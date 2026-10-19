@@ -64,7 +64,17 @@ impl Obj {
     }
 }
 
-/// The runtime heap: bump-allocated chunks plus a string handle table.
+/// Bookkeeping for one allocated object, enabling the sweep phase.
+#[derive(Debug)]
+struct Record {
+    addr: *mut u64,
+    field_count: usize,
+    alive: bool,
+    marked: bool,
+}
+
+/// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
+/// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
 pub struct Heap {
     /// Boxed chunks; their contents have stable addresses for the heap's life.
@@ -73,6 +83,12 @@ pub struct Heap {
     cursor: usize,
     /// Interned strings, referenced from field slots by index.
     strings: Vec<Rc<str>>,
+    /// One record per object ever allocated (dead ones are reused).
+    records: Vec<Record>,
+    /// Record index by object address, for tracing child references.
+    by_addr: std::collections::HashMap<usize, usize>,
+    /// Dead record indices available for reuse, keyed by field count.
+    free: std::collections::HashMap<usize, Vec<usize>>,
 }
 
 impl Heap {
@@ -82,8 +98,22 @@ impl Heap {
     }
 
     /// Allocate an object with `field_count` fields of type `type_rid`,
-    /// returning a pointer to it. Fields start zeroed.
+    /// returning a pointer to it. Fields start zeroed. A freed block of the
+    /// same field count is reused before bump-allocating a new one.
     pub fn alloc(&mut self, type_rid: u32, field_count: usize) -> Obj {
+        // Reuse a freed block of the exact size, if any.
+        if let Some(idx) = self.free.get_mut(&field_count).and_then(Vec::pop) {
+            let addr = self.records[idx].addr;
+            // SAFETY: the block is `field_count + 1` valid slots we own.
+            unsafe {
+                std::ptr::write_bytes(addr, 0, field_count + 1);
+                *addr = type_rid as u64;
+            }
+            self.records[idx].alive = true;
+            self.records[idx].marked = false;
+            return Obj(addr);
+        }
+
         let slots = field_count + 1; // + the type-RID header slot
         assert!(slots <= CHUNK_SLOTS, "object larger than a heap chunk");
 
@@ -100,7 +130,76 @@ impl Heap {
         unsafe {
             *base = type_rid as u64;
         }
+        let idx = self.records.len();
+        self.records.push(Record {
+            addr: base,
+            field_count,
+            alive: true,
+            marked: false,
+        });
+        self.by_addr.insert(base as usize, idx);
         Obj(base)
+    }
+
+    /// Number of currently live objects (for diagnostics and tests).
+    pub fn live_count(&self) -> usize {
+        self.records.iter().filter(|r| r.alive).count()
+    }
+
+    /// Mark-sweep collection. `roots` are the object references currently live
+    /// on the stacks; `ref_slots(type_rid)` gives the field-slot indices of an
+    /// object's reference fields (so the collector can trace the graph).
+    /// Returns how many objects were reclaimed.
+    ///
+    /// # Safety
+    /// Every root and every traced reference must be a valid object in this
+    /// heap. In particular, no live stack slot (interpreter or JIT) may hold an
+    /// object reference absent from `roots` — otherwise it could be freed while
+    /// still in use. (Collecting with precise roots from both engines is the
+    /// remaining integration; see PLAN.md Â§4.3.)
+    pub unsafe fn collect(&mut self, roots: &[Obj], ref_slots: &dyn Fn(u32) -> Vec<usize>) -> usize {
+        for r in &mut self.records {
+            r.marked = false;
+        }
+
+        // Mark reachable objects from the roots.
+        let mut work: Vec<usize> = Vec::new();
+        for root in roots {
+            if let Some(&idx) = self.by_addr.get(&(root.0 as usize)) {
+                if !self.records[idx].marked {
+                    self.records[idx].marked = true;
+                    work.push(idx);
+                }
+            }
+        }
+        while let Some(idx) = work.pop() {
+            let obj = Obj(self.records[idx].addr);
+            for slot in ref_slots(obj.type_rid()) {
+                let child = obj.field(slot) as *mut u64;
+                if child.is_null() {
+                    continue;
+                }
+                if let Some(&cidx) = self.by_addr.get(&(child as usize)) {
+                    if !self.records[cidx].marked {
+                        self.records[cidx].marked = true;
+                        work.push(cidx);
+                    }
+                }
+            }
+        }
+
+        // Sweep: reclaim live-but-unmarked objects into the free list.
+        let mut freed = 0;
+        for idx in 0..self.records.len() {
+            let r = &mut self.records[idx];
+            if r.alive && !r.marked {
+                r.alive = false;
+                self.by_addr.remove(&(r.addr as usize));
+                self.free.entry(r.field_count).or_default().push(idx);
+                freed += 1;
+            }
+        }
+        freed
     }
 
     /// Intern a string, returning its handle for storing in a field slot.
@@ -241,6 +340,59 @@ mod tests {
         let recovered = unsafe { Obj::from_addr(outer.field(0) as *mut u64) };
         assert_eq!(recovered.field(0), 99);
         assert_eq!(recovered.type_rid(), 5);
+    }
+
+    #[test]
+    fn collect_frees_unreachable_and_keeps_reachable() {
+        let mut heap = Heap::new();
+        // a has one reference field (slot 0) pointing at b; c is unreferenced.
+        let b = heap.alloc(2, 0);
+        let a = heap.alloc(1, 1);
+        a.set_field(0, b.addr() as u64);
+        let _c = heap.alloc(3, 0);
+        assert_eq!(heap.live_count(), 3);
+
+        // Type 1 has a reference in slot 0; types 2 and 3 have none.
+        let ref_slots = |type_rid: u32| if type_rid == 1 { vec![0usize] } else { vec![] };
+        // Root set is just `a`; `a` keeps `b` alive; `c` is garbage.
+        let freed = unsafe { heap.collect(&[a], &ref_slots) };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.live_count(), 2);
+    }
+
+    #[test]
+    fn collection_reuses_freed_blocks() {
+        let mut heap = Heap::new();
+        let keep = heap.alloc(1, 2);
+        let garbage = heap.alloc(1, 2);
+        let garbage_addr = garbage.addr();
+        let no_refs = |_: u32| Vec::<usize>::new();
+
+        let freed = unsafe { heap.collect(&[keep], &no_refs) };
+        assert_eq!(freed, 1);
+        // A new allocation of the same size reuses the reclaimed block.
+        let reused = heap.alloc(9, 2);
+        assert_eq!(reused.addr(), garbage_addr);
+        assert_eq!(reused.type_rid(), 9);
+        assert_eq!(reused.field(0), 0); // reused block was zeroed
+    }
+
+    #[test]
+    fn transitively_reachable_objects_survive() {
+        let mut heap = Heap::new();
+        // Chain a -> b -> c, all type 1 with a single reference in slot 0.
+        let c = heap.alloc(1, 1);
+        let b = heap.alloc(1, 1);
+        let a = heap.alloc(1, 1);
+        b.set_field(0, c.addr() as u64);
+        a.set_field(0, b.addr() as u64);
+        let unreachable = heap.alloc(1, 1);
+        let _ = unreachable;
+
+        let ref_slots = |_: u32| vec![0usize];
+        let freed = unsafe { heap.collect(&[a], &ref_slots) };
+        assert_eq!(freed, 1); // only the detached object
+        assert_eq!(heap.live_count(), 3);
     }
 
     #[test]

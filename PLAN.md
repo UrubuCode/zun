@@ -226,12 +226,18 @@ de implementação:
 4. **Objetos no JIT**: `newobj` chama o alocador; `ldfld`/`stfld` viram
    load/store por offset; `callvirt` indexa a vtable (as faixas
    `method_start/method_end` já existem) — slot em vez de busca por nome.
-5. **GC real**: mark-sweep-compact com write barriers (instrução distinta na IL)
-   e stack maps do Cranelift (guia §21) nos safepoints. Começar com
-   stop-the-world de um heap só (doc 09).
+5. **GC real**: mark-sweep sobre o heap não-móvel. *(Coletor implementado e
+   testado — `Heap::collect` marca a partir de um conjunto de raízes, traça os
+   campos-referência por tipo e varre os inalcançáveis para uma free-list.)* O
+   que falta é o **disparo automático ao vivo com raízes precisas**: safepoints
+   onde o interpretador expõe os `Value`-objeto das pilhas/locais de todos os
+   frames, e as raízes das pilhas nativas via stack maps do Cranelift (guia
+   §21). Compactação (mover objetos) fica para depois, pois exige reescrever
+   referências e stack maps mais ricos.
 
-Cada passo é testável isolado; o passo 3 é o de maior risco (memória manual) e
-deve vir com uma suíte de equivalência interp↔JIT para objetos, como a numérica.
+Estado: passos 1–4 feitos; o algoritmo do passo 5 está pronto e testado, e só a
+integração de raízes precisas (safepoints + stack maps) permanece — é o maior
+risco de memória e é feita isolada, com sua própria suíte.
 
 ## 5. Riscos e pontos de atenção
 
