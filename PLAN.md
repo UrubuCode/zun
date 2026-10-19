@@ -175,7 +175,33 @@ const test: float = 1.0;   // ponto flutuante (f64)
 - `int` (e futuramente larguras como `i32`/`i64`/`u32`) dá ao compilador o tipo estático exato, então o JIT usa registradores inteiros e operações inteiras sem conversões `ToInt32` em cada passo — a complexidade que o f64 uniforme empurraria para o runtime desaparece no compile-time.
 - O JS puro (sem anotação) permanece `float`/`Any`; o TS tipado ganha a capacidade de ser preciso. Isso é coerente com o princípio do projeto: "TS sound por padrão, dinâmico como opt-in custoso".
 
-Ordem sugerida: introduzir `int`/`float` no `zun_sema` (tipos `Ty::Int`/`Ty::Float`, hoje só `Ty::Number`), emitir os opcodes `*.i32`/`*.f64` corretos no `zun_ilgen`, e então trocar o JIT do "tudo f64" para a pilha tipada. O interpretador já tem o `Value` como enum, então suporta os dois tipos sem mudança estrutural.
+### Reticulado numérico completo
+
+`int`/`float` são o começo; o alvo é a família completa de larguras fixas, como em Rust/.NET. Usuários comuns usam `int`/`float`; usuários que precisam de controle de bits (e o próprio `std`) usam as larguras exatas.
+
+| Tipo TS | Repr. de máquina | Cranelift | Uso típico |
+|---|---|---|---|
+| `float` / `number` (JS) | f64 | `F64` | número geral, compat. JS |
+| `f32` | f32 | `F32` | gráficos, SIMD, dados compactos |
+| `int` | i32 (padrão) | `I32` | contadores, índices |
+| `i8` `i16` `i32` `i64` | inteiro com sinal | `I8..I64` | valores com sinal de largura exata |
+| `u8` `u16` `u32` `u64` | inteiro sem sinal | `I8..I64` (sinal no opcode) | bytes, buffers, UTF-16, flags, hashing |
+| `bool` | i8 (0/1) | `I8` | condições (hoje já é `Boolean`) |
+
+Decisões de semântica:
+- **Sinal fica na operação, não no tipo Cranelift** (como no próprio Cranelift e no doc 02): o reticulado guarda a assinatura; `div`/`shr`/comparações escolhem a forma com/sem sinal (`sdiv`/`udiv`, `sshr`/`ushr`, `IntCC::Signed*`/`Unsigned*`).
+- **Overflow explícito por operação** (doc 08/10): `wrap` (padrão, como `u8` do Rust em release — útil para hashing/buffers), com modo `checked` (trap) opcional. A tabela mestre já prevê escolher wrap/trap por instrução.
+- **Conversões explícitas** entre larguras (`as`), lowering para `ireduce`/`uextend`/`sextend`; number↔int usa os `fcvt_*_sat` (nunca a forma que faz trap — o pitfall do guia do Cranelift).
+- **Representação no interpretador**: hoje `Value::Number(f64)`; o plano é `Value::Int(i64, width, signed)` + `Value::Float(f64|f32)` ou variantes dedicadas por largura. O enum absorve isso sem mudança estrutural.
+- **Layout de objeto**: larguras exatas permitem campos compactos (`u8`/`u16`) com o alinhamento mínimo (doc 03/05), importante para structs densos e interop.
+
+### Ordem de implementação
+
+1. `zun_sema`: substituir `Ty::Number` por um reticulado (`Ty::Float{32,64}`, `Ty::Int{width, signed}`), com `number`→`float64` e regras de promoção/conversão.
+2. `zun_ilgen`: escolher a família de opcode certa (`add.i32`/`add.f64`/…) e inserir conversões; emitir larguras estreitas com máscara/extensão.
+3. `zun_interp`: variantes de `Value` por largura (ou i64+largura), com wrap correto.
+4. JIT: pilha tipada (I8/I16/I32/I64/F32/F64) em vez de "tudo f64", com sinal/overflow na instrução.
+5. `std` base: usar `u8`/`u16`/`u32` em buffers, código de string (UTF-16), hashing e flags.
 
 ## 5. Riscos e pontos de atenção
 
