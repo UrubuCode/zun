@@ -12,6 +12,29 @@ use zun_common::Span;
 pub struct Program {
     /// Top-level function declarations, in source order.
     pub functions: Vec<Function>,
+    /// Top-level class declarations, in source order.
+    pub classes: Vec<Class>,
+}
+
+/// `class Name { field: type; ... }` — phase-2 classes carry fields only;
+/// methods and inheritance arrive in a later step.
+#[derive(Debug, PartialEq)]
+pub struct Class {
+    /// The class name.
+    pub name: Name,
+    /// Declared fields in source order; `new` initializes them positionally.
+    pub fields: Vec<ClassField>,
+    /// Span of the whole declaration.
+    pub span: Span,
+}
+
+/// A class field declaration: `name: type;`.
+#[derive(Debug, PartialEq)]
+pub struct ClassField {
+    /// The field name.
+    pub name: Name,
+    /// The field's declared type.
+    pub ty: TypeAnnotation,
 }
 
 /// `function name(params): ret { body }`
@@ -212,6 +235,35 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `new Class(args)` — positional field initialization.
+    New {
+        /// The class being instantiated.
+        class: Name,
+        /// Initializer arguments, one per field in declaration order.
+        args: Vec<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
+    /// `object.field` — read a field.
+    Field {
+        /// The object expression.
+        object: Box<Expr>,
+        /// The field name.
+        field: Name,
+        /// Span of the whole expression.
+        span: Span,
+    },
+    /// `object.field = value` — write a field; the value is the result.
+    FieldAssign {
+        /// The object expression.
+        object: Box<Expr>,
+        /// The field name.
+        field: Name,
+        /// The stored value.
+        value: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -225,7 +277,10 @@ impl Expr {
             | Expr::Assign { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Unary { span, .. }
-            | Expr::Call { span, .. } => *span,
+            | Expr::Call { span, .. }
+            | Expr::New { span, .. }
+            | Expr::Field { span, .. }
+            | Expr::FieldAssign { span, .. } => *span,
             Expr::Ident(name) => name.span,
         }
     }

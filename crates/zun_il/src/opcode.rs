@@ -213,8 +213,9 @@ define_opcodes! {
     NewObj = 0x70, Token, "newobj", StackEffect::Call;
     /// Load an object field.
     LoadField = 0x71, Token, "ldfld", StackEffect::Fixed { pops: 1, pushes: 1 };
-    /// Store an object field.
-    StoreField = 0x72, Token, "stfld", StackEffect::Fixed { pops: 2, pushes: 0 };
+    /// Store an object field, leaving the stored value on the stack so a field
+    /// assignment can be used as an expression.
+    StoreField = 0x72, Token, "stfld", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Direct (static / non-virtual) call.
     Call = 0x73, Token, "call", StackEffect::Call;
     /// Virtual / interface call.

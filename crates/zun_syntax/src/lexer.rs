@@ -36,6 +36,10 @@ pub enum TokenKind {
     KwFalse,
     /// `null`
     KwNull,
+    /// `class`
+    KwClass,
+    /// `new`
+    KwNew,
 
     // Punctuation
     /// `(`
@@ -52,6 +56,8 @@ pub enum TokenKind {
     Semi,
     /// `:`
     Colon,
+    /// `.`
+    Dot,
 
     // Operators
     /// `+`
@@ -174,6 +180,7 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semi,
                     b':' => TokenKind::Colon,
+                    b'.' => TokenKind::Dot,
                     b'+' => TokenKind::Plus,
                     b'-' => TokenKind::Minus,
                     b'*' => TokenKind::Star,
@@ -253,6 +260,8 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "true" => TokenKind::KwTrue,
         "false" => TokenKind::KwFalse,
         "null" => TokenKind::KwNull,
+        "class" => TokenKind::KwClass,
+        "new" => TokenKind::KwNew,
         _ => TokenKind::Ident,
     }
 }

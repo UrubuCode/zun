@@ -16,13 +16,22 @@
 //!   (displacements are relative to the end of the branch instruction).
 
 use zun_il::{encode, Instruction, Opcode, Operand};
-use zun_metadata::{MethodDef, TableKind, Token};
+use zun_metadata::{BlobIndex, FieldDef, MethodDef, TableKind, Token, TypeDef};
 use zun_module::{write_body, Module};
 use zun_sema::hir::{self, BinaryOp, Builtin, ExprKind, Stmt, Ty, UnaryOp};
+
+/// Tokens a lowered program needs to reference its own metadata.
+struct Layout {
+    /// TypeDef token per class index.
+    type_tokens: Vec<Token>,
+    /// FieldDef token per (class index, field slot).
+    field_tokens: Vec<Vec<Token>>,
+}
 
 /// Lower a checked program into a `.zm` module.
 pub fn lower(program: &hir::Program) -> Module {
     let mut module = Module::new();
+    let layout = emit_classes(program, &mut module);
 
     // Reserve one MethodDef per function first so call sites can name any
     // function by token regardless of order. body_offset is patched after
@@ -31,13 +40,13 @@ pub fn lower(program: &hir::Program) -> Module {
         let name = module.strings.intern(&f.name);
         module.tables.add_method_def(MethodDef {
             name,
-            signature: zun_metadata::BlobIndex(0), // signatures land with the verifier
+            signature: BlobIndex(0), // signatures land with the verifier
             body_offset: u32::MAX,
         });
     }
 
     for (index, f) in program.functions.iter().enumerate() {
-        let code = lower_function(f, &mut module);
+        let code = lower_function(f, &layout, &mut module);
         let offset = write_body(
             &mut module.code,
             f.param_count,
@@ -54,10 +63,48 @@ pub fn lower(program: &hir::Program) -> Module {
     module
 }
 
+/// Emit TypeDef and FieldDef rows for every class and return their tokens.
+fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
+    let mut type_tokens = Vec::with_capacity(program.classes.len());
+    let mut field_tokens = Vec::with_capacity(program.classes.len());
+
+    for class in &program.classes {
+        let name = module.strings.intern(&class.name);
+        let mut this_class_fields = Vec::with_capacity(class.fields.len());
+        let field_start = module.tables.field_defs.len() as u32 + 1; // RIDs are 1-based
+        for field in &class.fields {
+            let fname = module.strings.intern(&field.name);
+            let tok = module.tables.add_field_def(FieldDef {
+                name: fname,
+                signature: BlobIndex(0),
+            });
+            this_class_fields.push(tok);
+        }
+        let field_end = module.tables.field_defs.len() as u32 + 1;
+        let tok = module.tables.add_type_def(TypeDef {
+            name,
+            namespace: zun_metadata::StringIndex(0),
+            base: Token::null(TableKind::TypeDef),
+            field_start,
+            field_end,
+            method_start: 0,
+            method_end: 0,
+        });
+        type_tokens.push(tok);
+        field_tokens.push(this_class_fields);
+    }
+
+    Layout {
+        type_tokens,
+        field_tokens,
+    }
+}
+
 /// Lower one function body to ZIL bytes.
-fn lower_function(f: &hir::Function, module: &mut Module) -> Vec<u8> {
+fn lower_function(f: &hir::Function, layout: &Layout, module: &mut Module) -> Vec<u8> {
     let mut gen = FnLowerer {
         code: Vec::new(),
+        layout,
         module,
     };
     gen.stmts(&f.body);
@@ -78,6 +125,7 @@ struct BranchPatch {
 
 struct FnLowerer<'a> {
     code: Vec<u8>,
+    layout: &'a Layout,
     module: &'a mut Module,
 }
 
@@ -231,6 +279,36 @@ impl FnLowerer<'_> {
                     Builtin::Print => 0,
                 };
                 self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id)));
+            }
+            ExprKind::New { class, args } => {
+                for a in args {
+                    self.expr(a);
+                }
+                let token = self.layout.type_tokens[*class as usize];
+                self.emit(Instruction::new(Opcode::NewObj, Operand::Token(token)));
+            }
+            ExprKind::FieldGet {
+                object,
+                class,
+                field_slot,
+            } => {
+                self.expr(object);
+                let token = self.layout.field_tokens[*class as usize][*field_slot as usize];
+                self.emit(Instruction::new(Opcode::LoadField, Operand::Token(token)));
+            }
+            ExprKind::FieldSet {
+                object,
+                class,
+                field_slot,
+                value,
+            } => {
+                // [object, value] -> stfld -> [value]. stfld leaves the stored
+                // value so the assignment yields it; in statement position the
+                // always-pop rule discards it.
+                self.expr(object);
+                self.expr(value);
+                let token = self.layout.field_tokens[*class as usize][*field_slot as usize];
+                self.emit(Instruction::new(Opcode::StoreField, Operand::Token(token)));
             }
             ExprKind::Error => unreachable!("ilgen runs only on error-free programs"),
         }

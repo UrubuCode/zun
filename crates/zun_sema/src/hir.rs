@@ -8,7 +8,10 @@
 use zun_common::Span;
 pub use zun_syntax::ast::{BinaryOp, UnaryOp};
 
-/// A checked type. Phase 1 knows only the primitives.
+/// Index of a class within the checked program.
+pub type ClassIndex = u32;
+
+/// A checked type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ty {
     /// `number` — IEEE-754 f64, as in JS.
@@ -19,6 +22,8 @@ pub enum Ty {
     Boolean,
     /// `void` — only valid as a return type.
     Void,
+    /// An instance of a user-declared class.
+    Instance(ClassIndex),
     /// A type that failed to check. Propagates silently so one error does not
     /// cascade into dozens.
     Error,
@@ -49,8 +54,28 @@ pub enum Builtin {
 pub struct Program {
     /// All functions; a [`FuncIndex`] indexes this vector.
     pub functions: Vec<Function>,
+    /// All classes; a [`ClassIndex`] indexes this vector.
+    pub classes: Vec<Class>,
     /// Index of `main`, if the program declares one.
     pub main: Option<FuncIndex>,
+}
+
+/// A checked class: an ordered list of typed fields.
+#[derive(Debug)]
+pub struct Class {
+    /// The class name.
+    pub name: String,
+    /// Fields in declaration order; the index is the object's field slot.
+    pub fields: Vec<ClassField>,
+}
+
+/// A checked class field.
+#[derive(Debug)]
+pub struct ClassField {
+    /// The field name.
+    pub name: String,
+    /// The field's type.
+    pub ty: Ty,
 }
 
 /// A checked function.
@@ -159,6 +184,33 @@ pub enum ExprKind {
         builtin: Builtin,
         /// Arguments in order.
         args: Vec<Expr>,
+    },
+    /// Allocate a class instance, initializing fields positionally.
+    New {
+        /// The class being instantiated.
+        class: ClassIndex,
+        /// One initializer per field, in field-slot order.
+        args: Vec<Expr>,
+    },
+    /// Read `object`'s field at `field_slot`.
+    FieldGet {
+        /// The object expression.
+        object: Box<Expr>,
+        /// The class whose layout defines the slot.
+        class: ClassIndex,
+        /// Zero-based field slot.
+        field_slot: u16,
+    },
+    /// Write `object`'s field at `field_slot`; the stored value is the result.
+    FieldSet {
+        /// The object expression.
+        object: Box<Expr>,
+        /// The class whose layout defines the slot.
+        class: ClassIndex,
+        /// Zero-based field slot.
+        field_slot: u16,
+        /// The stored value.
+        value: Box<Expr>,
     },
     /// A poisoned expression that already produced a diagnostic.
     Error,

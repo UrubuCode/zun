@@ -78,19 +78,48 @@ impl Parser<'_> {
 
     fn program(&mut self) -> Program {
         let mut functions = Vec::new();
+        let mut classes = Vec::new();
         while !self.at(TokenKind::Eof) {
-            if self.at(TokenKind::KwFunction) {
-                functions.push(self.function());
-            } else {
-                let t = self.peek();
-                self.error_at(t.span, "expected a function declaration");
-                // Synchronize: skip to the next `function` or EOF.
-                while !self.at(TokenKind::Eof) && !self.at(TokenKind::KwFunction) {
-                    self.bump();
+            match self.peek().kind {
+                TokenKind::KwFunction => functions.push(self.function()),
+                TokenKind::KwClass => classes.push(self.class()),
+                _ => {
+                    let t = self.peek();
+                    self.error_at(t.span, "expected a function or class declaration");
+                    // Synchronize to the next top-level declaration or EOF.
+                    while !self.at(TokenKind::Eof)
+                        && !self.at(TokenKind::KwFunction)
+                        && !self.at(TokenKind::KwClass)
+                    {
+                        self.bump();
+                    }
                 }
             }
         }
-        Program { functions }
+        Program { functions, classes }
+    }
+
+    fn class(&mut self) -> Class {
+        let start = self.bump().span; // `class`
+        let name = self.name("a class name");
+        self.expect(TokenKind::LBrace, "`{`");
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            let fname = self.name("a field name");
+            self.expect(TokenKind::Colon, "`:` (fields require a type)");
+            let ty = TypeAnnotation {
+                name: self.name("a type name"),
+            };
+            self.expect(TokenKind::Semi, "`;`");
+            fields.push(ClassField { name: fname, ty });
+        }
+        let close = self.peek().span;
+        self.expect(TokenKind::RBrace, "`}`");
+        Class {
+            name,
+            fields,
+            span: start.to(close),
+        }
     }
 
     fn function(&mut self) -> Function {
@@ -243,15 +272,26 @@ impl Parser<'_> {
         if self.at(TokenKind::Eq) {
             let eq_span = self.bump().span;
             let value = self.assignment();
-            if let Expr::Ident(target) = lhs {
-                let span = target.span.to(value.span());
-                return Expr::Assign {
-                    target,
-                    value: Box::new(value),
-                    span,
-                };
+            match lhs {
+                Expr::Ident(target) => {
+                    let span = target.span.to(value.span());
+                    return Expr::Assign {
+                        target,
+                        value: Box::new(value),
+                        span,
+                    };
+                }
+                Expr::Field { object, field, .. } => {
+                    let span = object.span().to(value.span());
+                    return Expr::FieldAssign {
+                        object,
+                        field,
+                        value: Box::new(value),
+                        span,
+                    };
+                }
+                _ => self.error_at(eq_span, "invalid assignment target"),
             }
-            self.error_at(eq_span, "invalid assignment target");
         }
         lhs
     }
@@ -298,28 +338,52 @@ impl Parser<'_> {
     }
 
     fn call(&mut self) -> Expr {
-        let expr = self.primary();
-        if let Expr::Ident(callee) = expr {
-            if self.at(TokenKind::LParen) {
-                self.bump();
-                let mut args = Vec::new();
-                while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
-                    args.push(self.expression());
-                    if !self.eat(TokenKind::Comma) {
+        let mut expr = self.primary();
+        loop {
+            match self.peek().kind {
+                // `ident(args)` — only a bare name is callable in phase 2.
+                TokenKind::LParen => {
+                    let Expr::Ident(callee) = expr else {
                         break;
-                    }
+                    };
+                    self.bump();
+                    let args = self.arguments();
+                    let close = self.tokens[self.pos - 1].span;
+                    expr = Expr::Call {
+                        callee,
+                        args,
+                        span: callee.span.to(close),
+                    };
                 }
-                let close = self.peek().span;
-                self.expect(TokenKind::RParen, "`)`");
-                return Expr::Call {
-                    callee,
-                    args,
-                    span: callee.span.to(close),
-                };
+                // `object.field`
+                TokenKind::Dot => {
+                    self.bump();
+                    let field = self.name("a field name");
+                    let span = expr.span().to(field.span);
+                    expr = Expr::Field {
+                        object: Box::new(expr),
+                        field,
+                        span,
+                    };
+                }
+                _ => break,
             }
-            return Expr::Ident(callee);
         }
         expr
+    }
+
+    /// Parse `(a, b, c)` argument list; the opening `(` is already consumed and
+    /// the closing `)` is consumed here.
+    fn arguments(&mut self) -> Vec<Expr> {
+        let mut args = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            args.push(self.expression());
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "`)`");
+        args
     }
 
     fn primary(&mut self) -> Expr {
@@ -352,6 +416,18 @@ impl Parser<'_> {
             TokenKind::KwNull => {
                 self.bump();
                 Expr::Null { span: t.span }
+            }
+            TokenKind::KwNew => {
+                let start = self.bump().span; // `new`
+                let class = self.name("a class name");
+                self.expect(TokenKind::LParen, "`(`");
+                let args = self.arguments();
+                let close = self.tokens[self.pos - 1].span;
+                Expr::New {
+                    class,
+                    args,
+                    span: start.to(close),
+                }
             }
             TokenKind::Ident => {
                 self.bump();
@@ -534,5 +610,53 @@ mod tests {
         let p = parse("let x = 1; function ok() {}", &mut diags);
         assert_eq!(p.functions.len(), 1);
         assert!(!diags.is_empty());
+    }
+
+    #[test]
+    fn parses_class_with_fields() {
+        let src = "class Point { x: number; y: number; }";
+        let p = parse_ok(src);
+        assert_eq!(p.classes.len(), 1);
+        let c = &p.classes[0];
+        assert_eq!(ident_text(src, &c.name), "Point");
+        assert_eq!(c.fields.len(), 2);
+        assert_eq!(ident_text(src, &c.fields[0].name), "x");
+    }
+
+    #[test]
+    fn parses_new_and_field_access() {
+        let src = "function f() { let p = new Point(1, 2); print(p.x); }";
+        let p = parse_ok(src);
+        let body = &p.functions[0].body.statements;
+        let Stmt::Let { init: Expr::New { args, .. }, .. } = &body[0] else {
+            panic!("expected new");
+        };
+        assert_eq!(args.len(), 2);
+        let Stmt::Expr(Expr::Call { args, .. }) = &body[1] else {
+            panic!("expected call");
+        };
+        assert!(matches!(args[0], Expr::Field { .. }));
+    }
+
+    #[test]
+    fn parses_field_assignment() {
+        let src = "function f() { p.x = 5; }";
+        let p = parse_ok(src);
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::Expr(Expr::FieldAssign { .. })
+        ));
+    }
+
+    #[test]
+    fn chained_field_access() {
+        let src = "function f() { let z = a.b.c; }";
+        let p = parse_ok(src);
+        let Stmt::Let { init: Expr::Field { object, .. }, .. } =
+            &p.functions[0].body.statements[0]
+        else {
+            panic!("expected field access");
+        };
+        assert!(matches!(**object, Expr::Field { .. }));
     }
 }

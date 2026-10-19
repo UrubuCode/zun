@@ -79,6 +79,16 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
             let body = read_body(&module.code, callee.body_offset).ok()?;
             Some((body.param_count as u8, 1))
         }
+        // newobj pops one initializer per field and pushes the new reference.
+        Opcode::NewObj => {
+            let token = match operand {
+                Operand::Token(t) => *t,
+                _ => return None,
+            };
+            let ty = module.tables.type_defs.get(token.rid() as usize - 1)?;
+            let field_count = (ty.field_end - ty.field_start) as u8;
+            Some((field_count, 1))
+        }
         // The phase-1 builtins all take one argument and push one result.
         Opcode::CallBuiltin => Some((1, 1)),
         _ => None,

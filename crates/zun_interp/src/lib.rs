@@ -187,11 +187,31 @@ impl Interp<'_> {
                     let id = operand_i32(&instr.operand);
                     self.call_builtin(id, &mut stack)?;
                 }
-                // Object/field opcodes are not reachable from phase-1 ilgen yet.
-                Opcode::NewObj
-                | Opcode::LoadField
-                | Opcode::StoreField
-                | Opcode::CallVirt
+                Opcode::NewObj => {
+                    let token = operand_token(&instr.operand);
+                    let (field_start, field_count) = self.type_field_range(token)?;
+                    let _ = field_start;
+                    let args = pop_n(&mut stack, field_count)?;
+                    stack.push(Value::Object(std::rc::Rc::new(value::Object {
+                        type_rid: token.rid(),
+                        fields: std::cell::RefCell::new(args),
+                    })));
+                }
+                Opcode::LoadField => {
+                    let slot = self.field_slot(operand_token(&instr.operand))?;
+                    let obj = pop(&mut stack)?;
+                    let v = obj.as_object().fields.borrow()[slot].clone();
+                    stack.push(v);
+                }
+                Opcode::StoreField => {
+                    let slot = self.field_slot(operand_token(&instr.operand))?;
+                    let value = pop(&mut stack)?;
+                    let obj = pop(&mut stack)?;
+                    obj.as_object().fields.borrow_mut()[slot] = value.clone();
+                    stack.push(value);
+                }
+                // Remaining opcodes are not reachable from phase-2 ilgen yet.
+                Opcode::CallVirt
                 | Opcode::ConstI32
                 | Opcode::ConstI64
                 | Opcode::ConstNull
@@ -211,6 +231,31 @@ impl Interp<'_> {
         // Falling off the end with no `ret` returns void; ilgen always appends
         // a trailing `ret`, so this is a safety net.
         Ok(Value::Void)
+    }
+
+    /// For a TypeDef token, return `(field_start_rid, field_count)`.
+    fn type_field_range(&self, token: zun_metadata::Token) -> Result<(u32, usize), RunError> {
+        let ty = self
+            .module
+            .tables
+            .type_defs
+            .get(token.rid() as usize - 1)
+            .ok_or(RunError::BadToken)?;
+        Ok((ty.field_start, (ty.field_end - ty.field_start) as usize))
+    }
+
+    /// For a FieldDef token, return its zero-based slot within the class that
+    /// owns it (the class whose field range contains this field's RID).
+    fn field_slot(&self, field_token: zun_metadata::Token) -> Result<usize, RunError> {
+        let field_rid = field_token.rid();
+        let owner = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .find(|t| field_rid >= t.field_start && field_rid < t.field_end)
+            .ok_or(RunError::BadToken)?;
+        Ok((field_rid - owner.field_start) as usize)
     }
 
     fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {

@@ -5,7 +5,19 @@
 //! This is the interpreter's own representation; the eventual object model and
 //! GC heap (`zun_gc`) are separate concerns.
 
+use std::cell::RefCell;
 use std::rc::Rc;
+
+/// A heap object: its class's TypeDef RID plus its field slots. `Rc<RefCell>`
+/// gives reference semantics (two bindings share one object) and interior
+/// mutability for field stores — a stand-in until the real GC heap lands.
+#[derive(Debug)]
+pub struct Object {
+    /// 1-based TypeDef RID of the object's class.
+    pub type_rid: u32,
+    /// Field values, indexed by field slot.
+    pub fields: RefCell<Vec<Value>>,
+}
 
 /// A runtime value.
 #[derive(Debug, Clone)]
@@ -16,6 +28,8 @@ pub enum Value {
     Bool(bool),
     /// An immutable string. `Rc` keeps cloning a value cheap.
     Str(Rc<str>),
+    /// A heap object reference (shared, mutable).
+    Object(Rc<Object>),
     /// The absence of a value (a void call's result).
     Void,
 }
@@ -53,7 +67,17 @@ impl Value {
             Value::Number(n) => format_number(*n),
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => s.to_string(),
+            Value::Object(_) => "[object]".to_string(),
             Value::Void => "undefined".to_string(),
+        }
+    }
+
+    /// Interpret the value as an object reference, or panic (see
+    /// [`Value::as_number`]).
+    pub fn as_object(&self) -> &Rc<Object> {
+        match self {
+            Value::Object(o) => o,
+            other => panic!("expected object, found {other:?}"),
         }
     }
 }

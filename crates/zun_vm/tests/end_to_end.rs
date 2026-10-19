@@ -87,6 +87,52 @@ fn string_concatenation() {
 }
 
 #[test]
+fn class_field_read() {
+    let out = run_source(
+        "class Point { x: number; y: number; }\n\
+         function main() { let p = new Point(3, 4); print(p.x); print(p.y); }",
+    );
+    assert_eq!(out, ["3", "4"]);
+}
+
+#[test]
+fn class_field_write_and_reference_semantics() {
+    // Writing through one binding is visible through an alias (reference type).
+    let out = run_source(
+        "class Counter { n: number; }\n\
+         function bump(c: Counter) { c.n = c.n + 1; }\n\
+         function main() {\n\
+            let c = new Counter(0);\n\
+            bump(c); bump(c); bump(c);\n\
+            print(c.n);\n\
+         }",
+    );
+    assert_eq!(out, ["3"]);
+}
+
+#[test]
+fn nested_objects() {
+    let out = run_source(
+        "class Inner { v: number; }\n\
+         class Outer { inner: Inner; }\n\
+         function main() {\n\
+            let o = new Outer(new Inner(42));\n\
+            print(o.inner.v);\n\
+         }",
+    );
+    assert_eq!(out, ["42"]);
+}
+
+#[test]
+fn field_assignment_as_expression() {
+    let out = run_source(
+        "class Box { v: number; }\n\
+         function main() { let b = new Box(0); let y = (b.v = 7); print(y); print(b.v); }",
+    );
+    assert_eq!(out, ["7", "7"]);
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

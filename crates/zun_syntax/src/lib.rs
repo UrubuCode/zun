@@ -11,5 +11,8 @@ pub mod ast;
 pub mod lexer;
 pub mod parser;
 
-pub use ast::{BinaryOp, Block, Expr, Function, Name, Param, Program, Stmt, UnaryOp};
+pub use ast::{
+    BinaryOp, Block, Class, ClassField, Expr, Function, Name, Param, Program, Stmt, TypeAnnotation,
+    UnaryOp,
+};
 pub use parser::parse;

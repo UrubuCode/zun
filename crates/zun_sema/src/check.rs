@@ -22,7 +22,13 @@ pub fn check(
         diagnostics,
         signatures: Vec::new(),
         by_name: HashMap::new(),
+        classes: Vec::new(),
+        classes_by_name: HashMap::new(),
     };
+    // Classes first so field and signature annotations can name them, then
+    // function signatures so calls can be forward references, then bodies.
+    checker.collect_classes(program);
+    let classes = checker.check_classes(program);
     checker.collect_signatures(program);
     let functions = program
         .functions
@@ -31,7 +37,11 @@ pub fn check(
         .map(|(index, f)| checker.check_function(index, f))
         .collect();
     let main = checker.by_name.get("main").copied();
-    hir::Program { functions, main }
+    hir::Program {
+        functions,
+        classes,
+        main,
+    }
 }
 
 /// A collected function signature.
@@ -41,11 +51,18 @@ struct Signature {
     return_ty: Ty,
 }
 
+/// A collected class layout: field name -> (slot, type).
+struct ClassInfo {
+    fields: Vec<(String, Ty)>,
+}
+
 struct Checker<'a> {
     source: &'a str,
     diagnostics: &'a mut Vec<Diagnostic>,
     signatures: Vec<Signature>,
     by_name: HashMap<String, u32>,
+    classes: Vec<ClassInfo>,
+    classes_by_name: HashMap<String, u32>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -92,11 +109,59 @@ impl Checker<'_> {
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
             "void" => Ty::Void,
-            other => {
-                self.error(annotation.name.span, format!("unknown type `{other}`"));
-                Ty::Error
-            }
+            other => match self.classes_by_name.get(other) {
+                Some(&index) => Ty::Instance(index),
+                None => {
+                    self.error(annotation.name.span, format!("unknown type `{other}`"));
+                    Ty::Error
+                }
+            },
         }
+    }
+
+    /// First pass over classes: register names so annotations can resolve them.
+    fn collect_classes(&mut self, program: &ast::Program) {
+        for c in &program.classes {
+            let name = self.text(&c.name).to_string();
+            let index = self.classes.len() as u32;
+            if self.classes_by_name.insert(name, index).is_some() {
+                self.error(c.name.span, "duplicate class");
+            }
+            // Reserve the slot; fields are resolved in check_classes once every
+            // class name is known.
+            self.classes.push(ClassInfo { fields: Vec::new() });
+        }
+    }
+
+    /// Second pass: resolve each class's field types and build the HIR classes.
+    fn check_classes(&mut self, program: &ast::Program) -> Vec<hir::Class> {
+        let mut out = Vec::with_capacity(program.classes.len());
+        for (index, c) in program.classes.iter().enumerate() {
+            let mut fields = Vec::new();
+            let mut infos = Vec::new();
+            for f in &c.fields {
+                let fname = self.text(&f.name).to_string();
+                let ty = self.resolve_annotation(&f.ty);
+                infos.push((fname.clone(), ty));
+                fields.push(hir::ClassField { name: fname, ty });
+            }
+            self.classes[index].fields = infos;
+            out.push(hir::Class {
+                name: self.text(&c.name).to_string(),
+                fields,
+            });
+        }
+        out
+    }
+
+    /// Find a field's slot and type in a class layout.
+    fn field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
+        self.classes[class as usize]
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, (n, _))| n == name)
+            .map(|(slot, (_, ty))| (slot as u16, *ty))
     }
 
     fn collect_signatures(&mut self, program: &ast::Program) {
@@ -399,6 +464,114 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::New { class, args, .. } => {
+                let name = self.text(class).to_string();
+                let Some(&class_idx) = self.classes_by_name.get(&name) else {
+                    self.error(class.span, format!("unknown class `{name}`"));
+                    return self.poison(span);
+                };
+                let field_tys: Vec<Ty> = self.classes[class_idx as usize]
+                    .fields
+                    .iter()
+                    .map(|(_, ty)| *ty)
+                    .collect();
+                let args: Vec<hir::Expr> =
+                    args.iter().map(|a| self.check_expr(cx, a)).collect();
+                if args.len() != field_tys.len() {
+                    self.error(
+                        span,
+                        format!(
+                            "`{name}` has {} field(s), found {} initializer(s)",
+                            field_tys.len(),
+                            args.len()
+                        ),
+                    );
+                } else {
+                    for (arg, &expected) in args.iter().zip(&field_tys) {
+                        if !expected.is_error() && !arg.ty.is_error() && arg.ty != expected {
+                            self.error(
+                                arg.span,
+                                format!("field initializer type {:?} does not match {expected:?}", arg.ty),
+                            );
+                        }
+                    }
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::New {
+                        class: class_idx,
+                        args,
+                    },
+                    ty: Ty::Instance(class_idx),
+                    span,
+                }
+            }
+            ast::Expr::Field { object, field, .. } => {
+                let object = self.check_expr(cx, object);
+                let fname = self.text(field).to_string();
+                match object.ty {
+                    Ty::Instance(class) => match self.field_of(class, &fname) {
+                        Some((slot, ty)) => hir::Expr {
+                            kind: hir::ExprKind::FieldGet {
+                                object: Box::new(object),
+                                class,
+                                field_slot: slot,
+                            },
+                            ty,
+                            span,
+                        },
+                        None => {
+                            self.error(field.span, format!("no field `{fname}` on this type"));
+                            self.poison(span)
+                        }
+                    },
+                    Ty::Error => self.poison(span),
+                    other => {
+                        self.error(object.span, format!("type {other:?} has no fields"));
+                        self.poison(span)
+                    }
+                }
+            }
+            ast::Expr::FieldAssign {
+                object,
+                field,
+                value,
+                ..
+            } => {
+                let object = self.check_expr(cx, object);
+                let value = self.check_expr(cx, value);
+                let fname = self.text(field).to_string();
+                match object.ty {
+                    Ty::Instance(class) => match self.field_of(class, &fname) {
+                        Some((slot, ty)) => {
+                            if !ty.is_error() && !value.ty.is_error() && ty != value.ty {
+                                self.error(
+                                    value.span,
+                                    format!("cannot assign {:?} to field of type {ty:?}", value.ty),
+                                );
+                            }
+                            hir::Expr {
+                                kind: hir::ExprKind::FieldSet {
+                                    object: Box::new(object),
+                                    class,
+                                    field_slot: slot,
+                                    value: Box::new(value),
+                                },
+                                ty,
+                                span,
+                            }
+                        }
+                        None => {
+                            self.error(field.span, format!("no field `{fname}` on this type"));
+                            self.poison(span)
+                        }
+                    },
+                    Ty::Error => self.poison(span),
+                    other => {
+                        self.error(object.span, format!("type {other:?} has no fields"));
+                        self.poison(span)
+                    }
+                }
+            }
         }
     }
 
@@ -587,6 +760,61 @@ mod tests {
             "function f(x: boolean) { if (x) { let inner = 1; } print(inner); }",
         );
         assert!(msg.contains("unknown variable"), "{msg}");
+    }
+
+    #[test]
+    fn class_fields_and_new_check() {
+        let hir = check_ok(
+            "class Point { x: number; y: number; }\n\
+             function main() { let p = new Point(1, 2); print(p.x); }",
+        );
+        assert_eq!(hir.classes.len(), 1);
+        assert_eq!(hir.classes[0].fields.len(), 2);
+    }
+
+    #[test]
+    fn field_type_flows_through_access() {
+        // `p.x` is a number, so it can feed arithmetic.
+        check_ok(
+            "class Box { v: number; }\n\
+             function main() { let b = new Box(3); let y = b.v + 1; print(y); }",
+        );
+    }
+
+    #[test]
+    fn wrong_new_arity_diagnoses() {
+        let msg = first_error(
+            "class Point { x: number; y: number; }\n\
+             function main() { let p = new Point(1); }",
+        );
+        assert!(msg.contains("field(s)"), "{msg}");
+    }
+
+    #[test]
+    fn unknown_field_diagnoses() {
+        let msg = first_error(
+            "class Point { x: number; }\n\
+             function main() { let p = new Point(1); print(p.z); }",
+        );
+        assert!(msg.contains("no field"), "{msg}");
+    }
+
+    #[test]
+    fn field_assignment_type_checked() {
+        let msg = first_error(
+            "class Box { v: number; }\n\
+             function main() { let b = new Box(1); b.v = \"s\"; }",
+        );
+        assert!(msg.contains("cannot assign"), "{msg}");
+    }
+
+    #[test]
+    fn class_typed_field_references_another_class() {
+        check_ok(
+            "class Inner { n: number; }\n\
+             class Outer { inner: Inner; }\n\
+             function main() { let i = new Inner(5); let o = new Outer(i); print(o.inner.n); }",
+        );
     }
 
     #[test]
