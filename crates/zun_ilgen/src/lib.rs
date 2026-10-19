@@ -66,11 +66,14 @@ pub fn lower(program: &hir::Program) -> Module {
 
     for (index, f) in program.functions.iter().enumerate() {
         let code = lower_function(f, &layout, &mut module);
+        let local_kinds: Vec<u8> = f.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body(
             &mut module.code,
             f.param_count,
             f.locals.len() as u16,
             f.return_ty != Ty::Void,
+            jitkind_byte(f.return_ty),
+            &local_kinds,
             &code,
         );
         module.tables.method_defs[index].body_offset = offset;
@@ -80,6 +83,17 @@ pub fn lower(program: &hir::Program) -> Module {
         .main
         .map(|index| Token::new(TableKind::MethodDef, index + 1));
     module
+}
+
+/// The method-body value-type code ([`zun_il::JitKind`]) for a checked type.
+fn jitkind_byte(ty: Ty) -> u8 {
+    use zun_il::JitKind;
+    let kind = match numkind_of(ty) {
+        Some(n) => JitKind::Num(n),
+        None if ty == Ty::Boolean => JitKind::Bool,
+        None => JitKind::Other,
+    };
+    kind.to_byte()
 }
 
 /// Choose between the integer and float opcode for a numeric operation.

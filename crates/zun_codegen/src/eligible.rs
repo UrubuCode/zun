@@ -1,32 +1,38 @@
 //! JIT eligibility.
 //!
-//! The Tier-1 backend compiles a numeric subset: method bodies in which every
-//! value — numbers and booleans alike — is represented as an `f64`. This covers
-//! arithmetic, comparisons, control flow, and calls among such methods, which
-//! is where native code pays off most. Anything touching the heap (strings,
-//! objects, field access, `callvirt`, builtins) or `rem.f64` (a libcall) stays
-//! on the always-correct interpreter.
-//!
-//! Eligibility is a property of the whole call graph: a method is eligible only
-//! if every method it calls is eligible too, so a JIT frame never has to call
-//! back into the interpreter.
+//! The typed backend compiles numeric and boolean method bodies: every local,
+//! parameter, and the return must be a JIT value type (any `int` width, `f32`,
+//! `f64`, or `bool`), and the body may use only opcodes the translator handles.
+//! Heap operations (strings, objects, fields, `callvirt`, builtins) and the
+//! float-remainder libcall stay on the interpreter. Eligibility is a
+//! whole-call-graph fixpoint, so a JIT frame never calls back into the
+//! interpreter.
 
 use std::collections::{HashMap, HashSet};
-use zun_il::{decode_all, Opcode, Operand};
+use zun_il::{decode_all, JitKind, Opcode, Operand};
 use zun_module::{read_body, Module};
 
-/// Whether an opcode is part of the numeric (all-`f64`) subset.
-fn opcode_is_numeric(op: Opcode) -> bool {
+/// Whether an opcode is handled by the typed translator.
+fn opcode_supported(op: Opcode) -> bool {
     matches!(
         op,
         Opcode::Nop
+            | Opcode::ConstI32
+            | Opcode::ConstI64
             | Opcode::ConstF64
             | Opcode::ConstTrue
             | Opcode::ConstFalse
+            | Opcode::Conv
             | Opcode::LoadLocal
             | Opcode::StoreLocal
             | Opcode::Pop
             | Opcode::Dup
+            | Opcode::AddI32
+            | Opcode::SubI32
+            | Opcode::MulI32
+            | Opcode::DivI32
+            | Opcode::RemI32
+            | Opcode::NegI32
             | Opcode::AddF64
             | Opcode::SubF64
             | Opcode::MulF64
@@ -45,15 +51,14 @@ fn opcode_is_numeric(op: Opcode) -> bool {
     )
 }
 
+/// Whether a value-type code is one the typed JIT can represent.
+fn kind_supported(byte: u8) -> bool {
+    !matches!(JitKind::from_byte(byte), JitKind::Other)
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
-///
-/// A method is eligible if its body decodes, uses only numeric opcodes, and
-/// every method it calls is itself eligible. The call-graph constraint is
-/// solved by removing any method that calls an ineligible one until the set is
-/// stable.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
-    // Candidates: methods whose own opcodes are all numeric.
-    let mut candidate: HashMap<u32, Vec<u32>> = HashMap::new(); // rid -> callees
+    let mut candidate: HashMap<u32, Vec<u32>> = HashMap::new();
     for (i, method) in module.tables.method_defs.iter().enumerate() {
         let rid = i as u32 + 1;
         if method.body_offset == u32::MAX {
@@ -62,10 +67,17 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         let Ok(body) = read_body(&module.code, method.body_offset) else {
             continue;
         };
+        // Return and every local must be a representable JIT type.
+        if !kind_supported(body.return_kind) && body.returns_value {
+            continue;
+        }
+        if !body.local_kinds.iter().all(|&k| kind_supported(k)) {
+            continue;
+        }
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
-        if !instrs.iter().all(|i| opcode_is_numeric(i.opcode)) {
+        if !instrs.iter().all(|i| opcode_supported(i.opcode)) {
             continue;
         }
         let callees = instrs
@@ -79,8 +91,6 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         candidate.insert(rid, callees);
     }
 
-    // Fixpoint: drop any candidate that calls a method not (yet) known
-    // eligible, repeating until the set stops shrinking.
     let mut eligible: HashSet<u32> = candidate.keys().copied().collect();
     loop {
         let prev = eligible.clone();

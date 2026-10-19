@@ -18,12 +18,15 @@ pub use eligible::eligible_methods;
 
 use std::collections::{HashMap, HashSet};
 
-use cranelift_codegen::ir::{AbiParam, types};
+use cranelift_codegen::ir::AbiParam;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module as ClifModule};
+use zun_il::JitKind;
 use zun_module::{read_body, Module};
+
+use translate::clif_ty;
 
 /// Errors from building or invoking JIT code.
 #[derive(Debug)]
@@ -69,10 +72,31 @@ impl core::fmt::Display for JitError {
 impl std::error::Error for JitError {}
 
 /// A JIT that compiles a module's eligible numeric methods to native code.
+/// The result of calling a compiled method, carrying its numeric kind.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RetVal {
+    /// A float result (f32 widened to f64).
+    Float(f64),
+    /// An integer result (any width, in an i64; unsigned zero-extended).
+    Int(i64),
+    /// A boolean result.
+    Bool(bool),
+    /// No value (void).
+    Void,
+}
+
+/// A compiled method's call shape.
+#[derive(Clone, Copy)]
+struct Sig {
+    param_count: u16,
+    returns: Option<JitKind>,
+}
+
 pub struct Jit {
     module: JITModule,
     func_ids: HashMap<u32, FuncId>,
     eligible: HashSet<u32>,
+    sigs: HashMap<u32, Sig>,
 }
 
 impl core::fmt::Debug for Jit {
@@ -103,18 +127,26 @@ impl Jit {
         // Declare every eligible function first so calls can reference any of
         // them regardless of order.
         let mut func_ids = HashMap::new();
+        let mut sigs = HashMap::new();
         for &rid in &eligible {
             let body = read_body(&zm.code, zm.tables.method_defs[rid as usize - 1].body_offset)
                 .map_err(|e| JitError::Compile {
                     method_rid: rid,
                     detail: e.to_string(),
                 })?;
-            let sig = numeric_signature(&module, body.param_count as usize);
+            let sig = body_signature(&module, &body);
             let name = format!("m{rid}");
             let id = module
                 .declare_function(&name, Linkage::Local, &sig)
                 .map_err(|e| JitError::Module(e.to_string()))?;
             func_ids.insert(rid, id);
+            sigs.insert(
+                rid,
+                Sig {
+                    param_count: body.param_count,
+                    returns: body.returns_value.then(|| JitKind::from_byte(body.return_kind)),
+                },
+            );
         }
 
         // Define each function body.
@@ -126,9 +158,10 @@ impl Jit {
                     method_rid: rid,
                     detail: e.to_string(),
                 })?;
-            ctx.func.signature = numeric_signature(&module, body.param_count as usize);
+            ctx.func.signature = body_signature(&module, &body);
             translate::translate_body(
                 &mut module,
+                zm,
                 &mut ctx,
                 &mut fb_ctx,
                 &func_ids,
@@ -156,6 +189,7 @@ impl Jit {
             module,
             func_ids,
             eligible,
+            sigs,
         })
     }
 
@@ -164,57 +198,96 @@ impl Jit {
         self.eligible.contains(&method_rid)
     }
 
-    /// Call a compiled numeric method with `args`, returning its `f64` result.
+    /// Call a compiled zero-argument method (an entry point), returning its
+    /// result tagged by kind.
     ///
-    /// # Safety contract
-    /// The compiled code is trusted because the module was verified before
-    /// compilation; `args.len()` must equal the method's parameter count.
-    pub fn call(&self, method_rid: u32, args: &[f64]) -> Result<f64, JitError> {
-        let id = *self
-            .func_ids
+    /// Only nullary methods are callable from Rust for now; methods that take
+    /// arguments are still reached through Cranelift-to-Cranelift calls inside
+    /// compiled code. The compiled code is trusted because the module was
+    /// verified before compilation.
+    pub fn call_entry(&self, method_rid: u32) -> Result<RetVal, JitError> {
+        let sig = *self
+            .sigs
             .get(&method_rid)
             .ok_or(JitError::Ineligible(method_rid))?;
+        if sig.param_count != 0 {
+            return Err(JitError::Arity {
+                expected: 0,
+                found: sig.param_count as usize,
+            });
+        }
+        let id = self.func_ids[&method_rid];
         let ptr = self.module.get_finalized_function(id);
 
-        // Dispatch by arity through a small set of concrete fn signatures. The
-        // numeric subset keeps arities small in practice.
+        // Transmute the entry point to a nullary fn of its concrete return type,
+        // then box the native result into a kind-tagged RetVal.
+        use zun_il::NumKind::*;
         unsafe {
-            Ok(match args.len() {
-                0 => {
+            Ok(match sig.returns {
+                None => {
+                    let f: extern "C" fn() = std::mem::transmute(ptr);
+                    f();
+                    RetVal::Void
+                }
+                Some(JitKind::Bool) => {
+                    let f: extern "C" fn() -> i32 = std::mem::transmute(ptr);
+                    RetVal::Bool(f() != 0)
+                }
+                Some(JitKind::Num(F64)) => {
                     let f: extern "C" fn() -> f64 = std::mem::transmute(ptr);
-                    f()
+                    RetVal::Float(f())
                 }
-                1 => {
-                    let f: extern "C" fn(f64) -> f64 = std::mem::transmute(ptr);
-                    f(args[0])
+                Some(JitKind::Num(F32)) => {
+                    let f: extern "C" fn() -> f32 = std::mem::transmute(ptr);
+                    RetVal::Float(f() as f64)
                 }
-                2 => {
-                    let f: extern "C" fn(f64, f64) -> f64 = std::mem::transmute(ptr);
-                    f(args[0], args[1])
+                Some(JitKind::Num(k)) => {
+                    let (bits, signed) = k.int_parts().unwrap();
+                    RetVal::Int(read_int(ptr, bits, signed))
                 }
-                3 => {
-                    let f: extern "C" fn(f64, f64, f64) -> f64 = std::mem::transmute(ptr);
-                    f(args[0], args[1], args[2])
-                }
-                n => return Err(JitError::Arity { expected: n.min(3), found: n }),
+                Some(JitKind::Other) => return Err(JitError::Ineligible(method_rid)),
             })
         }
     }
 }
 
-/// Build an all-`f64` signature with `params` parameters and one `f64` result.
+/// Read a nullary integer-returning entry point, sign/zero-extending to i64.
 ///
-/// It uses the host's native (C) calling convention so the entry points can be
-/// invoked directly through `extern "C"` function pointers from Rust, and so
-/// calls between compiled methods match. Switching managed calls to
-/// `CallConv::Tail` for tail-call optimization is a later refinement that needs
-/// a C-convention trampoline at the Rust boundary.
-fn numeric_signature(module: &JITModule, params: usize) -> cranelift_codegen::ir::Signature {
-    let call_conv = module.isa().default_call_conv();
-    let mut sig = cranelift_codegen::ir::Signature::new(call_conv);
-    for _ in 0..params {
-        sig.params.push(AbiParam::new(types::F64));
+/// # Safety
+/// `ptr` must be a finalized nullary function returning an integer of the given
+/// width and signedness.
+unsafe fn read_int(ptr: *const u8, bits: u8, signed: bool) -> i64 {
+    unsafe {
+        match bits {
+            8 if signed => (std::mem::transmute::<_, extern "C" fn() -> i8>(ptr))() as i64,
+            8 => (std::mem::transmute::<_, extern "C" fn() -> u8>(ptr))() as i64,
+            16 if signed => (std::mem::transmute::<_, extern "C" fn() -> i16>(ptr))() as i64,
+            16 => (std::mem::transmute::<_, extern "C" fn() -> u16>(ptr))() as i64,
+            32 if signed => (std::mem::transmute::<_, extern "C" fn() -> i32>(ptr))() as i64,
+            32 => (std::mem::transmute::<_, extern "C" fn() -> u32>(ptr))() as i64,
+            _ if signed => (std::mem::transmute::<_, extern "C" fn() -> i64>(ptr))(),
+            _ => (std::mem::transmute::<_, extern "C" fn() -> u64>(ptr))() as i64,
+        }
     }
-    sig.returns.push(AbiParam::new(types::F64));
+}
+
+/// Build a method's Cranelift signature from its recorded value-type codes: one
+/// parameter per leading local kind, and a result when it returns a value.
+///
+/// It uses the host's native (C) calling convention so entry points are callable
+/// through `extern "C"` function pointers and calls between compiled methods
+/// match. Switching managed calls to `CallConv::Tail` is a later refinement.
+fn body_signature(
+    module: &JITModule,
+    body: &zun_module::MethodBody<'_>,
+) -> cranelift_codegen::ir::Signature {
+    let mut sig = cranelift_codegen::ir::Signature::new(module.isa().default_call_conv());
+    for &k in &body.local_kinds[..body.param_count as usize] {
+        sig.params.push(AbiParam::new(clif_ty(JitKind::from_byte(k))));
+    }
+    if body.returns_value {
+        sig.returns
+            .push(AbiParam::new(clif_ty(JitKind::from_byte(body.return_kind))));
+    }
     sig
 }

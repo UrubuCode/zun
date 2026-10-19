@@ -85,9 +85,52 @@ impl NumKind {
     }
 }
 
+/// A JIT-level value type recorded per local/return in a method body, so the
+/// typed backend knows each slot's machine type without re-deriving it. It is a
+/// superset of [`NumKind`] plus `Bool` and `Other` (non-JIT-able: string, ref).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JitKind {
+    /// A numeric kind.
+    Num(NumKind),
+    /// A boolean (machine `i32` 0/1).
+    Bool,
+    /// Anything the typed JIT does not handle (string, object, void).
+    Other,
+}
+
+impl JitKind {
+    /// Encode as one byte for a method-body frame.
+    pub fn to_byte(self) -> u8 {
+        match self {
+            JitKind::Num(n) => n.to_imm() as u8,
+            JitKind::Bool => 10,
+            JitKind::Other => 255,
+        }
+    }
+
+    /// Decode from a method-body frame byte.
+    pub fn from_byte(b: u8) -> JitKind {
+        match b {
+            10 => JitKind::Bool,
+            255 => JitKind::Other,
+            n => match NumKind::from_imm(n as i32) {
+                Some(k) => JitKind::Num(k),
+                None => JitKind::Other,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::NumKind;
+    use super::{JitKind, NumKind};
+
+    #[test]
+    fn jitkind_byte_roundtrip() {
+        for k in [JitKind::Num(NumKind::U8), JitKind::Num(NumKind::F32), JitKind::Bool, JitKind::Other] {
+            assert_eq!(JitKind::from_byte(k.to_byte()), k);
+        }
+    }
 
     #[test]
     fn imm_roundtrip() {
