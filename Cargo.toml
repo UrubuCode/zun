@@ -11,6 +11,7 @@ members = [
     "crates/zun_interp",
     "crates/zun_vm",
     "crates/zun_cli",
+    "crates/zun_verify",
 ]
 
 [workspace.package]

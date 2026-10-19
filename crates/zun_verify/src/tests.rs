@@ -1,0 +1,230 @@
+//! Verifier fixtures.
+//!
+//! Each `fixture_Valid_*` builds a body the verifier must accept; each
+//! `fixture_Invalid_*` builds one it must reject with a specific [`ErrorKind`].
+//! Bodies are assembled from real instructions so the tests track the actual
+//! encoding.
+
+use super::*;
+use zun_il::{encode, Instruction, Opcode, Operand};
+use zun_metadata::{TableKind, Token};
+
+/// Assemble a sequence of instructions into bytes.
+fn asm(instrs: &[Instruction]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for i in instrs {
+        encode(i, &mut out);
+    }
+    out
+}
+
+/// A resolver where `call` pops 1 / pushes 1 and `call.builtin` pops 1 / pushes
+/// 1 (the phase-1 `print` returns a void value that still occupies a slot).
+fn resolver(opcode: Opcode, _operand: &Operand) -> Option<(u8, u8)> {
+    match opcode {
+        Opcode::Call | Opcode::CallVirt => Some((1, 1)),
+        Opcode::CallBuiltin => Some((1, 1)),
+        Opcode::NewObj => Some((0, 1)),
+        _ => None,
+    }
+}
+
+fn check(code: &[u8], info: MethodInfo) -> Result<(), VerifyError> {
+    verify(code, info, &resolver)
+}
+
+const VOID: MethodInfo = MethodInfo {
+    local_count: 2,
+    returns_value: false,
+};
+const RETURNS: MethodInfo = MethodInfo {
+    local_count: 2,
+    returns_value: true,
+};
+
+#[test]
+fn fixture_valid_straight_line() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        Instruction::new(Opcode::ConstF64, Operand::Float64(2.0)),
+        Instruction::simple(Opcode::AddF64),
+        Instruction::new(Opcode::StoreLocal, Operand::Local(0)),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_valid_return_value_leaves_one() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(42.0)),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, RETURNS), Ok(()));
+}
+
+#[test]
+fn fixture_valid_if_else_joins_consistently() {
+    // const.true; br.false +L; const.f64 1; stloc0; br +M; [L] const.f64 2;
+    // stloc0; [M] ret
+    let then_branch = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        Instruction::new(Opcode::StoreLocal, Operand::Local(0)),
+    ]);
+    let else_branch = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(2.0)),
+        Instruction::new(Opcode::StoreLocal, Operand::Local(0)),
+    ]);
+    let br_over_else_len = 5;
+    let mut code = Vec::new();
+    encode(&Instruction::simple(Opcode::ConstTrue), &mut code);
+    // br.false to else: skip the then-branch and the trailing `br`.
+    let to_else = (then_branch.len() + br_over_else_len) as i32;
+    encode(&Instruction::new(Opcode::BranchFalse, Operand::Branch(to_else)), &mut code);
+    code.extend_from_slice(&then_branch);
+    encode(&Instruction::new(Opcode::Branch, Operand::Branch(else_branch.len() as i32)), &mut code);
+    code.extend_from_slice(&else_branch);
+    encode(&Instruction::simple(Opcode::Ret), &mut code);
+
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_valid_backward_loop() {
+    // [start] ldloc0; const.f64 0; cmp.gt; br.false +exit; ldloc0; stloc0;
+    // br -start; [exit] ret
+    let mut code = Vec::new();
+    let start = code.len();
+    encode(&Instruction::new(Opcode::LoadLocal, Operand::Local(0)), &mut code);
+    encode(&Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)), &mut code);
+    encode(&Instruction::simple(Opcode::CmpGt), &mut code);
+    // Reserve the br.false; patch after we know the body length.
+    let brfalse_at = code.len();
+    encode(&Instruction::new(Opcode::BranchFalse, Operand::Branch(0)), &mut code);
+    encode(&Instruction::new(Opcode::LoadLocal, Operand::Local(0)), &mut code);
+    encode(&Instruction::new(Opcode::StoreLocal, Operand::Local(0)), &mut code);
+    let back = start as i32 - (code.len() as i32 + 5);
+    encode(&Instruction::new(Opcode::Branch, Operand::Branch(back)), &mut code);
+    let exit = code.len();
+    encode(&Instruction::simple(Opcode::Ret), &mut code);
+    // Patch br.false to jump to `exit`.
+    let disp = (exit as i32) - (brfalse_at as i32 + 5);
+    code[brfalse_at + 1..brfalse_at + 5].copy_from_slice(&disp.to_le_bytes());
+
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_underflow() {
+    // add.f64 with an empty stack.
+    let code = asm(&[Instruction::simple(Opcode::AddF64), Instruction::simple(Opcode::Ret)]);
+    assert_eq!(check(&code, VOID).unwrap_err().kind, ErrorKind::StackUnderflow);
+}
+
+#[test]
+fn fixture_invalid_bad_return_height() {
+    // Leave a value on the stack in a void method.
+    let code = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::BadReturnHeight { expected: 0, found: 1 }
+    );
+}
+
+#[test]
+fn fixture_invalid_local_out_of_range() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        Instruction::new(Opcode::StoreLocal, Operand::Local(9)),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::LocalOutOfRange(9)
+    );
+}
+
+#[test]
+fn fixture_invalid_stack_mismatch_at_join() {
+    // const.true; br.false +L; const.f64 1 (fall-through leaves 1 extra);
+    // [L] nop; pop?; ret.  The join at `nop` is reached with height 1 (fall
+    // through) and height 0 (taken branch): a mismatch at a non-terminator, so
+    // it is reported before any return-height check.
+    let mut code = Vec::new();
+    encode(&Instruction::simple(Opcode::ConstTrue), &mut code);
+    let const_len = 9; // const.f64 is 9 bytes; jump over it to the nop
+    encode(&Instruction::new(Opcode::BranchFalse, Operand::Branch(const_len)), &mut code);
+    encode(&Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)), &mut code);
+    encode(&Instruction::simple(Opcode::Nop), &mut code);
+    encode(&Instruction::simple(Opcode::Ret), &mut code);
+    // RETURNS so the tall (height-1) path satisfies `ret`; the short path then
+    // rejoins `nop` with height 0, which is the mismatch under test.
+    assert!(matches!(
+        check(&code, RETURNS).unwrap_err().kind,
+        ErrorKind::StackMismatch { .. }
+    ));
+}
+
+#[test]
+fn fixture_invalid_branch_into_middle_of_instruction() {
+    // br with a displacement that lands inside the const.f64 operand bytes.
+    let mut code = Vec::new();
+    // br +1 : target offset = end(5) + 1 = 6, which is inside the const.f64.
+    encode(&Instruction::new(Opcode::Branch, Operand::Branch(1)), &mut code);
+    encode(&Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)), &mut code);
+    encode(&Instruction::simple(Opcode::Ret), &mut code);
+    assert!(matches!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::BadBranchTarget(_)
+    ));
+}
+
+#[test]
+fn fixture_invalid_branch_out_of_range() {
+    let mut code = Vec::new();
+    encode(&Instruction::new(Opcode::Branch, Operand::Branch(9999)), &mut code);
+    assert!(matches!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::BadBranchTarget(_)
+    ));
+}
+
+#[test]
+fn fixture_invalid_falls_off_end() {
+    // No terminator: ends after a store.
+    let code = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        Instruction::new(Opcode::StoreLocal, Operand::Local(0)),
+    ]);
+    assert_eq!(check(&code, VOID).unwrap_err().kind, ErrorKind::FallsOffEnd);
+}
+
+#[test]
+fn fixture_invalid_bad_encoding() {
+    // 0xFF is not an opcode.
+    assert_eq!(check(&[0xFF], VOID).unwrap_err().kind, ErrorKind::BadEncoding);
+}
+
+#[test]
+fn fixture_invalid_unknown_call_arity() {
+    // A call the resolver cannot resolve: use a token for a MethodDef the
+    // resolver maps... our resolver resolves Call to (1,1), so instead test a
+    // resolver returning None by using LoadField? No — exercise the path with a
+    // resolver that declines.
+    let decline = |_: Opcode, _: &Operand| None;
+    let code = asm(&[
+        Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        Instruction::new(
+            Opcode::Call,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        verify(&code, RETURNS, &decline).unwrap_err().kind,
+        ErrorKind::UnknownCallArity
+    );
+}

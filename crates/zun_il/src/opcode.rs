@@ -51,10 +51,27 @@ impl OperandKind {
 }
 
 /// Generate the [`Opcode`] enum and its lookup tables from a single list.
+/// The net effect of an opcode on the evaluation stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackEffect {
+    /// Pops `pops` values and pushes `pushes` values — both fixed.
+    Fixed {
+        /// Values consumed from the stack.
+        pops: u8,
+        /// Values produced onto the stack.
+        pushes: u8,
+    },
+    /// Effect depends on a callee signature not known from the opcode alone
+    /// (the call family). The verifier resolves arity from metadata.
+    Call,
+    /// Transfers control and does not fall through (`br`, `ret`).
+    Terminator,
+}
+
 macro_rules! define_opcodes {
     ($(
         $(#[$meta:meta])*
-        $name:ident = $byte:literal, $operand:ident, $mnemonic:literal;
+        $name:ident = $byte:literal, $operand:ident, $mnemonic:literal, $effect:expr;
     )*) => {
         /// A ZIL instruction opcode. The discriminant is the on-disk byte value
         /// and is part of the format: never renumber an existing opcode.
@@ -92,6 +109,13 @@ macro_rules! define_opcodes {
                 }
             }
 
+            /// This opcode's effect on the evaluation stack.
+            pub const fn stack_effect(self) -> StackEffect {
+                match self {
+                    $( Opcode::$name => $effect, )*
+                }
+            }
+
             /// Every opcode, in table order. Used by tests and tooling.
             pub const ALL: &'static [Opcode] = &[ $( Opcode::$name, )* ];
         }
@@ -100,104 +124,104 @@ macro_rules! define_opcodes {
 
 define_opcodes! {
     /// Do nothing.
-    Nop = 0x00, None, "nop";
+    Nop = 0x00, None, "nop", StackEffect::Fixed { pops: 0, pushes: 0 };
 
     // --- constants ---
     /// Push a 32-bit integer constant.
-    ConstI32 = 0x10, Imm32, "const.i32";
+    ConstI32 = 0x10, Imm32, "const.i32", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Push a 64-bit integer constant.
-    ConstI64 = 0x11, Imm64, "const.i64";
+    ConstI64 = 0x11, Imm64, "const.i64", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Push a 64-bit float constant.
-    ConstF64 = 0x12, Float64, "const.f64";
+    ConstF64 = 0x12, Float64, "const.f64", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Push the null reference.
-    ConstNull = 0x13, None, "const.null";
+    ConstNull = 0x13, None, "const.null", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Push boolean true (as i32 1).
-    ConstTrue = 0x14, None, "const.true";
+    ConstTrue = 0x14, None, "const.true", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Push boolean false (as i32 0).
-    ConstFalse = 0x15, None, "const.false";
+    ConstFalse = 0x15, None, "const.false", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Push a string literal from the module string heap.
-    ConstStr = 0x16, StringRef, "const.str";
+    ConstStr = 0x16, StringRef, "const.str", StackEffect::Fixed { pops: 0, pushes: 1 };
 
     // --- locals ---
     /// Push the value of a local slot.
-    LoadLocal = 0x20, Local, "ldloc";
+    LoadLocal = 0x20, Local, "ldloc", StackEffect::Fixed { pops: 0, pushes: 1 };
     /// Pop and store into a local slot.
-    StoreLocal = 0x21, Local, "stloc";
+    StoreLocal = 0x21, Local, "stloc", StackEffect::Fixed { pops: 1, pushes: 0 };
 
     // --- stack ---
     /// Remove the top stack value.
-    Pop = 0x28, None, "pop";
+    Pop = 0x28, None, "pop", StackEffect::Fixed { pops: 1, pushes: 0 };
     /// Duplicate the top stack value.
-    Dup = 0x29, None, "dup";
+    Dup = 0x29, None, "dup", StackEffect::Fixed { pops: 1, pushes: 2 };
 
     // --- integer arithmetic (pop two, push one) ---
     /// Integer add.
-    AddI32 = 0x30, None, "add.i32";
+    AddI32 = 0x30, None, "add.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Integer subtract.
-    SubI32 = 0x31, None, "sub.i32";
+    SubI32 = 0x31, None, "sub.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Integer multiply.
-    MulI32 = 0x32, None, "mul.i32";
+    MulI32 = 0x32, None, "mul.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Signed integer divide.
-    DivI32 = 0x33, None, "div.i32";
+    DivI32 = 0x33, None, "div.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Signed integer remainder.
-    RemI32 = 0x34, None, "rem.i32";
+    RemI32 = 0x34, None, "rem.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Integer negate (pop one, push one).
-    NegI32 = 0x35, None, "neg.i32";
+    NegI32 = 0x35, None, "neg.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
 
     // --- float arithmetic ---
     /// Float add.
-    AddF64 = 0x40, None, "add.f64";
+    AddF64 = 0x40, None, "add.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Float subtract.
-    SubF64 = 0x41, None, "sub.f64";
+    SubF64 = 0x41, None, "sub.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Float multiply.
-    MulF64 = 0x42, None, "mul.f64";
+    MulF64 = 0x42, None, "mul.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Float divide.
-    DivF64 = 0x43, None, "div.f64";
+    DivF64 = 0x43, None, "div.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Float remainder (JS `%` semantics).
-    RemF64 = 0x44, None, "rem.f64";
+    RemF64 = 0x44, None, "rem.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
 
     // --- strings ---
     /// String concatenation (pop two strings, push one).
-    Concat = 0x48, None, "concat";
+    Concat = 0x48, None, "concat", StackEffect::Fixed { pops: 2, pushes: 1 };
 
     // --- comparison (pop two, push i32 0/1) ---
     /// Equal.
-    CmpEq = 0x50, None, "cmp.eq";
+    CmpEq = 0x50, None, "cmp.eq", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Not equal.
-    CmpNe = 0x51, None, "cmp.ne";
+    CmpNe = 0x51, None, "cmp.ne", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Signed less-than.
-    CmpLt = 0x52, None, "cmp.lt";
+    CmpLt = 0x52, None, "cmp.lt", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Signed less-than-or-equal.
-    CmpLe = 0x53, None, "cmp.le";
+    CmpLe = 0x53, None, "cmp.le", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Signed greater-than.
-    CmpGt = 0x54, None, "cmp.gt";
+    CmpGt = 0x54, None, "cmp.gt", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Signed greater-than-or-equal.
-    CmpGe = 0x55, None, "cmp.ge";
+    CmpGe = 0x55, None, "cmp.ge", StackEffect::Fixed { pops: 2, pushes: 1 };
 
     // --- control flow ---
     /// Unconditional branch.
-    Branch = 0x60, Branch, "br";
+    Branch = 0x60, Branch, "br", StackEffect::Terminator;
     /// Branch if the popped value is non-zero.
-    BranchTrue = 0x61, Branch, "br.true";
+    BranchTrue = 0x61, Branch, "br.true", StackEffect::Fixed { pops: 1, pushes: 0 };
     /// Branch if the popped value is zero.
-    BranchFalse = 0x62, Branch, "br.false";
+    BranchFalse = 0x62, Branch, "br.false", StackEffect::Fixed { pops: 1, pushes: 0 };
     /// Return, popping the return value if the method has one.
-    Ret = 0x63, None, "ret";
+    Ret = 0x63, None, "ret", StackEffect::Terminator;
 
     // --- objects and calls (operand is a metadata token) ---
     /// Allocate an object and run its constructor.
-    NewObj = 0x70, Token, "newobj";
+    NewObj = 0x70, Token, "newobj", StackEffect::Call;
     /// Load an object field.
-    LoadField = 0x71, Token, "ldfld";
+    LoadField = 0x71, Token, "ldfld", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Store an object field.
-    StoreField = 0x72, Token, "stfld";
+    StoreField = 0x72, Token, "stfld", StackEffect::Fixed { pops: 2, pushes: 0 };
     /// Direct (static / non-virtual) call.
-    Call = 0x73, Token, "call";
+    Call = 0x73, Token, "call", StackEffect::Call;
     /// Virtual / interface call.
-    CallVirt = 0x74, Token, "callvirt";
+    CallVirt = 0x74, Token, "callvirt", StackEffect::Call;
     /// Call a runtime builtin by id. Phase-1 scaffolding: builtins move to
     /// `zun_core` MemberRefs once the std exists.
-    CallBuiltin = 0x75, Imm32, "call.builtin";
+    CallBuiltin = 0x75, Imm32, "call.builtin", StackEffect::Call;
 }
 
 #[cfg(test)]

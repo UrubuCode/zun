@@ -42,6 +42,7 @@ pub fn lower(program: &hir::Program) -> Module {
             &mut module.code,
             f.param_count,
             f.locals.len() as u16,
+            f.return_ty != Ty::Void,
             &code,
         );
         module.tables.method_defs[index].body_offset = offset;
@@ -122,10 +123,11 @@ impl FnLowerer<'_> {
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
             }
             Stmt::Expr(e) => {
+                // Every expression leaves exactly one value on the stack in this
+                // model — including void calls, which push a void value — so an
+                // expression statement always discards one.
                 self.expr(e);
-                if e.ty != Ty::Void {
-                    self.emit(Instruction::simple(Opcode::Pop));
-                }
+                self.emit(Instruction::simple(Opcode::Pop));
             }
             Stmt::If {
                 cond,
@@ -261,7 +263,8 @@ mod tests {
              0009: stloc 0\n\
              000C: ldloc 0\n\
              000F: call.builtin 0\n\
-             0014: ret\n"
+             0014: pop\n\
+             0015: ret\n"
         );
         assert_eq!(body.local_count, 1);
         assert!(module.entry_point.is_some());
@@ -303,13 +306,15 @@ mod tests {
         assert_eq!(
             text,
             "0000: const.true\n\
-             0001: br.false +15\n\
+             0001: br.false +16\n\
              0006: const.str str:6\n\
              000B: call.builtin 0\n\
-             0010: br +10\n\
-             0015: const.str str:8\n\
-             001A: call.builtin 0\n\
-             001F: ret\n"
+             0010: pop\n\
+             0011: br +11\n\
+             0016: const.str str:8\n\
+             001B: call.builtin 0\n\
+             0020: pop\n\
+             0021: ret\n"
         );
     }
 

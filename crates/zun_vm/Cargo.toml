@@ -9,6 +9,8 @@ description = "The Zun virtual machine: loads a .zm module and runs it."
 [dependencies]
 zun_interp = { path = "../zun_interp" }
 zun_module = { path = "../zun_module" }
+zun_il = { path = "../zun_il" }
+zun_verify = { path = "../zun_verify" }
 
 [dev-dependencies]
 zun_ilgen = { path = "../zun_ilgen" }
