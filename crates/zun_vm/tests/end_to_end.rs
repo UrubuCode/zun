@@ -133,6 +133,49 @@ fn field_assignment_as_expression() {
 }
 
 #[test]
+fn instance_methods_with_this() {
+    let out = run_source(
+        "class Counter {\n\
+            n: number;\n\
+            inc() { this.n = this.n + 1; }\n\
+            get(): number { return this.n; }\n\
+         }\n\
+         function main() {\n\
+            let c = new Counter(0);\n\
+            c.inc(); c.inc(); c.inc();\n\
+            print(c.get());\n\
+         }",
+    );
+    assert_eq!(out, ["3"]);
+}
+
+#[test]
+fn method_with_parameters() {
+    let out = run_source(
+        "class Adder {\n\
+            base: number;\n\
+            add(x: number): number { return this.base + x; }\n\
+         }\n\
+         function main() { let a = new Adder(10); print(a.add(5)); }",
+    );
+    assert_eq!(out, ["15"]);
+}
+
+#[test]
+fn method_calling_another_method() {
+    let out = run_source(
+        "class Rect {\n\
+            w: number;\n\
+            h: number;\n\
+            area(): number { return this.w * this.h; }\n\
+            describe(): number { return this.area() + this.area(); }\n\
+         }\n\
+         function main() { let r = new Rect(3, 4); print(r.describe()); }",
+    );
+    assert_eq!(out, ["24"]); // 12 + 12
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

@@ -104,21 +104,57 @@ impl Parser<'_> {
         let name = self.name("a class name");
         self.expect(TokenKind::LBrace, "`{`");
         let mut fields = Vec::new();
+        let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            let fname = self.name("a field name");
-            self.expect(TokenKind::Colon, "`:` (fields require a type)");
-            let ty = TypeAnnotation {
-                name: self.name("a type name"),
-            };
-            self.expect(TokenKind::Semi, "`;`");
-            fields.push(ClassField { name: fname, ty });
+            let member_name = self.name("a field or method name");
+            // A `(` after the name starts a method; `:` starts a field.
+            if self.at(TokenKind::LParen) {
+                methods.push(self.method(member_name));
+            } else {
+                self.expect(TokenKind::Colon, "`:` (fields require a type)");
+                let ty = TypeAnnotation {
+                    name: self.name("a type name"),
+                };
+                self.expect(TokenKind::Semi, "`;`");
+                fields.push(ClassField {
+                    name: member_name,
+                    ty,
+                });
+            }
         }
         let close = self.peek().span;
         self.expect(TokenKind::RBrace, "`}`");
         Class {
             name,
             fields,
+            methods,
             span: start.to(close),
+        }
+    }
+
+    /// Parse a method, given its already-consumed name. Shares the parameter,
+    /// return-type, and body grammar with top-level functions.
+    fn method(&mut self, name: Name) -> Function {
+        self.expect(TokenKind::LParen, "`(`");
+        let mut params = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let pname = self.name("a parameter name");
+            let ty = self.optional_type_annotation();
+            params.push(Param { name: pname, ty });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "`)`");
+        let return_type = self.optional_type_annotation();
+        let body = self.block();
+        let span = name.span.to(body.span);
+        Function {
+            name,
+            params,
+            return_type,
+            body,
+            span,
         }
     }
 
@@ -355,16 +391,29 @@ impl Parser<'_> {
                         span: callee.span.to(close),
                     };
                 }
-                // `object.field`
+                // `object.field` or `object.method(args)`
                 TokenKind::Dot => {
                     self.bump();
-                    let field = self.name("a field name");
-                    let span = expr.span().to(field.span);
-                    expr = Expr::Field {
-                        object: Box::new(expr),
-                        field,
-                        span,
-                    };
+                    let member = self.name("a field or method name");
+                    if self.at(TokenKind::LParen) {
+                        self.bump();
+                        let args = self.arguments();
+                        let close = self.tokens[self.pos - 1].span;
+                        let span = expr.span().to(close);
+                        expr = Expr::MethodCall {
+                            receiver: Box::new(expr),
+                            method: member,
+                            args,
+                            span,
+                        };
+                    } else {
+                        let span = expr.span().to(member.span);
+                        expr = Expr::Field {
+                            object: Box::new(expr),
+                            field: member,
+                            span,
+                        };
+                    }
                 }
                 _ => break,
             }
@@ -646,6 +695,28 @@ mod tests {
             p.functions[0].body.statements[0],
             Stmt::Expr(Expr::FieldAssign { .. })
         ));
+    }
+
+    #[test]
+    fn parses_class_with_methods() {
+        let src = "class Counter { n: number; inc() { n = n + 1; } get(): number { return n; } }";
+        let p = parse_ok(src);
+        let c = &p.classes[0];
+        assert_eq!(c.fields.len(), 1);
+        assert_eq!(c.methods.len(), 2);
+        assert_eq!(ident_text(src, &c.methods[0].name), "inc");
+    }
+
+    #[test]
+    fn parses_method_call() {
+        let src = "function f() { let r = c.add(1, 2); }";
+        let p = parse_ok(src);
+        let Stmt::Let { init: Expr::MethodCall { args, .. }, .. } =
+            &p.functions[0].body.statements[0]
+        else {
+            panic!("expected method call");
+        };
+        assert_eq!(args.len(), 2);
     }
 
     #[test]

@@ -24,18 +24,29 @@ pub fn check(
         by_name: HashMap::new(),
         classes: Vec::new(),
         classes_by_name: HashMap::new(),
+        methods_by_class: Vec::new(),
     };
     // Classes first so field and signature annotations can name them, then
-    // function signatures so calls can be forward references, then bodies.
+    // function and method signatures so calls can be forward references, then
+    // bodies. Methods are checked as functions with an implicit `this` param.
     checker.collect_classes(program);
     let classes = checker.check_classes(program);
     checker.collect_signatures(program);
-    let functions = program
-        .functions
-        .iter()
-        .enumerate()
-        .map(|(index, f)| checker.check_function(index, f))
-        .collect();
+
+    let mut functions: Vec<hir::Function> = Vec::new();
+    // Top-level functions occupy the first func indices (see collect_signatures).
+    for (i, f) in program.functions.iter().enumerate() {
+        functions.push(checker.check_function(i, f, None));
+    }
+    // Methods follow, in (class, method) order.
+    let mut next = program.functions.len();
+    for (class_idx, class) in program.classes.iter().enumerate() {
+        for m in &class.methods {
+            functions.push(checker.check_function(next, m, Some(class_idx as u32)));
+            next += 1;
+        }
+    }
+
     let main = checker.by_name.get("main").copied();
     hir::Program {
         functions,
@@ -63,6 +74,8 @@ struct Checker<'a> {
     by_name: HashMap<String, u32>,
     classes: Vec<ClassInfo>,
     classes_by_name: HashMap<String, u32>,
+    /// Per class index: method name -> global func index.
+    methods_by_class: Vec<HashMap<String, u32>>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -195,9 +208,51 @@ impl Checker<'_> {
                 return_ty,
             });
         }
+
+        // Method signatures follow the top-level functions, in (class, method)
+        // order, each with an implicit leading `this` parameter.
+        self.methods_by_class = vec![HashMap::new(); program.classes.len()];
+        for (class_idx, class) in program.classes.iter().enumerate() {
+            for m in &class.methods {
+                let name = self.text(&m.name).to_string();
+                let mut params = vec![Ty::Instance(class_idx as u32)];
+                for p in &m.params {
+                    params.push(match &p.ty {
+                        Some(t) => self.resolve_annotation(t),
+                        None => {
+                            self.error(p.name.span, "methods require a type on every parameter");
+                            Ty::Error
+                        }
+                    });
+                }
+                let return_ty = match &m.return_type {
+                    Some(t) => self.resolve_annotation(t),
+                    None => Ty::Void,
+                };
+                let func_index = self.signatures.len() as u32;
+                if self.methods_by_class[class_idx]
+                    .insert(name.clone(), func_index)
+                    .is_some()
+                {
+                    self.error(m.name.span, format!("duplicate method `{name}`"));
+                }
+                self.signatures.push(Signature {
+                    name,
+                    params,
+                    return_ty,
+                });
+            }
+        }
     }
 
-    fn check_function(&mut self, index: usize, f: &ast::Function) -> hir::Function {
+    /// Check a function or method body. `this_class` is `Some` for methods,
+    /// which bind `this` as the first local slot.
+    fn check_function(
+        &mut self,
+        index: usize,
+        f: &ast::Function,
+        this_class: Option<u32>,
+    ) -> hir::Function {
         let sig = &self.signatures[index];
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
@@ -208,7 +263,14 @@ impl Checker<'_> {
             scopes: vec![Scope::new()],
             return_ty,
         };
-        for (p, &ty) in f.params.iter().zip(&param_tys) {
+        // For a method, slot 0 is the implicit `this`; the declared params
+        // follow it. For a free function, the params occupy every slot.
+        let mut param_tys_iter = param_tys.iter();
+        if this_class.is_some() {
+            let this_ty = *param_tys_iter.next().expect("method has a this param");
+            cx.declare("this", this_ty);
+        }
+        for (p, &ty) in f.params.iter().zip(param_tys_iter) {
             let pname = self.text(&p.name).to_string();
             cx.declare(&pname, ty);
         }
@@ -460,6 +522,63 @@ impl Checker<'_> {
                 }
                 hir::Expr {
                     kind: hir::ExprKind::Call { func, args },
+                    ty: return_ty,
+                    span,
+                }
+            }
+            ast::Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                let receiver = self.check_expr(cx, receiver);
+                let mname = self.text(method).to_string();
+                let class = match receiver.ty {
+                    Ty::Instance(c) => c,
+                    Ty::Error => return self.poison(span),
+                    other => {
+                        self.error(receiver.span, format!("type {other:?} has no methods"));
+                        return self.poison(span);
+                    }
+                };
+                let Some(&func) = self.methods_by_class[class as usize].get(&mname) else {
+                    self.error(method.span, format!("no method `{mname}` on this type"));
+                    return self.poison(span);
+                };
+                let (param_tys, return_ty) = {
+                    let sig = &self.signatures[func as usize];
+                    (sig.params.clone(), sig.return_ty)
+                };
+                // param_tys[0] is `this`; the remaining are the declared params.
+                let mut call_args = vec![receiver];
+                for a in args {
+                    call_args.push(self.check_expr(cx, a));
+                }
+                if call_args.len() != param_tys.len() {
+                    self.error(
+                        span,
+                        format!(
+                            "`{mname}` expects {} argument(s), found {}",
+                            param_tys.len() - 1,
+                            call_args.len() - 1
+                        ),
+                    );
+                } else {
+                    for (arg, &expected) in call_args.iter().zip(&param_tys).skip(1) {
+                        if !expected.is_error() && !arg.ty.is_error() && arg.ty != expected {
+                            self.error(
+                                arg.span,
+                                format!("argument type {:?} does not match {expected:?}", arg.ty),
+                            );
+                        }
+                    }
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: call_args,
+                    },
                     ty: return_ty,
                     span,
                 }
@@ -806,6 +925,42 @@ mod tests {
              function main() { let b = new Box(1); b.v = \"s\"; }",
         );
         assert!(msg.contains("cannot assign"), "{msg}");
+    }
+
+    #[test]
+    fn methods_check_and_this_resolves_fields() {
+        let hir = check_ok(
+            "class Counter {\n\
+                n: number;\n\
+                inc() { this.n = this.n + 1; }\n\
+                get(): number { return this.n; }\n\
+             }\n\
+             function main() {\n\
+                let c = new Counter(0);\n\
+                c.inc(); c.inc();\n\
+                print(c.get());\n\
+             }",
+        );
+        // 1 top-level function + 2 methods.
+        assert_eq!(hir.functions.len(), 3);
+    }
+
+    #[test]
+    fn method_with_params_checks_arity() {
+        let msg = first_error(
+            "class Adder { base: number; add(x: number): number { return this.base + x; } }\n\
+             function main() { let a = new Adder(10); print(a.add()); }",
+        );
+        assert!(msg.contains("argument(s)"), "{msg}");
+    }
+
+    #[test]
+    fn unknown_method_diagnoses() {
+        let msg = first_error(
+            "class C { x: number; }\n\
+             function main() { let c = new C(1); c.nope(); }",
+        );
+        assert!(msg.contains("no method"), "{msg}");
     }
 
     #[test]

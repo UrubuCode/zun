@@ -16,14 +16,17 @@ pub struct Program {
     pub classes: Vec<Class>,
 }
 
-/// `class Name { field: type; ... }` — phase-2 classes carry fields only;
-/// methods and inheritance arrive in a later step.
+/// `class Name { field: type; method(...) {...} ... }`. Fields are initialized
+/// positionally by `new`; methods receive an implicit `this`. Inheritance and
+/// virtual dispatch arrive in a later step.
 #[derive(Debug, PartialEq)]
 pub struct Class {
     /// The class name.
     pub name: Name,
     /// Declared fields in source order; `new` initializes them positionally.
     pub fields: Vec<ClassField>,
+    /// Declared methods in source order.
+    pub methods: Vec<Function>,
     /// Span of the whole declaration.
     pub span: Span,
 }
@@ -235,6 +238,17 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `receiver.method(args)` — an instance method call.
+    MethodCall {
+        /// The object the method is called on.
+        receiver: Box<Expr>,
+        /// The method name.
+        method: Name,
+        /// Arguments in order (not counting the implicit `this`).
+        args: Vec<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `new Class(args)` — positional field initialization.
     New {
         /// The class being instantiated.
@@ -278,6 +292,7 @@ impl Expr {
             | Expr::Binary { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Call { span, .. }
+            | Expr::MethodCall { span, .. }
             | Expr::New { span, .. }
             | Expr::Field { span, .. }
             | Expr::FieldAssign { span, .. } => *span,
