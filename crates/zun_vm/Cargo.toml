@@ -12,6 +12,7 @@ zun_module = { path = "../zun_module" }
 zun_il = { path = "../zun_il" }
 zun_verify = { path = "../zun_verify" }
 zun_codegen = { path = "../zun_codegen" }
+zun_gc = { path = "../zun_gc" }
 
 [dev-dependencies]
 zun_ilgen = { path = "../zun_ilgen" }

@@ -94,7 +94,10 @@ pub enum JitKind {
     Num(NumKind),
     /// A boolean (machine `i32` 0/1).
     Bool,
-    /// Anything the typed JIT does not handle (string, object, void).
+    /// An object reference (a machine pointer). Code 11 — must match
+    /// `zun_interp::value::FIELD_OBJECT`.
+    Object,
+    /// Anything the typed JIT does not handle (string, void).
     Other,
 }
 
@@ -104,6 +107,7 @@ impl JitKind {
         match self {
             JitKind::Num(n) => n.to_imm() as u8,
             JitKind::Bool => 10,
+            JitKind::Object => 11,
             JitKind::Other => 255,
         }
     }
@@ -112,6 +116,7 @@ impl JitKind {
     pub fn from_byte(b: u8) -> JitKind {
         match b {
             10 => JitKind::Bool,
+            11 => JitKind::Object,
             255 => JitKind::Other,
             n => match NumKind::from_imm(n as i32) {
                 Some(k) => JitKind::Num(k),

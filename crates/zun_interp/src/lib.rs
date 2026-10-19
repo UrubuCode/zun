@@ -88,21 +88,17 @@ pub fn run_with(
 ) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
     let rid = entry.rid();
-    Interp {
-        module,
-        output,
-        hook,
-        heap: zun_gc::Heap::new(),
-    }
-    .call(rid, Vec::new())
+    // Own the heap for the run and register it as the thread's current heap so
+    // the interpreter and any JIT code allocate into the same one.
+    let mut heap = zun_gc::Heap::new();
+    let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+    Interp { module, output, hook }.call(rid, Vec::new())
 }
 
 struct Interp<'a> {
     module: &'a Module,
     output: &'a mut dyn Output,
     hook: Option<&'a dyn CallHook>,
-    /// The runtime object heap, owned for the duration of the run.
-    heap: zun_gc::Heap,
 }
 
 impl Interp<'_> {
@@ -246,12 +242,17 @@ impl Interp<'_> {
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
                     let args = pop_n(&mut stack, field_count)?;
-                    let obj = self.heap.alloc(token.rid(), field_count);
-                    for (i, arg) in args.iter().enumerate() {
-                        let kind = self.field_kind_at(field_start + i as u32)?;
-                        let raw = value::encode_field(kind, arg, &mut self.heap);
-                        obj.set_field(i, raw);
-                    }
+                    let kinds: Vec<u8> = (0..field_count as u32)
+                        .map(|i| self.field_kind_at(field_start + i))
+                        .collect::<Result<_, _>>()?;
+                    let obj = zun_gc::with_current_heap_mut(|h| {
+                        let obj = h.alloc(token.rid(), field_count);
+                        for (i, arg) in args.iter().enumerate() {
+                            let raw = value::encode_field(kinds[i], arg, h);
+                            obj.set_field(i, raw);
+                        }
+                        obj
+                    });
                     stack.push(Value::Object(obj));
                 }
                 Opcode::LoadField => {
@@ -259,7 +260,7 @@ impl Interp<'_> {
                     let slot = self.field_slot(token)?;
                     let kind = self.field_kind_at(token.rid())?;
                     let obj = pop(&mut stack)?.as_object();
-                    let v = value::decode_field(kind, obj.field(slot), &self.heap);
+                    let v = zun_gc::with_current_heap(|h| value::decode_field(kind, obj.field(slot), h));
                     stack.push(v);
                 }
                 Opcode::StoreField => {
@@ -268,7 +269,7 @@ impl Interp<'_> {
                     let kind = self.field_kind_at(token.rid())?;
                     let value = pop(&mut stack)?;
                     let obj = pop(&mut stack)?.as_object();
-                    let raw = value::encode_field(kind, &value, &mut self.heap);
+                    let raw = zun_gc::with_current_heap_mut(|h| value::encode_field(kind, &value, h));
                     obj.set_field(slot, raw);
                     stack.push(value);
                 }

@@ -130,7 +130,9 @@ impl Jit {
             .finish(settings::Flags::new(flags))
             .map_err(|e| JitError::UnsupportedHost(e.to_string()))?;
 
-        let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        // Make the runtime allocator callable from native `newobj`.
+        builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);
@@ -350,6 +352,10 @@ impl Jit {
                 Some(JitKind::Num(k)) => {
                     let (bits, signed) = k.int_parts().unwrap();
                     RetVal::Int(read_int(ptr, bits, signed))
+                }
+                Some(JitKind::Object) => {
+                    let f: extern "C" fn() -> i64 = std::mem::transmute(ptr);
+                    RetVal::Int(f())
                 }
                 Some(JitKind::Other) => return Err(JitError::Ineligible(method_rid)),
             })

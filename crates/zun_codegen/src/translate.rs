@@ -10,7 +10,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, Block, InstBuilder, Type, Value};
+use cranelift_codegen::ir::{types, Block, InstBuilder, MemFlags, Type, Value};
+use cranelift_codegen::ir::AbiParam;
+use cranelift_module::Linkage;
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{FuncId, Module as ClifModule};
@@ -21,7 +23,8 @@ use zun_module::{read_body, MethodBody, Module as ZmModule};
 pub fn clif_ty(kind: JitKind) -> Type {
     match kind {
         JitKind::Bool => types::I32,
-        JitKind::Other => types::I64, // never used; eligibility excludes it
+        JitKind::Object => types::I64, // a machine pointer (64-bit target)
+        JitKind::Other => types::I64,  // never used; eligibility excludes it
         JitKind::Num(n) => match n {
             NumKind::I8 | NumKind::U8 => types::I8,
             NumKind::I16 | NumKind::U16 => types::I16,
@@ -36,8 +39,7 @@ pub fn clif_ty(kind: JitKind) -> Type {
 fn is_signed(kind: JitKind) -> bool {
     match kind {
         JitKind::Num(n) => n.int_parts().map(|(_, s)| s).unwrap_or(false),
-        JitKind::Bool => false,
-        JitKind::Other => false,
+        JitKind::Bool | JitKind::Object | JitKind::Other => false,
     }
 }
 
@@ -306,6 +308,49 @@ impl Translator<'_> {
                         stack.push((r, JitKind::from_byte(callee.return_kind)));
                     }
                 }
+                Opcode::NewObj => {
+                    let type_rid = match instr.operand {
+                        Operand::Token(t) => t.rid(),
+                        _ => return Err("newobj operand".into()),
+                    };
+                    let (_field_start, count) = type_field_range(self.zm, type_rid)?;
+                    // Pop field initializers (last pushed = last field).
+                    if stack.len() < count {
+                        return Err("stack underflow at newobj".into());
+                    }
+                    let args: Vec<Slot> = stack.split_off(stack.len() - count);
+                    // ptr = zun_rt_alloc(type_rid, count)
+                    let alloc = self.alloc_fref();
+                    let trid = self.builder.ins().iconst(types::I32, type_rid as i64);
+                    let nfields = self.builder.ins().iconst(types::I64, count as i64);
+                    let inst = self.builder.ins().call(alloc, &[trid, nfields]);
+                    let ptr = self.builder.inst_results(inst)[0];
+                    // Store each field as a full i64 slot (same encoding the
+                    // interpreter uses), at offset (slot + 1) * 8.
+                    for (i, (val, kind)) in args.into_iter().enumerate() {
+                        let raw = crate::shim::pack_result(&mut self.builder, val, kind);
+                        let off = ((i + 1) * 8) as i32;
+                        self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
+                    }
+                    stack.push((ptr, JitKind::Object));
+                }
+                Opcode::LoadField => {
+                    let (kind, slot) = self.field_info(&instr.operand)?;
+                    let (ptr, _) = stack.pop().ok_or("stack underflow")?;
+                    let off = ((slot + 1) * 8) as i32;
+                    let raw = self.builder.ins().load(types::I64, MemFlags::trusted(), ptr, off);
+                    let v = crate::shim::unpack_arg(&mut self.builder, raw, kind);
+                    stack.push((v, kind));
+                }
+                Opcode::StoreField => {
+                    let (kind, slot) = self.field_info(&instr.operand)?;
+                    let (val, _) = stack.pop().ok_or("stack underflow")?;
+                    let (ptr, _) = stack.pop().ok_or("stack underflow")?;
+                    let raw = crate::shim::pack_result(&mut self.builder, val, kind);
+                    let off = ((slot + 1) * 8) as i32;
+                    self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
+                    stack.push((val, kind)); // stfld leaves the stored value
+                }
                 other => return Err(format!("opcode {other:?} not supported by the typed JIT")),
             }
         }
@@ -474,6 +519,55 @@ impl Translator<'_> {
             .copied()
             .ok_or_else(|| "missing fall-through block".into())
     }
+
+    /// Import `zun_rt_alloc(type_rid: i32, field_count: i64) -> ptr` into the
+    /// current function.
+    fn alloc_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let conv = self.module.isa().default_call_conv();
+        let mut sig = cranelift_codegen::ir::Signature::new(conv);
+        sig.params.push(AbiParam::new(types::I32));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_rt_alloc", Linkage::Import, &sig)
+            .expect("declare zun_rt_alloc");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    /// Resolve a field token to its `(kind, slot)` using module metadata.
+    fn field_info(&self, operand: &Operand) -> Result<(JitKind, usize), String> {
+        let rid = match operand {
+            Operand::Token(t) => t.rid(),
+            _ => return Err("field operand".into()),
+        };
+        let fd = self
+            .zm
+            .tables
+            .field_defs
+            .get(rid as usize - 1)
+            .ok_or("bad field token")?;
+        let kind = JitKind::from_byte(fd.kind);
+        // Slot = position within the owning type's field range.
+        let owner = self
+            .zm
+            .tables
+            .type_defs
+            .iter()
+            .find(|t| rid >= t.field_start && rid < t.field_end)
+            .ok_or("field has no owning type")?;
+        Ok((kind, (rid - owner.field_start) as usize))
+    }
+}
+
+/// For a TypeDef RID, return `(field_start_rid, field_count)`.
+fn type_field_range(zm: &ZmModule, type_rid: u32) -> Result<(u32, usize), String> {
+    let ty = zm
+        .tables
+        .type_defs
+        .get(type_rid as usize - 1)
+        .ok_or("bad type token")?;
+    Ok((ty.field_start, (ty.field_end - ty.field_start) as usize))
 }
 
 #[derive(Clone, Copy)]

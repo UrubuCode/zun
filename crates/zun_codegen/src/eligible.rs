@@ -48,7 +48,37 @@ fn opcode_supported(op: Opcode) -> bool {
             | Opcode::BranchFalse
             | Opcode::Ret
             | Opcode::Call
+            | Opcode::NewObj
+            | Opcode::LoadField
+            | Opcode::StoreField
     )
+}
+
+/// Whether a field (by FieldDef token RID) has a JIT-representable type, i.e.
+/// numeric, bool, or object — not a string or anything else.
+fn field_jit_ok(module: &Module, field_rid: u32) -> bool {
+    module
+        .tables
+        .field_defs
+        .get(field_rid as usize - 1)
+        .map(|f| kind_supported(f.kind))
+        .unwrap_or(false)
+}
+
+/// Whether an instruction's field/type operand references only JIT types.
+fn instr_fields_ok(module: &Module, instr: &zun_il::Instruction) -> bool {
+    match (instr.opcode, instr.operand) {
+        (Opcode::LoadField | Opcode::StoreField, Operand::Token(t)) => {
+            field_jit_ok(module, t.rid())
+        }
+        (Opcode::NewObj, Operand::Token(t)) => {
+            match module.tables.type_defs.get(t.rid() as usize - 1) {
+                Some(ty) => (ty.field_start..ty.field_end).all(|r| field_jit_ok(module, r)),
+                None => false,
+            }
+        }
+        _ => true,
+    }
 }
 
 /// Whether a value-type code is one the typed JIT can represent.
@@ -78,6 +108,11 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
             continue;
         };
         if !instrs.iter().all(|i| opcode_supported(i.opcode)) {
+            continue;
+        }
+        // Reject methods whose field/newobj operands touch non-JIT types
+        // (e.g. string fields).
+        if !instrs.iter().all(|i| instr_fields_ok(module, i)) {
             continue;
         }
         let callees = instrs

@@ -91,18 +91,18 @@ fn jitkind_byte(ty: Ty) -> u8 {
     let kind = match numkind_of(ty) {
         Some(n) => JitKind::Num(n),
         None if ty == Ty::Boolean => JitKind::Bool,
+        None if matches!(ty, Ty::Instance(_)) => JitKind::Object,
         None => JitKind::Other,
     };
     kind.to_byte()
 }
 
-/// The field value-type code: the `JitKind` byte for numeric/bool fields, plus
-/// distinct codes for object and string references so the runtime can
-/// reconstruct the right `Value` from a raw slot (see `zun_interp::value`).
+/// The field value-type code: like [`jitkind_byte`] but with a distinct string
+/// code (12) so the runtime reconstructs the right `Value` from a raw slot
+/// (see `zun_interp::value`). Objects share code 11 with `JitKind::Object`.
 fn field_kind_byte(ty: Ty) -> u8 {
     match ty {
-        Ty::Instance(_) => 11, // FIELD_OBJECT
-        Ty::String => 12,      // FIELD_STRING
+        Ty::String => 12, // FIELD_STRING
         _ => jitkind_byte(ty),
     }
 }

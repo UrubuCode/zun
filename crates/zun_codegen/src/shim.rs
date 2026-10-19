@@ -71,8 +71,8 @@ pub fn define_shim(
     Ok(shim_id)
 }
 
-/// Convert a raw i64 buffer slot into a parameter of kind `k`.
-fn unpack_arg(b: &mut FunctionBuilder, raw: Value, k: JitKind) -> Value {
+/// Convert a raw i64 value into a value of kind `k` (shared with field loads).
+pub(crate) fn unpack_arg(b: &mut FunctionBuilder, raw: Value, k: JitKind) -> Value {
     match k {
         JitKind::Num(NumKind::F64) => b.ins().bitcast(types::F64, MemFlags::new(), raw),
         JitKind::Num(NumKind::F32) => {
@@ -91,8 +91,8 @@ fn unpack_arg(b: &mut FunctionBuilder, raw: Value, k: JitKind) -> Value {
     }
 }
 
-/// Pack a real result of kind `k` back into a u64.
-fn pack_result(b: &mut FunctionBuilder, r: Value, k: JitKind) -> Value {
+/// Pack a value of kind `k` into an i64 (shared with field stores).
+pub(crate) fn pack_result(b: &mut FunctionBuilder, r: Value, k: JitKind) -> Value {
     match k {
         JitKind::Num(NumKind::F64) => b.ins().bitcast(types::I64, MemFlags::new(), r),
         JitKind::Num(NumKind::F32) => {

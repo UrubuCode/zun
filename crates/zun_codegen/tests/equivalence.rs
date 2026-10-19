@@ -135,6 +135,50 @@ fn boolean_return() {
 }
 
 #[test]
+fn object_alloc_and_field_access_in_jit() {
+    // A helper that builds a Point, writes/reads fields, and returns a number.
+    // It uses newobj/ldfld/stfld with numeric fields, so it is JIT-eligible;
+    // the result must match the interpreter.
+    let src = "class Point { x: int; y: int; }\n\
+               function dist2(): int {\n\
+                   let p: Point = new Point(3, 4);\n\
+                   p.x = p.x + 1;\n\
+                   return p.x * p.x + p.y * p.y;\n\
+               }\n\
+               function main(): int { return dist2(); }";
+    let module = compile(src);
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    // dist2 (rid 2) uses objects and must be JIT-eligible now.
+    assert!(jit.is_compiled(2), "object method should be eligible");
+
+    // The JIT needs a current heap for newobj; the VM sets one per run, so a
+    // standalone call must register one too.
+    let mut heap = zun_gc::Heap::new();
+    let jit_result = {
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    let interp_result = interp_entry(&module);
+    let matches = match (&jit_result, &interp_result) {
+        (RetVal::Int(a), Value::Int(b, _)) => a == b,
+        _ => false,
+    };
+    assert!(matches, "JIT {jit_result:?} vs interp {interp_result:?}");
+}
+
+#[test]
+fn string_field_method_is_not_jit_eligible() {
+    // A method touching a string field must stay on the interpreter.
+    let src = "class Named { tag: string; }\n\
+               function make(): int { let n: Named = new Named(\"hi\"); return 1; }\n\
+               function main(): int { return make(); }";
+    let module = compile(src);
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(2), "string-field method must be ineligible");
+}
+
+#[test]
 fn ineligible_methods_are_not_compiled() {
     let module = compile(r#"function main() { print("hi"); }"#);
     let entry = module.entry_point.unwrap().rid();
