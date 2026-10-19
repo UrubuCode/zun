@@ -3,6 +3,11 @@
 
 use zun_interp::CaptureOutput;
 
+/// Compile `src` with the std prelude, run it, and return the output lines.
+fn run_with_std(user: &str) -> Vec<String> {
+    run_source(&zun_std::with_prelude(user))
+}
+
 /// Compile `src` to a module, serialize it, and run the bytes, returning the
 /// captured output lines.
 fn run_source(src: &str) -> Vec<String> {
@@ -270,6 +275,21 @@ fn int_through_function_and_recursion() {
          function main() { print(sumTo(5)); }",
     );
     assert_eq!(out, ["15"]);
+}
+
+#[test]
+fn std_prelude_numeric_helpers() {
+    let out = run_with_std(
+        "function main() {\n\
+            print(abs(-7));\n\
+            print(clamp(42, 0, 10));\n\
+            print(powi(2, 10));\n\
+            print(max(3, 9));\n\
+            print(fabs(-2.5));\n\
+            print(sign(-100));\n\
+         }",
+    );
+    assert_eq!(out, ["7", "10", "1024", "9", "2.5", "-1"]);
 }
 
 #[test]

@@ -1,0 +1,61 @@
+// Zun base prelude — numeric helpers written in Zun, using the fixed-width
+// numeric types. These compile with every program and, being pure numeric
+// functions, are JIT-eligible (they run as native code once hot).
+//
+// Until a module system exists this prelude is concatenated after the user's
+// source, so these names are effectively reserved.
+
+// --- integer (i32) helpers ---
+
+function abs(x: int): int {
+    if (x < 0) { return -x; }
+    return x;
+}
+
+function min(a: int, b: int): int {
+    if (a < b) { return a; }
+    return b;
+}
+
+function max(a: int, b: int): int {
+    if (a > b) { return a; }
+    return b;
+}
+
+function clamp(x: int, lo: int, hi: int): int {
+    return min(max(x, lo), hi);
+}
+
+// Integer power by repeated multiplication (exp assumed non-negative).
+function powi(base: int, exp: int): int {
+    let result: int = 1;
+    let i: int = 0;
+    while (i < exp) {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
+
+function sign(x: int): int {
+    if (x > 0) { return 1; }
+    if (x < 0) { return -1; }
+    return 0;
+}
+
+// --- float (f64) helpers ---
+
+function fabs(x: float): float {
+    if (x < 0.0) { return -x; }
+    return x;
+}
+
+function fmin(a: float, b: float): float {
+    if (a < b) { return a; }
+    return b;
+}
+
+function fmax(a: float, b: float): float {
+    if (a > b) { return a; }
+    return b;
+}

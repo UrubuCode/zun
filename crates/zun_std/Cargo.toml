@@ -1,0 +1,10 @@
+[package]
+name = "zun_std"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Zun base standard library: a numeric prelude written in Zun."
+
+[lints]
+workspace = true

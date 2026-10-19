@@ -563,6 +563,17 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Unary { op, operand, .. } => {
+                // Fold `-<number literal>` into a single negative number literal
+                // so it stays coercible to an int context (e.g. `abs(-7)`).
+                if let ast::UnaryOp::Neg = op {
+                    if let ast::Expr::Number { value, .. } = operand.as_ref() {
+                        return hir::Expr {
+                            kind: hir::ExprKind::Number(-value),
+                            ty: Ty::F64,
+                            span,
+                        };
+                    }
+                }
                 let operand = self.check_expr(cx, operand);
                 let ty = match op {
                     // Negation keeps the operand's numeric type; `!` needs bool.
