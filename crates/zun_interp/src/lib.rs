@@ -92,19 +92,45 @@ pub fn run_with(
     // the interpreter and any JIT code allocate into the same one.
     let mut heap = zun_gc::Heap::new();
     let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
-    Interp { module, output, hook }.call(rid, Vec::new())
+    Interp {
+        module,
+        output,
+        hook,
+        allocs: 0,
+    }
+    .call(rid, Vec::new(), None)
 }
+
+/// How many object allocations trigger a collection attempt.
+const GC_INTERVAL: u32 = 256;
 
 struct Interp<'a> {
     module: &'a Module,
     output: &'a mut dyn Output,
     hook: Option<&'a dyn CallHook>,
+    /// Object allocations since the last collection (GC trigger counter).
+    allocs: u32,
+}
+
+/// A link in the chain of suspended caller frames, used to find precise GC
+/// roots. Each active interpreter frame contributes the object references on
+/// its operand stack and in its locals; a frame is frozen (its stack/locals
+/// unchanged) while a callee runs, so these borrows are valid at a safepoint.
+struct RootLink<'a> {
+    stack: &'a [Value],
+    locals: &'a [Value],
+    parent: Option<&'a RootLink<'a>>,
 }
 
 impl Interp<'_> {
     /// Call the method at `method_rid` (1-based) with `args`, returning its
     /// result ([`Value::Void`] for a void method).
-    fn call(&mut self, method_rid: u32, args: Vec<Value>) -> Result<Value, RunError> {
+    fn call(
+        &mut self,
+        method_rid: u32,
+        args: Vec<Value>,
+        parent: Option<&RootLink>,
+    ) -> Result<Value, RunError> {
         let method = self
             .module
             .tables
@@ -231,7 +257,8 @@ impl Interp<'_> {
                     let callee_body = read_body(&self.module.code, callee.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, callee_body.param_count as usize)?;
-                    let result = self.dispatch(callee_rid, args)?;
+                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let result = self.dispatch(callee_rid, args, Some(&link))?;
                     stack.push(result);
                 }
                 Opcode::CallBuiltin => {
@@ -239,6 +266,15 @@ impl Interp<'_> {
                     self.call_builtin(id, &mut stack)?;
                 }
                 Opcode::NewObj => {
+                    // Safepoint: only the interpreter triggers GC, and only
+                    // here, where every live object reference is reachable from
+                    // the current frame plus the ancestor root chain (no JIT
+                    // frame is executing at this point).
+                    self.allocs += 1;
+                    if self.allocs >= GC_INTERVAL {
+                        self.allocs = 0;
+                        self.collect(&stack, &locals, parent);
+                    }
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
                     let args = pop_n(&mut stack, field_count)?;
@@ -292,7 +328,8 @@ impl Interp<'_> {
                     // Dispatch on the receiver's runtime class.
                     let type_rid = args[0].as_object().type_rid();
                     let target = self.resolve_virtual(type_rid, &name)?;
-                    let result = self.dispatch(target, args)?;
+                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let result = self.dispatch(target, args, Some(&link))?;
                     stack.push(result);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
@@ -346,13 +383,39 @@ impl Interp<'_> {
 
     /// Execute a call: route it to the JIT hook when it handles the method,
     /// otherwise interpret it.
-    fn dispatch(&mut self, method_rid: u32, args: Vec<Value>) -> Result<Value, RunError> {
+    fn dispatch(
+        &mut self,
+        method_rid: u32,
+        args: Vec<Value>,
+        parent: Option<&RootLink>,
+    ) -> Result<Value, RunError> {
         if let Some(hook) = self.hook {
             if let Some(result) = hook.try_call(method_rid, &args) {
                 return Ok(result);
             }
         }
-        self.call(method_rid, args)
+        self.call(method_rid, args, parent)
+    }
+
+    /// Run a mark-sweep collection with precise roots: the object references in
+    /// the current frame's stack and locals, plus every ancestor frame in the
+    /// `parent` chain. Reference fields are traced via the module's type layout.
+    fn collect(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>) {
+        let mut roots: Vec<zun_gc::Obj> = Vec::new();
+        collect_frame_roots(stack, locals, &mut roots);
+        let mut link = parent;
+        while let Some(l) = link {
+            collect_frame_roots(l.stack, l.locals, &mut roots);
+            link = l.parent;
+        }
+        let module = self.module;
+        let ref_fn = |type_rid: u32| object_ref_slots(module, type_rid);
+        // SAFETY: `roots` holds every live object reference reachable by the
+        // running program at this safepoint (no JIT frame is active here), so
+        // only genuinely-unreachable objects are reclaimed.
+        zun_gc::with_current_heap_mut(|h| unsafe {
+            h.collect(&roots, &ref_fn);
+        });
     }
 
     /// Resolve a virtual call: find the most-derived method named `name`
@@ -391,6 +454,35 @@ impl Interp<'_> {
             other => Err(RunError::Malformed(format!("unknown builtin {other}"))),
         }
     }
+}
+
+/// Add the object references found in a frame's stack and locals to `roots`.
+fn collect_frame_roots(stack: &[Value], locals: &[Value], roots: &mut Vec<zun_gc::Obj>) {
+    for v in stack.iter().chain(locals.iter()) {
+        if let Value::Object(o) = v {
+            roots.push(*o);
+        }
+    }
+}
+
+/// The field-slot indices of a type's object-reference fields, so the collector
+/// can trace the object graph. Derived from the field value-type codes.
+fn object_ref_slots(module: &Module, type_rid: u32) -> Vec<usize> {
+    let Some(ty) = module.tables.type_defs.get(type_rid as usize - 1) else {
+        return Vec::new();
+    };
+    (ty.field_start..ty.field_end)
+        .enumerate()
+        .filter(|&(_, rid)| {
+            module
+                .tables
+                .field_defs
+                .get(rid as usize - 1)
+                .map(|f| f.kind == value::FIELD_OBJECT)
+                .unwrap_or(false)
+        })
+        .map(|(slot, _)| slot)
+        .collect()
 }
 
 fn underflow() -> RunError {

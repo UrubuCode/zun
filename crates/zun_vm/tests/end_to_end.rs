@@ -293,6 +293,30 @@ fn std_prelude_numeric_helpers() {
 }
 
 #[test]
+fn gc_runs_without_corrupting_live_objects() {
+    // Allocate far more objects than the GC interval (256) inside a loop while
+    // keeping a live accumulator object referenced from a local. Collection
+    // fires repeatedly; if roots were imprecise, the live object (or the
+    // garbage churn feeding it) would be corrupted and the sum would be wrong.
+    let out = run_source(
+        "class Cell { v: int; }\n\
+         class Acc { total: int; }\n\
+         function main() {\n\
+            let acc: Acc = new Acc(0);\n\
+            let i: int = 0;\n\
+            while (i < 5000) {\n\
+                let c: Cell = new Cell(i);\n\
+                acc.total = acc.total + c.v;\n\
+                i = i + 1;\n\
+            }\n\
+            print(acc.total);\n\
+         }",
+    );
+    // Sum of 0..4999 = 4999*5000/2 = 12497500.
+    assert_eq!(out, ["12497500"]);
+}
+
+#[test]
 fn adaptive_tiering_compiles_hot_methods() {
     use zun_interp::{run_with, CaptureOutput};
     // A numeric function called repeatedly from main; with a low threshold it
