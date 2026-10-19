@@ -1,0 +1,10 @@
+[package]
+name = "zun_gc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Zun runtime heap: a non-moving object allocator shared by the interpreter and JIT."
+
+[lints]
+workspace = true
