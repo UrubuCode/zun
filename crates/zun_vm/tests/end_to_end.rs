@@ -273,6 +273,36 @@ fn int_through_function_and_recursion() {
 }
 
 #[test]
+fn adaptive_tiering_compiles_hot_methods() {
+    use zun_interp::{run_with, CaptureOutput};
+    // A numeric function called repeatedly from main; with a low threshold it
+    // becomes hot and is compiled, and the output must stay correct whether a
+    // given call was interpreted (cold) or native (hot).
+    let src = "function sq(n: int): int { return n * n; }\n\
+               function main() {\n\
+                   let i: int = 0;\n\
+                   while (i < 5) { print(sq(i)); i = i + 1; }\n\
+               }";
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty());
+    let module = zun_ilgen::lower(&hir);
+    let bytes = module.write();
+
+    let loaded = zun_vm::load(&bytes).unwrap();
+    let jit = zun_codegen::Jit::new(&loaded).unwrap();
+    let sq_rid = 1; // sq is the first function
+    let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 2);
+    let mut out = CaptureOutput::default();
+    run_with(&loaded, &mut out, Some(&hook)).unwrap();
+
+    assert_eq!(out.lines, ["0", "1", "4", "9", "16"]);
+    // After 5 calls with threshold 2, `sq` must have been compiled.
+    assert!(hook.jit_is_defined(sq_rid));
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

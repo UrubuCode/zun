@@ -98,7 +98,13 @@ pub struct Jit {
     func_ids: HashMap<u32, FuncId>,
     shim_ids: HashMap<u32, FuncId>,
     eligible: HashSet<u32>,
+    /// Eligible callees of each eligible method (for the compile closure).
+    callees: HashMap<u32, Vec<u32>>,
+    /// Methods whose bodies are defined and finalized.
+    defined: HashSet<u32>,
     sigs: HashMap<u32, Sig>,
+    ctx: cranelift_codegen::Context,
+    fb_ctx: FunctionBuilderContext,
 }
 
 impl core::fmt::Debug for Jit {
@@ -110,8 +116,11 @@ impl core::fmt::Debug for Jit {
 }
 
 impl Jit {
-    /// Compile every eligible method in `zm` to native code.
-    pub fn compile(zm: &Module) -> Result<Self, JitError> {
+    /// Create a JIT for `zm`: determine eligible methods and declare their
+    /// Cranelift functions, without compiling any bodies yet. Bodies are
+    /// defined on demand by [`Jit::ensure_compiled`] (lazy tiering) or all at
+    /// once by [`Jit::compile`].
+    pub fn new(zm: &Module) -> Result<Self, JitError> {
         let mut flags = settings::builder();
         // Optimize for speed; the e-graph optimizer is on by default in this
         // Cranelift version, so there is no flag to set for it.
@@ -122,105 +131,149 @@ impl Jit {
             .map_err(|e| JitError::UnsupportedHost(e.to_string()))?;
 
         let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-        let mut module = JITModule::new(builder);
+        let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);
 
-        // Declare every eligible function first so calls can reference any of
-        // them regardless of order.
-        let mut func_ids = HashMap::new();
-        let mut sigs = HashMap::new();
+        // Declare every eligible function and shim up front (signatures only) so
+        // calls can reference any of them; bodies are defined later, eagerly by
+        // `compile` or lazily by `ensure_compiled`.
+        let mut jit = Self {
+            module,
+            func_ids: HashMap::new(),
+            shim_ids: HashMap::new(),
+            eligible: eligible.clone(),
+            callees: HashMap::new(),
+            defined: HashSet::new(),
+            sigs: HashMap::new(),
+            ctx: cranelift_codegen::Context::new(),
+            fb_ctx: FunctionBuilderContext::new(),
+        };
+
         for &rid in &eligible {
             let body = read_body(&zm.code, zm.tables.method_defs[rid as usize - 1].body_offset)
-                .map_err(|e| JitError::Compile {
-                    method_rid: rid,
-                    detail: e.to_string(),
-                })?;
-            let sig = body_signature(&module, &body);
-            let name = format!("m{rid}");
-            let id = module
-                .declare_function(&name, Linkage::Local, &sig)
+                .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?;
+            let sig = body_signature(&jit.module, &body);
+            let fid = jit
+                .module
+                .declare_function(&format!("m{rid}"), Linkage::Local, &sig)
                 .map_err(|e| JitError::Module(e.to_string()))?;
-            func_ids.insert(rid, id);
-            let param_kinds = body.local_kinds[..body.param_count as usize]
+            jit.func_ids.insert(rid, fid);
+
+            let param_kinds: Vec<JitKind> = body.local_kinds[..body.param_count as usize]
                 .iter()
                 .map(|&b| JitKind::from_byte(b))
                 .collect();
-            sigs.insert(
+            jit.sigs.insert(
                 rid,
                 Sig {
                     param_kinds,
                     returns: body.returns_value.then(|| JitKind::from_byte(body.return_kind)),
                 },
             );
+            jit.callees.insert(
+                rid,
+                zun_il::decode_all(body.code)
+                    .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?
+                    .iter()
+                    .filter(|i| i.opcode == zun_il::Opcode::Call)
+                    .filter_map(|i| match i.operand {
+                        zun_il::Operand::Token(t) => Some(t.rid()),
+                        _ => None,
+                    })
+                    .filter(|c| eligible.contains(c))
+                    .collect(),
+            );
         }
-
-        // Define each function body.
-        let mut ctx = module.make_context();
-        let mut fb_ctx = FunctionBuilderContext::new();
-        for &rid in &eligible {
-            let body = read_body(&zm.code, zm.tables.method_defs[rid as usize - 1].body_offset)
-                .map_err(|e| JitError::Compile {
-                    method_rid: rid,
-                    detail: e.to_string(),
-                })?;
-            ctx.func.signature = body_signature(&module, &body);
-            translate::translate_body(
-                &mut module,
-                zm,
-                &mut ctx,
-                &mut fb_ctx,
-                &func_ids,
-                &body,
-            )
-            .map_err(|detail| JitError::Compile {
-                method_rid: rid,
-                detail,
-            })?;
-            let id = func_ids[&rid];
-            module
-                .define_function(id, &mut ctx)
-                .map_err(|e| JitError::Compile {
-                    method_rid: rid,
-                    detail: e.to_string(),
-                })?;
-            module.clear_context(&mut ctx);
-        }
-
-        // Define a uniform-ABI shim per method so the interpreter can call any
-        // of them through one function-pointer type.
-        let mut shim_ids = HashMap::new();
-        for &rid in &eligible {
-            let sig = &sigs[&rid];
-            let id = shim::define_shim(
-                &mut module,
-                &mut ctx,
-                &mut fb_ctx,
-                &format!("m{rid}_shim"),
-                func_ids[&rid],
-                &sig.param_kinds,
-                sig.returns,
-            )
-            .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;
-            shim_ids.insert(rid, id);
-        }
-
-        module
-            .finalize_definitions()
-            .map_err(|e| JitError::Module(e.to_string()))?;
-
-        Ok(Self {
-            module,
-            func_ids,
-            shim_ids,
-            eligible,
-            sigs,
-        })
+        Ok(jit)
     }
 
-    /// Whether `method_rid` was JIT-compiled.
+    /// Eagerly compile every eligible method. Used where all compiled code is
+    /// wanted up front (e.g. equivalence tests).
+    pub fn compile(zm: &Module) -> Result<Self, JitError> {
+        let mut jit = Self::new(zm)?;
+        let all: Vec<u32> = jit.eligible.iter().copied().collect();
+        for rid in all {
+            jit.ensure_compiled(zm, rid)?;
+        }
+        Ok(jit)
+    }
+
+    /// Ensure `rid` and every eligible method reachable from it are defined and
+    /// finalized, so calling `rid` cannot jump into an undefined function.
+    /// Returns whether `rid` is JIT-executable (i.e. eligible).
+    pub fn ensure_compiled(&mut self, zm: &Module, rid: u32) -> Result<bool, JitError> {
+        if !self.eligible.contains(&rid) {
+            return Ok(false);
+        }
+        if self.defined.contains(&rid) {
+            return Ok(true);
+        }
+        // Collect the transitive eligible-callee closure that still needs
+        // defining, then define and finalize it as one batch.
+        let mut worklist = vec![rid];
+        let mut batch = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(m) = worklist.pop() {
+            if !self.defined.contains(&m) && seen.insert(m) {
+                batch.push(m);
+                worklist.extend(self.callees[&m].iter().copied());
+            }
+        }
+        for &m in &batch {
+            self.define_method(zm, m)?;
+        }
+        self.module
+            .finalize_definitions()
+            .map_err(|e| JitError::Module(e.to_string()))?;
+        for m in batch {
+            self.defined.insert(m);
+        }
+        Ok(true)
+    }
+
+    /// Translate and define one method body and its shim (no finalize).
+    fn define_method(&mut self, zm: &Module, rid: u32) -> Result<(), JitError> {
+        let body = read_body(&zm.code, zm.tables.method_defs[rid as usize - 1].body_offset)
+            .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?;
+        self.ctx.func.signature = body_signature(&self.module, &body);
+        translate::translate_body(
+            &mut self.module,
+            zm,
+            &mut self.ctx,
+            &mut self.fb_ctx,
+            &self.func_ids,
+            &body,
+        )
+        .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;
+        self.module
+            .define_function(self.func_ids[&rid], &mut self.ctx)
+            .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?;
+        self.module.clear_context(&mut self.ctx);
+
+        let sig = self.sigs[&rid].clone();
+        let shim_id = shim::define_shim(
+            &mut self.module,
+            &mut self.ctx,
+            &mut self.fb_ctx,
+            &format!("m{rid}_shim"),
+            self.func_ids[&rid],
+            &sig.param_kinds,
+            sig.returns,
+        )
+        .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;
+        self.shim_ids.insert(rid, shim_id);
+        Ok(())
+    }
+
+    /// Whether `method_rid` is eligible for JIT compilation.
     pub fn is_compiled(&self, method_rid: u32) -> bool {
         self.eligible.contains(&method_rid)
+    }
+
+    /// Whether `method_rid`'s body has actually been compiled and finalized.
+    pub fn is_defined(&self, method_rid: u32) -> bool {
+        self.defined.contains(&method_rid)
     }
 
     /// The parameter kinds of a compiled method (for marshalling arguments).

@@ -58,9 +58,9 @@ pub fn execute(bytes: &[u8]) -> Result<Value, VmError> {
 /// JIT cannot be built, execution falls back to the interpreter alone.
 pub fn execute_with(bytes: &[u8], output: &mut dyn Output) -> Result<Value, VmError> {
     let module = load(bytes)?;
-    match zun_codegen::Jit::compile(&module) {
+    match zun_codegen::Jit::new(&module) {
         Ok(jit) => {
-            let hook = JitHook::new(jit);
+            let hook = JitHook::new(jit, &module);
             run_with(&module, output, Some(&hook)).map_err(VmError::Run)
         }
         Err(_) => run_with(&module, output, None).map_err(VmError::Run),
