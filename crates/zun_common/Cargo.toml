@@ -1,0 +1,10 @@
+[package]
+name = "zun_common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared primitives for the Zun platform: typed ids, interning, spans, diagnostics."
+
+[lints]
+workspace = true
