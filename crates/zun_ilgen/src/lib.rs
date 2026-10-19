@@ -96,6 +96,17 @@ fn jitkind_byte(ty: Ty) -> u8 {
     kind.to_byte()
 }
 
+/// The field value-type code: the `JitKind` byte for numeric/bool fields, plus
+/// distinct codes for object and string references so the runtime can
+/// reconstruct the right `Value` from a raw slot (see `zun_interp::value`).
+fn field_kind_byte(ty: Ty) -> u8 {
+    match ty {
+        Ty::Instance(_) => 11, // FIELD_OBJECT
+        Ty::String => 12,      // FIELD_STRING
+        _ => jitkind_byte(ty),
+    }
+}
+
 /// Choose between the integer and float opcode for a numeric operation.
 fn int_or_float(is_int: bool, int_op: Opcode, float_op: Opcode) -> Opcode {
     if is_int {
@@ -130,7 +141,7 @@ fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
             let tok = module.tables.add_field_def(FieldDef {
                 name: fname,
                 signature: BlobIndex(0),
-                kind: jitkind_byte(field.ty),
+                kind: field_kind_byte(field.ty),
             });
             this_class_fields.push(tok);
         }

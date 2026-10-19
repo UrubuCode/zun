@@ -88,13 +88,21 @@ pub fn run_with(
 ) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
     let rid = entry.rid();
-    Interp { module, output, hook }.call(rid, Vec::new())
+    Interp {
+        module,
+        output,
+        hook,
+        heap: zun_gc::Heap::new(),
+    }
+    .call(rid, Vec::new())
 }
 
 struct Interp<'a> {
     module: &'a Module,
     output: &'a mut dyn Output,
     hook: Option<&'a dyn CallHook>,
+    /// The runtime object heap, owned for the duration of the run.
+    heap: zun_gc::Heap,
 }
 
 impl Interp<'_> {
@@ -237,24 +245,31 @@ impl Interp<'_> {
                 Opcode::NewObj => {
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
-                    let _ = field_start;
                     let args = pop_n(&mut stack, field_count)?;
-                    stack.push(Value::Object(std::rc::Rc::new(value::Object {
-                        type_rid: token.rid(),
-                        fields: std::cell::RefCell::new(args),
-                    })));
+                    let obj = self.heap.alloc(token.rid(), field_count);
+                    for (i, arg) in args.iter().enumerate() {
+                        let kind = self.field_kind_at(field_start + i as u32)?;
+                        let raw = value::encode_field(kind, arg, &mut self.heap);
+                        obj.set_field(i, raw);
+                    }
+                    stack.push(Value::Object(obj));
                 }
                 Opcode::LoadField => {
-                    let slot = self.field_slot(operand_token(&instr.operand))?;
-                    let obj = pop(&mut stack)?;
-                    let v = obj.as_object().fields.borrow()[slot].clone();
+                    let token = operand_token(&instr.operand);
+                    let slot = self.field_slot(token)?;
+                    let kind = self.field_kind_at(token.rid())?;
+                    let obj = pop(&mut stack)?.as_object();
+                    let v = value::decode_field(kind, obj.field(slot), &self.heap);
                     stack.push(v);
                 }
                 Opcode::StoreField => {
-                    let slot = self.field_slot(operand_token(&instr.operand))?;
+                    let token = operand_token(&instr.operand);
+                    let slot = self.field_slot(token)?;
+                    let kind = self.field_kind_at(token.rid())?;
                     let value = pop(&mut stack)?;
-                    let obj = pop(&mut stack)?;
-                    obj.as_object().fields.borrow_mut()[slot] = value.clone();
+                    let obj = pop(&mut stack)?.as_object();
+                    let raw = value::encode_field(kind, &value, &mut self.heap);
+                    obj.set_field(slot, raw);
                     stack.push(value);
                 }
                 Opcode::CallVirt => {
@@ -274,7 +289,7 @@ impl Interp<'_> {
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, static_body.param_count as usize)?;
                     // Dispatch on the receiver's runtime class.
-                    let type_rid = args[0].as_object().type_rid;
+                    let type_rid = args[0].as_object().type_rid();
                     let target = self.resolve_virtual(type_rid, &name)?;
                     let result = self.dispatch(target, args)?;
                     stack.push(result);
@@ -302,6 +317,16 @@ impl Interp<'_> {
             .get(token.rid() as usize - 1)
             .ok_or(RunError::BadToken)?;
         Ok((ty.field_start, (ty.field_end - ty.field_start) as usize))
+    }
+
+    /// The value-type code (`FieldDef.kind`) of the field at 1-based `field_rid`.
+    fn field_kind_at(&self, field_rid: u32) -> Result<u8, RunError> {
+        self.module
+            .tables
+            .field_defs
+            .get(field_rid as usize - 1)
+            .map(|f| f.kind)
+            .ok_or(RunError::BadToken)
     }
 
     /// For a FieldDef token, return its zero-based slot within the class that
@@ -497,6 +522,8 @@ fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
         (Value::Int(x, _), Value::Int(y, _)) => x == y,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
+        // Reference identity: two object refs are equal iff the same object.
+        (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
         _ => false,
     };
     stack.push(Value::Bool(equal == want_equal));

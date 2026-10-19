@@ -5,19 +5,7 @@
 //! This is the interpreter's own representation; the eventual object model and
 //! GC heap (`zun_gc`) are separate concerns.
 
-use std::cell::RefCell;
 use std::rc::Rc;
-
-/// A heap object: its class's TypeDef RID plus its field slots. `Rc<RefCell>`
-/// gives reference semantics (two bindings share one object) and interior
-/// mutability for field stores — a stand-in until the real GC heap lands.
-#[derive(Debug)]
-pub struct Object {
-    /// 1-based TypeDef RID of the object's class.
-    pub type_rid: u32,
-    /// Field values, indexed by field slot.
-    pub fields: RefCell<Vec<Value>>,
-}
 
 /// A runtime value.
 #[derive(Debug, Clone)]
@@ -31,8 +19,9 @@ pub enum Value {
     Bool(bool),
     /// An immutable string. `Rc` keeps cloning a value cheap.
     Str(Rc<str>),
-    /// A heap object reference (shared, mutable).
-    Object(Rc<Object>),
+    /// A reference to an object in the runtime [`Heap`](zun_gc::Heap). Reference
+    /// semantics (shared, mutable) come from the shared raw pointer.
+    Object(zun_gc::Obj),
     /// The absence of a value (a void call's result).
     Void,
 }
@@ -102,11 +91,55 @@ impl Value {
 
     /// Interpret the value as an object reference, or panic (see
     /// [`Value::as_number`]).
-    pub fn as_object(&self) -> &Rc<Object> {
+    pub fn as_object(&self) -> zun_gc::Obj {
         match self {
-            Value::Object(o) => o,
+            Value::Object(o) => *o,
             other => panic!("expected object, found {other:?}"),
         }
+    }
+}
+
+/// Field value-type code for an object reference (beyond the `JitKind` codes).
+pub const FIELD_OBJECT: u8 = 11;
+/// Field value-type code for a string reference.
+pub const FIELD_STRING: u8 = 12;
+
+/// Decode a raw field slot into a [`Value`], given the field's value-type code
+/// (from `FieldDef.kind`) and the heap (for string handles).
+pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
+    use zun_il::{JitKind, NumKind};
+    match kind {
+        FIELD_OBJECT => Value::Object(unsafe { zun_gc::Obj::from_addr(slot as *mut u64) }),
+        FIELD_STRING => Value::Str(heap.string(slot as u32).clone()),
+        _ => match JitKind::from_byte(kind) {
+            JitKind::Num(NumKind::F64) => Value::Float(f64::from_bits(slot), NumKind::F64),
+            JitKind::Num(NumKind::F32) => {
+                Value::Float(f32::from_bits(slot as u32) as f64, NumKind::F32)
+            }
+            JitKind::Num(n) => Value::Int(slot as i64, n),
+            JitKind::Bool => Value::Bool(slot != 0),
+            JitKind::Other => Value::Void,
+        },
+    }
+}
+
+/// Encode a [`Value`] into a raw field slot for the field's value-type code,
+/// interning strings into the heap as needed.
+pub fn encode_field(kind: u8, v: &Value, heap: &mut zun_gc::Heap) -> u64 {
+    use zun_il::{JitKind, NumKind};
+    match kind {
+        FIELD_OBJECT => v.as_object().addr() as u64,
+        FIELD_STRING => match v {
+            Value::Str(s) => heap.intern_string(s.clone()) as u64,
+            _ => 0,
+        },
+        _ => match JitKind::from_byte(kind) {
+            JitKind::Num(NumKind::F64) => v.as_number().to_bits(),
+            JitKind::Num(NumKind::F32) => (v.as_number() as f32).to_bits() as u64,
+            JitKind::Num(_) => v.as_int() as u64,
+            JitKind::Bool => matches!(v, Value::Bool(true)) as u64,
+            JitKind::Other => 0,
+        },
     }
 }
 

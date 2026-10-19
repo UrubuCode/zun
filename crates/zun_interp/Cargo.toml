@@ -10,6 +10,7 @@ description = "Tier 0: the always-correct ZIL interpreter and its value model."
 zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
+zun_gc = { path = "../zun_gc" }
 
 [lints]
 workspace = true
