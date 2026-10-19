@@ -158,6 +158,25 @@ O usuário final nunca instala um runtime. Os três modos são empacotamentos do
 
 Restrições de plataforma que tornam o modo 3 obrigatório: **iOS e consoles proíbem JIT** (sem páginas executáveis); Android aceita JIT mas AOT dá melhor startup. Desktop (Win/Linux/macOS) pode usar qualquer modo. Ordem de entrega: 1 → 2 → 3, conforme doc 02-compilation.
 
+## 4.2 Tipos numéricos e a pilha de avaliação tipada (decisão)
+
+O primeiro corte do JIT (Fase 3) representa **todo valor como f64** (booleanos como 1.0/0.0). Isso é **andaime**, não o modelo final — é fiel ao `number` de JS (que é f64) e evita rastrear tipos na pilha no começo, mas não escala: índices, deslocamento de bits, `| 0`, referências de objeto e strings não são f64.
+
+**Modelo final (estilo .NET / ECMA-335):** a pilha de avaliação do JIT rastreia o **tipo Cranelift de cada valor** — `I64` para refs/bools, `I32`/`I64` para inteiros, `F64` para float — derivado da HIR tipada e das assinaturas, e emite a instrução de máquina certa (ALU inteira vs. XMM). Opcodes já são separados por família na tabela mestre (`add.i32` vs `add.f64`), seguindo o doc 02.
+
+**Extensão do TS com tipos numéricos explícitos (decisão do usuário):** a linguagem Zun vai expor tipos numéricos distintos no TS, além do `number` do JS:
+
+```ts
+const valor: int = 1;      // inteiro de máquina (i32/i64)
+const test: float = 1.0;   // ponto flutuante (f64)
+```
+
+- `number` (JS) continua existindo e mapeia para `float` (f64), por compatibilidade com código JS.
+- `int` (e futuramente larguras como `i32`/`i64`/`u32`) dá ao compilador o tipo estático exato, então o JIT usa registradores inteiros e operações inteiras sem conversões `ToInt32` em cada passo — a complexidade que o f64 uniforme empurraria para o runtime desaparece no compile-time.
+- O JS puro (sem anotação) permanece `float`/`Any`; o TS tipado ganha a capacidade de ser preciso. Isso é coerente com o princípio do projeto: "TS sound por padrão, dinâmico como opt-in custoso".
+
+Ordem sugerida: introduzir `int`/`float` no `zun_sema` (tipos `Ty::Int`/`Ty::Float`, hoje só `Ty::Number`), emitir os opcodes `*.i32`/`*.f64` corretos no `zun_ilgen`, e então trocar o JIT do "tudo f64" para a pilha tipada. O interpretador já tem o `Value` como enum, então suporta os dois tipos sem mudança estrutural.
+
 ## 5. Riscos e pontos de atenção
 
 - **Semântica JS vs modelo estático**: o escopo do que `any`/JS dinâmico suporta precisa ser decidido cedo (não dá para ser 100% ECMAScript sem reconstruir um V8). Recomendação: definir Zun como "TS sound-por-padrão, com `Any` como opt-in custoso" e documentar divergências.
