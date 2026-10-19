@@ -121,7 +121,7 @@ impl Module {
         }
         let entry_raw = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
 
-        let mut section = |i: usize| -> Result<&[u8], ReadError> {
+        let section = |i: usize| -> Result<&[u8], ReadError> {
             let base = 12 + i * 8;
             let off = u32::from_le_bytes(bytes[base..base + 4].try_into().unwrap()) as usize;
             let len = u32::from_le_bytes(bytes[base + 4..base + 8].try_into().unwrap()) as usize;

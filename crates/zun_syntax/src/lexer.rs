@@ -101,7 +101,13 @@ pub struct Token {
 pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
-    let mut pos = 0usize;
+    // Skip a UTF-8 byte-order mark if the file starts with one, so editors that
+    // add a BOM do not produce spurious errors on the first token.
+    let mut pos = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        3
+    } else {
+        0
+    };
 
     while pos < bytes.len() {
         let start = pos;
@@ -305,6 +311,12 @@ mod tests {
         assert_eq!(toks[0].kind, TokenKind::Error);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "SYN0001");
+    }
+
+    #[test]
+    fn leading_bom_is_skipped() {
+        use TokenKind::*;
+        assert_eq!(kinds("\u{FEFF}let x = 1;"), vec![KwLet, Ident, Eq, Number, Semi, Eof]);
     }
 
     #[test]

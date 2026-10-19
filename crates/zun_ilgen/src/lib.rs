@@ -38,7 +38,12 @@ pub fn lower(program: &hir::Program) -> Module {
 
     for (index, f) in program.functions.iter().enumerate() {
         let code = lower_function(f, &mut module);
-        let offset = write_body(&mut module.code, f.locals.len() as u16, &code);
+        let offset = write_body(
+            &mut module.code,
+            f.param_count,
+            f.locals.len() as u16,
+            &code,
+        );
         module.tables.method_defs[index].body_offset = offset;
     }
 

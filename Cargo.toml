@@ -8,6 +8,9 @@ members = [
     "crates/zun_syntax",
     "crates/zun_sema",
     "crates/zun_ilgen",
+    "crates/zun_interp",
+    "crates/zun_vm",
+    "crates/zun_cli",
 ]
 
 [workspace.package]
