@@ -28,6 +28,8 @@ pub enum OperandKind {
     Token,
     /// A 2-byte local-variable slot index.
     Local,
+    /// A 4-byte index into the module's string heap.
+    StringRef,
     /// A 4-byte signed branch displacement, relative to the end of the
     /// instruction.
     Branch,
@@ -39,7 +41,10 @@ impl OperandKind {
         match self {
             OperandKind::None => 0,
             OperandKind::Local => 2,
-            OperandKind::Imm32 | OperandKind::Token | OperandKind::Branch => 4,
+            OperandKind::Imm32
+            | OperandKind::Token
+            | OperandKind::Branch
+            | OperandKind::StringRef => 4,
             OperandKind::Imm64 | OperandKind::Float64 => 8,
         }
     }
@@ -110,6 +115,8 @@ define_opcodes! {
     ConstTrue = 0x14, None, "const.true";
     /// Push boolean false (as i32 0).
     ConstFalse = 0x15, None, "const.false";
+    /// Push a string literal from the module string heap.
+    ConstStr = 0x16, StringRef, "const.str";
 
     // --- locals ---
     /// Push the value of a local slot.
@@ -146,6 +153,12 @@ define_opcodes! {
     MulF64 = 0x42, None, "mul.f64";
     /// Float divide.
     DivF64 = 0x43, None, "div.f64";
+    /// Float remainder (JS `%` semantics).
+    RemF64 = 0x44, None, "rem.f64";
+
+    // --- strings ---
+    /// String concatenation (pop two strings, push one).
+    Concat = 0x48, None, "concat";
 
     // --- comparison (pop two, push i32 0/1) ---
     /// Equal.
@@ -182,6 +195,9 @@ define_opcodes! {
     Call = 0x73, Token, "call";
     /// Virtual / interface call.
     CallVirt = 0x74, Token, "callvirt";
+    /// Call a runtime builtin by id. Phase-1 scaffolding: builtins move to
+    /// `zun_core` MemberRefs once the std exists.
+    CallBuiltin = 0x75, Imm32, "call.builtin";
 }
 
 #[cfg(test)]

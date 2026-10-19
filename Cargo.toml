@@ -7,6 +7,7 @@ members = [
     "crates/zun_module",
     "crates/zun_syntax",
     "crates/zun_sema",
+    "crates/zun_ilgen",
 ]
 
 [workspace.package]

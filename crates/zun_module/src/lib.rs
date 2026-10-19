@@ -24,7 +24,10 @@
 //! reading is byte-exact (deterministic builds fall out of this plus the
 //! deduplicated heaps).
 
+pub mod body;
 mod serial;
+
+pub use body::{read_body, write_body, MethodBody};
 
 use zun_metadata::{BlobHeap, StringHeap, Tables, Token};
 

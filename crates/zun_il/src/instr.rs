@@ -24,6 +24,8 @@ pub enum Operand {
     Token(Token),
     /// A local-variable slot index.
     Local(u16),
+    /// An index into the module's string heap.
+    StringRef(u32),
     /// A signed branch displacement relative to the end of the instruction.
     Branch(i32),
 }
@@ -38,6 +40,7 @@ impl Operand {
             Operand::Float64(_) => OperandKind::Float64,
             Operand::Token(_) => OperandKind::Token,
             Operand::Local(_) => OperandKind::Local,
+            Operand::StringRef(_) => OperandKind::StringRef,
             Operand::Branch(_) => OperandKind::Branch,
         }
     }
@@ -108,6 +111,7 @@ pub fn encode(instr: &Instruction, out: &mut Vec<u8>) {
         Operand::Float64(v) => out.extend_from_slice(&v.to_bits().to_le_bytes()),
         Operand::Token(t) => out.extend_from_slice(&t.to_raw().to_le_bytes()),
         Operand::Local(v) => out.extend_from_slice(&v.to_le_bytes()),
+        Operand::StringRef(v) => out.extend_from_slice(&v.to_le_bytes()),
         Operand::Branch(v) => out.extend_from_slice(&v.to_le_bytes()),
     }
 }
@@ -133,6 +137,9 @@ pub fn decode_one(bytes: &[u8]) -> Result<(Instruction, usize), DecodeError> {
             Operand::Token(Token::from_raw(u32::from_le_bytes(body[..4].try_into().unwrap())))
         }
         OperandKind::Local => Operand::Local(u16::from_le_bytes(body[..2].try_into().unwrap())),
+        OperandKind::StringRef => {
+            Operand::StringRef(u32::from_le_bytes(body[..4].try_into().unwrap()))
+        }
         OperandKind::Branch => Operand::Branch(i32::from_le_bytes(body[..4].try_into().unwrap())),
     };
     Ok((Instruction { opcode, operand }, 1 + kind.size()))

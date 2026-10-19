@@ -16,6 +16,7 @@ pub fn format_instruction(instr: &Instruction) -> String {
         Operand::Float64(v) => format!("{m} {v}"),
         Operand::Token(t) => format!("{m} {t:?}"),
         Operand::Local(v) => format!("{m} {v}"),
+        Operand::StringRef(v) => format!("{m} str:{v}"),
         Operand::Branch(v) => format!("{m} {v:+}"),
     }
 }

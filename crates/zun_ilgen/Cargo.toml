@@ -1,0 +1,19 @@
+[package]
+name = "zun_ilgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lowers the typed HIR to ZIL and emits a .zm module."
+
+[dev-dependencies]
+zun_syntax = { path = "../zun_syntax" }
+
+[dependencies]
+zun_il = { path = "../zun_il" }
+zun_metadata = { path = "../zun_metadata" }
+zun_module = { path = "../zun_module" }
+zun_sema = { path = "../zun_sema" }
+
+[lints]
+workspace = true
