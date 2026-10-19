@@ -180,6 +180,11 @@ define_opcodes! {
     /// Float remainder (JS `%` semantics).
     RemF64 = 0x44, None, "rem.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
 
+    /// Convert the numeric value on top of the stack to another numeric kind
+    /// (width/signedness/float), encoded in the immediate. Covers the `as`
+    /// operator and implicit narrowing on store.
+    Conv = 0x45, Imm32, "conv", StackEffect::Fixed { pops: 1, pushes: 1 };
+
     // --- strings ---
     /// String concatenation (pop two strings, push one).
     Concat = 0x48, None, "concat", StackEffect::Fixed { pops: 2, pushes: 1 };

@@ -42,6 +42,8 @@ pub enum TokenKind {
     KwNew,
     /// `extends`
     KwExtends,
+    /// `as`
+    KwAs,
 
     // Punctuation
     /// `(`
@@ -265,6 +267,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "class" => TokenKind::KwClass,
         "new" => TokenKind::KwNew,
         "extends" => TokenKind::KwExtends,
+        "as" => TokenKind::KwAs,
         _ => TokenKind::Ident,
     }
 }

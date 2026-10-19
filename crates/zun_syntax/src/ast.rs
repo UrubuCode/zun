@@ -251,6 +251,15 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `expr as Type` — a numeric conversion.
+    Cast {
+        /// The value being converted.
+        expr: Box<Expr>,
+        /// The target type.
+        ty: TypeAnnotation,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `new Class(args)` — positional field initialization.
     New {
         /// The class being instantiated.
@@ -295,6 +304,7 @@ impl Expr {
             | Expr::Unary { span, .. }
             | Expr::Call { span, .. }
             | Expr::MethodCall { span, .. }
+            | Expr::Cast { span, .. }
             | Expr::New { span, .. }
             | Expr::Field { span, .. }
             | Expr::FieldAssign { span, .. } => *span,

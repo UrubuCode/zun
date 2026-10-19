@@ -22,10 +22,11 @@ pub struct Object {
 /// A runtime value.
 #[derive(Debug, Clone)]
 pub enum Value {
-    /// A number (IEEE-754 double) — the `number`/`float` type.
-    Number(f64),
-    /// A 32-bit signed integer — the `int` type.
-    Int(i32),
+    /// An integer, stored in an i64 with its exact kind (width + signedness).
+    Int(i64, zun_il::NumKind),
+    /// A float, stored in an f64 with its kind (`F32` values are kept rounded
+    /// to single precision).
+    Float(f64, zun_il::NumKind),
     /// A boolean.
     Bool(bool),
     /// An immutable string. `Rc` keeps cloning a value cheap.
@@ -42,16 +43,32 @@ impl Value {
     /// code generation, not bad user input.
     pub fn as_number(&self) -> f64 {
         match self {
-            Value::Number(n) => *n,
-            other => panic!("expected number, found {other:?}"),
+            Value::Float(n, _) => *n,
+            other => panic!("expected float, found {other:?}"),
         }
     }
 
-    /// Interpret the value as an `int`, or panic (see [`Value::as_number`]).
-    pub fn as_int(&self) -> i32 {
+    /// The float kind of a float value (defaults to F64 for non-floats).
+    pub fn float_kind(&self) -> zun_il::NumKind {
         match self {
-            Value::Int(n) => *n,
+            Value::Float(_, k) => *k,
+            _ => zun_il::NumKind::F64,
+        }
+    }
+
+    /// Interpret the value as an integer (i64 container), or panic.
+    pub fn as_int(&self) -> i64 {
+        match self {
+            Value::Int(n, _) => *n,
             other => panic!("expected int, found {other:?}"),
+        }
+    }
+
+    /// The integer kind of an int value (defaults to I32 for non-ints).
+    pub fn int_kind(&self) -> zun_il::NumKind {
+        match self {
+            Value::Int(_, k) => *k,
+            _ => zun_il::NumKind::I32,
         }
     }
 
@@ -74,8 +91,8 @@ impl Value {
     /// Render the value the way `print` should show it.
     pub fn display(&self) -> String {
         match self {
-            Value::Number(n) => format_number(*n),
-            Value::Int(n) => n.to_string(),
+            Value::Float(n, _) => format_number(*n),
+            Value::Int(n, _) => n.to_string(),
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => s.to_string(),
             Value::Object(_) => "[object]".to_string(),
@@ -93,6 +110,30 @@ impl Value {
     }
 }
 
+/// Wrap an i64 into the value range of `kind` (two's-complement for signed,
+/// modular for unsigned), returning the canonical i64 representative.
+pub fn wrap_int(v: i64, kind: zun_il::NumKind) -> i64 {
+    let (bits, signed) = kind.int_parts().expect("int kind");
+    if bits == 64 {
+        return v;
+    }
+    let mask = (1i128 << bits) - 1;
+    let m = (v as i128) & mask;
+    if signed && (m & (1i128 << (bits - 1))) != 0 {
+        (m - (1i128 << bits)) as i64
+    } else {
+        m as i64
+    }
+}
+
+/// Round an f64 to `kind`'s precision (a no-op for F64, single-precision for F32).
+pub fn round_float(v: f64, kind: zun_il::NumKind) -> f64 {
+    match kind {
+        zun_il::NumKind::F32 => v as f32 as f64,
+        _ => v,
+    }
+}
+
 /// Format a number using JS-like rules: integers print without a trailing `.0`.
 fn format_number(n: f64) -> String {
     if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
@@ -106,15 +147,25 @@ fn format_number(n: f64) -> String {
 mod tests {
     use super::*;
 
+    use zun_il::NumKind;
+
     #[test]
     fn integers_print_without_decimal() {
-        assert_eq!(Value::Number(42.0).display(), "42");
-        assert_eq!(Value::Number(-7.0).display(), "-7");
+        assert_eq!(Value::Float(42.0, NumKind::F64).display(), "42");
+        assert_eq!(Value::Int(-7, NumKind::I32).display(), "-7");
     }
 
     #[test]
     fn fractions_keep_their_decimal() {
-        assert_eq!(Value::Number(3.5).display(), "3.5");
+        assert_eq!(Value::Float(3.5, NumKind::F64).display(), "3.5");
+    }
+
+    #[test]
+    fn wrap_unsigned_and_signed() {
+        assert_eq!(wrap_int(256, NumKind::U8), 0);
+        assert_eq!(wrap_int(255, NumKind::U8), 255);
+        assert_eq!(wrap_int(128, NumKind::I8), -128);
+        assert_eq!(wrap_int(-1, NumKind::U8), 255);
     }
 
     #[test]

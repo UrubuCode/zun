@@ -6,7 +6,7 @@
 //! follow-on mismatch diagnostics instead of cascading.
 
 use crate::hir;
-use crate::hir::{Builtin, Ty};
+use crate::hir::{Builtin, IntKind, Ty};
 use std::collections::HashMap;
 use zun_common::{Diagnostic, Span};
 use zun_syntax::ast;
@@ -122,8 +122,16 @@ impl Checker<'_> {
     fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
         let text = self.text(&annotation.name).to_string();
         match text.as_str() {
-            "number" | "float" => Ty::Number,
-            "int" => Ty::Int,
+            "number" | "float" | "f64" => Ty::F64,
+            "f32" => Ty::F32,
+            "int" | "i32" => Ty::Int(IntKind::I32),
+            "i8" => Ty::Int(IntKind::I8),
+            "i16" => Ty::Int(IntKind::I16),
+            "i64" => Ty::Int(IntKind::I64),
+            "u8" => Ty::Int(IntKind::U8),
+            "u16" => Ty::Int(IntKind::U16),
+            "u32" => Ty::Int(IntKind::U32),
+            "u64" => Ty::Int(IntKind::U64),
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
             "void" => Ty::Void,
@@ -475,7 +483,7 @@ impl Checker<'_> {
         match expr {
             ast::Expr::Number { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Number(*value),
-                ty: Ty::Number,
+                ty: Ty::F64,
                 span,
             },
             ast::Expr::String { value, .. } => hir::Expr {
@@ -557,9 +565,14 @@ impl Checker<'_> {
             ast::Expr::Unary { op, operand, .. } => {
                 let operand = self.check_expr(cx, operand);
                 let ty = match op {
-                    // Negation works on both numeric types; `!` needs a boolean.
-                    ast::UnaryOp::Neg if operand.ty == Ty::Int => Ty::Int,
-                    ast::UnaryOp::Neg => self.expect_ty(&operand, Ty::Number),
+                    // Negation keeps the operand's numeric type; `!` needs bool.
+                    ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => {
+                        operand.ty
+                    }
+                    ast::UnaryOp::Neg => {
+                        self.error(operand.span, format!("cannot negate {:?}", operand.ty));
+                        Ty::Error
+                    }
                     ast::UnaryOp::Not => self.expect_ty(&operand, Ty::Boolean),
                 };
                 hir::Expr {
@@ -687,6 +700,26 @@ impl Checker<'_> {
                         args: call_args,
                     },
                     ty: return_ty,
+                    span,
+                }
+            }
+            ast::Expr::Cast { expr, ty, .. } => {
+                let value = self.check_expr(cx, expr);
+                let target = self.resolve_annotation(ty);
+                // Only numeric-to-numeric conversions are allowed.
+                let numeric = |t: Ty| t.is_int() || t.is_float();
+                if !value.ty.is_error() && !(numeric(value.ty) && numeric(target)) {
+                    self.error(
+                        span,
+                        format!("cannot convert {:?} to {target:?}", value.ty),
+                    );
+                    return self.poison(span);
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(value),
+                    },
+                    ty: target,
                     span,
                 }
             }
@@ -823,9 +856,10 @@ impl Checker<'_> {
         }
         // Both numeric operands must be the same numeric type (no implicit
         // int/float mixing; conversions are explicit — PLAN.md §4.2).
-        let same_numeric = |a: Ty, b: Ty| {
-            (a == Ty::Number && b == Ty::Number) || (a == Ty::Int && b == Ty::Int)
-        };
+        // Both operands must be the same numeric type, exact width included.
+        let same_numeric = |a: Ty, b: Ty| matches!((a, b),
+            (Ty::Int(x), Ty::Int(y)) if x == y)
+            || matches!((a, b), (Ty::Float(x), Ty::Float(y)) if x == y);
         match op {
             Add => {
                 // `+` is numeric addition or string concatenation.
@@ -900,28 +934,56 @@ impl Checker<'_> {
     }
 }
 
-/// Whether `expr` is a number literal whose value is an exact `i32`.
-fn is_integral_number_literal(expr: &hir::Expr) -> bool {
-    matches!(expr.kind, hir::ExprKind::Number(v)
-        if expr.ty == Ty::Number && v.fract() == 0.0 && v >= i32::MIN as f64 && v <= i32::MAX as f64)
+/// Whether `expr` is a default (f64) number literal — a candidate to adopt a
+/// different numeric type from its context.
+fn is_number_literal(expr: &hir::Expr) -> bool {
+    matches!(expr.kind, hir::ExprKind::Number(_)) && expr.ty == Ty::F64
 }
 
-/// Retype an integral number literal to `expected` when `expected` is `Int`.
-/// Number literals default to `float`; this lets them adapt to an int context
-/// (`let x: int = 1`, `f(1)` where the parameter is `int`).
-fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
-    if expected == Ty::Int && is_integral_number_literal(expr) {
-        expr.ty = Ty::Int;
+/// Whether `v` fits exactly in the integer kind `k`.
+fn fits_int(v: f64, k: IntKind) -> bool {
+    if v.fract() != 0.0 {
+        return false;
+    }
+    let (lo, hi) = int_range(k);
+    v >= lo && v <= hi
+}
+
+/// Inclusive `(min, max)` of an integer kind, as f64 (exact up to 2^53).
+fn int_range(k: IntKind) -> (f64, f64) {
+    if k.signed {
+        let hi = 2f64.powi(k.bits as i32 - 1);
+        (-hi, hi - 1.0)
+    } else {
+        (0.0, 2f64.powi(k.bits as i32) - 1.0)
     }
 }
 
-/// If one side of a binary op is `Int` and the other is an integral number
-/// literal, retype the literal to `Int` so `x + 1` checks with `x: int`.
+/// Retype a number literal to `expected` when that is a numeric type the
+/// literal can represent: any float, or an integer kind the value fits.
+fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
+    if !is_number_literal(expr) {
+        return;
+    }
+    let v = match expr.kind {
+        hir::ExprKind::Number(v) => v,
+        _ => return,
+    };
+    match expected {
+        Ty::Float(_) => expr.ty = expected,
+        Ty::Int(k) if fits_int(v, k) => expr.ty = expected,
+        _ => {}
+    }
+}
+
+/// If one side of a binary op has a concrete numeric type and the other is a
+/// default number literal that can take it, retype the literal to match — so
+/// `x + 1` checks when `x: u8` (and `1 + x`).
 fn unify_numeric_literal(a: &mut hir::Expr, b: &mut hir::Expr) {
-    if a.ty == Ty::Int && is_integral_number_literal(b) {
-        b.ty = Ty::Int;
-    } else if b.ty == Ty::Int && is_integral_number_literal(a) {
-        a.ty = Ty::Int;
+    if (a.ty.is_int() || a.ty.is_float()) && is_number_literal(b) {
+        coerce_numeric_literal(b, a.ty);
+    } else if (b.ty.is_int() || b.ty.is_float()) && is_number_literal(a) {
+        coerce_numeric_literal(a, b.ty);
     }
 }
 
@@ -960,13 +1022,13 @@ mod tests {
         assert_eq!(hir.main, Some(1));
         let add = &hir.functions[0];
         assert_eq!(add.param_count, 2);
-        assert_eq!(add.return_ty, Ty::Number);
+        assert_eq!(add.return_ty, Ty::F64);
     }
 
     #[test]
     fn let_infers_type_from_initializer() {
         let hir = check_ok("function f() { let x = 1; let s = \"hi\"; }");
-        assert_eq!(hir.functions[0].locals, vec![Ty::Number, Ty::String]);
+        assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);
     }
 
     #[test]
@@ -974,7 +1036,7 @@ mod tests {
         let hir = check_ok(
             "function f() { let x = 1; if (x > 0) { let x = \"inner\"; print(x); } }",
         );
-        assert_eq!(hir.functions[0].locals, vec![Ty::Number, Ty::String]);
+        assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);
     }
 
     #[test]
@@ -1163,7 +1225,7 @@ mod tests {
             "function main() { let a: int = 1; let b: float = 1.0; let c = 2; }",
         );
         // a:int, b:float(Number), c defaults to Number.
-        assert_eq!(hir.functions[0].locals, vec![Ty::Int, Ty::Number, Ty::Number]);
+        assert_eq!(hir.functions[0].locals, vec![Ty::INT, Ty::F64, Ty::F64]);
     }
 
     #[test]
@@ -1171,7 +1233,7 @@ mod tests {
         let hir = check_ok(
             "function f(): int { let x: int = 10; return x * 2 + 5; }",
         );
-        assert_eq!(hir.functions[0].return_ty, Ty::Int);
+        assert_eq!(hir.functions[0].return_ty, Ty::INT);
     }
 
     #[test]

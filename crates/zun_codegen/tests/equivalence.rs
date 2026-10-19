@@ -29,8 +29,8 @@ fn interp_call(module: &zun_module::Module, method_rid: u32, args: &[f64]) -> f6
     let _ = (method_rid, args);
     let mut out = CaptureOutput::default();
     match zun_interp::run(module, &mut out).unwrap() {
-        Value::Number(n) => n,
-        other => panic!("expected number, got {other:?}"),
+        Value::Float(n, _) => n,
+        other => panic!("expected float, got {other:?}"),
     }
 }
 

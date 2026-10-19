@@ -11,15 +11,50 @@ pub use zun_syntax::ast::{BinaryOp, UnaryOp};
 /// Index of a class within the checked program.
 pub type ClassIndex = u32;
 
+/// A fixed-width integer kind: its bit width and signedness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntKind {
+    /// Bit width: 8, 16, 32, or 64.
+    pub bits: u8,
+    /// Whether the integer is signed.
+    pub signed: bool,
+}
+
+impl IntKind {
+    /// `i8`..`i64`/`u8`..`u64` shorthands.
+    pub const I8: IntKind = IntKind { bits: 8, signed: true };
+    /// See [`IntKind::I8`].
+    pub const I16: IntKind = IntKind { bits: 16, signed: true };
+    /// See [`IntKind::I8`].
+    pub const I32: IntKind = IntKind { bits: 32, signed: true };
+    /// See [`IntKind::I8`].
+    pub const I64: IntKind = IntKind { bits: 64, signed: true };
+    /// See [`IntKind::I8`].
+    pub const U8: IntKind = IntKind { bits: 8, signed: false };
+    /// See [`IntKind::I8`].
+    pub const U16: IntKind = IntKind { bits: 16, signed: false };
+    /// See [`IntKind::I8`].
+    pub const U32: IntKind = IntKind { bits: 32, signed: false };
+    /// See [`IntKind::I8`].
+    pub const U64: IntKind = IntKind { bits: 64, signed: false };
+}
+
+/// A floating-point kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FloatKind {
+    /// 32-bit IEEE-754.
+    F32,
+    /// 64-bit IEEE-754 (`number`/`float`).
+    F64,
+}
+
 /// A checked type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ty {
-    /// `number` / `float` — IEEE-754 f64 (JS numbers are this).
-    Number,
-    /// `int` — a 32-bit signed integer. The first member of the planned
-    /// fixed-width integer lattice (PLAN.md §4.2); wider/unsigned widths slot in
-    /// here later.
-    Int,
+    /// A fixed-width integer (`int` = i32; plus i8..i64, u8..u64).
+    Int(IntKind),
+    /// A floating-point number (`number`/`float` = f64; plus f32).
+    Float(FloatKind),
     /// `string`.
     String,
     /// `boolean`.
@@ -34,10 +69,27 @@ pub enum Ty {
 }
 
 impl Ty {
-    /// Whether this type (or the other) is already poisoned, in which case
-    /// further mismatch diagnostics are suppressed.
+    /// `number`/`float` — 64-bit float.
+    pub const F64: Ty = Ty::Float(FloatKind::F64);
+    /// 32-bit float.
+    pub const F32: Ty = Ty::Float(FloatKind::F32);
+    /// `int` — 32-bit signed integer.
+    pub const INT: Ty = Ty::Int(IntKind::I32);
+
+    /// Whether this type is already poisoned, which suppresses follow-on
+    /// mismatch diagnostics.
     pub fn is_error(self) -> bool {
         self == Ty::Error
+    }
+
+    /// Whether this is any integer type.
+    pub fn is_int(self) -> bool {
+        matches!(self, Ty::Int(_))
+    }
+
+    /// Whether this is any float type.
+    pub fn is_float(self) -> bool {
+        matches!(self, Ty::Float(_))
     }
 }
 
@@ -227,6 +279,11 @@ pub enum ExprKind {
         /// Zero-based field slot.
         field_slot: u16,
         /// The stored value.
+        value: Box<Expr>,
+    },
+    /// A numeric conversion (`as`). The target type is the expression's `ty`.
+    Convert {
+        /// The value being converted.
         value: Box<Expr>,
     },
     /// A poisoned expression that already produced a diagnostic.

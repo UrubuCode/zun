@@ -376,7 +376,25 @@ impl Parser<'_> {
                 span,
             };
         }
-        self.call()
+        self.cast()
+    }
+
+    /// `call ('as' type)*` — casts bind tighter than binary operators but looser
+    /// than calls and member access.
+    fn cast(&mut self) -> Expr {
+        let mut expr = self.call();
+        while self.eat(TokenKind::KwAs) {
+            let ty = TypeAnnotation {
+                name: self.name("a type name"),
+            };
+            let span = expr.span().to(ty.name.span);
+            expr = Expr::Cast {
+                expr: Box::new(expr),
+                ty,
+                span,
+            };
+        }
+        expr
     }
 
     fn call(&mut self) -> Expr {

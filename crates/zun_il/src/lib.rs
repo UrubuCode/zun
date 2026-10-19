@@ -15,7 +15,10 @@
 
 pub mod disasm;
 pub mod instr;
+pub mod num;
 pub mod opcode;
+
+pub use num::NumKind;
 
 pub use disasm::disassemble;
 pub use instr::{decode_all, decode_one, encode, DecodeError, Instruction, Operand};

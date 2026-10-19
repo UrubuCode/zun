@@ -110,7 +110,9 @@ impl Interp<'_> {
 
             match instr.opcode {
                 Opcode::Nop => {}
-                Opcode::ConstF64 => stack.push(Value::Number(operand_f64(&instr.operand))),
+                Opcode::ConstF64 => {
+                    stack.push(Value::Float(operand_f64(&instr.operand), zun_il::NumKind::F64))
+                }
                 Opcode::ConstStr => {
                     let idx = operand_strref(&instr.operand);
                     let s: Rc<str> = self.module.strings.get(zun_metadata::StringIndex(idx)).into();
@@ -130,22 +132,36 @@ impl Interp<'_> {
                     let top = stack.last().cloned().ok_or_else(underflow)?;
                     stack.push(top);
                 }
-                Opcode::AddF64 => bin_num(&mut stack, |a, b| Value::Number(a + b))?,
-                Opcode::SubF64 => bin_num(&mut stack, |a, b| Value::Number(a - b))?,
-                Opcode::MulF64 => bin_num(&mut stack, |a, b| Value::Number(a * b))?,
-                Opcode::DivF64 => bin_num(&mut stack, |a, b| Value::Number(a / b))?,
-                Opcode::RemF64 => bin_num(&mut stack, |a, b| Value::Number(a % b))?,
-                // Integer arithmetic wraps (two's complement), matching the
-                // default overflow policy in PLAN.md §4.2.
-                Opcode::ConstI32 => stack.push(Value::Int(operand_i32(&instr.operand))),
+                Opcode::AddF64 => bin_float(&mut stack, |a, b| a + b)?,
+                Opcode::SubF64 => bin_float(&mut stack, |a, b| a - b)?,
+                Opcode::MulF64 => bin_float(&mut stack, |a, b| a * b)?,
+                Opcode::DivF64 => bin_float(&mut stack, |a, b| a / b)?,
+                Opcode::RemF64 => bin_float(&mut stack, |a, b| a % b)?,
+                // Integer arithmetic is width-generic here: the result kind
+                // comes from the operands (which sema guarantees match) and the
+                // value wraps to that width. A future typed-stack JIT will
+                // specialize these by stack type (PLAN.md §4.2).
+                Opcode::ConstI32 => {
+                    stack.push(Value::Int(operand_i32(&instr.operand) as i64, zun_il::NumKind::I32))
+                }
+                Opcode::ConstI64 => {
+                    stack.push(Value::Int(operand_i64(&instr.operand), zun_il::NumKind::I64))
+                }
                 Opcode::AddI32 => bin_int(&mut stack, |a, b| a.wrapping_add(b))?,
                 Opcode::SubI32 => bin_int(&mut stack, |a, b| a.wrapping_sub(b))?,
                 Opcode::MulI32 => bin_int(&mut stack, |a, b| a.wrapping_mul(b))?,
-                Opcode::DivI32 => bin_int(&mut stack, |a, b| a.wrapping_div(b))?,
-                Opcode::RemI32 => bin_int(&mut stack, |a, b| a.wrapping_rem(b))?,
+                Opcode::DivI32 => bin_int_signed_aware(&mut stack, true)?,
+                Opcode::RemI32 => bin_int_signed_aware(&mut stack, false)?,
                 Opcode::NegI32 => {
-                    let v = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(v.wrapping_neg()));
+                    let v = pop(&mut stack)?;
+                    let k = v.int_kind();
+                    stack.push(Value::Int(value::wrap_int(v.as_int().wrapping_neg(), k), k));
+                }
+                Opcode::Conv => {
+                    let target = zun_il::NumKind::from_imm(operand_i32(&instr.operand))
+                        .ok_or_else(|| RunError::Malformed("bad conv kind".into()))?;
+                    let v = pop(&mut stack)?;
+                    stack.push(convert(&v, target)?);
                 }
                 Opcode::Concat => {
                     let b = pop(&mut stack)?;
@@ -154,10 +170,10 @@ impl Interp<'_> {
                 }
                 Opcode::CmpEq => cmp(&mut stack, true)?,
                 Opcode::CmpNe => cmp(&mut stack, false)?,
-                Opcode::CmpLt => cmp_num(&mut stack, |a, b| a < b, |a, b| a < b)?,
-                Opcode::CmpLe => cmp_num(&mut stack, |a, b| a <= b, |a, b| a <= b)?,
-                Opcode::CmpGt => cmp_num(&mut stack, |a, b| a > b, |a, b| a > b)?,
-                Opcode::CmpGe => cmp_num(&mut stack, |a, b| a >= b, |a, b| a >= b)?,
+                Opcode::CmpLt => compare(&mut stack, Ordering::Lt)?,
+                Opcode::CmpLe => compare(&mut stack, Ordering::Le)?,
+                Opcode::CmpGt => compare(&mut stack, Ordering::Gt)?,
+                Opcode::CmpGe => compare(&mut stack, Ordering::Ge)?,
                 Opcode::Branch => {
                     pc = branch_target(next, &instr.operand);
                 }
@@ -245,7 +261,7 @@ impl Interp<'_> {
                     stack.push(result);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
-                Opcode::ConstI64 | Opcode::ConstNull => {
+                Opcode::ConstNull => {
                     return Err(RunError::Malformed(format!(
                         "opcode {:?} not supported by the phase-1 interpreter",
                         instr.opcode
@@ -336,35 +352,105 @@ fn pop_n(stack: &mut Vec<Value>, n: usize) -> Result<Vec<Value>, RunError> {
     Ok(stack.split_off(stack.len() - n))
 }
 
-fn bin_num(
-    stack: &mut Vec<Value>,
-    f: impl Fn(f64, f64) -> Value,
-) -> Result<(), RunError> {
-    let b = pop(stack)?.as_number();
-    let a = pop(stack)?.as_number();
-    stack.push(f(a, b));
+fn bin_float(stack: &mut Vec<Value>, f: impl Fn(f64, f64) -> f64) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.float_kind();
+    let r = value::round_float(f(a.as_number(), b.as_number()), kind);
+    stack.push(Value::Float(r, kind));
     Ok(())
 }
 
-fn bin_int(stack: &mut Vec<Value>, f: impl Fn(i32, i32) -> i32) -> Result<(), RunError> {
-    let b = pop(stack)?.as_int();
-    let a = pop(stack)?.as_int();
-    stack.push(Value::Int(f(a, b)));
+fn bin_int(stack: &mut Vec<Value>, f: impl Fn(i64, i64) -> i64) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    stack.push(Value::Int(value::wrap_int(f(a.as_int(), b.as_int()), kind), kind));
     Ok(())
 }
 
-/// Ordered comparison over either two ints or two floats (sema guarantees the
-/// operands share a numeric kind).
-fn cmp_num(
-    stack: &mut Vec<Value>,
-    fi: impl Fn(i32, i32) -> bool,
-    ff: impl Fn(f64, f64) -> bool,
-) -> Result<(), RunError> {
+/// Integer divide (`is_div`) or remainder, choosing signed vs unsigned by the
+/// operand kind so `u32` division behaves unsigned.
+fn bin_int_signed_aware(stack: &mut Vec<Value>, is_div: bool) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (_, signed) = kind.int_parts().expect("int kind");
+    let (x, y) = (a.as_int(), b.as_int());
+    if y == 0 {
+        return Err(RunError::Malformed("integer division by zero".into()));
+    }
+    let r = if signed {
+        if is_div { x.wrapping_div(y) } else { x.wrapping_rem(y) }
+    } else {
+        let (ux, uy) = (x as u64, y as u64);
+        let ur = if is_div { ux / uy } else { ux % uy };
+        ur as i64
+    };
+    stack.push(Value::Int(value::wrap_int(r, kind), kind));
+    Ok(())
+}
+
+/// Convert a numeric value to `target`, following the lattice rules: int↔int
+/// re-wraps, float→int truncates toward zero (saturating is a JIT concern), and
+/// int→float / float→float rounds.
+fn convert(v: &Value, target: zun_il::NumKind) -> Result<Value, RunError> {
+    use zun_il::NumKind;
+    let as_f64 = match v {
+        Value::Int(n, _) => *n as f64,
+        Value::Float(n, _) => *n,
+        other => return Err(RunError::Malformed(format!("cannot convert {other:?}"))),
+    };
+    Ok(if target.is_int() {
+        let truncated = match v {
+            Value::Int(n, _) => *n,
+            Value::Float(n, _) => *n as i64,
+            _ => unreachable!(),
+        };
+        Value::Int(value::wrap_int(truncated, target), target)
+    } else {
+        match target {
+            NumKind::F32 => Value::Float(as_f64 as f32 as f64, NumKind::F32),
+            _ => Value::Float(as_f64, NumKind::F64),
+        }
+    })
+}
+
+/// A relational comparison operator.
+#[derive(Clone, Copy)]
+enum Ordering {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Ordering {
+    fn apply<T: PartialOrd>(self, a: T, b: T) -> bool {
+        match self {
+            Ordering::Lt => a < b,
+            Ordering::Le => a <= b,
+            Ordering::Gt => a > b,
+            Ordering::Ge => a >= b,
+        }
+    }
+}
+
+/// Ordered comparison over two ints (signed or unsigned by kind) or two floats;
+/// sema guarantees the operands share a numeric kind.
+fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
     let result = match (&a, &b) {
-        (Value::Int(x), Value::Int(y)) => fi(*x, *y),
-        (Value::Number(x), Value::Number(y)) => ff(*x, *y),
+        (Value::Int(x, k), Value::Int(y, _)) => {
+            let (_, signed) = k.int_parts().expect("int kind");
+            if signed {
+                op.apply(*x, *y)
+            } else {
+                op.apply(*x as u64, *y as u64)
+            }
+        }
+        (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
         _ => return Err(RunError::Malformed("comparison of mismatched numeric kinds".into())),
     };
     stack.push(Value::Bool(result));
@@ -377,8 +463,8 @@ fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
     let equal = match (&a, &b) {
-        (Value::Number(x), Value::Number(y)) => x == y,
-        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Float(x, _), Value::Float(y, _)) => x == y,
+        (Value::Int(x, _), Value::Int(y, _)) => x == y,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         _ => false,
@@ -399,6 +485,12 @@ fn operand_f64(o: &Operand) -> f64 {
     match o {
         Operand::Float64(v) => *v,
         _ => 0.0,
+    }
+}
+fn operand_i64(o: &Operand) -> i64 {
+    match o {
+        Operand::Imm64(v) => *v,
+        _ => 0,
     }
 }
 fn operand_i32(o: &Operand) -> i32 {

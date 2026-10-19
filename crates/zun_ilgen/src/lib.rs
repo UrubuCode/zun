@@ -15,10 +15,29 @@
 //! - Branches patch forward displacements after the target is known
 //!   (displacements are relative to the end of the branch instruction).
 
-use zun_il::{encode, Instruction, Opcode, Operand};
+use zun_il::{encode, Instruction, NumKind, Opcode, Operand};
 use zun_metadata::{BlobIndex, FieldDef, MethodDef, TableKind, Token, TypeDef};
 use zun_module::{write_body, Module};
-use zun_sema::hir::{self, BinaryOp, Builtin, ExprKind, Stmt, Ty, UnaryOp};
+use zun_sema::hir::{self, BinaryOp, Builtin, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp};
+
+/// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
+/// is not numeric.
+fn numkind_of(ty: Ty) -> Option<NumKind> {
+    Some(match ty {
+        Ty::Int(IntKind { bits: 8, signed: true }) => NumKind::I8,
+        Ty::Int(IntKind { bits: 16, signed: true }) => NumKind::I16,
+        Ty::Int(IntKind { bits: 32, signed: true }) => NumKind::I32,
+        Ty::Int(IntKind { bits: 64, signed: true }) => NumKind::I64,
+        Ty::Int(IntKind { bits: 8, signed: false }) => NumKind::U8,
+        Ty::Int(IntKind { bits: 16, signed: false }) => NumKind::U16,
+        Ty::Int(IntKind { bits: 32, signed: false }) => NumKind::U32,
+        Ty::Int(IntKind { bits: 64, signed: false }) => NumKind::U64,
+        Ty::Int(_) => return None,
+        Ty::Float(FloatKind::F32) => NumKind::F32,
+        Ty::Float(FloatKind::F64) => NumKind::F64,
+        _ => return None,
+    })
+}
 
 /// Tokens a lowered program needs to reference its own metadata.
 struct Layout {
@@ -170,6 +189,42 @@ impl FnLowerer<'_> {
         encode(&instr, &mut self.code);
     }
 
+    /// Push a numeric constant of the given type: a base `const.i32`/`const.i64`
+    /// or `const.f64`, then a `conv` when the target kind is narrower/unsigned
+    /// or single-precision.
+    fn emit_numeric_const(&mut self, v: f64, ty: Ty) {
+        let kind = numkind_of(ty).unwrap_or(NumKind::F64);
+        match kind {
+            NumKind::F64 => {
+                self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(v)));
+            }
+            NumKind::F32 => {
+                self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(v)));
+                self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(NumKind::F32.to_imm())));
+            }
+            NumKind::I64 | NumKind::U64 => {
+                self.emit(Instruction::new(Opcode::ConstI64, Operand::Imm64(v as i64)));
+                if kind != NumKind::I64 {
+                    self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+                }
+            }
+            _ => {
+                // i8/i16/i32/u8/u16/u32: build as i32, then narrow if needed.
+                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(v as i32)));
+                if kind != NumKind::I32 {
+                    self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+                }
+            }
+        }
+    }
+
+    /// Emit a `conv` to `ty` (used by the `as` operator).
+    fn emit_conv_to(&mut self, ty: Ty) {
+        if let Some(kind) = numkind_of(ty) {
+            self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+        }
+    }
+
     /// Emit a branch with a placeholder displacement; returns a patch handle.
     fn emit_branch(&mut self, opcode: Opcode) -> BranchPatch {
         self.emit(Instruction::new(opcode, Operand::Branch(0)));
@@ -249,13 +304,7 @@ impl FnLowerer<'_> {
 
     fn expr(&mut self, e: &hir::Expr) {
         match &e.kind {
-            ExprKind::Number(v) => {
-                if e.ty == Ty::Int {
-                    self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(*v as i32)));
-                } else {
-                    self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(*v)));
-                }
-            }
+            ExprKind::Number(v) => self.emit_numeric_const(*v, e.ty),
             ExprKind::String(s) => {
                 let idx = self.module.strings.intern(s);
                 self.emit(Instruction::new(Opcode::ConstStr, Operand::StringRef(idx.0)));
@@ -275,7 +324,7 @@ impl FnLowerer<'_> {
                 self.expr(rhs);
                 // Pick the opcode family from the operand type: int operands use
                 // the i32 ops, floats the f64 ops, strings concatenate.
-                let is_int = lhs.ty == Ty::Int;
+                let is_int = lhs.ty.is_int();
                 let opcode = match op {
                     BinaryOp::Add if lhs.ty == Ty::String => Opcode::Concat,
                     BinaryOp::Add => int_or_float(is_int, Opcode::AddI32, Opcode::AddF64),
@@ -295,13 +344,14 @@ impl FnLowerer<'_> {
                 self.emit(Instruction::simple(opcode));
             }
             ExprKind::Unary { op, operand } => match op {
-                UnaryOp::Neg if operand.ty == Ty::Int => {
+                UnaryOp::Neg if operand.ty.is_int() => {
                     self.expr(operand);
                     self.emit(Instruction::simple(Opcode::NegI32));
                 }
                 UnaryOp::Neg => {
-                    // 0 - x
-                    self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)));
+                    // 0 - x, with the zero in the operand's float kind so the
+                    // subtraction keeps that kind.
+                    self.emit_numeric_const(0.0, operand.ty);
                     self.expr(operand);
                     self.emit(Instruction::simple(Opcode::SubF64));
                 }
@@ -367,6 +417,10 @@ impl FnLowerer<'_> {
                 self.expr(value);
                 let token = self.layout.field_tokens[*class as usize][*field_slot as usize];
                 self.emit(Instruction::new(Opcode::StoreField, Operand::Token(token)));
+            }
+            ExprKind::Convert { value } => {
+                self.expr(value);
+                self.emit_conv_to(e.ty);
             }
             ExprKind::Error => unreachable!("ilgen runs only on error-free programs"),
         }
