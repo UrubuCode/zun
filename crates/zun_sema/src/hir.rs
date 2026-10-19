@@ -14,8 +14,12 @@ pub type ClassIndex = u32;
 /// A checked type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ty {
-    /// `number` — IEEE-754 f64, as in JS.
+    /// `number` / `float` — IEEE-754 f64 (JS numbers are this).
     Number,
+    /// `int` — a 32-bit signed integer. The first member of the planned
+    /// fixed-width integer lattice (PLAN.md §4.2); wider/unsigned widths slot in
+    /// here later.
+    Int,
     /// `string`.
     String,
     /// `boolean`.

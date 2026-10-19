@@ -122,7 +122,8 @@ impl Checker<'_> {
     fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
         let text = self.text(&annotation.name).to_string();
         match text.as_str() {
-            "number" => Ty::Number,
+            "number" | "float" => Ty::Number,
+            "int" => Ty::Int,
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
             "void" => Ty::Void,
@@ -376,8 +377,13 @@ impl Checker<'_> {
     fn check_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
         match stmt {
             ast::Stmt::Let { name, ty, init, .. } => {
-                let init = self.check_expr(cx, init);
+                let mut init = self.check_expr(cx, init);
                 let declared = ty.as_ref().map(|t| self.resolve_annotation(t));
+                // `let x: int = 1` — retype an integral number literal to the
+                // declared numeric type.
+                if let Some(d) = declared {
+                    coerce_numeric_literal(&mut init, d);
+                }
                 let var_ty = match declared {
                     Some(declared) => {
                         if !declared.is_error()
@@ -425,7 +431,11 @@ impl Checker<'_> {
                 hir::Stmt::While { cond, body }
             }
             ast::Stmt::Return { value, span } => {
-                let value = value.as_ref().map(|v| self.check_expr(cx, v));
+                let value = value.as_ref().map(|v| {
+                    let mut e = self.check_expr(cx, v);
+                    coerce_numeric_literal(&mut e, cx.return_ty);
+                    e
+                });
                 match (&value, cx.return_ty) {
                     (None, Ty::Void) => {}
                     (None, expected) if !expected.is_error() => {
@@ -497,11 +507,12 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Assign { target, value, .. } => {
-                let value = self.check_expr(cx, value);
+                let mut value = self.check_expr(cx, value);
                 let text = self.text(target).to_string();
                 match cx.lookup(&text) {
                     Some(slot) => {
                         let slot_ty = cx.locals[slot as usize];
+                        coerce_numeric_literal(&mut value, slot_ty);
                         if !slot_ty.is_error()
                             && !value.ty.is_error()
                             && !self.is_assignable(value.ty, slot_ty)
@@ -527,8 +538,11 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Binary { op, lhs, rhs, .. } => {
-                let lhs = self.check_expr(cx, lhs);
-                let rhs = self.check_expr(cx, rhs);
+                let mut lhs = self.check_expr(cx, lhs);
+                let mut rhs = self.check_expr(cx, rhs);
+                // Let an integral number literal take on an Int sibling's type
+                // so `x + 1` type-checks when `x: int` (and vice versa).
+                unify_numeric_literal(&mut lhs, &mut rhs);
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
                 hir::Expr {
                     kind: hir::ExprKind::Binary {
@@ -543,6 +557,8 @@ impl Checker<'_> {
             ast::Expr::Unary { op, operand, .. } => {
                 let operand = self.check_expr(cx, operand);
                 let ty = match op {
+                    // Negation works on both numeric types; `!` needs a boolean.
+                    ast::UnaryOp::Neg if operand.ty == Ty::Int => Ty::Int,
                     ast::UnaryOp::Neg => self.expect_ty(&operand, Ty::Number),
                     ast::UnaryOp::Not => self.expect_ty(&operand, Ty::Boolean),
                 };
@@ -557,7 +573,7 @@ impl Checker<'_> {
             }
             ast::Expr::Call { callee, args, .. } => {
                 let name = self.text(callee).to_string();
-                let args: Vec<hir::Expr> =
+                let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
 
                 // Builtins first: `print` accepts exactly one argument of any
@@ -594,7 +610,8 @@ impl Checker<'_> {
                         ),
                     );
                 } else {
-                    for (arg, &expected) in args.iter().zip(&param_tys) {
+                    for (arg, &expected) in args.iter_mut().zip(&param_tys) {
+                        coerce_numeric_literal(arg, expected);
                         if !expected.is_error()
                             && !arg.ty.is_error()
                             && !self.is_assignable(arg.ty, expected)
@@ -651,7 +668,8 @@ impl Checker<'_> {
                         ),
                     );
                 } else {
-                    for (arg, &expected) in call_args.iter().zip(&param_tys).skip(1) {
+                    for (arg, &expected) in call_args.iter_mut().zip(&param_tys).skip(1) {
+                        coerce_numeric_literal(arg, expected);
                         if !expected.is_error()
                             && !arg.ty.is_error()
                             && !self.is_assignable(arg.ty, expected)
@@ -683,7 +701,7 @@ impl Checker<'_> {
                     .into_iter()
                     .map(|(_, ty)| ty)
                     .collect();
-                let args: Vec<hir::Expr> =
+                let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
                 if args.len() != field_tys.len() {
                     self.error(
@@ -695,7 +713,8 @@ impl Checker<'_> {
                         ),
                     );
                 } else {
-                    for (arg, &expected) in args.iter().zip(&field_tys) {
+                    for (arg, &expected) in args.iter_mut().zip(&field_tys) {
+                        coerce_numeric_literal(arg, expected);
                         if !expected.is_error()
                             && !arg.ty.is_error()
                             && !self.is_assignable(arg.ty, expected)
@@ -749,11 +768,12 @@ impl Checker<'_> {
                 ..
             } => {
                 let object = self.check_expr(cx, object);
-                let value = self.check_expr(cx, value);
+                let mut value = self.check_expr(cx, value);
                 let fname = self.text(field).to_string();
                 match object.ty {
                     Ty::Instance(class) => match self.field_of(class, &fname) {
                         Some((slot, ty)) => {
+                            coerce_numeric_literal(&mut value, ty);
                             if !ty.is_error()
                                 && !value.ty.is_error()
                                 && !self.is_assignable(value.ty, ty)
@@ -801,11 +821,16 @@ impl Checker<'_> {
         if lhs.ty.is_error() || rhs.ty.is_error() {
             return Ty::Error;
         }
+        // Both numeric operands must be the same numeric type (no implicit
+        // int/float mixing; conversions are explicit — PLAN.md §4.2).
+        let same_numeric = |a: Ty, b: Ty| {
+            (a == Ty::Number && b == Ty::Number) || (a == Ty::Int && b == Ty::Int)
+        };
         match op {
             Add => {
                 // `+` is numeric addition or string concatenation.
-                if lhs.ty == Ty::Number && rhs.ty == Ty::Number {
-                    Ty::Number
+                if same_numeric(lhs.ty, rhs.ty) {
+                    lhs.ty
                 } else if lhs.ty == Ty::String && rhs.ty == Ty::String {
                     Ty::String
                 } else {
@@ -817,23 +842,23 @@ impl Checker<'_> {
                 }
             }
             Sub | Mul | Div | Rem => {
-                if lhs.ty == Ty::Number && rhs.ty == Ty::Number {
-                    Ty::Number
+                if same_numeric(lhs.ty, rhs.ty) {
+                    lhs.ty
                 } else {
                     self.error(
                         span,
-                        format!("arithmetic requires numbers, found {:?} and {:?}", lhs.ty, rhs.ty),
+                        format!("arithmetic requires matching numbers, found {:?} and {:?}", lhs.ty, rhs.ty),
                     );
                     Ty::Error
                 }
             }
             Lt | Le | Gt | Ge => {
-                if lhs.ty == Ty::Number && rhs.ty == Ty::Number {
+                if same_numeric(lhs.ty, rhs.ty) {
                     Ty::Boolean
                 } else {
                     self.error(
                         span,
-                        format!("comparison requires numbers, found {:?} and {:?}", lhs.ty, rhs.ty),
+                        format!("comparison requires matching numbers, found {:?} and {:?}", lhs.ty, rhs.ty),
                     );
                     Ty::Error
                 }
@@ -872,6 +897,31 @@ impl Checker<'_> {
             ty: Ty::Error,
             span,
         }
+    }
+}
+
+/// Whether `expr` is a number literal whose value is an exact `i32`.
+fn is_integral_number_literal(expr: &hir::Expr) -> bool {
+    matches!(expr.kind, hir::ExprKind::Number(v)
+        if expr.ty == Ty::Number && v.fract() == 0.0 && v >= i32::MIN as f64 && v <= i32::MAX as f64)
+}
+
+/// Retype an integral number literal to `expected` when `expected` is `Int`.
+/// Number literals default to `float`; this lets them adapt to an int context
+/// (`let x: int = 1`, `f(1)` where the parameter is `int`).
+fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
+    if expected == Ty::Int && is_integral_number_literal(expr) {
+        expr.ty = Ty::Int;
+    }
+}
+
+/// If one side of a binary op is `Int` and the other is an integral number
+/// literal, retype the literal to `Int` so `x + 1` checks with `x: int`.
+fn unify_numeric_literal(a: &mut hir::Expr, b: &mut hir::Expr) {
+    if a.ty == Ty::Int && is_integral_number_literal(b) {
+        b.ty = Ty::Int;
+    } else if b.ty == Ty::Int && is_integral_number_literal(a) {
+        a.ty = Ty::Int;
     }
 }
 
@@ -1104,6 +1154,45 @@ mod tests {
             "class Inner { n: number; }\n\
              class Outer { inner: Inner; }\n\
              function main() { let i = new Inner(5); let o = new Outer(i); print(o.inner.n); }",
+        );
+    }
+
+    #[test]
+    fn int_and_float_are_distinct() {
+        let hir = check_ok(
+            "function main() { let a: int = 1; let b: float = 1.0; let c = 2; }",
+        );
+        // a:int, b:float(Number), c defaults to Number.
+        assert_eq!(hir.functions[0].locals, vec![Ty::Int, Ty::Number, Ty::Number]);
+    }
+
+    #[test]
+    fn int_arithmetic_stays_int() {
+        let hir = check_ok(
+            "function f(): int { let x: int = 10; return x * 2 + 5; }",
+        );
+        assert_eq!(hir.functions[0].return_ty, Ty::Int);
+    }
+
+    #[test]
+    fn mixing_int_and_float_is_an_error() {
+        let msg = first_error(
+            "function f() { let x: int = 1; let y: float = 2.0; let z = x + y; }",
+        );
+        assert!(msg.contains("cannot add") || msg.contains("matching"), "{msg}");
+    }
+
+    #[test]
+    fn non_integral_literal_not_coerced_to_int() {
+        let msg = first_error("function f() { let x: int = 1.5; }");
+        assert!(msg.contains("does not match"), "{msg}");
+    }
+
+    #[test]
+    fn int_param_accepts_integer_literal() {
+        check_ok(
+            "function inc(n: int): int { return n + 1; }\n\
+             function main() { print(inc(41)); }",
         );
     }
 

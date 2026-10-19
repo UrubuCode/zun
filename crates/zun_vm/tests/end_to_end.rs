@@ -233,6 +233,46 @@ fn override_can_extend_via_shared_field() {
 }
 
 #[test]
+fn int_type_arithmetic() {
+    let out = run_source(
+        "function main() {\n\
+            let a: int = 10;\n\
+            let b: int = 3;\n\
+            print(a * b);\n\
+            print(a / b);\n\
+            print(a % b);\n\
+         }",
+    );
+    // Integer division truncates (10/3 = 3), unlike float.
+    assert_eq!(out, ["30", "3", "1"]);
+}
+
+#[test]
+fn int_and_float_division_differ() {
+    let out = run_source(
+        "function main() {\n\
+            let i: int = 7;\n\
+            let f: float = 7.0;\n\
+            print(i / 2);\n\
+            print(f / 2.0);\n\
+         }",
+    );
+    assert_eq!(out, ["3", "3.5"]);
+}
+
+#[test]
+fn int_through_function_and_recursion() {
+    let out = run_source(
+        "function sumTo(n: int): int {\n\
+            if (n == 0) { return 0; }\n\
+            return n + sumTo(n - 1);\n\
+         }\n\
+         function main() { print(sumTo(5)); }",
+    );
+    assert_eq!(out, ["15"]);
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

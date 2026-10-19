@@ -22,8 +22,10 @@ pub struct Object {
 /// A runtime value.
 #[derive(Debug, Clone)]
 pub enum Value {
-    /// A number (IEEE-754 double).
+    /// A number (IEEE-754 double) — the `number`/`float` type.
     Number(f64),
+    /// A 32-bit signed integer — the `int` type.
+    Int(i32),
     /// A boolean.
     Bool(bool),
     /// An immutable string. `Rc` keeps cloning a value cheap.
@@ -42,6 +44,14 @@ impl Value {
         match self {
             Value::Number(n) => *n,
             other => panic!("expected number, found {other:?}"),
+        }
+    }
+
+    /// Interpret the value as an `int`, or panic (see [`Value::as_number`]).
+    pub fn as_int(&self) -> i32 {
+        match self {
+            Value::Int(n) => *n,
+            other => panic!("expected int, found {other:?}"),
         }
     }
 
@@ -65,6 +75,7 @@ impl Value {
     pub fn display(&self) -> String {
         match self {
             Value::Number(n) => format_number(*n),
+            Value::Int(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => s.to_string(),
             Value::Object(_) => "[object]".to_string(),

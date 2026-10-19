@@ -63,6 +63,15 @@ pub fn lower(program: &hir::Program) -> Module {
     module
 }
 
+/// Choose between the integer and float opcode for a numeric operation.
+fn int_or_float(is_int: bool, int_op: Opcode, float_op: Opcode) -> Opcode {
+    if is_int {
+        int_op
+    } else {
+        float_op
+    }
+}
+
 /// Total number of methods across all classes.
 fn total_methods(program: &hir::Program) -> usize {
     program.classes.iter().map(|c| c.methods.len()).sum()
@@ -241,7 +250,11 @@ impl FnLowerer<'_> {
     fn expr(&mut self, e: &hir::Expr) {
         match &e.kind {
             ExprKind::Number(v) => {
-                self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(*v)));
+                if e.ty == Ty::Int {
+                    self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(*v as i32)));
+                } else {
+                    self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(*v)));
+                }
             }
             ExprKind::String(s) => {
                 let idx = self.module.strings.intern(s);
@@ -260,14 +273,18 @@ impl FnLowerer<'_> {
             ExprKind::Binary { op, lhs, rhs } => {
                 self.expr(lhs);
                 self.expr(rhs);
+                // Pick the opcode family from the operand type: int operands use
+                // the i32 ops, floats the f64 ops, strings concatenate.
+                let is_int = lhs.ty == Ty::Int;
                 let opcode = match op {
-                    // Sema guarantees Add is number+number or string+string.
                     BinaryOp::Add if lhs.ty == Ty::String => Opcode::Concat,
-                    BinaryOp::Add => Opcode::AddF64,
-                    BinaryOp::Sub => Opcode::SubF64,
-                    BinaryOp::Mul => Opcode::MulF64,
-                    BinaryOp::Div => Opcode::DivF64,
-                    BinaryOp::Rem => Opcode::RemF64,
+                    BinaryOp::Add => int_or_float(is_int, Opcode::AddI32, Opcode::AddF64),
+                    BinaryOp::Sub => int_or_float(is_int, Opcode::SubI32, Opcode::SubF64),
+                    BinaryOp::Mul => int_or_float(is_int, Opcode::MulI32, Opcode::MulF64),
+                    BinaryOp::Div => int_or_float(is_int, Opcode::DivI32, Opcode::DivF64),
+                    BinaryOp::Rem => int_or_float(is_int, Opcode::RemI32, Opcode::RemF64),
+                    // Comparisons share one opcode set; the runtime compares by
+                    // the operands' actual kind.
                     BinaryOp::Eq => Opcode::CmpEq,
                     BinaryOp::Ne => Opcode::CmpNe,
                     BinaryOp::Lt => Opcode::CmpLt,
@@ -278,6 +295,10 @@ impl FnLowerer<'_> {
                 self.emit(Instruction::simple(opcode));
             }
             ExprKind::Unary { op, operand } => match op {
+                UnaryOp::Neg if operand.ty == Ty::Int => {
+                    self.expr(operand);
+                    self.emit(Instruction::simple(Opcode::NegI32));
+                }
                 UnaryOp::Neg => {
                     // 0 - x
                     self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)));

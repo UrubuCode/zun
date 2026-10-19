@@ -135,6 +135,18 @@ impl Interp<'_> {
                 Opcode::MulF64 => bin_num(&mut stack, |a, b| Value::Number(a * b))?,
                 Opcode::DivF64 => bin_num(&mut stack, |a, b| Value::Number(a / b))?,
                 Opcode::RemF64 => bin_num(&mut stack, |a, b| Value::Number(a % b))?,
+                // Integer arithmetic wraps (two's complement), matching the
+                // default overflow policy in PLAN.md §4.2.
+                Opcode::ConstI32 => stack.push(Value::Int(operand_i32(&instr.operand))),
+                Opcode::AddI32 => bin_int(&mut stack, |a, b| a.wrapping_add(b))?,
+                Opcode::SubI32 => bin_int(&mut stack, |a, b| a.wrapping_sub(b))?,
+                Opcode::MulI32 => bin_int(&mut stack, |a, b| a.wrapping_mul(b))?,
+                Opcode::DivI32 => bin_int(&mut stack, |a, b| a.wrapping_div(b))?,
+                Opcode::RemI32 => bin_int(&mut stack, |a, b| a.wrapping_rem(b))?,
+                Opcode::NegI32 => {
+                    let v = pop(&mut stack)?.as_int();
+                    stack.push(Value::Int(v.wrapping_neg()));
+                }
                 Opcode::Concat => {
                     let b = pop(&mut stack)?;
                     let a = pop(&mut stack)?;
@@ -142,10 +154,10 @@ impl Interp<'_> {
                 }
                 Opcode::CmpEq => cmp(&mut stack, true)?,
                 Opcode::CmpNe => cmp(&mut stack, false)?,
-                Opcode::CmpLt => cmp_num(&mut stack, |a, b| a < b)?,
-                Opcode::CmpLe => cmp_num(&mut stack, |a, b| a <= b)?,
-                Opcode::CmpGt => cmp_num(&mut stack, |a, b| a > b)?,
-                Opcode::CmpGe => cmp_num(&mut stack, |a, b| a >= b)?,
+                Opcode::CmpLt => cmp_num(&mut stack, |a, b| a < b, |a, b| a < b)?,
+                Opcode::CmpLe => cmp_num(&mut stack, |a, b| a <= b, |a, b| a <= b)?,
+                Opcode::CmpGt => cmp_num(&mut stack, |a, b| a > b, |a, b| a > b)?,
+                Opcode::CmpGe => cmp_num(&mut stack, |a, b| a >= b, |a, b| a >= b)?,
                 Opcode::Branch => {
                     pc = branch_target(next, &instr.operand);
                 }
@@ -232,16 +244,8 @@ impl Interp<'_> {
                     let result = self.call(target, args)?;
                     stack.push(result);
                 }
-                // Remaining opcodes are not reachable from phase-2 ilgen yet.
-                Opcode::ConstI32
-                | Opcode::ConstI64
-                | Opcode::ConstNull
-                | Opcode::AddI32
-                | Opcode::SubI32
-                | Opcode::MulI32
-                | Opcode::DivI32
-                | Opcode::RemI32
-                | Opcode::NegI32 => {
+                // Remaining opcodes are not produced by the front-end yet.
+                Opcode::ConstI64 | Opcode::ConstNull => {
                     return Err(RunError::Malformed(format!(
                         "opcode {:?} not supported by the phase-1 interpreter",
                         instr.opcode
@@ -342,10 +346,28 @@ fn bin_num(
     Ok(())
 }
 
-fn cmp_num(stack: &mut Vec<Value>, f: impl Fn(f64, f64) -> bool) -> Result<(), RunError> {
-    let b = pop(stack)?.as_number();
-    let a = pop(stack)?.as_number();
-    stack.push(Value::Bool(f(a, b)));
+fn bin_int(stack: &mut Vec<Value>, f: impl Fn(i32, i32) -> i32) -> Result<(), RunError> {
+    let b = pop(stack)?.as_int();
+    let a = pop(stack)?.as_int();
+    stack.push(Value::Int(f(a, b)));
+    Ok(())
+}
+
+/// Ordered comparison over either two ints or two floats (sema guarantees the
+/// operands share a numeric kind).
+fn cmp_num(
+    stack: &mut Vec<Value>,
+    fi: impl Fn(i32, i32) -> bool,
+    ff: impl Fn(f64, f64) -> bool,
+) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let result = match (&a, &b) {
+        (Value::Int(x), Value::Int(y)) => fi(*x, *y),
+        (Value::Number(x), Value::Number(y)) => ff(*x, *y),
+        _ => return Err(RunError::Malformed("comparison of mismatched numeric kinds".into())),
+    };
+    stack.push(Value::Bool(result));
     Ok(())
 }
 
@@ -356,6 +378,7 @@ fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
     let a = pop(stack)?;
     let equal = match (&a, &b) {
         (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         _ => false,
