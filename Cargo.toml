@@ -13,7 +13,7 @@ members = [
     "crates/zun_cli",
     "crates/zun_verify",
     "crates/zun_codegen",
-    "crates/zun_std",
+    "crates/zun_prelude",
     "crates/zun_gc",
     "crates/zun_intrinsics",
 ]

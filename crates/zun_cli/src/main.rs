@@ -93,7 +93,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
 /// like `abs`/`clamp`/`powi` are always in scope while user diagnostics keep
 /// their original line and column.
 fn compile(user_source: &str) -> Result<Module, Vec<Diagnostic>> {
-    let source = zun_std::with_prelude(user_source);
+    let source = zun_prelude::with_prelude(user_source);
     let source = source.as_str();
     let mut diags = Vec::new();
     let ast = zun_syntax::parse(source, &mut diags);

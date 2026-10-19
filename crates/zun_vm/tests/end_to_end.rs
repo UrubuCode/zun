@@ -5,7 +5,7 @@ use zun_interp::CaptureOutput;
 
 /// Compile `src` with the std prelude, run it, and return the output lines.
 fn run_with_std(user: &str) -> Vec<String> {
-    run_source(&zun_std::with_prelude(user))
+    run_source(&zun_prelude::with_prelude(user))
 }
 
 /// Compile `src` to a module, serialize it, and run the bytes, returning the

@@ -19,7 +19,7 @@ zun_intrinsics = { path = "../zun_intrinsics" }
 zun_ilgen = { path = "../zun_ilgen" }
 zun_sema = { path = "../zun_sema" }
 zun_syntax = { path = "../zun_syntax" }
-zun_std = { path = "../zun_std" }
+zun_prelude = { path = "../zun_prelude" }
 
 [lints]
 workspace = true

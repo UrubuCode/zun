@@ -1,10 +1,10 @@
 [package]
-name = "zun_std"
+name = "zun_prelude"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The Zun base standard library: a numeric prelude written in Zun."
+description = "The Zun prelude: numeric/math helpers in Zun, auto-included in every program."
 
 [lints]
 workspace = true

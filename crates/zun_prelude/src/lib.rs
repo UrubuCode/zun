@@ -1,10 +1,15 @@
-//! The Zun base standard library.
+//! The Zun prelude.
 //!
-//! For now the std is a numeric **prelude** written in Zun. Until a module
-//! system exists, [`with_prelude`] concatenates it *after* the user's source so
+//! A set of numeric/math helpers written in Zun that are auto-included in every
+//! program (the analogue of Rust's `std::prelude`). Until Zun-source module
+//! imports exist, [`with_prelude`] concatenates it *after* the user's source so
 //! user spans (which start at offset 0) stay correct for diagnostics, while the
 //! prelude's own functions sit at the end of the combined text. The prelude is
-//! pure numeric code, so its functions are JIT-eligible like any other.
+//! pure numeric code, so its functions are JIT-eligible like any other. When
+//! code-module imports land, this becomes the importable `zun:math` module.
+//!
+//! This is distinct from the **intrinsics** (`zun:fs`, `zun:io`, ...), which are
+//! runtime-implemented in Rust (see `zun_intrinsics`).
 
 /// The prelude source, compiled with every program.
 pub const PRELUDE: &str = include_str!("prelude.zun");

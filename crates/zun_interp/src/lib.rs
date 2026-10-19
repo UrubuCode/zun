@@ -6,6 +6,7 @@
 //! the `print` builtin writes through a pluggable [`Output`] sink so tests can
 //! capture it.
 
+mod intrinsics;
 pub mod value;
 
 use value::Value;
@@ -446,44 +447,10 @@ impl Interp<'_> {
     }
 
     fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {
-        use zun_intrinsics as ix;
         let id = id as u32;
-        // Pop the intrinsic's arguments in call order.
-        let args = pop_n(stack, ix::param_count(id))?;
-        let result = match id {
-            ix::PRINT | ix::IO_PRINTLN => {
-                self.output.println(&args[0].display());
-                Value::Void
-            }
-            ix::FS_READ_TEXT => {
-                let text = std::fs::read_to_string(args[0].as_str())
-                    .map_err(|e| RunError::Native(format!("readText: {e}")))?;
-                Value::Str(text.into())
-            }
-            ix::FS_WRITE_TEXT => {
-                std::fs::write(args[0].as_str(), args[1].as_str())
-                    .map_err(|e| RunError::Native(format!("writeText: {e}")))?;
-                Value::Void
-            }
-            ix::FS_EXISTS => Value::Bool(std::path::Path::new(args[0].as_str()).exists()),
-            ix::FS_REMOVE => {
-                std::fs::remove_file(args[0].as_str())
-                    .map_err(|e| RunError::Native(format!("removeFile: {e}")))?;
-                Value::Void
-            }
-            ix::ENV_GET => {
-                let v = std::env::var(args[0].as_str()).unwrap_or_default();
-                Value::Str(v.into())
-            }
-            ix::TIME_NOW_MILLIS => {
-                let ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
-                Value::Int(ms, zun_il::NumKind::I64)
-            }
-            other => return Err(RunError::Malformed(format!("unknown intrinsic {other}"))),
-        };
+        // Pop the intrinsic's arguments in call order, then run its body.
+        let args = pop_n(stack, zun_intrinsics::param_count(id))?;
+        let result = intrinsics::dispatch(id, &args, self.output)?;
         stack.push(result);
         Ok(())
     }
