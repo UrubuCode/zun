@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/zun_common",
+    "crates/zun_metadata",
 ]
 
 [workspace.package]

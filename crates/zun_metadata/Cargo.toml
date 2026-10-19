@@ -1,0 +1,13 @@
+[package]
+name = "zun_metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Zun metadata: tokens, deduplicated heaps, and definition/reference tables."
+
+[dependencies]
+zun_common = { path = "../zun_common" }
+
+[lints]
+workspace = true
