@@ -65,8 +65,9 @@ pub fn verify_module(module: &Module) -> Result<(), ModuleVerifyError> {
 /// Resolve a call-family opcode's `(pops, pushes)` from module metadata.
 fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
     match opcode {
-        // A direct/virtual call pops the callee's parameters and pushes its
-        // single result value (void results still occupy one slot in phase 1).
+        // A direct or virtual call pops the (statically named) callee's
+        // parameters and pushes its single result value. For callvirt the
+        // static method's arity matches every override's, so it is exact.
         Opcode::Call | Opcode::CallVirt => {
             let token = match operand {
                 Operand::Token(t) => *t,

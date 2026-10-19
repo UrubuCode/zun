@@ -102,6 +102,11 @@ impl Parser<'_> {
     fn class(&mut self) -> Class {
         let start = self.bump().span; // `class`
         let name = self.name("a class name");
+        let base = if self.eat(TokenKind::KwExtends) {
+            Some(self.name("a base class name"))
+        } else {
+            None
+        };
         self.expect(TokenKind::LBrace, "`{`");
         let mut fields = Vec::new();
         let mut methods = Vec::new();
@@ -126,6 +131,7 @@ impl Parser<'_> {
         self.expect(TokenKind::RBrace, "`}`");
         Class {
             name,
+            base,
             fields,
             methods,
             span: start.to(close),
@@ -705,6 +711,15 @@ mod tests {
         assert_eq!(c.fields.len(), 1);
         assert_eq!(c.methods.len(), 2);
         assert_eq!(ident_text(src, &c.methods[0].name), "inc");
+    }
+
+    #[test]
+    fn parses_extends() {
+        let src = "class Dog extends Animal { bark(): number { return 1; } }";
+        let p = parse_ok(src);
+        let c = &p.classes[0];
+        assert!(c.base.is_some());
+        assert_eq!(ident_text(src, c.base.as_ref().unwrap()), "Animal");
     }
 
     #[test]

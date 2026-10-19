@@ -60,13 +60,18 @@ pub struct Program {
     pub main: Option<FuncIndex>,
 }
 
-/// A checked class: an ordered list of typed fields.
+/// A checked class: its base, full field layout, and methods.
 #[derive(Debug)]
 pub struct Class {
     /// The class name.
     pub name: String,
-    /// Fields in declaration order; the index is the object's field slot.
+    /// Base class index, if this class `extends` another.
+    pub base: Option<ClassIndex>,
+    /// The full field layout, inherited fields first then own, in slot order.
     pub fields: Vec<ClassField>,
+    /// Global function indices of this class's own methods, in declaration
+    /// order (their MethodDef RIDs are contiguous and in this order).
+    pub methods: Vec<FuncIndex>,
 }
 
 /// A checked class field.
@@ -183,6 +188,14 @@ pub enum ExprKind {
         /// Which builtin.
         builtin: Builtin,
         /// Arguments in order.
+        args: Vec<Expr>,
+    },
+    /// A virtual method call, dispatched on the receiver's runtime class.
+    MethodCall {
+        /// The statically resolved target (the method visible in the receiver's
+        /// static class); the runtime may dispatch to an override of it.
+        func: FuncIndex,
+        /// Arguments, with the receiver (`this`) first.
         args: Vec<Expr>,
     },
     /// Allocate a class instance, initializing fields positionally.

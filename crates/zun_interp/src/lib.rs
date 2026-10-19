@@ -210,9 +210,30 @@ impl Interp<'_> {
                     obj.as_object().fields.borrow_mut()[slot] = value.clone();
                     stack.push(value);
                 }
+                Opcode::CallVirt => {
+                    let token = operand_token(&instr.operand);
+                    if token.table() != Some(TableKind::MethodDef) {
+                        return Err(RunError::BadToken);
+                    }
+                    // The static method gives the call's name and arity.
+                    let static_method = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(token.rid() as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let name = self.module.strings.get(static_method.name).to_string();
+                    let static_body = read_body(&self.module.code, static_method.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    let args = pop_n(&mut stack, static_body.param_count as usize)?;
+                    // Dispatch on the receiver's runtime class.
+                    let type_rid = args[0].as_object().type_rid;
+                    let target = self.resolve_virtual(type_rid, &name)?;
+                    let result = self.call(target, args)?;
+                    stack.push(result);
+                }
                 // Remaining opcodes are not reachable from phase-2 ilgen yet.
-                Opcode::CallVirt
-                | Opcode::ConstI32
+                Opcode::ConstI32
                 | Opcode::ConstI64
                 | Opcode::ConstNull
                 | Opcode::AddI32
@@ -256,6 +277,30 @@ impl Interp<'_> {
             .find(|t| field_rid >= t.field_start && field_rid < t.field_end)
             .ok_or(RunError::BadToken)?;
         Ok((field_rid - owner.field_start) as usize)
+    }
+
+    /// Resolve a virtual call: find the most-derived method named `name`
+    /// starting at the runtime class `type_rid` and walking up to its bases.
+    /// Returns the target method's RID.
+    fn resolve_virtual(&self, mut type_rid: u32, name: &str) -> Result<u32, RunError> {
+        loop {
+            let ty = self
+                .module
+                .tables
+                .type_defs
+                .get(type_rid as usize - 1)
+                .ok_or(RunError::BadToken)?;
+            for rid in ty.method_start..ty.method_end {
+                let m = &self.module.tables.method_defs[rid as usize - 1];
+                if self.module.strings.get(m.name) == name {
+                    return Ok(rid);
+                }
+            }
+            if ty.base.is_null() {
+                return Err(RunError::BadToken);
+            }
+            type_rid = ty.base.rid();
+        }
     }
 
     fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {

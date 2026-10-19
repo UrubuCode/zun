@@ -63,13 +63,24 @@ pub fn lower(program: &hir::Program) -> Module {
     module
 }
 
+/// Total number of methods across all classes.
+fn total_methods(program: &hir::Program) -> usize {
+    program.classes.iter().map(|c| c.methods.len()).sum()
+}
+
 /// Emit TypeDef and FieldDef rows for every class and return their tokens.
 fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
     let mut type_tokens = Vec::with_capacity(program.classes.len());
     let mut field_tokens = Vec::with_capacity(program.classes.len());
 
-    for class in &program.classes {
+    // The number of top-level functions: method MethodDef RIDs follow them.
+    let top_level_fns = program.functions.len() - total_methods(program);
+
+    for (class_idx, class) in program.classes.iter().enumerate() {
         let name = module.strings.intern(&class.name);
+
+        // Field layout is the full inherited-first list; a FieldDef is emitted
+        // per full-layout slot so ldfld/stfld tokens address the right slot.
         let mut this_class_fields = Vec::with_capacity(class.fields.len());
         let field_start = module.tables.field_defs.len() as u32 + 1; // RIDs are 1-based
         for field in &class.fields {
@@ -81,15 +92,31 @@ fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
             this_class_fields.push(tok);
         }
         let field_end = module.tables.field_defs.len() as u32 + 1;
+
+        // This class's own methods are a contiguous MethodDef range. Their RIDs
+        // are func_index + 1, and func indices are top-level functions first,
+        // then methods in class order, so the range is derived from them.
+        let (method_start, method_end) = match (class.methods.first(), class.methods.last()) {
+            (Some(&first), Some(&last)) => (first + 1, last + 2),
+            _ => (0, 0),
+        };
+        let _ = top_level_fns;
+
+        let base = match class.base {
+            Some(b) => Token::new(TableKind::TypeDef, b + 1),
+            None => Token::null(TableKind::TypeDef),
+        };
+
         let tok = module.tables.add_type_def(TypeDef {
             name,
             namespace: zun_metadata::StringIndex(0),
-            base: Token::null(TableKind::TypeDef),
+            base,
             field_start,
             field_end,
-            method_start: 0,
-            method_end: 0,
+            method_start,
+            method_end,
         });
+        debug_assert_eq!(tok.rid(), class_idx as u32 + 1);
         type_tokens.push(tok);
         field_tokens.push(this_class_fields);
     }
@@ -279,6 +306,16 @@ impl FnLowerer<'_> {
                     Builtin::Print => 0,
                 };
                 self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id)));
+            }
+            ExprKind::MethodCall { func, args } => {
+                // args[0] is the receiver; push it and the rest, then dispatch
+                // virtually on the receiver's runtime class. The token names the
+                // statically resolved method (for its name and arity).
+                for a in args {
+                    self.expr(a);
+                }
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(Opcode::CallVirt, Operand::Token(token)));
             }
             ExprKind::New { class, args } => {
                 for a in args {

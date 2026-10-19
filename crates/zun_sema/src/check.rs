@@ -30,7 +30,7 @@ pub fn check(
     // function and method signatures so calls can be forward references, then
     // bodies. Methods are checked as functions with an implicit `this` param.
     checker.collect_classes(program);
-    let classes = checker.check_classes(program);
+    let mut classes = checker.check_classes(program);
     checker.collect_signatures(program);
 
     let mut functions: Vec<hir::Function> = Vec::new();
@@ -38,10 +38,12 @@ pub fn check(
     for (i, f) in program.functions.iter().enumerate() {
         functions.push(checker.check_function(i, f, None));
     }
-    // Methods follow, in (class, method) order.
+    // Methods follow, in (class, method) order; record each class's method
+    // func indices for the HIR (their MethodDef RIDs are contiguous in order).
     let mut next = program.functions.len();
     for (class_idx, class) in program.classes.iter().enumerate() {
         for m in &class.methods {
+            classes[class_idx].methods.push(next as u32);
             functions.push(checker.check_function(next, m, Some(class_idx as u32)));
             next += 1;
         }
@@ -62,9 +64,11 @@ struct Signature {
     return_ty: Ty,
 }
 
-/// A collected class layout: field name -> (slot, type).
+/// A collected class: its base and its own (not inherited) fields.
 struct ClassInfo {
-    fields: Vec<(String, Ty)>,
+    base: Option<u32>,
+    base_name: Option<String>,
+    own_fields: Vec<(String, Ty)>,
 }
 
 struct Checker<'a> {
@@ -132,7 +136,8 @@ impl Checker<'_> {
         }
     }
 
-    /// First pass over classes: register names so annotations can resolve them.
+    /// First pass over classes: register names (so annotations resolve) and
+    /// remember each base's name for later resolution.
     fn collect_classes(&mut self, program: &ast::Program) {
         for c in &program.classes {
             let name = self.text(&c.name).to_string();
@@ -140,41 +145,113 @@ impl Checker<'_> {
             if self.classes_by_name.insert(name, index).is_some() {
                 self.error(c.name.span, "duplicate class");
             }
-            // Reserve the slot; fields are resolved in check_classes once every
-            // class name is known.
-            self.classes.push(ClassInfo { fields: Vec::new() });
+            let base_name = c.base.as_ref().map(|b| self.text(b).to_string());
+            self.classes.push(ClassInfo {
+                base: None,
+                base_name,
+                own_fields: Vec::new(),
+            });
+        }
+        // Resolve base names to indices now that all classes are known.
+        for (i, c) in program.classes.iter().enumerate() {
+            if let Some(base_name) = self.classes[i].base_name.clone() {
+                match self.classes_by_name.get(&base_name) {
+                    Some(&b) if b != i as u32 => self.classes[i].base = Some(b),
+                    Some(_) => {
+                        if let Some(b) = &c.base {
+                            self.error(b.span, "a class cannot extend itself");
+                        }
+                    }
+                    None => {
+                        if let Some(b) = &c.base {
+                            self.error(b.span, format!("unknown base class `{base_name}`"));
+                        }
+                    }
+                }
+            }
         }
     }
 
-    /// Second pass: resolve each class's field types and build the HIR classes.
+    /// Second pass: resolve each class's own field types, then build the HIR
+    /// classes with the full (inherited-first) field layout.
     fn check_classes(&mut self, program: &ast::Program) -> Vec<hir::Class> {
-        let mut out = Vec::with_capacity(program.classes.len());
         for (index, c) in program.classes.iter().enumerate() {
-            let mut fields = Vec::new();
-            let mut infos = Vec::new();
+            let mut own = Vec::new();
             for f in &c.fields {
                 let fname = self.text(&f.name).to_string();
                 let ty = self.resolve_annotation(&f.ty);
-                infos.push((fname.clone(), ty));
-                fields.push(hir::ClassField { name: fname, ty });
+                own.push((fname, ty));
             }
-            self.classes[index].fields = infos;
+            self.classes[index].own_fields = own;
+        }
+
+        let mut out = Vec::with_capacity(program.classes.len());
+        for (index, c) in program.classes.iter().enumerate() {
+            let fields = self
+                .full_fields(index as u32)
+                .into_iter()
+                .map(|(name, ty)| hir::ClassField { name, ty })
+                .collect();
             out.push(hir::Class {
                 name: self.text(&c.name).to_string(),
+                base: self.classes[index].base,
                 fields,
+                methods: Vec::new(), // filled after signatures assign indices
             });
         }
         out
     }
 
-    /// Find a field's slot and type in a class layout.
+    /// The full field layout of a class: inherited fields first (base's full
+    /// layout), then the class's own fields, in slot order.
+    fn full_fields(&self, class: u32) -> Vec<(String, Ty)> {
+        let info = &self.classes[class as usize];
+        let mut fields = match info.base {
+            Some(b) => self.full_fields(b),
+            None => Vec::new(),
+        };
+        fields.extend(info.own_fields.iter().cloned());
+        fields
+    }
+
+    /// Find a field's slot and type, searching inherited fields too.
     fn field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
-        self.classes[class as usize]
-            .fields
-            .iter()
+        self.full_fields(class)
+            .into_iter()
             .enumerate()
             .find(|(_, (n, _))| n == name)
-            .map(|(slot, (_, ty))| (slot as u16, *ty))
+            .map(|(slot, (_, ty))| (slot as u16, ty))
+    }
+
+    /// Resolve a method name to its function index, searching base classes.
+    fn method_of(&self, class: u32, name: &str) -> Option<u32> {
+        if let Some(&f) = self.methods_by_class[class as usize].get(name) {
+            return Some(f);
+        }
+        match self.classes[class as usize].base {
+            Some(b) => self.method_of(b, name),
+            None => None,
+        }
+    }
+
+    /// Whether `sub` is `sup` or a (transitive) subclass of it.
+    fn is_subclass(&self, sub: u32, sup: u32) -> bool {
+        if sub == sup {
+            return true;
+        }
+        match self.classes[sub as usize].base {
+            Some(b) => self.is_subclass(b, sup),
+            None => false,
+        }
+    }
+
+    /// Whether a value of type `from` may be used where `to` is expected.
+    /// Instances are assignable to a base type; otherwise types must match.
+    fn is_assignable(&self, from: Ty, to: Ty) -> bool {
+        match (from, to) {
+            (Ty::Instance(d), Ty::Instance(b)) => self.is_subclass(d, b),
+            (a, b) => a == b,
+        }
     }
 
     fn collect_signatures(&mut self, program: &ast::Program) {
@@ -305,7 +382,7 @@ impl Checker<'_> {
                     Some(declared) => {
                         if !declared.is_error()
                             && !init.ty.is_error()
-                            && declared != init.ty
+                            && !self.is_assignable(init.ty, declared)
                         {
                             self.error(
                                 init.span,
@@ -355,7 +432,10 @@ impl Checker<'_> {
                         self.error(*span, format!("expected a {expected:?} return value"));
                     }
                     (Some(v), expected) => {
-                        if !expected.is_error() && !v.ty.is_error() && v.ty != expected {
+                        if !expected.is_error()
+                            && !v.ty.is_error()
+                            && !self.is_assignable(v.ty, expected)
+                        {
                             self.error(
                                 v.span,
                                 format!("return type {:?} does not match {expected:?}", v.ty),
@@ -422,7 +502,10 @@ impl Checker<'_> {
                 match cx.lookup(&text) {
                     Some(slot) => {
                         let slot_ty = cx.locals[slot as usize];
-                        if !slot_ty.is_error() && !value.ty.is_error() && slot_ty != value.ty {
+                        if !slot_ty.is_error()
+                            && !value.ty.is_error()
+                            && !self.is_assignable(value.ty, slot_ty)
+                        {
                             self.error(
                                 value.span,
                                 format!("cannot assign {:?} to {slot_ty:?}", value.ty),
@@ -512,7 +595,10 @@ impl Checker<'_> {
                     );
                 } else {
                     for (arg, &expected) in args.iter().zip(&param_tys) {
-                        if !expected.is_error() && !arg.ty.is_error() && arg.ty != expected {
+                        if !expected.is_error()
+                            && !arg.ty.is_error()
+                            && !self.is_assignable(arg.ty, expected)
+                        {
                             self.error(
                                 arg.span,
                                 format!("argument type {:?} does not match {expected:?}", arg.ty),
@@ -542,7 +628,7 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                 };
-                let Some(&func) = self.methods_by_class[class as usize].get(&mname) else {
+                let Some(func) = self.method_of(class, &mname) else {
                     self.error(method.span, format!("no method `{mname}` on this type"));
                     return self.poison(span);
                 };
@@ -566,7 +652,10 @@ impl Checker<'_> {
                     );
                 } else {
                     for (arg, &expected) in call_args.iter().zip(&param_tys).skip(1) {
-                        if !expected.is_error() && !arg.ty.is_error() && arg.ty != expected {
+                        if !expected.is_error()
+                            && !arg.ty.is_error()
+                            && !self.is_assignable(arg.ty, expected)
+                        {
                             self.error(
                                 arg.span,
                                 format!("argument type {:?} does not match {expected:?}", arg.ty),
@@ -575,7 +664,7 @@ impl Checker<'_> {
                     }
                 }
                 hir::Expr {
-                    kind: hir::ExprKind::Call {
+                    kind: hir::ExprKind::MethodCall {
                         func,
                         args: call_args,
                     },
@@ -589,10 +678,10 @@ impl Checker<'_> {
                     self.error(class.span, format!("unknown class `{name}`"));
                     return self.poison(span);
                 };
-                let field_tys: Vec<Ty> = self.classes[class_idx as usize]
-                    .fields
-                    .iter()
-                    .map(|(_, ty)| *ty)
+                let field_tys: Vec<Ty> = self
+                    .full_fields(class_idx)
+                    .into_iter()
+                    .map(|(_, ty)| ty)
                     .collect();
                 let args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
@@ -607,7 +696,10 @@ impl Checker<'_> {
                     );
                 } else {
                     for (arg, &expected) in args.iter().zip(&field_tys) {
-                        if !expected.is_error() && !arg.ty.is_error() && arg.ty != expected {
+                        if !expected.is_error()
+                            && !arg.ty.is_error()
+                            && !self.is_assignable(arg.ty, expected)
+                        {
                             self.error(
                                 arg.span,
                                 format!("field initializer type {:?} does not match {expected:?}", arg.ty),
@@ -662,7 +754,10 @@ impl Checker<'_> {
                 match object.ty {
                     Ty::Instance(class) => match self.field_of(class, &fname) {
                         Some((slot, ty)) => {
-                            if !ty.is_error() && !value.ty.is_error() && ty != value.ty {
+                            if !ty.is_error()
+                                && !value.ty.is_error()
+                                && !self.is_assignable(value.ty, ty)
+                            {
                                 self.error(
                                     value.span,
                                     format!("cannot assign {:?} to field of type {ty:?}", value.ty),
@@ -961,6 +1056,46 @@ mod tests {
              function main() { let c = new C(1); c.nope(); }",
         );
         assert!(msg.contains("no method"), "{msg}");
+    }
+
+    #[test]
+    fn inherited_fields_and_methods_resolve() {
+        check_ok(
+            "class Animal { legs: number; describe(): number { return this.legs; } }\n\
+             class Dog extends Animal { tailLen: number; }\n\
+             function main() {\n\
+                let d = new Dog(4, 20);\n\
+                print(d.describe());\n\
+                print(d.tailLen);\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn subclass_is_assignable_to_base() {
+        check_ok(
+            "class Shape { sides: number; }\n\
+             class Square extends Shape { size: number; }\n\
+             function area(s: Shape): number { return s.sides; }\n\
+             function main() { let sq = new Square(4, 10); print(area(sq)); }",
+        );
+    }
+
+    #[test]
+    fn base_is_not_assignable_to_subclass() {
+        let msg = first_error(
+            "class Shape { sides: number; }\n\
+             class Square extends Shape { size: number; }\n\
+             function f(sq: Square) {}\n\
+             function main() { let s = new Shape(4); f(s); }",
+        );
+        assert!(msg.contains("does not match"), "{msg}");
+    }
+
+    #[test]
+    fn unknown_base_class_diagnoses() {
+        let msg = first_error("class Dog extends Missing { n: number; }");
+        assert!(msg.contains("unknown base class"), "{msg}");
     }
 
     #[test]

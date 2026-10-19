@@ -23,6 +23,8 @@ pub struct Program {
 pub struct Class {
     /// The class name.
     pub name: Name,
+    /// Base class name, if the class `extends` another.
+    pub base: Option<Name>,
     /// Declared fields in source order; `new` initializes them positionally.
     pub fields: Vec<ClassField>,
     /// Declared methods in source order.

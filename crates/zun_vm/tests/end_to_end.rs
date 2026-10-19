@@ -176,6 +176,63 @@ fn method_calling_another_method() {
 }
 
 #[test]
+fn inherited_field_and_method() {
+    let out = run_source(
+        "class Animal { legs: number; legCount(): number { return this.legs; } }\n\
+         class Dog extends Animal { goodBoy: number; }\n\
+         function main() { let d = new Dog(4, 1); print(d.legCount()); print(d.goodBoy); }",
+    );
+    assert_eq!(out, ["4", "1"]);
+}
+
+#[test]
+fn virtual_dispatch_calls_the_override() {
+    // speak() is overridden in Dog; calling through a method that only knows
+    // the base type must still reach Dog's version at runtime.
+    let out = run_source(
+        "class Animal {\n\
+            id: number;\n\
+            speak(): number { return 0; }\n\
+         }\n\
+         class Dog extends Animal {\n\
+            speak(): number { return 1; }\n\
+         }\n\
+         class Cat extends Animal {\n\
+            speak(): number { return 2; }\n\
+         }\n\
+         function hear(a: Animal): number { return a.speak(); }\n\
+         function main() {\n\
+            print(hear(new Animal(0)));\n\
+            print(hear(new Dog(1)));\n\
+            print(hear(new Cat(2)));\n\
+         }",
+    );
+    assert_eq!(out, ["0", "1", "2"]);
+}
+
+#[test]
+fn override_can_extend_via_shared_field() {
+    // A base method reads a field; a subclass overrides another method. Field
+    // layout is inherited-first, so the base field slot is stable.
+    let out = run_source(
+        "class Shape {\n\
+            kind: number;\n\
+            area(): number { return 0; }\n\
+         }\n\
+         class Square extends Shape {\n\
+            side: number;\n\
+            area(): number { return this.side * this.side; }\n\
+         }\n\
+         function main() {\n\
+            let s = new Square(1, 5);\n\
+            print(s.area());\n\
+            print(s.kind);\n\
+         }",
+    );
+    assert_eq!(out, ["25", "1"]);
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\
