@@ -8,10 +8,15 @@
 //! - **heaps** ([`heap`]): content-addressed pools of strings and blobs that
 //!   rows reference by offset.
 //!
-//! Definition and reference tables build on these and land in a later step.
+//! - **tables** ([`tables`]): typed definition and reference rows that address
+//!   heaps by index and each other by token.
 
 pub mod heap;
+pub mod tables;
 pub mod token;
 
 pub use heap::{BlobHeap, BlobIndex, StringHeap, StringIndex};
+pub use tables::{
+    FieldDef, MemberRef, MethodDef, ModuleRef, Tables, TypeDef, TypeRef,
+};
 pub use token::{TableKind, Token};
