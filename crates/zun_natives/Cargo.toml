@@ -1,0 +1,10 @@
+[package]
+name = "zun_natives"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native (runtime-implemented) modules: zun:fs, zun:io, zun:env, zun:time. Each module is self-contained (signature + logic), using neutral value types so it depends on no other Zun crate."
+
+[lints]
+workspace = true

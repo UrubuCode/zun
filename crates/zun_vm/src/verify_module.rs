@@ -97,7 +97,7 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
                 Operand::Imm32(v) => *v as u32,
                 _ => return None,
             };
-            Some((zun_intrinsics::param_count(id) as u8, 1))
+            Some((zun_natives::param_count(id) as u8, 1))
         }
         _ => None,
     }

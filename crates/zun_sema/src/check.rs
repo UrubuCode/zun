@@ -82,8 +82,8 @@ struct Checker<'a> {
     classes_by_name: HashMap<String, u32>,
     /// Per class index: method name -> global func index.
     methods_by_class: Vec<HashMap<String, u32>>,
-    /// Imported intrinsic name -> its signature and dispatch id.
-    imports: HashMap<String, zun_intrinsics::Intrinsic>,
+    /// Imported intrinsic name -> (dispatch id, its native signature).
+    imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -153,15 +153,16 @@ impl Checker<'_> {
     /// binding each imported name to its signature and dispatch id.
     fn resolve_imports(&mut self, program: &ast::Program) {
         for import in &program.imports {
-            let Some(module) = zun_intrinsics::module(&import.module) else {
+            let Some(module) = zun_natives::module(&import.module) else {
                 self.error(import.span, format!("unknown module `{}`", import.module));
                 continue;
             };
+            let _ = module;
             for name in &import.names {
                 let text = self.text(name).to_string();
-                match module.function(&text) {
-                    Some(f) => {
-                        self.imports.insert(text, *f);
+                match zun_natives::resolve(&import.module, &text) {
+                    Some((id, f)) => {
+                        self.imports.insert(text, (id, f));
                     }
                     None => self.error(
                         name.span,
@@ -635,7 +636,7 @@ impl Checker<'_> {
                     }
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
-                            id: zun_intrinsics::PRINT,
+                            id: zun_natives::PRINT,
                             args,
                         },
                         ty: Ty::Void,
@@ -644,7 +645,7 @@ impl Checker<'_> {
                 }
 
                 // An imported intrinsic: check against its native signature.
-                if let Some(intrinsic) = self.imports.get(&name).copied() {
+                if let Some((intrinsic_id, intrinsic)) = self.imports.get(&name).copied() {
                     let param_tys: Vec<Ty> =
                         intrinsic.params.iter().map(|&t| native_ty(t)).collect();
                     if args.len() != param_tys.len() {
@@ -671,7 +672,7 @@ impl Checker<'_> {
                         }
                     }
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id: intrinsic.id, args },
+                        kind: hir::ExprKind::CallBuiltin { id: intrinsic_id, args },
                         ty: native_ty(intrinsic.ret),
                         span,
                     };
@@ -1007,8 +1008,8 @@ impl Checker<'_> {
 }
 
 /// Map an intrinsic signature type to the checker's `Ty`.
-fn native_ty(t: zun_intrinsics::NativeTy) -> Ty {
-    use zun_intrinsics::NativeTy;
+fn native_ty(t: zun_natives::NativeTy) -> Ty {
+    use zun_natives::NativeTy;
     match t {
         NativeTy::Int => Ty::INT,
         NativeTy::I64 => Ty::Int(IntKind::I64),

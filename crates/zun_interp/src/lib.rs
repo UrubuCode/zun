@@ -6,7 +6,6 @@
 //! the `print` builtin writes through a pluggable [`Output`] sink so tests can
 //! capture it.
 
-mod intrinsics;
 pub mod value;
 
 use value::Value;
@@ -15,11 +14,9 @@ use zun_metadata::TableKind;
 use zun_module::{read_body, Module};
 use std::rc::Rc;
 
-/// Sink for program output (the `print` builtin).
-pub trait Output {
-    /// Write one already-formatted line (without the trailing newline).
-    fn println(&mut self, line: &str);
-}
+/// Sink for program output: the native modules' [`Sink`](zun_natives::Sink),
+/// re-exported so callers keep using `Output`.
+pub use zun_natives::Sink as Output;
 
 /// An [`Output`] that collects lines in a vector, for tests.
 #[derive(Debug, Default)]
@@ -448,11 +445,45 @@ impl Interp<'_> {
 
     fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {
         let id = id as u32;
-        // Pop the intrinsic's arguments in call order, then run its body.
-        let args = pop_n(stack, zun_intrinsics::param_count(id))?;
-        let result = intrinsics::dispatch(id, &args, self.output)?;
-        stack.push(result);
+        // Pop the arguments, convert them to neutral native values, run the
+        // native body (in zun_natives), then convert the result back.
+        let args = pop_n(stack, zun_natives::param_count(id))?;
+        let native_args: Vec<zun_natives::NativeArg> = args.iter().map(to_native_arg).collect();
+        let result = zun_natives::dispatch(id, &native_args, self.output)
+            .map_err(|e| RunError::Native(e.0))?;
+        stack.push(from_native_value(result, id));
         Ok(())
+    }
+}
+
+/// Borrow a `Value` as a neutral [`NativeArg`](zun_natives::NativeArg).
+fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
+    match v {
+        Value::Int(n, _) => zun_natives::NativeArg::Int(*n),
+        Value::Float(n, _) => zun_natives::NativeArg::Float(*n),
+        Value::Bool(b) => zun_natives::NativeArg::Bool(*b),
+        Value::Str(s) => zun_natives::NativeArg::Str(s),
+        Value::Object(_) => zun_natives::NativeArg::Opaque,
+        Value::Void => zun_natives::NativeArg::Void,
+    }
+}
+
+/// Convert a native result back to a `Value`, using the function's declared
+/// return type (via `id`) to pick the integer width.
+fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
+    use zun_natives::{NativeTy, NativeValue};
+    match v {
+        NativeValue::Void => Value::Void,
+        NativeValue::Bool(b) => Value::Bool(b),
+        NativeValue::Str(s) => Value::Str(s.into()),
+        NativeValue::Float(n) => Value::Float(n, zun_il::NumKind::F64),
+        NativeValue::Int(n) => {
+            let kind = match zun_natives::by_id(id).map(|f| f.ret) {
+                Some(NativeTy::I64) => zun_il::NumKind::I64,
+                _ => zun_il::NumKind::I32,
+            };
+            Value::Int(n, kind)
+        }
     }
 }
 
