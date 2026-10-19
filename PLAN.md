@@ -148,6 +148,16 @@ State machines async, Promise/event loop, `Any`/`DynamicObject` para JS não tip
 **Fase 5 — Hosting e distribuição**
 `zun_napi` (Node embedding), módulos pré-compilados/cache R2R-like, OSR, trimming/alcançabilidade.
 
+## 4.1 Modos de distribuição (decisão: suportar os três)
+
+O usuário final nunca instala um runtime. Os três modos são empacotamentos do mesmo pipeline — o codegen atrás do trait estilo `ICorJitInfo` serve JIT (`cranelift-jit`) e AOT (`cranelift-object`) sem saber a diferença:
+
+1. **Self-contained JIT (default do `zun build`)** — executável único: apphost nativo + VM linkada estaticamente + `.zm` embutido como seção de dados. Duplo clique e roda; JIT em runtime. Equivale ao single-file self-contained do .NET.
+2. **Self-contained + R2R** — modo 1 com código nativo pré-compilado embutido (via `ObjectModule`) e ZIL como fallback para o JIT. Startup quase instantâneo, mantém dinamicidade.
+3. **AOT puro (`zun build --aot`)** — Cranelift roda inteiro no build, linker do sistema gera o binário; runtime mínima embutida (GC, scheduler, exceções, estilo Go), mundo fechado com trimming e reflection reduzida (docs 08 e 02-compilation/07).
+
+Restrições de plataforma que tornam o modo 3 obrigatório: **iOS e consoles proíbem JIT** (sem páginas executáveis); Android aceita JIT mas AOT dá melhor startup. Desktop (Win/Linux/macOS) pode usar qualquer modo. Ordem de entrega: 1 → 2 → 3, conforme doc 02-compilation.
+
 ## 5. Riscos e pontos de atenção
 
 - **Semântica JS vs modelo estático**: o escopo do que `any`/JS dinâmico suporta precisa ser decidido cedo (não dá para ser 100% ECMAScript sem reconstruir um V8). Recomendação: definir Zun como "TS sound-por-padrão, com `Any` como opt-in custoso" e documentar divergências.
