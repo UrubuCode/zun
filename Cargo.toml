@@ -4,6 +4,7 @@ members = [
     "crates/zun_common",
     "crates/zun_metadata",
     "crates/zun_il",
+    "crates/zun_module",
 ]
 
 [workspace.package]

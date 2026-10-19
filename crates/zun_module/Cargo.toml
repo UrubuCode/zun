@@ -1,0 +1,16 @@
+[package]
+name = "zun_module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The .zm container format: header, code section, heaps, and metadata tables."
+
+[dependencies]
+zun_metadata = { path = "../zun_metadata" }
+
+[dev-dependencies]
+zun_il = { path = "../zun_il" }
+
+[lints]
+workspace = true

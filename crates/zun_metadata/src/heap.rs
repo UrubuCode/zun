@@ -70,6 +70,26 @@ impl StringHeap {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    /// Rebuild a heap from serialized bytes (the read side of [`as_bytes`]).
+    ///
+    /// The lookup map is rebuilt so that further interning still deduplicates
+    /// against the existing entries.
+    ///
+    /// [`as_bytes`]: StringHeap::as_bytes
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        assert!(!bytes.is_empty() && bytes[0] == 0, "string heap must start with the empty entry");
+        let mut lookup = HashMap::new();
+        let mut pos = 1usize;
+        while pos < bytes.len() {
+            let rest = &bytes[pos..];
+            let end = rest.iter().position(|&b| b == 0).expect("unterminated heap string");
+            let s = std::str::from_utf8(&rest[..end]).expect("string heap holds valid UTF-8");
+            lookup.insert(s.into(), StringIndex(pos as u32));
+            pos += end + 1;
+        }
+        Self { bytes, lookup }
+    }
 }
 
 /// A deduplicating pool of length-prefixed binary blobs.
@@ -122,6 +142,23 @@ impl BlobHeap {
     /// The raw heap bytes, ready to serialize.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Rebuild a heap from serialized bytes (the read side of [`as_bytes`]).
+    ///
+    /// [`as_bytes`]: BlobHeap::as_bytes
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        assert!(!bytes.is_empty() && bytes[0] == 0, "blob heap must start with the empty entry");
+        let mut lookup = HashMap::new();
+        let mut pos = 1usize;
+        while pos < bytes.len() {
+            let (len, header) = read_compressed_len(&bytes[pos..]);
+            let start = pos + header;
+            let end = start + len as usize;
+            lookup.insert(bytes[start..end].into(), BlobIndex(pos as u32));
+            pos = end;
+        }
+        Self { bytes, lookup }
     }
 }
 
@@ -199,6 +236,22 @@ mod tests {
         let data = vec![7u8; 5000];
         let idx = h.intern(&data);
         assert_eq!(h.get(idx), &data[..]);
+    }
+
+    #[test]
+    fn heaps_from_bytes_preserve_entries_and_dedup() {
+        let mut s = StringHeap::new();
+        let hello = s.intern("hello");
+        let mut b = BlobHeap::new();
+        let blob = b.intern(&[1, 2, 3]);
+
+        let mut s2 = StringHeap::from_bytes(s.as_bytes().to_vec());
+        let mut b2 = BlobHeap::from_bytes(b.as_bytes().to_vec());
+        assert_eq!(s2.get(hello), "hello");
+        assert_eq!(b2.get(blob), &[1, 2, 3]);
+        // Re-interning existing content must return the original index.
+        assert_eq!(s2.intern("hello"), hello);
+        assert_eq!(b2.intern(&[1, 2, 3]), blob);
     }
 
     #[test]
