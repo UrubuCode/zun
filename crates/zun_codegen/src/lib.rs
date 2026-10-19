@@ -12,9 +12,11 @@
 //! identical results — the contract the plan sets for Tier 0 vs Tier 1.
 
 mod eligible;
+mod shim;
 mod translate;
 
 pub use eligible::eligible_methods;
+pub use zun_il::{JitKind, NumKind};
 
 use std::collections::{HashMap, HashSet};
 
@@ -23,7 +25,6 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module as ClifModule};
-use zun_il::JitKind;
 use zun_module::{read_body, Module};
 
 use translate::clif_ty;
@@ -86,15 +87,16 @@ pub enum RetVal {
 }
 
 /// A compiled method's call shape.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Sig {
-    param_count: u16,
+    param_kinds: Vec<JitKind>,
     returns: Option<JitKind>,
 }
 
 pub struct Jit {
     module: JITModule,
     func_ids: HashMap<u32, FuncId>,
+    shim_ids: HashMap<u32, FuncId>,
     eligible: HashSet<u32>,
     sigs: HashMap<u32, Sig>,
 }
@@ -140,10 +142,14 @@ impl Jit {
                 .declare_function(&name, Linkage::Local, &sig)
                 .map_err(|e| JitError::Module(e.to_string()))?;
             func_ids.insert(rid, id);
+            let param_kinds = body.local_kinds[..body.param_count as usize]
+                .iter()
+                .map(|&b| JitKind::from_byte(b))
+                .collect();
             sigs.insert(
                 rid,
                 Sig {
-                    param_count: body.param_count,
+                    param_kinds,
                     returns: body.returns_value.then(|| JitKind::from_byte(body.return_kind)),
                 },
             );
@@ -181,6 +187,24 @@ impl Jit {
             module.clear_context(&mut ctx);
         }
 
+        // Define a uniform-ABI shim per method so the interpreter can call any
+        // of them through one function-pointer type.
+        let mut shim_ids = HashMap::new();
+        for &rid in &eligible {
+            let sig = &sigs[&rid];
+            let id = shim::define_shim(
+                &mut module,
+                &mut ctx,
+                &mut fb_ctx,
+                &format!("m{rid}_shim"),
+                func_ids[&rid],
+                &sig.param_kinds,
+                sig.returns,
+            )
+            .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;
+            shim_ids.insert(rid, id);
+        }
+
         module
             .finalize_definitions()
             .map_err(|e| JitError::Module(e.to_string()))?;
@@ -188,6 +212,7 @@ impl Jit {
         Ok(Self {
             module,
             func_ids,
+            shim_ids,
             eligible,
             sigs,
         })
@@ -198,6 +223,33 @@ impl Jit {
         self.eligible.contains(&method_rid)
     }
 
+    /// The parameter kinds of a compiled method (for marshalling arguments).
+    pub fn param_kinds(&self, method_rid: u32) -> Option<&[JitKind]> {
+        self.sigs.get(&method_rid).map(|s| s.param_kinds.as_slice())
+    }
+
+    /// The return kind of a compiled method, or `None` for void / unknown.
+    pub fn return_kind(&self, method_rid: u32) -> Option<JitKind> {
+        self.sigs.get(&method_rid).and_then(|s| s.returns)
+    }
+
+    /// Call a compiled method through its shim with arguments already packed
+    /// into `u64` slots (ints as their i64 bits, floats as float bits), and
+    /// return the packed result. zun_vm marshals `Value`s to and from this.
+    ///
+    /// # Safety contract
+    /// The module was verified before compilation, and `args` must match the
+    /// method's parameter count and kinds.
+    pub fn call_packed(&self, method_rid: u32, args: &[u64]) -> Result<u64, JitError> {
+        let id = *self
+            .shim_ids
+            .get(&method_rid)
+            .ok_or(JitError::Ineligible(method_rid))?;
+        let ptr = self.module.get_finalized_function(id);
+        let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
+        Ok(f(args.as_ptr()))
+    }
+
     /// Call a compiled zero-argument method (an entry point), returning its
     /// result tagged by kind.
     ///
@@ -206,14 +258,15 @@ impl Jit {
     /// compiled code. The compiled code is trusted because the module was
     /// verified before compilation.
     pub fn call_entry(&self, method_rid: u32) -> Result<RetVal, JitError> {
-        let sig = *self
+        let sig = self
             .sigs
             .get(&method_rid)
-            .ok_or(JitError::Ineligible(method_rid))?;
-        if sig.param_count != 0 {
+            .ok_or(JitError::Ineligible(method_rid))?
+            .clone();
+        if !sig.param_kinds.is_empty() {
             return Err(JitError::Arity {
                 expected: 0,
-                found: sig.param_count as usize,
+                found: sig.param_kinds.len(),
             });
         }
         let id = self.func_ids[&method_rid];

@@ -66,16 +66,35 @@ impl core::fmt::Display for RunError {
 
 impl std::error::Error for RunError {}
 
-/// Run a module's entry point with no arguments.
+/// A hook the interpreter consults before interpreting a call, so a faster
+/// backend (the JIT) can execute an eligible method instead. Returning `None`
+/// means "not handled — interpret it".
+pub trait CallHook {
+    /// Try to execute method `method_rid` with `args`.
+    fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value>;
+}
+
+/// Run a module's entry point with no arguments, on the interpreter alone.
 pub fn run(module: &Module, output: &mut dyn Output) -> Result<Value, RunError> {
+    run_with(module, output, None)
+}
+
+/// Run a module's entry point, consulting `hook` on each call (tiering: the JIT
+/// handles eligible methods, the interpreter the rest).
+pub fn run_with(
+    module: &Module,
+    output: &mut dyn Output,
+    hook: Option<&dyn CallHook>,
+) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
     let rid = entry.rid();
-    Interp { module, output }.call(rid, Vec::new())
+    Interp { module, output, hook }.call(rid, Vec::new())
 }
 
 struct Interp<'a> {
     module: &'a Module,
     output: &'a mut dyn Output,
+    hook: Option<&'a dyn CallHook>,
 }
 
 impl Interp<'_> {
@@ -208,7 +227,7 @@ impl Interp<'_> {
                     let callee_body = read_body(&self.module.code, callee.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, callee_body.param_count as usize)?;
-                    let result = self.call(callee_rid, args)?;
+                    let result = self.dispatch(callee_rid, args)?;
                     stack.push(result);
                 }
                 Opcode::CallBuiltin => {
@@ -257,7 +276,7 @@ impl Interp<'_> {
                     // Dispatch on the receiver's runtime class.
                     let type_rid = args[0].as_object().type_rid;
                     let target = self.resolve_virtual(type_rid, &name)?;
-                    let result = self.call(target, args)?;
+                    let result = self.dispatch(target, args)?;
                     stack.push(result);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
@@ -297,6 +316,17 @@ impl Interp<'_> {
             .find(|t| field_rid >= t.field_start && field_rid < t.field_end)
             .ok_or(RunError::BadToken)?;
         Ok((field_rid - owner.field_start) as usize)
+    }
+
+    /// Execute a call: route it to the JIT hook when it handles the method,
+    /// otherwise interpret it.
+    fn dispatch(&mut self, method_rid: u32, args: Vec<Value>) -> Result<Value, RunError> {
+        if let Some(hook) = self.hook {
+            if let Some(result) = hook.try_call(method_rid, &args) {
+                return Ok(result);
+            }
+        }
+        self.call(method_rid, args)
     }
 
     /// Resolve a virtual call: find the most-derived method named `name`
