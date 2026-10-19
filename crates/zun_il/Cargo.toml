@@ -1,0 +1,13 @@
+[package]
+name = "zun_il"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ZIL: the Zun stack-machine intermediate language and its master opcode table."
+
+[dependencies]
+zun_metadata = { path = "../zun_metadata" }
+
+[lints]
+workspace = true
