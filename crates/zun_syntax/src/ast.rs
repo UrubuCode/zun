@@ -14,6 +14,19 @@ pub struct Program {
     pub functions: Vec<Function>,
     /// Top-level class declarations, in source order.
     pub classes: Vec<Class>,
+    /// `import { ... } from "..."` declarations, in source order.
+    pub imports: Vec<Import>,
+}
+
+/// `import { a, b } from "module";`
+#[derive(Debug, PartialEq)]
+pub struct Import {
+    /// The imported names.
+    pub names: Vec<Name>,
+    /// The module string (decoded, e.g. `"zun:fs"`).
+    pub module: String,
+    /// Span of the whole declaration.
+    pub span: Span,
 }
 
 /// `class Name { field: type; method(...) {...} ... }`. Fields are initialized

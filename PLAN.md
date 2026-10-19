@@ -239,6 +239,32 @@ Estado: passos 1–4 feitos; o algoritmo do passo 5 está pronto e testado, e s�
 integração de raízes precisas (safepoints + stack maps) permanece — é o maior
 risco de memória e é feita isolada, com sua própria suíte.
 
+## 4.4 Biblioteca padrão, intrinsics e FFI (design)
+
+A stdlib do Zun tem dois tipos de módulo, mais um mecanismo externo futuro —
+separados de propósito, como Rust (`std` + FFI) e .NET (BCL + InternalCall vs
+P/Invoke):
+
+- **Módulos de código Zun** (ex.: `zun:std` — matemática): `.ts`/`.js`/`.zun`
+  puros, compilados como código de usuário. Para lógica que não toca o SO.
+- **Intrinsics** (ex.: `zun:fs`, `zun:io`, `zun:env`, `zun:time`): assinatura
+  declarada em Zun, corpo implementado **dentro do runtime** (em Rust). É o
+  análogo do **InternalCall/FCall** do .NET e dos intrinsics/`std::sys` do Rust.
+  Chamados por um dispatch indexado O(1) (`call.builtin <id>`); cada intrinsic
+  tem um id fixo que o compilador resolve a partir do `import`. No JIT viram
+  `extern "C"` diretos no futuro.
+- **FFI / P-Invoke** (futuro, **mecanismo separado**): carregar bibliotecas
+  nativas **externas** (`.dll`/`.so`/`.dylib`) em runtime, com marshalling de
+  tipos (doc 07-actions-operations/04). É o `[DllImport]`/`LibraryImport` do
+  .NET e o `extern "C"` sobre libs do Rust. NÃO é o mesmo que intrinsic: o
+  intrinsic é implementado por nós; a FFI chama código de terceiros.
+
+Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
+} from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
+vincula os nomes com suas assinaturas e baixa chamadas para `call.builtin <id>`.
+Módulos de usuário (caminhos relativos) e o sistema de módulos de código Zun
+ficam para uma fase posterior (precisam de compilação multi-arquivo).
+
 ## 5. Riscos e pontos de atenção
 
 - **Semântica JS vs modelo estático**: o escopo do que `any`/JS dinâmico suporta precisa ser decidido cedo (não dá para ser 100% ECMAScript sem reconstruir um V8). Recomendação: definir Zun como "TS sound-por-padrão, com `Any` como opt-in custoso" e documentar divergências.

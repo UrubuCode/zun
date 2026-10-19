@@ -44,6 +44,10 @@ pub enum TokenKind {
     KwExtends,
     /// `as`
     KwAs,
+    /// `import`
+    KwImport,
+    /// `from`
+    KwFrom,
 
     // Punctuation
     /// `(`
@@ -268,6 +272,8 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "new" => TokenKind::KwNew,
         "extends" => TokenKind::KwExtends,
         "as" => TokenKind::KwAs,
+        "import" => TokenKind::KwImport,
+        "from" => TokenKind::KwFrom,
         _ => TokenKind::Ident,
     }
 }

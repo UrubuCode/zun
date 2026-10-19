@@ -1,0 +1,10 @@
+[package]
+name = "zun_intrinsics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Registry of built-in intrinsic modules (zun:fs, zun:io, ...): signatures and builtin ids."
+
+[lints]
+workspace = true

@@ -79,24 +79,56 @@ impl Parser<'_> {
     fn program(&mut self) -> Program {
         let mut functions = Vec::new();
         let mut classes = Vec::new();
+        let mut imports = Vec::new();
         while !self.at(TokenKind::Eof) {
             match self.peek().kind {
+                TokenKind::KwImport => imports.push(self.import()),
                 TokenKind::KwFunction => functions.push(self.function()),
                 TokenKind::KwClass => classes.push(self.class()),
                 _ => {
                     let t = self.peek();
-                    self.error_at(t.span, "expected a function or class declaration");
+                    self.error_at(t.span, "expected a function, class, or import declaration");
                     // Synchronize to the next top-level declaration or EOF.
                     while !self.at(TokenKind::Eof)
                         && !self.at(TokenKind::KwFunction)
                         && !self.at(TokenKind::KwClass)
+                        && !self.at(TokenKind::KwImport)
                     {
                         self.bump();
                     }
                 }
             }
         }
-        Program { functions, classes }
+        Program {
+            functions,
+            classes,
+            imports,
+        }
+    }
+
+    fn import(&mut self) -> Import {
+        let start = self.bump().span; // `import`
+        self.expect(TokenKind::LBrace, "`{`");
+        let mut names = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            names.push(self.name("an imported name"));
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RBrace, "`}`");
+        self.expect(TokenKind::KwFrom, "`from`");
+        let module = match self.expect(TokenKind::String, "a module string") {
+            Some(t) => decode_string(self.text(t)),
+            None => String::new(),
+        };
+        let end = self.peek().span;
+        self.expect(TokenKind::Semi, "`;`");
+        Import {
+            names,
+            module,
+            span: start.to(end),
+        }
     }
 
     fn class(&mut self) -> Class {
@@ -719,6 +751,16 @@ mod tests {
             p.functions[0].body.statements[0],
             Stmt::Expr(Expr::FieldAssign { .. })
         ));
+    }
+
+    #[test]
+    fn parses_import() {
+        let src = "import { readText, writeText } from \"zun:fs\";\nfunction main() {}";
+        let p = parse_ok(src);
+        assert_eq!(p.imports.len(), 1);
+        assert_eq!(p.imports[0].module, "zun:fs");
+        assert_eq!(p.imports[0].names.len(), 2);
+        assert_eq!(p.functions.len(), 1);
     }
 
     #[test]

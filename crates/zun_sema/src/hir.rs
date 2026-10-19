@@ -98,13 +98,6 @@ pub type FuncIndex = u32;
 /// A local variable slot within one function (params occupy the first slots).
 pub type LocalSlot = u16;
 
-/// A built-in operation provided by the runtime rather than user code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Builtin {
-    /// `print(value)` — write a value and a newline to stdout.
-    Print,
-}
-
 /// A checked program.
 #[derive(Debug)]
 pub struct Program {
@@ -239,10 +232,10 @@ pub enum ExprKind {
         /// Arguments in order.
         args: Vec<Expr>,
     },
-    /// Call a runtime builtin.
+    /// Call a runtime intrinsic by its stable id (see `zun_intrinsics`).
     CallBuiltin {
-        /// Which builtin.
-        builtin: Builtin,
+        /// The intrinsic dispatch id.
+        id: u32,
         /// Arguments in order.
         args: Vec<Expr>,
     },

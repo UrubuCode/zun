@@ -10,4 +10,4 @@ pub mod check;
 pub mod hir;
 
 pub use check::check;
-pub use hir::{Builtin, Program, Ty};
+pub use hir::{Program, Ty};

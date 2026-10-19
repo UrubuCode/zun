@@ -15,6 +15,7 @@ members = [
     "crates/zun_codegen",
     "crates/zun_std",
     "crates/zun_gc",
+    "crates/zun_intrinsics",
 ]
 
 [workspace.dependencies]

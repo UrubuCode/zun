@@ -12,7 +12,7 @@ pub mod lexer;
 pub mod parser;
 
 pub use ast::{
-    BinaryOp, Block, Class, ClassField, Expr, Function, Name, Param, Program, Stmt, TypeAnnotation,
-    UnaryOp,
+    BinaryOp, Block, Class, ClassField, Expr, Function, Import, Name, Param, Program, Stmt,
+    TypeAnnotation, UnaryOp,
 };
 pub use parser::parse;

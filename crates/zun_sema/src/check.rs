@@ -6,7 +6,7 @@
 //! follow-on mismatch diagnostics instead of cascading.
 
 use crate::hir;
-use crate::hir::{Builtin, IntKind, Ty};
+use crate::hir::{IntKind, Ty};
 use std::collections::HashMap;
 use zun_common::{Diagnostic, Span};
 use zun_syntax::ast;
@@ -25,7 +25,9 @@ pub fn check(
         classes: Vec::new(),
         classes_by_name: HashMap::new(),
         methods_by_class: Vec::new(),
+        imports: HashMap::new(),
     };
+    checker.resolve_imports(program);
     // Classes first so field and signature annotations can name them, then
     // function and method signatures so calls can be forward references, then
     // bodies. Methods are checked as functions with an implicit `this` param.
@@ -80,6 +82,8 @@ struct Checker<'a> {
     classes_by_name: HashMap<String, u32>,
     /// Per class index: method name -> global func index.
     methods_by_class: Vec<HashMap<String, u32>>,
+    /// Imported intrinsic name -> its signature and dispatch id.
+    imports: HashMap<String, zun_intrinsics::Intrinsic>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -142,6 +146,29 @@ impl Checker<'_> {
                     Ty::Error
                 }
             },
+        }
+    }
+
+    /// Resolve `import { ... } from "zun:..."` declarations to intrinsics,
+    /// binding each imported name to its signature and dispatch id.
+    fn resolve_imports(&mut self, program: &ast::Program) {
+        for import in &program.imports {
+            let Some(module) = zun_intrinsics::module(&import.module) else {
+                self.error(import.span, format!("unknown module `{}`", import.module));
+                continue;
+            };
+            for name in &import.names {
+                let text = self.text(name).to_string();
+                match module.function(&text) {
+                    Some(f) => {
+                        self.imports.insert(text, *f);
+                    }
+                    None => self.error(
+                        name.span,
+                        format!("`{}` has no export named `{text}`", import.module),
+                    ),
+                }
+            }
         }
     }
 
@@ -600,18 +627,52 @@ impl Checker<'_> {
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
 
-                // Builtins first: `print` accepts exactly one argument of any
-                // primitive type and returns void.
+                // `print` is the one implicit intrinsic: one argument of any
+                // primitive type, returns void.
                 if name == "print" {
                     if args.len() != 1 {
                         self.error(span, "print takes exactly one argument");
                     }
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
-                            builtin: Builtin::Print,
+                            id: zun_intrinsics::PRINT,
                             args,
                         },
                         ty: Ty::Void,
+                        span,
+                    };
+                }
+
+                // An imported intrinsic: check against its native signature.
+                if let Some(intrinsic) = self.imports.get(&name).copied() {
+                    let param_tys: Vec<Ty> =
+                        intrinsic.params.iter().map(|&t| native_ty(t)).collect();
+                    if args.len() != param_tys.len() {
+                        self.error(
+                            span,
+                            format!(
+                                "`{name}` expects {} argument(s), found {}",
+                                param_tys.len(),
+                                args.len()
+                            ),
+                        );
+                    } else {
+                        for (arg, &expected) in args.iter_mut().zip(&param_tys) {
+                            coerce_numeric_literal(arg, expected);
+                            if !expected.is_error()
+                                && !arg.ty.is_error()
+                                && !self.is_assignable(arg.ty, expected)
+                            {
+                                self.error(
+                                    arg.span,
+                                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                                );
+                            }
+                        }
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id: intrinsic.id, args },
+                        ty: native_ty(intrinsic.ret),
                         span,
                     };
                 }
@@ -942,6 +1003,19 @@ impl Checker<'_> {
             ty: Ty::Error,
             span,
         }
+    }
+}
+
+/// Map an intrinsic signature type to the checker's `Ty`.
+fn native_ty(t: zun_intrinsics::NativeTy) -> Ty {
+    use zun_intrinsics::NativeTy;
+    match t {
+        NativeTy::Int => Ty::INT,
+        NativeTy::I64 => Ty::Int(IntKind::I64),
+        NativeTy::Float => Ty::F64,
+        NativeTy::Bool => Ty::Boolean,
+        NativeTy::Str => Ty::String,
+        NativeTy::Void => Ty::Void,
     }
 }
 

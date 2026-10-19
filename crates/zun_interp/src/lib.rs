@@ -52,6 +52,8 @@ pub enum RunError {
     BadToken,
     /// The bytecode stream was malformed (should not happen for verified code).
     Malformed(String),
+    /// A runtime intrinsic (e.g. a `zun:fs` operation) failed.
+    Native(String),
 }
 
 impl core::fmt::Display for RunError {
@@ -60,6 +62,7 @@ impl core::fmt::Display for RunError {
             RunError::NoEntryPoint => write!(f, "module has no entry point"),
             RunError::BadToken => write!(f, "call did not resolve to a method"),
             RunError::Malformed(m) => write!(f, "malformed bytecode: {m}"),
+            RunError::Native(m) => write!(f, "{m}"),
         }
     }
 }
@@ -443,16 +446,46 @@ impl Interp<'_> {
     }
 
     fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {
-        match id {
-            0 => {
-                // print(value): pop one argument, show it, push void.
-                let arg = pop(stack)?;
-                self.output.println(&arg.display());
-                stack.push(Value::Void);
-                Ok(())
+        use zun_intrinsics as ix;
+        let id = id as u32;
+        // Pop the intrinsic's arguments in call order.
+        let args = pop_n(stack, ix::param_count(id))?;
+        let result = match id {
+            ix::PRINT | ix::IO_PRINTLN => {
+                self.output.println(&args[0].display());
+                Value::Void
             }
-            other => Err(RunError::Malformed(format!("unknown builtin {other}"))),
-        }
+            ix::FS_READ_TEXT => {
+                let text = std::fs::read_to_string(args[0].as_str())
+                    .map_err(|e| RunError::Native(format!("readText: {e}")))?;
+                Value::Str(text.into())
+            }
+            ix::FS_WRITE_TEXT => {
+                std::fs::write(args[0].as_str(), args[1].as_str())
+                    .map_err(|e| RunError::Native(format!("writeText: {e}")))?;
+                Value::Void
+            }
+            ix::FS_EXISTS => Value::Bool(std::path::Path::new(args[0].as_str()).exists()),
+            ix::FS_REMOVE => {
+                std::fs::remove_file(args[0].as_str())
+                    .map_err(|e| RunError::Native(format!("removeFile: {e}")))?;
+                Value::Void
+            }
+            ix::ENV_GET => {
+                let v = std::env::var(args[0].as_str()).unwrap_or_default();
+                Value::Str(v.into())
+            }
+            ix::TIME_NOW_MILLIS => {
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                Value::Int(ms, zun_il::NumKind::I64)
+            }
+            other => return Err(RunError::Malformed(format!("unknown intrinsic {other}"))),
+        };
+        stack.push(result);
+        Ok(())
     }
 }
 

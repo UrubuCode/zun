@@ -11,6 +11,7 @@ zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
 zun_gc = { path = "../zun_gc" }
+zun_intrinsics = { path = "../zun_intrinsics" }
 
 [lints]
 workspace = true

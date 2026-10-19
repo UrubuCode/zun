@@ -9,6 +9,7 @@ description = "Name resolution and type checking: lowers the AST to a typed HIR.
 [dependencies]
 zun_common = { path = "../zun_common" }
 zun_syntax = { path = "../zun_syntax" }
+zun_intrinsics = { path = "../zun_intrinsics" }
 
 [lints]
 workspace = true

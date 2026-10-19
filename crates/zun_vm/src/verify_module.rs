@@ -90,8 +90,15 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
             let field_count = (ty.field_end - ty.field_start) as u8;
             Some((field_count, 1))
         }
-        // The phase-1 builtins all take one argument and push one result.
-        Opcode::CallBuiltin => Some((1, 1)),
+        // An intrinsic pops its parameters (by id) and pushes one result value
+        // (void intrinsics push a void value, discarded by the always-pop rule).
+        Opcode::CallBuiltin => {
+            let id = match operand {
+                Operand::Imm32(v) => *v as u32,
+                _ => return None,
+            };
+            Some((zun_intrinsics::param_count(id) as u8, 1))
+        }
         _ => None,
     }
 }

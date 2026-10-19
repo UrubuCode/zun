@@ -18,7 +18,7 @@
 use zun_il::{encode, Instruction, NumKind, Opcode, Operand};
 use zun_metadata::{BlobIndex, FieldDef, MethodDef, TableKind, Token, TypeDef};
 use zun_module::{write_body, Module};
-use zun_sema::hir::{self, BinaryOp, Builtin, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp};
+use zun_sema::hir::{self, BinaryOp, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp};
 
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
 /// is not numeric.
@@ -395,14 +395,11 @@ impl FnLowerer<'_> {
                 let token = Token::new(TableKind::MethodDef, *func + 1);
                 self.emit(Instruction::new(Opcode::Call, Operand::Token(token)));
             }
-            ExprKind::CallBuiltin { builtin, args } => {
+            ExprKind::CallBuiltin { id, args } => {
                 for a in args {
                     self.expr(a);
                 }
-                let id = match builtin {
-                    Builtin::Print => 0,
-                };
-                self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id)));
+                self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(*id as i32)));
             }
             ExprKind::MethodCall { func, args } => {
                 // args[0] is the receiver; push it and the rest, then dispatch
