@@ -1,0 +1,232 @@
+//! The abstract syntax tree.
+//!
+//! A deliberately small AST for the phase-1 TypeScript subset: top-level
+//! functions, `let`, `if`/`else`, `while`, `return`, calls, and arithmetic.
+//! Every node carries its [`Span`] so later passes can diagnose precisely.
+//! Names are kept as spans into the source (resolved to symbols by `zun_sema`).
+
+use zun_common::Span;
+
+/// A parsed source file.
+#[derive(Debug, PartialEq)]
+pub struct Program {
+    /// Top-level function declarations, in source order.
+    pub functions: Vec<Function>,
+}
+
+/// `function name(params): ret { body }`
+#[derive(Debug, PartialEq)]
+pub struct Function {
+    /// The function name.
+    pub name: Name,
+    /// Parameters in declaration order.
+    pub params: Vec<Param>,
+    /// Declared return type, if annotated.
+    pub return_type: Option<TypeAnnotation>,
+    /// The body block.
+    pub body: Block,
+    /// Span of the whole declaration.
+    pub span: Span,
+}
+
+/// A parameter: `name: type`.
+#[derive(Debug, PartialEq)]
+pub struct Param {
+    /// The parameter name.
+    pub name: Name,
+    /// Declared type, if annotated.
+    pub ty: Option<TypeAnnotation>,
+}
+
+/// A type annotation. Phase 1 only knows named types (`number`, `string`,
+/// `boolean`, `void`, user names).
+#[derive(Debug, PartialEq)]
+pub struct TypeAnnotation {
+    /// The type name.
+    pub name: Name,
+}
+
+/// An identifier occurrence: its text lives in the source at `span`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Name {
+    /// Where the identifier appears.
+    pub span: Span,
+}
+
+/// `{ statements }`
+#[derive(Debug, PartialEq)]
+pub struct Block {
+    /// Statements in order.
+    pub statements: Vec<Stmt>,
+    /// Span including the braces.
+    pub span: Span,
+}
+
+/// A statement.
+#[derive(Debug, PartialEq)]
+pub enum Stmt {
+    /// `let name: ty = init;`
+    Let {
+        /// The declared name.
+        name: Name,
+        /// Optional type annotation.
+        ty: Option<TypeAnnotation>,
+        /// The initializer (mandatory in phase 1).
+        init: Expr,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `expr;`
+    Expr(Expr),
+    /// `if (cond) { then } else { otherwise }`
+    If {
+        /// The condition.
+        cond: Expr,
+        /// Taken when the condition is truthy.
+        then_block: Block,
+        /// Taken otherwise, if present.
+        else_block: Option<Block>,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `while (cond) { body }`
+    While {
+        /// The loop condition.
+        cond: Expr,
+        /// The loop body.
+        body: Block,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `return expr;` / `return;`
+    Return {
+        /// The returned value, if any.
+        value: Option<Expr>,
+        /// Span of the whole statement.
+        span: Span,
+    },
+}
+
+/// A binary operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    /// `+`
+    Add,
+    /// `-`
+    Sub,
+    /// `*`
+    Mul,
+    /// `/`
+    Div,
+    /// `%`
+    Rem,
+    /// `==`
+    Eq,
+    /// `!=`
+    Ne,
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `>`
+    Gt,
+    /// `>=`
+    Ge,
+}
+
+/// A unary operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    /// `-`
+    Neg,
+    /// `!`
+    Not,
+}
+
+/// An expression.
+#[derive(Debug, PartialEq)]
+pub enum Expr {
+    /// A numeric literal.
+    Number {
+        /// The parsed value (JS numbers are f64).
+        value: f64,
+        /// Source location.
+        span: Span,
+    },
+    /// A string literal, with escapes already processed.
+    String {
+        /// The decoded contents.
+        value: String,
+        /// Source location including quotes.
+        span: Span,
+    },
+    /// `true` / `false`.
+    Bool {
+        /// The literal value.
+        value: bool,
+        /// Source location.
+        span: Span,
+    },
+    /// `null`.
+    Null {
+        /// Source location.
+        span: Span,
+    },
+    /// A variable reference.
+    Ident(Name),
+    /// `name = value`
+    Assign {
+        /// The assigned variable.
+        target: Name,
+        /// The new value.
+        value: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
+    /// `lhs op rhs`
+    Binary {
+        /// The operator.
+        op: BinaryOp,
+        /// Left operand.
+        lhs: Box<Expr>,
+        /// Right operand.
+        rhs: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
+    /// `op operand`
+    Unary {
+        /// The operator.
+        op: UnaryOp,
+        /// The operand.
+        operand: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
+    /// `callee(args)` — phase 1 callees are plain names.
+    Call {
+        /// The called function's name.
+        callee: Name,
+        /// Arguments in order.
+        args: Vec<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
+}
+
+impl Expr {
+    /// The source span of this expression.
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Number { span, .. }
+            | Expr::String { span, .. }
+            | Expr::Bool { span, .. }
+            | Expr::Null { span }
+            | Expr::Assign { span, .. }
+            | Expr::Binary { span, .. }
+            | Expr::Unary { span, .. }
+            | Expr::Call { span, .. } => *span,
+            Expr::Ident(name) => name.span,
+        }
+    }
+}

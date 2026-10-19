@@ -1,0 +1,13 @@
+[package]
+name = "zun_syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lexer, AST, and parser for the Zun TypeScript/JavaScript front-end."
+
+[dependencies]
+zun_common = { path = "../zun_common" }
+
+[lints]
+workspace = true
