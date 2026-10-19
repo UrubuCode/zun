@@ -476,13 +476,26 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
         NativeValue::Void => Value::Void,
         NativeValue::Bool(b) => Value::Bool(b),
         NativeValue::Str(s) => Value::Str(s.into()),
-        NativeValue::Float(n) => Value::Float(n, zun_il::NumKind::F64),
-        NativeValue::Int(n) => {
+        NativeValue::Float(n) => {
             let kind = match zun_natives::by_id(id).map(|f| f.ret) {
-                Some(NativeTy::I64) => zun_il::NumKind::I64,
-                _ => zun_il::NumKind::I32,
+                Some(NativeTy::F32) => zun_il::NumKind::F32,
+                _ => zun_il::NumKind::F64,
             };
-            Value::Int(n, kind)
+            Value::Float(value::round_float(n, kind), kind)
+        }
+        NativeValue::Int(n) => {
+            use zun_il::NumKind as K;
+            let kind = match zun_natives::by_id(id).map(|f| f.ret) {
+                Some(NativeTy::I8) => K::I8,
+                Some(NativeTy::I16) => K::I16,
+                Some(NativeTy::I64) => K::I64,
+                Some(NativeTy::U8) => K::U8,
+                Some(NativeTy::U16) => K::U16,
+                Some(NativeTy::U32) => K::U32,
+                Some(NativeTy::U64) => K::U64,
+                _ => K::I32,
+            };
+            Value::Int(value::wrap_int(n, kind), kind)
         }
     }
 }

@@ -1009,14 +1009,21 @@ impl Checker<'_> {
 
 /// Map an intrinsic signature type to the checker's `Ty`.
 fn native_ty(t: zun_natives::NativeTy) -> Ty {
-    use zun_natives::NativeTy;
+    use zun_natives::NativeTy as N;
     match t {
-        NativeTy::Int => Ty::INT,
-        NativeTy::I64 => Ty::Int(IntKind::I64),
-        NativeTy::Float => Ty::F64,
-        NativeTy::Bool => Ty::Boolean,
-        NativeTy::Str => Ty::String,
-        NativeTy::Void => Ty::Void,
+        N::I8 => Ty::Int(IntKind::I8),
+        N::I16 => Ty::Int(IntKind::I16),
+        N::I32 => Ty::Int(IntKind::I32),
+        N::I64 => Ty::Int(IntKind::I64),
+        N::U8 => Ty::Int(IntKind::U8),
+        N::U16 => Ty::Int(IntKind::U16),
+        N::U32 => Ty::Int(IntKind::U32),
+        N::U64 => Ty::Int(IntKind::U64),
+        N::F32 => Ty::F32,
+        N::F64 => Ty::F64,
+        N::Bool => Ty::Boolean,
+        N::Str => Ty::String,
+        N::Void => Ty::Void,
     }
 }
 

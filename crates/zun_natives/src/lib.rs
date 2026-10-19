@@ -19,16 +19,35 @@ mod fs;
 mod io;
 mod time;
 
-/// A parameter or return type in a native signature. The compiler maps these
-/// onto its own `Ty`.
+/// A parameter or return type in a native signature.
+///
+/// Native modules are machine-facing (not JS-flavored), so signatures use the
+/// exact fixed-width numeric types — `u8` for bytes, `u64` for sizes/counts,
+/// `i64` for timestamps — rather than the JS `number`/f64. The compiler maps
+/// each onto its own `Ty`; the full lattice matches `zun_sema`'s `Ty::Int`/
+/// `Ty::Float`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeTy {
-    /// `int` (i32).
-    Int,
-    /// `i64`.
+    /// Signed 8-bit.
+    I8,
+    /// Signed 16-bit.
+    I16,
+    /// Signed 32-bit (`int`).
+    I32,
+    /// Signed 64-bit.
     I64,
-    /// `number`/`float` (f64).
-    Float,
+    /// Unsigned 8-bit (a byte).
+    U8,
+    /// Unsigned 16-bit.
+    U16,
+    /// Unsigned 32-bit.
+    U32,
+    /// Unsigned 64-bit (sizes, counts, handles).
+    U64,
+    /// 32-bit float.
+    F32,
+    /// 64-bit float (`number`/`float`).
+    F64,
     /// `boolean`.
     Bool,
     /// `string`.
