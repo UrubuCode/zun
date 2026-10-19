@@ -39,6 +39,9 @@ pub struct FieldDef {
     pub name: StringIndex,
     /// Encoded field type signature (blob heap index).
     pub signature: BlobIndex,
+    /// Value-type code of the field (a `zun_il::JitKind` byte), giving its
+    /// machine representation for the object layout the typed JIT will use.
+    pub kind: u8,
 }
 
 /// A method defined in this module.
@@ -208,8 +211,8 @@ mod tests {
     #[test]
     fn field_range_links_type_to_fields() {
         let mut t = Tables::new();
-        let f0 = t.add_field_def(FieldDef { name: StringIndex(1), signature: BlobIndex(0) });
-        let f1 = t.add_field_def(FieldDef { name: StringIndex(2), signature: BlobIndex(0) });
+        let f0 = t.add_field_def(FieldDef { name: StringIndex(1), signature: BlobIndex(0), kind: 0 });
+        let f1 = t.add_field_def(FieldDef { name: StringIndex(2), signature: BlobIndex(0), kind: 0 });
         let ty = t.add_type_def(TypeDef {
             name: StringIndex(3),
             namespace: StringIndex(0),

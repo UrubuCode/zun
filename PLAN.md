@@ -203,6 +203,36 @@ Decisões de semântica:
 4. JIT: pilha tipada (I8/I16/I32/I64/F32/F64) em vez de "tudo f64", com sinal/overflow na instrução.
 5. `std` base: usar `u8`/`u16`/`u32` em buffers, código de string (UTF-16), hashing e flags.
 
+## 4.3 GC e objetos no JIT (plano — o maior item restante)
+
+Hoje o JIT compila só o subconjunto numérico/bool; métodos que tocam o heap
+(string, objeto, `ldfld`/`stfld`/`newobj`/`callvirt`) caem no interpretador,
+que usa `Rc<RefCell<Vec<Value>>>` para objetos. Para levar objetos ao JIT,
+interpretador e JIT precisam compartilhar um **heap de ponteiros crus**. Ordem
+de implementação:
+
+1. **Tipos de campo no formato** (pré-requisito, baixo risco): gravar o tipo de
+   cada `FieldDef` (um `JitKind`/código de tipo) no `.zm`, mais o tamanho e os
+   offsets do objeto por `TypeDef`. Sem isso o JIT não sabe o layout. *(Primeiro
+   passo sendo implementado agora.)*
+2. **Heap de runtime não-móvel**: um alocador (`zun_gc`) chamável por
+   `extern "C"` do código nativo e direto do interpretador. Objeto = bloco
+   `[type_rid][campos...]`, campos em slots crus interpretados pelo tipo
+   estático. Sem coleta ainda (bump/leak) — "alocar primeiro, coletar depois"
+   (doc 05/09).
+3. **Unificar o modelo de objeto**: reescrever o interpretador de `Rc` para
+   ponteiros crus no mesmo heap, para que objetos atravessem a fronteira
+   interp↔JIT. Código `unsafe` isolado atrás de uma API segura.
+4. **Objetos no JIT**: `newobj` chama o alocador; `ldfld`/`stfld` viram
+   load/store por offset; `callvirt` indexa a vtable (as faixas
+   `method_start/method_end` já existem) — slot em vez de busca por nome.
+5. **GC real**: mark-sweep-compact com write barriers (instrução distinta na IL)
+   e stack maps do Cranelift (guia §21) nos safepoints. Começar com
+   stop-the-world de um heap só (doc 09).
+
+Cada passo é testável isolado; o passo 3 é o de maior risco (memória manual) e
+deve vir com uma suíte de equivalência interp↔JIT para objetos, como a numérica.
+
 ## 5. Riscos e pontos de atenção
 
 - **Semântica JS vs modelo estático**: o escopo do que `any`/JS dinâmico suporta precisa ser decidido cedo (não dá para ser 100% ECMAScript sem reconstruir um V8). Recomendação: definir Zun como "TS sound-por-padrão, com `Any` como opt-in custoso" e documentar divergências.

@@ -130,6 +130,7 @@ fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
             let tok = module.tables.add_field_def(FieldDef {
                 name: fname,
                 signature: BlobIndex(0),
+                kind: jitkind_byte(field.ty),
             });
             this_class_fields.push(tok);
         }

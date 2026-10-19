@@ -20,6 +20,7 @@ fn sample_module() -> Module {
     let field_tok = m.tables.add_field_def(FieldDef {
         name: field_name,
         signature: field_sig,
+        kind: 2, // i32
     });
 
     // The method body starts at code offset 0.

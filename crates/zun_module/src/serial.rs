@@ -28,7 +28,7 @@ pub fn write_tables(tables: &Tables) -> Vec<u8> {
         ]);
     });
     write_table(&mut out, &tables.field_defs, |w, r| {
-        w.extend([r.name.0, r.signature.0]);
+        w.extend([r.name.0, r.signature.0, r.kind as u32]);
     });
     write_table(&mut out, &tables.method_defs, |w, r| {
         w.extend([r.name.0, r.signature.0, r.body_offset]);
@@ -66,6 +66,7 @@ pub fn read_tables(bytes: &[u8]) -> Result<Tables, ReadError> {
         Ok(FieldDef {
             name: StringIndex(r.u32()?),
             signature: BlobIndex(r.u32()?),
+            kind: r.u32()? as u8,
         })
     })?;
     tables.method_defs = r.read_table(|r| {
