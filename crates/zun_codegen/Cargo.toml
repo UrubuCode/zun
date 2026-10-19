@@ -1,0 +1,26 @@
+[package]
+name = "zun_codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tier 1: a Cranelift JIT backend for ZIL method bodies."
+
+[dependencies]
+zun_il = { path = "../zun_il" }
+zun_metadata = { path = "../zun_metadata" }
+zun_module = { path = "../zun_module" }
+cranelift-codegen = { workspace = true }
+cranelift-frontend = { workspace = true }
+cranelift-jit = { workspace = true }
+cranelift-module = { workspace = true }
+cranelift-native = { workspace = true }
+
+[dev-dependencies]
+zun_syntax = { path = "../zun_syntax" }
+zun_sema = { path = "../zun_sema" }
+zun_ilgen = { path = "../zun_ilgen" }
+zun_interp = { path = "../zun_interp" }
+
+[lints]
+workspace = true

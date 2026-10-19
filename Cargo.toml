@@ -12,7 +12,15 @@ members = [
     "crates/zun_vm",
     "crates/zun_cli",
     "crates/zun_verify",
+    "crates/zun_codegen",
 ]
+
+[workspace.dependencies]
+cranelift-codegen = "0.131"
+cranelift-frontend = "0.131"
+cranelift-jit = "0.131"
+cranelift-module = "0.131"
+cranelift-native = "0.131"
 
 [workspace.package]
 version = "0.0.0"
