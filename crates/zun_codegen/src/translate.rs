@@ -726,6 +726,13 @@ impl Translator<'_> {
                     }
                     stack.push((ptr, JitKind::Object));
                 }
+                Opcode::ArrayLength => {
+                    let (array, _) = stack.pop().ok_or("stack underflow")?;
+                    let length = self.array_length_fref();
+                    let inst = self.builder.ins().call(length, &[array]);
+                    let result = self.builder.inst_results(inst)[0];
+                    stack.push((result, JitKind::Num(NumKind::U64)));
+                }
                 Opcode::LoadField => {
                     let (kind, slot) = self.field_info(&instr.operand)?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
@@ -930,6 +937,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_rt_alloc", Linkage::Import, &sig)
             .expect("declare zun_rt_alloc");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn array_length_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let conv = self.module.isa().default_call_conv();
+        let mut sig = Signature::new(conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_array_length", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_length");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

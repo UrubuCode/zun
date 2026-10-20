@@ -25,6 +25,15 @@ pub extern "C" fn zun_jit_date_year(millis: i64) -> i32 {
         .unwrap()
         .0
 }
+
+/// Read a GC-owned array length without allocating or collecting.
+/// Mutating and allocating array operations remain Tier 0 until JIT stack-map
+/// and write-barrier support is available.
+#[inline]
+pub extern "C" fn zun_jit_array_length(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.array_len(object).map(|len| len as i64).unwrap_or(-1))
+}
 #[inline]
 pub extern "C" fn zun_jit_date_is_valid(millis: i64) -> i32 {
     zun_core::DateValue::from_millis(millis).millis().is_some() as i32
@@ -347,6 +356,7 @@ impl Jit {
         let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
+        builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
         builder.symbol("zun_jit_date_year", zun_jit_date_year as *const u8);
         builder.symbol("zun_jit_date_is_valid", zun_jit_date_is_valid as *const u8);
         builder.symbol("zun_jit_date_month", zun_jit_date_month as *const u8);

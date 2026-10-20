@@ -53,6 +53,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::NewObj
             | Opcode::LoadField
             | Opcode::StoreField
+            | Opcode::ArrayLength
     );
     supported || (op == Opcode::CallBuiltin && (date_builtin(instr) || math_builtin(instr)))
 }

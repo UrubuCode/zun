@@ -2571,6 +2571,27 @@ fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
 }
 
 #[test]
+fn managed_array_length_is_jit_eligible_while_allocation_stays_tier0() {
+    let module = compile(
+        "function arrayLength(values: Array): u64 { return values.length; } function main(): u64 { return 7; }",
+    );
+    let length = module
+        .tables
+        .method_defs
+        .iter()
+        .enumerate()
+        .find(|(_, method)| module.strings.get(method.name) == "arrayLength")
+        .expect("arrayLength method");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles array length");
+
+    assert!(jit.is_compiled(length.0 as u32 + 1));
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(7, _)));
+    assert!(matches!(jit.call_entry(entry), Ok(RetVal::Int(7))));
+}
+
+#[test]
 fn unsigned_wrap_u8() {
     assert_equivalent("function main(): u8 { let b: u8 = 250; return b + 10 as u8; }");
 }
