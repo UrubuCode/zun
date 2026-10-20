@@ -83,6 +83,17 @@ fn managed_collection_constructors_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
+    let module = compile(
+        "function main(): number { let map = new Map(); map.set(1.0, 10.0); let set = new Set(); set.add(2.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "collection iteration requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\
