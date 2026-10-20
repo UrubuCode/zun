@@ -128,6 +128,23 @@ impl NativeLibrary {
         // SAFETY: the resolved function has the declared ABI and signature.
         Ok(unsafe { symbol(arg) })
     }
+
+    /// Call a C symbol with two `f64` arguments and an `f64` result.
+    ///
+    /// # Safety
+    /// The symbol must use the C ABI and have the exact signature
+    /// `extern "C" fn(f64, f64) -> f64`.
+    pub unsafe fn call_f64_2(
+        &self,
+        name: &[u8],
+        first: f64,
+        second: f64,
+    ) -> Result<f64, FfiError> {
+        // SAFETY: the caller guarantees the symbol ABI described above.
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(f64, f64) -> f64>(name) }?;
+        // SAFETY: the resolved function has the declared ABI and signature.
+        Ok(unsafe { symbol(first, second) })
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +174,8 @@ mod tests {
         let result = unsafe { library.call_i64_2(b"zun_missing_symbol", 1, 2) };
         assert!(result.is_err());
         let result = unsafe { library.call_f64_0(b"zun_missing_symbol") };
+        assert!(result.is_err());
+        let result = unsafe { library.call_f64_2(b"zun_missing_symbol", 1.0, 2.0) };
         assert!(result.is_err());
     }
 
