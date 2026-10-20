@@ -354,6 +354,11 @@ mod tests {
         assert!(matches!(dispatch(parse_date_id, &[NativeArg::Str("1970-01-01")], &mut sink).unwrap(), NativeValue::Int(0)));
         assert!(dispatch(parse_date_id, &[NativeArg::Str("1970-02-30")], &mut sink).is_err());
         assert!(dispatch(parse_id, &[NativeArg::Str("not-a-date")], &mut sink).is_err());
+        let leap_day = match dispatch(parse_date_id, &[NativeArg::Str("2020-02-29")], &mut sink).unwrap() {
+            NativeValue::Int(value) => value,
+            other => panic!("unexpected parsed leap-day value: {other:?}"),
+        };
+        assert!(matches!(dispatch(ordinal_id, &[NativeArg::Int(leap_day)], &mut sink).unwrap(), NativeValue::Int(60)));
     }
 
     #[test]
