@@ -13,7 +13,7 @@ use zun_interp::{run_with, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
 pub use jit_hook::JitHook;
-pub use verify_module::{verify_module, ModuleVerifyError};
+pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
 
 /// Errors from loading or running a module.
 #[derive(Debug)]
@@ -108,7 +108,7 @@ pub fn verify_manifest(
         let scope = loader
             .get(name)
             .ok_or_else(|| VmError::Load(zun_loader::LoadError::UnresolvedModule(name.into())))?;
-        verify_module(scope.module()).map_err(VmError::Verify)?;
+        verify_loaded_module(scope, loader).map_err(VmError::Verify)?;
     }
     Ok(())
 }

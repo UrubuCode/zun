@@ -10,6 +10,7 @@ description = "The Zun virtual machine: loads a .zm module and runs it."
 zun_interp = { path = "../zun_interp" }
 zun_module = { path = "../zun_module" }
 zun_loader = { path = "../zun_loader" }
+zun_metadata = { path = "../zun_metadata" }
 zun_il = { path = "../zun_il" }
 zun_verify = { path = "../zun_verify" }
 zun_codegen = { path = "../zun_codegen" }

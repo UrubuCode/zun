@@ -6,6 +6,7 @@
 //! safe for the interpreter and, later, the JIT to consume without guards.
 
 use zun_il::{Opcode, Operand};
+use zun_loader::{ModuleLoader, ModuleScope};
 use zun_module::{read_body, Module};
 use zun_verify::{verify, MethodInfo};
 
@@ -32,6 +33,26 @@ impl core::fmt::Display for ModuleVerifyError {
 
 /// Verify every method body in `module`.
 pub fn verify_module(module: &Module) -> Result<(), ModuleVerifyError> {
+    verify_module_with(module, |opcode, operand| {
+        resolve_call(module, opcode, operand)
+    })
+}
+
+/// Verify a loaded scope, resolving external method references through its loader.
+pub fn verify_loaded_module(
+    scope: &ModuleScope,
+    loader: &ModuleLoader,
+) -> Result<(), ModuleVerifyError> {
+    let module = scope.module();
+    verify_module_with(module, |opcode, operand| {
+        resolve_loaded_call(scope, loader, opcode, operand)
+    })
+}
+
+fn verify_module_with(
+    module: &Module,
+    resolve: impl Fn(Opcode, &Operand) -> Option<(u8, u8)>,
+) -> Result<(), ModuleVerifyError> {
     for (i, method) in module.tables.method_defs.iter().enumerate() {
         let rid = i as u32 + 1;
         if method.body_offset == u32::MAX {
@@ -51,8 +72,6 @@ pub fn verify_module(module: &Module) -> Result<(), ModuleVerifyError> {
             returns_value: body.returns_value,
         };
 
-        let resolve = |opcode: Opcode, operand: &Operand| resolve_call(module, opcode, operand);
-
         verify(body.code, info, &resolve).map_err(|error| ModuleVerifyError {
             method_rid: rid,
             method_name: module.strings.get(method.name).to_string(),
@@ -60,6 +79,32 @@ pub fn verify_module(module: &Module) -> Result<(), ModuleVerifyError> {
         })?;
     }
     Ok(())
+}
+
+fn resolve_loaded_call(
+    requester: &ModuleScope,
+    loader: &ModuleLoader,
+    opcode: Opcode,
+    operand: &Operand,
+) -> Option<(u8, u8)> {
+    if !matches!(opcode, Opcode::Call | Opcode::CallVirt) {
+        return resolve_call(requester.module(), opcode, operand);
+    }
+    let token = match operand {
+        Operand::Token(token) => *token,
+        _ => return None,
+    };
+    if token.table() != Some(zun_metadata::TableKind::MemberRef) {
+        return resolve_call(requester.module(), opcode, operand);
+    }
+    let (scope, method) = loader.resolve_method_ref(requester, token).ok()?;
+    let method = scope
+        .module()
+        .tables
+        .method_defs
+        .get(method.rid() as usize - 1)?;
+    let body = read_body(&scope.module().code, method.body_offset).ok()?;
+    Some((body.param_count as u8, 1))
 }
 
 /// Resolve a call-family opcode's `(pops, pushes)` from module metadata.
