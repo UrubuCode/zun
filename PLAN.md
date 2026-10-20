@@ -22,6 +22,10 @@ state-machine lowering, complete typed FFI/ABI integration, N-API hosting,
 AOT/R2R object emission, true OSR frame replacement, and production-grade
 trimming diagnostics and metadata removal.
 
+The JIT virtual-call path is covered by interpreter/JIT equivalence, including
+derived overrides. The remaining object-runtime gate is precise root handling
+at collection safepoints; virtual dispatch itself is no longer Tier 0-only.
+
 ## 1. Visão geral do pipeline
 
 ```

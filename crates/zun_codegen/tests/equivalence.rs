@@ -91,6 +91,25 @@ fn managed_error_to_string_uses_name_and_message() {
 }
 
 #[test]
+fn virtual_override_dispatch_is_jit_equivalent() {
+    let module = compile(
+        "class Base { value(): int { return 1; } }\n\
+         class Derived extends Base { value(): int { return 2; } }\n\
+         function main(): int { let item: Base = new Derived(); return item.value(); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles virtual override");
+    assert!(jit.is_compiled(entry));
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("run JIT virtual override")
+    };
+    assert!(matches!(jit_result, RetVal::Int(2)));
+    assert!(matches!(interp_entry(&module), Value::Int(2, _)));
+}
+
+#[test]
 fn date_surface_decomposes_utc_timestamps() {
     let module = compile(
         "import { year, month, day } from \"zun:date\";\n\
