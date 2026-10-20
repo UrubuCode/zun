@@ -533,6 +533,20 @@ The following runtime contracts are implemented and covered by tests:
   `async`/`await` lowering remains a separate pending gate; the source syntax
   is now tokenized and represented in the AST, with sema rejecting it until
   state-machine lowering is available.
+
+The next async lowering gate has an explicit representation boundary. The
+current `zun_vm::Promise<T>` is a Rust-side handle and cannot yet be returned
+as a Zun `Value`: Zun managed references are `zun_gc::Obj` values, while the
+semantic type and IL ABI have no Promise carrier. Source lowering must first
+introduce a managed Promise object whose state is traced through the heap and
+whose settlement/awaiter operations are exposed as typed intrinsics. The
+state-machine compiler must then lower `async` functions to that object using
+the existing poll/awaiter contract. It must preserve the .NET-style invariants
+from `.docs-dotnet/06-blocks-control-flow/05-async-await-maquina-de-estados.md`:
+hoisted locals survive suspension, synchronous completion avoids suspension,
+exceptions settle the returned Promise as rejection, and resumption does not
+run inside an exception handler. Until this boundary exists, accepting source
+`async`/`await` would generate no valid IL and remains prohibited.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
