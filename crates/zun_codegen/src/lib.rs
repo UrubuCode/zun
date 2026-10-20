@@ -351,6 +351,9 @@ impl Jit {
         // Optimize for speed; the e-graph optimizer is on by default in this
         // Cranelift version, so there is no flag to set for it.
         flags.set("opt_level", "speed").unwrap();
+        // Keep a stable frame chain so a future GC safepoint can capture the
+        // JIT frame pointer and return address alongside its stack map.
+        flags.set("preserve_frame_pointers", "true").unwrap();
         let isa = cranelift_native::builder()
             .map_err(|e| JitError::UnsupportedHost(e.to_string()))?
             .finish(settings::Flags::new(flags))
@@ -821,6 +824,7 @@ impl Jit {
 pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed").unwrap();
+    flags.set("preserve_frame_pointers", "true").unwrap();
     let isa = cranelift_native::builder()
         .map_err(|e| JitError::UnsupportedHost(e.to_string()))?
         .finish(settings::Flags::new(flags))
