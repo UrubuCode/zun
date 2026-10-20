@@ -122,10 +122,9 @@ pub struct WeakMapId(u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FinalizationId(u32);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
 struct Ephemeron {
-    key: Option<usize>,
-    value: Option<usize>,
+    entries: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1095,9 +1094,7 @@ impl Heap {
         loop {
             let mut promoted = false;
             for entry in &self.weak_maps {
-                let (Some(key), Some(value)) = (entry.key, entry.value) else {
-                    continue;
-                };
+                for &(key, value) in &entry.entries {
                 let Some(&key_idx) = self.by_addr.get(&key) else {
                     continue;
                 };
@@ -1108,6 +1105,7 @@ impl Heap {
                     self.records[value_idx].marked = true;
                     work.push(value_idx);
                     promoted = true;
+                }
                 }
             }
             while let Some(idx) = work.pop() {
@@ -1173,6 +1171,12 @@ impl Heap {
 
         // Weak references observe the completed mark set but do not contribute
         // roots. Clear dead targets before sweep removes their addresses.
+        for entry in &mut self.weak_maps {
+            entry.entries.retain(|(key, value)| {
+                self.by_addr.get(key).is_some_and(|idx| self.records[*idx].marked)
+                    && self.by_addr.get(value).is_some_and(|idx| self.records[*idx].marked)
+            });
+        }
         for weak in &mut self.weak_refs {
             if let Some(address) = weak.target {
                 if self
@@ -1308,10 +1312,7 @@ impl Heap {
 
     pub fn weak_map_new(&mut self) -> WeakMapId {
         let id = WeakMapId(self.weak_maps.len() as u32);
-        self.weak_maps.push(Ephemeron {
-            key: None,
-            value: None,
-        });
+        self.weak_maps.push(Ephemeron::default());
         id
     }
 
@@ -1339,16 +1340,33 @@ impl Heap {
         let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else {
             return false;
         };
-        entry.key = Some(key.addr() as usize);
-        entry.value = Some(value.addr() as usize);
+        let key = key.addr() as usize;
+        let value = value.addr() as usize;
+        if let Some((_, existing_value)) = entry.entries.iter_mut().find(|(existing_key, _)| *existing_key == key) {
+            *existing_value = value;
+        } else {
+            entry.entries.push((key, value));
+        }
         true
     }
 
     pub fn weak_map_get(&self, id: WeakMapId) -> Option<(Obj, Obj)> {
         let entry = self.weak_maps.get(id.0 as usize)?;
-        let key = self.by_addr.get(&entry.key?)?;
-        let value = self.by_addr.get(&entry.value?)?;
+        let (key_address, value_address) = *entry.entries.first()?;
+        let key = self.by_addr.get(&key_address)?;
+        let value = self.by_addr.get(&value_address)?;
         Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
+    }
+
+    pub fn weak_map_entries(&self, id: WeakMapId) -> Vec<(Obj, Obj)> {
+        let Some(entry) = self.weak_maps.get(id.0 as usize) else {
+            return Vec::new();
+        };
+        entry.entries.iter().filter_map(|&(key_address, value_address)| {
+            let key = self.by_addr.get(&key_address)?;
+            let value = self.by_addr.get(&value_address)?;
+            Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
+        }).collect()
     }
 
     pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
@@ -1722,8 +1740,8 @@ mod tests {
         let key2 = heap.alloc(3, 0);
         let value2 = heap.alloc(4, 0);
         assert!(heap.weak_map_set(weak_map, key2, value2));
-        assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 3);
-        assert_eq!(heap.weak_map_get(weak_map), None);
+        assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 2);
+        assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
     }
 
     #[test]
@@ -1766,6 +1784,22 @@ mod tests {
                 assert_eq!(heap.weak_map_get(weak_map), None);
             }
         }
+    }
+
+    #[test]
+    fn weak_map_stores_multiple_entries_until_collection() {
+        let mut heap = Heap::new();
+        let weak_map = heap.weak_map_new();
+        let key_a = heap.alloc(1, 0);
+        let value_a = heap.alloc(2, 0);
+        let key_b = heap.alloc(3, 0);
+        let value_b = heap.alloc(4, 0);
+        assert!(heap.weak_map_set(weak_map, key_a, value_a));
+        assert!(heap.weak_map_set(weak_map, key_b, value_b));
+        let entries = heap.weak_map_entries(weak_map);
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains(&(key_a, value_a)));
+        assert!(entries.contains(&(key_b, value_b)));
     }
 
     #[test]
