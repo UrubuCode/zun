@@ -15,7 +15,7 @@ a type-by-all-methods matrix.
 
 Dynamic override dispatch in the JIT is implemented through compact inherited
 virtual-slot tables. Precise interpreter roots, native/JIT stack-map metadata,
-Promise/microtask primitives, `Any`/`DynamicObject`, scalar external-library
+Promise/microtask primitives (including settlement-preserving `finally`), `Any`/`DynamicObject`, scalar external-library
 calls, interpreted backedge observation, and conservative reachability-based
 trimming are also implemented. The remaining gates are source-level async
 state-machine lowering, complete typed FFI/ABI integration, N-API hosting,
@@ -451,7 +451,8 @@ The following runtime contracts are implemented and covered by tests:
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
-  microtask-scheduled success/failure continuations. Source-level
+  microtask-scheduled success/failure continuations, and settlement-preserving
+  `finally` cleanup. Source-level
   `async`/`await` lowering remains a separate pending gate.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
