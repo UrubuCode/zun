@@ -1083,22 +1083,6 @@ impl Interp<'_> {
         unwind::route_exception(&self.types, body, stack, pc, throw_pc, exception)
     }
 
-    /// Execute a call: route it to the JIT hook when it handles the method,
-    /// otherwise interpret it.
-    fn dispatch(
-        &mut self,
-        method_rid: u32,
-        args: Vec<Value>,
-        parent: Option<&RootLink>,
-    ) -> Result<Value, RunError> {
-        if let Some(hook) = self.hook {
-            if let Some(result) = hook.try_call(method_rid, &args) {
-                return Ok(result);
-            }
-        }
-        self.call(method_rid, args, parent)
-    }
-
     /// Run a mark-sweep collection with precise roots: the object references in
     /// the current frame's stack and locals, plus every ancestor frame in the
     /// `parent` chain. Reference fields are traced via the module's type layout.

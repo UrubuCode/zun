@@ -24,3 +24,21 @@ pub(super) fn run_method_with(
     }
     .call(method_rid, args, None)
 }
+
+impl Interp<'_> {
+    /// Route a call to the JIT hook when it handles the method, otherwise
+    /// continue with the Tier 0 interpreter.
+    pub(super) fn dispatch(
+        &mut self,
+        method_rid: u32,
+        args: Vec<Value>,
+        parent: Option<&super::RootLink>,
+    ) -> Result<Value, RunError> {
+        if let Some(hook) = self.hook {
+            if let Some(result) = hook.try_call(method_rid, &args) {
+                return Ok(result);
+            }
+        }
+        self.call(method_rid, args, parent)
+    }
+}
