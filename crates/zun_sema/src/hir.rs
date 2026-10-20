@@ -323,6 +323,17 @@ pub enum Stmt {
         /// The condition checked after the body.
         cond: Expr,
     },
+    /// `for (init; cond; update) { body }` loop.
+    For {
+        /// Optional initializer statement.
+        init: Option<Box<Stmt>>,
+        /// Loop condition.
+        cond: Expr,
+        /// Optional update expression.
+        update: Option<Expr>,
+        /// Loop body.
+        body: Vec<Stmt>,
+    },
     /// Iterate through the runtime iterator protocol.
     ForOf {
         iterator: Expr,

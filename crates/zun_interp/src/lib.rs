@@ -1363,6 +1363,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run do-while continue");
         assert_eq!(value.as_int(), 3);
     }
+
+    #[test]
+    fn executes_c_style_for_loop_and_continue() {
+        let module = zun_compiler::compile(
+            "function main(): int { let total: int = 0; for (let i: int = 0; i < 4; i = i + 1) { if (i == 2) { continue; } total = total + i; } return total; }",
+        )
+        .expect("compile c-style for");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run c-style for");
+        assert_eq!(value.as_int(), 4);
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;

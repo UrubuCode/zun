@@ -144,6 +144,13 @@ fn do_while_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn c_style_for_is_jit_equivalent() {
+    assert_equivalent(
+        "function main(): int { let total: int = 0; for (let i: int = 0; i < 4; i = i + 1) { total = total + i; } return total; }",
+    );
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\

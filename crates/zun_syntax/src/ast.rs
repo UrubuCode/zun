@@ -177,6 +177,19 @@ pub enum Stmt {
         /// Span of the whole loop.
         span: Span,
     },
+    /// `for (init; cond; update) { body }`.
+    For {
+        /// Optional loop initializer.
+        init: Option<Box<Stmt>>,
+        /// Optional condition; omitted means always true.
+        cond: Option<Expr>,
+        /// Optional update expression.
+        update: Option<Expr>,
+        /// Loop body.
+        body: Block,
+        /// Span of the whole loop.
+        span: Span,
+    },
     /// `for (let name of iterable) { body }`.
     ForOf {
         /// The loop binding.

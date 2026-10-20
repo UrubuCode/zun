@@ -192,6 +192,12 @@ impl Checker<'_> {
                 hir::Stmt::While { body, .. } | hir::Stmt::DoWhile { body, .. } => {
                     self.rewrite_boxed_lets(body, boxed)
                 }
+                hir::Stmt::For { init, body, .. } => {
+                    if let Some(init) = init {
+                        self.rewrite_boxed_lets(std::slice::from_mut(init.as_mut()), boxed);
+                    }
+                    self.rewrite_boxed_lets(body, boxed);
+                }
                 hir::Stmt::Try {
                     body,
                     catches,
@@ -235,6 +241,14 @@ impl Checker<'_> {
                 ast::Stmt::DoWhile { body, cond, .. } => {
                     self.collect_mutated_names(&body.statements, names);
                     self.collect_mutated_expr(cond, names);
+                }
+                ast::Stmt::For { init, cond, update, body, .. } => {
+                    if let Some(init) = init {
+                        self.collect_mutated_names(std::slice::from_ref(init), names);
+                    }
+                    if let Some(cond) = cond { self.collect_mutated_expr(cond, names); }
+                    if let Some(update) = update { self.collect_mutated_expr(update, names); }
+                    self.collect_mutated_names(&body.statements, names);
                 }
                 ast::Stmt::ForOf { iterable, body, .. } => {
                     self.collect_mutated_expr(iterable, names);
@@ -517,6 +531,12 @@ impl Checker<'_> {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
                 }
                 self.collect_capture_expr(cx, parameters, cond, uses);
+            }
+            ast::Stmt::For { init, cond, update, body, .. } => {
+                if let Some(init) = init { self.collect_capture_stmt(cx, parameters, init, uses); }
+                if let Some(cond) = cond { self.collect_capture_expr(cx, parameters, cond, uses); }
+                if let Some(update) = update { self.collect_capture_expr(cx, parameters, update, uses); }
+                for statement in &body.statements { self.collect_capture_stmt(cx, parameters, statement, uses); }
             }
             ast::Stmt::ForOf { iterable, body, .. } => {
                 self.collect_capture_expr(cx, parameters, iterable, uses);
@@ -1128,6 +1148,18 @@ impl Checker<'_> {
                 cx.loop_depth -= 1;
                 let cond = self.check_condition(cx, cond);
                 hir::Stmt::DoWhile { body, cond }
+            }
+            ast::Stmt::For { init, cond, update, body, .. } => {
+                let init = init.as_ref().map(|stmt| Box::new(self.check_stmt(cx, stmt)));
+                let cond = cond
+                    .as_ref()
+                    .map(|expr| self.check_condition(cx, expr))
+                    .unwrap_or(hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span: body.span });
+                let update = update.as_ref().map(|expr| self.check_expr(cx, expr));
+                cx.loop_depth += 1;
+                let body = self.check_block(cx, body);
+                cx.loop_depth -= 1;
+                hir::Stmt::For { init, cond, update, body }
             }
             ast::Stmt::ForOf { name, iterable, body, span: _ } => {
                 let iterable_expr = self.check_expr(cx, iterable);

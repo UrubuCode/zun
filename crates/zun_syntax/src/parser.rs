@@ -464,14 +464,45 @@ impl Parser<'_> {
     fn for_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         self.expect(TokenKind::LParen, "`(` after for");
-        self.expect(TokenKind::KwLet, "`let` in for-of binding");
-        let name = self.name("a for-of binding name");
-        self.expect(TokenKind::KwOf, "`of` in for-of loop");
-        let iterable = self.expression();
-        self.expect(TokenKind::RParen, "`)` after for-of iterable");
+        if self.eat(TokenKind::KwLet) {
+            let name = self.name("a for binding name");
+            let ty = self.optional_type_annotation();
+            if self.eat(TokenKind::KwOf) {
+                let iterable = self.expression();
+                self.expect(TokenKind::RParen, "`)` after for-of iterable");
+                let body = self.block();
+                let span = start.to(body.span);
+                return Stmt::ForOf {
+                    name,
+                    iterable,
+                    body,
+                    span,
+                };
+            }
+            self.expect(TokenKind::Eq, "`=` in for initializer");
+            let init = self.expression();
+            let init_span = name.span.to(init.span());
+            self.expect(TokenKind::Semi, "`;` after for initializer");
+            let cond = (!self.at(TokenKind::Semi)).then(|| self.expression());
+            self.expect(TokenKind::Semi, "`;` after for condition");
+            let update = (!self.at(TokenKind::RParen)).then(|| self.expression());
+            self.expect(TokenKind::RParen, "`)` after for update");
+            let body = self.block();
+            return Stmt::For {
+                init: Some(Box::new(Stmt::Let { name, ty, init, span: init_span })),
+                cond,
+                update,
+                span: start.to(body.span),
+                body,
+            };
+        }
+        self.expect(TokenKind::Semi, "`;` after for initializer");
+        let cond = (!self.at(TokenKind::Semi)).then(|| self.expression());
+        self.expect(TokenKind::Semi, "`;` after for condition");
+        let update = (!self.at(TokenKind::RParen)).then(|| self.expression());
+        self.expect(TokenKind::RParen, "`)` after for update");
         let body = self.block();
-        let span = start.to(body.span);
-        Stmt::ForOf { name, iterable, body, span }
+        Stmt::For { init: None, cond, update, span: start.to(body.span), body }
     }
 
     fn break_statement(&mut self) -> Stmt {
@@ -1045,6 +1076,12 @@ mod tests {
     fn parses_do_while_statement() {
         let p = parse_ok("function main() { do { print(1); } while (false); }");
         assert!(matches!(p.functions[0].body.statements[0], Stmt::DoWhile { .. }));
+    }
+
+    #[test]
+    fn parses_c_style_for_statement() {
+        let p = parse_ok("function main() { for (let i: int = 0; i < 3; i = i + 1) { print(i); } }");
+        assert!(matches!(p.functions[0].body.statements[0], Stmt::For { .. }));
     }
 
     #[test]

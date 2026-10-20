@@ -487,6 +487,32 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.patch_to_here(patch);
                 }
             }
+            Stmt::For { init, cond, update, body } => {
+                if let Some(init) = init {
+                    self.stmt(init);
+                }
+                let loop_start = self.code.len();
+                self.expr(cond);
+                let to_exit = self.emit_branch(Opcode::BranchFalse);
+                self.break_patches.push(Vec::new());
+                self.continue_targets.push(vec![usize::MAX]);
+                self.continue_patches.push(Vec::new());
+                self.stmts(body);
+                let update_target = self.code.len();
+                self.continue_targets.pop();
+                for patch in self.continue_patches.pop().unwrap_or_default() {
+                    self.patch_to_target(patch, update_target);
+                }
+                if let Some(update) = update {
+                    self.expr(update);
+                    self.emit(Instruction::simple(Opcode::Pop));
+                }
+                self.emit_branch_back(Opcode::Branch, loop_start);
+                self.patch_to_here(to_exit);
+                for patch in self.break_patches.pop().unwrap_or_default() {
+                    self.patch_to_here(patch);
+                }
+            }
             Stmt::ForOf { iterator, iterator_slot, done, next, binding, body } => {
                 self.expr(iterator);
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*iterator_slot)));
