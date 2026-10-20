@@ -3,6 +3,28 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn if_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        self.expect(TokenKind::LParen, "`(`");
+        let cond = self.expression();
+        self.expect(TokenKind::RParen, "`)`");
+        let then_block = self.block();
+        let mut span = start.to(then_block.span);
+        let else_block = if self.eat(TokenKind::KwElse) {
+            let b = self.block();
+            span = span.to(b.span);
+            Some(b)
+        } else {
+            None
+        };
+        Stmt::If {
+            cond,
+            then_block,
+            else_block,
+            span,
+        }
+    }
+
     pub(crate) fn statement(&mut self) -> Stmt {
         if self.at(TokenKind::Ident) && self.peek_n(1).kind == TokenKind::Colon {
             let label = self.name("a statement label");

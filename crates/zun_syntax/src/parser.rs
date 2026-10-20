@@ -345,28 +345,6 @@ impl Parser<'_> {
         }
     }
 
-    fn if_statement(&mut self) -> Stmt {
-        let start = self.bump().span; // `if`
-        self.expect(TokenKind::LParen, "`(`");
-        let cond = self.expression();
-        self.expect(TokenKind::RParen, "`)`");
-        let then_block = self.block();
-        let mut span = start.to(then_block.span);
-        let else_block = if self.eat(TokenKind::KwElse) {
-            let b = self.block();
-            span = span.to(b.span);
-            Some(b)
-        } else {
-            None
-        };
-        Stmt::If {
-            cond,
-            then_block,
-            else_block,
-            span,
-        }
-    }
-
     /// Parse switch cases and reduce them to the existing if/else AST.
     /// Cases are deliberately non-fallthrough; `break` is consumed as the
     /// natural end of a case because the generated chain exits after a match.
