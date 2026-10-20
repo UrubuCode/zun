@@ -556,7 +556,12 @@ impl FnLowerer<'_> {
                 self.emit(Instruction::simple(Opcode::ArrayPush));
             }
             ExprKind::Convert { value } => {
-                self.expr(value);
+                if value.ty == Ty::Any {
+                    self.expr(value);
+                    self.emit(Instruction::simple(Opcode::UnboxAny));
+                } else {
+                    self.expr(value);
+                }
                 self.emit_conv_to(e.ty);
             }
             ExprKind::Error => unreachable!("ilgen runs only on error-free programs"),

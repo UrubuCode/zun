@@ -1013,9 +1013,12 @@ impl Checker<'_> {
             ast::Expr::Cast { expr, ty, .. } => {
                 let value = self.check_expr(cx, expr);
                 let target = self.resolve_annotation(ty);
-                // Only numeric-to-numeric conversions are allowed.
+                // Numeric conversions may also explicitly unbox an `any` value.
                 let numeric = |t: Ty| t.is_int() || t.is_float();
-                if !value.ty.is_error() && !(numeric(value.ty) && numeric(target)) {
+                if !value.ty.is_error()
+                    && !((numeric(value.ty) && numeric(target))
+                        || (value.ty == Ty::Any && numeric(target)))
+                {
                     self.error(span, format!("cannot convert {:?} to {target:?}", value.ty));
                     return self.poison(span);
                 }
