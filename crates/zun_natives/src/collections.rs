@@ -23,5 +23,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "setSize", params: &[Opaque], ret: U64, imp: unavailable },
         NativeFn { name: "setDelete", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "setClear", params: &[Opaque], ret: Void, imp: unavailable },
+        NativeFn { name: "weakMapNew", params: &[], ret: Opaque, imp: unavailable },
+        NativeFn { name: "weakMapSet", params: &[Opaque, Opaque, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "weakMapHas", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
     ],
 };

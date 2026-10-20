@@ -995,13 +995,28 @@ impl Interp<'_> {
                 zun_gc::with_current_heap_mut(|heap| heap.set_clear(object)).ok_or(RunError::BadToken)?;
                 Ok(Value::Void)
             }
+            "weakMapNew" => {
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_map());
+                Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
+            }
+            "weakMapSet" => {
+                let map_object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.weak_map_set_object(map_object, key, value))))
+            }
+            "weakMapHas" => {
+                let map_object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.weak_map_get_object(map_object).is_some_and(|(candidate, _)| candidate == key))))
+            }
             _ => Err(RunError::BadToken),
         }
     }
 }
 
 fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear"] {
+    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "weakMapNew", "weakMapSet", "weakMapHas"] {
         if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1482,6 +1497,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run collection removal intrinsics");
         assert!(matches!(result, Value::Int(0, _)));
+    }
+
+    #[test]
+    fn uses_gc_backed_weak_map_handles() {
+        let module = zun_compiler::compile(
+            "import { weakMapNew, weakMapSet, weakMapHas } from \"zun:collections\"; class Key {} function main(): int { let key = new Key(); let value = new Key(); let map = weakMapNew(); weakMapSet(map, key, value); if (weakMapHas(map, key)) { return 1; } return 0; }",
+        )
+        .expect("compile weak map intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run weak map intrinsics");
+        assert!(matches!(result, Value::Int(1, _)));
     }
 
     #[test]

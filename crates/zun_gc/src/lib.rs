@@ -179,6 +179,8 @@ pub struct Heap {
     maps: HashMap<usize, zun_core::OrderedMap>,
     /// Ordered hash tables associated with Set objects.
     sets: HashMap<usize, zun_core::OrderedMap>,
+    /// WeakMap handles owned by managed WeakMap objects.
+    weak_map_objects: HashMap<usize, WeakMapId>,
     /// Record index by object address, for tracing child references.
     by_addr: HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
@@ -1075,6 +1077,7 @@ impl Heap {
                 self.errors.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
                 self.sets.remove(&(r.addr as usize));
+                self.weak_map_objects.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }
@@ -1186,6 +1189,26 @@ impl Heap {
             value: None,
         });
         id
+    }
+
+    /// Allocate the managed object used as a source-level WeakMap handle.
+    pub fn alloc_weak_map(&mut self) -> Obj {
+        let object = self.alloc(0, 0);
+        let id = self.weak_map_new();
+        self.weak_map_objects.insert(object.addr() as usize, id);
+        object
+    }
+
+    pub fn weak_map_set_object(&mut self, object: Obj, key: Obj, value: Obj) -> bool {
+        self.weak_map_objects
+            .get(&(object.addr() as usize))
+            .copied()
+            .is_some_and(|id| self.weak_map_set(id, key, value))
+    }
+
+    pub fn weak_map_get_object(&self, object: Obj) -> Option<(Obj, Obj)> {
+        let id = self.weak_map_objects.get(&(object.addr() as usize)).copied()?;
+        self.weak_map_get(id)
     }
 
     pub fn weak_map_set(&mut self, id: WeakMapId, key: Obj, value: Obj) -> bool {
