@@ -11,7 +11,7 @@ use zun_common::{Diagnostic, Span};
 
 #[path = "parser_helpers.rs"]
 mod parser_helpers;
-use parser_helpers::{decode_template_text, find_template_interpolation_end, find_template_marker, parse_expression_fragment};
+use parser_helpers::{decode_string, decode_template_text, find_template_interpolation_end, find_template_marker, parse_expression_fragment};
 
 /// Parse `source` into a [`Program`], appending any diagnostics.
 pub fn parse(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Program {
@@ -497,30 +497,6 @@ impl Parser<'_> {
 
     // --- expressions (precedence climbing) ---
 
-}
-
-/// Strip quotes and process escapes in a string literal's source text.
-fn decode_string(raw: &str) -> String {
-    let inner = &raw[1..raw.len() - 1];
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some('0') => out.push('\0'),
-            Some(other) => out.push(other),
-            None => {}
-        }
-    }
-    out
 }
 
 fn parse_template_parts(

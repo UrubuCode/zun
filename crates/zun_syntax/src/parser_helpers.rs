@@ -2,6 +2,21 @@
 
 use super::*;
 
+pub(crate) fn decode_string(raw: &str) -> String {
+    let inner = &raw[1..raw.len() - 1];
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' { out.push(c); continue; }
+        match chars.next() {
+            Some('n') => out.push('\n'), Some('t') => out.push('\t'), Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'), Some('"') => out.push('"'), Some('0') => out.push('\0'),
+            Some(other) => out.push(other), None => {}
+        }
+    }
+    out
+}
+
 pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
     let tokens = lex(source, diagnostics);
     let mut parser = Parser { source, tokens, pos: 0, diagnostics };
