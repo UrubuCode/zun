@@ -327,6 +327,29 @@ impl ModuleLoader {
         self.insert(scope)
     }
 
+    /// Load every module named by a flattened manifest in dependency order.
+    ///
+    /// Manifest identities are file paths for this file-based host API. A
+    /// higher-level package host can resolve identities to bytes first and use
+    /// [`ModuleLoader::load_bytes`] when paths are not the distribution key.
+    pub fn load_manifest(&mut self, manifest: &ModuleManifest) -> Result<(), LoadError> {
+        let mut seen = std::collections::HashSet::new();
+        for name in manifest
+            .dependencies
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(manifest.entry.as_str()))
+        {
+            if !seen.insert(name) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "module `{name}` appears more than once"
+                )));
+            }
+            self.load_file(name)?;
+        }
+        manifest.validate(self)
+    }
+
     /// Register an already loaded scope, rejecting duplicate identities.
     pub fn insert(&mut self, scope: ModuleScope) -> Result<(), LoadError> {
         let name = scope.name().to_owned();
@@ -684,5 +707,24 @@ mod tests {
         let loaded = ModuleManifest::read_file(&path).expect("read manifest");
         std::fs::remove_file(&path).expect("remove manifest");
         assert_eq!(loaded, manifest);
+    }
+
+    #[test]
+    fn loads_manifest_files_in_dependency_order() {
+        let root = std::env::temp_dir().join(format!("zun-loader-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create temp directory");
+        let dependency = root.join("core.zm");
+        let entry = root.join("app.zm");
+        std::fs::write(&dependency, Module::new().write()).expect("write dependency");
+        std::fs::write(&entry, Module::new().write()).expect("write entry");
+        let manifest = ModuleManifest::new(
+            entry.to_string_lossy(),
+            [dependency.to_string_lossy().into_owned()],
+        );
+        let mut loader = ModuleLoader::new();
+        loader.load_manifest(&manifest).expect("load manifest");
+        assert_eq!(loader.len(), 2);
+        assert!(loader.get(&entry.to_string_lossy()).is_some());
+        std::fs::remove_dir_all(root).expect("remove temp directory");
     }
 }
