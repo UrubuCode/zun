@@ -232,6 +232,12 @@ define_opcodes! {
     BoxAny = 0x76, None, "box.any", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Unbox an Any value, rejecting a mismatched dynamic tag at runtime.
     UnboxAny = 0x77, None, "unbox.any", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Allocate an object backed by a dynamic property dictionary.
+    NewDynamic = 0x78, None, "new.dynamic", StackEffect::Fixed { pops: 0, pushes: 1 };
+    /// Load a dynamic property by its module string-heap name.
+    LoadDynamic = 0x79, StringRef, "lddyn", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Store an Any value in a dynamic property, leaving it on the stack.
+    StoreDynamic = 0x7A, StringRef, "stdyn", StackEffect::Fixed { pops: 2, pushes: 1 };
 }
 
 #[cfg(test)]

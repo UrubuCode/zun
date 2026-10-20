@@ -229,6 +229,30 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     stack.push(value);
                 }
+                Opcode::NewDynamic => {
+                    let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                    stack.push(Value::Object(object));
+                }
+                Opcode::LoadDynamic => {
+                    let name = self.dynamic_name(&instr.operand)?;
+                    let object = pop(&mut stack)?.as_object();
+                    let value = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get(object, name).map(Value::Any).unwrap_or(Value::Void)
+                    });
+                    stack.push(value);
+                }
+                Opcode::StoreDynamic => {
+                    let name = self.dynamic_name(&instr.operand)?.to_owned();
+                    let value = pop(&mut stack)?;
+                    let Value::Any(any) = value else {
+                        return Err(RunError::BadToken);
+                    };
+                    let object = pop(&mut stack)?.as_object();
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(object, name, any);
+                    });
+                    stack.push(Value::Any(any));
+                }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
                     let v = pop(&mut stack)?;
@@ -474,6 +498,11 @@ impl Interp<'_> {
             .get(field_rid as usize - 1)
             .map(|f| f.kind)
             .ok_or(RunError::BadToken)
+    }
+
+    fn dynamic_name(&self, operand: &Operand) -> Result<&str, RunError> {
+        let index = operand_strref(operand);
+        Ok(self.module.strings.get(zun_metadata::StringIndex(index)))
     }
 
     /// Execute a call: route it to the JIT hook when it handles the method,
