@@ -18,6 +18,7 @@ mod env;
 mod fs;
 mod io;
 mod math;
+mod string;
 mod time;
 
 use std::collections::HashMap;
@@ -161,7 +162,14 @@ pub struct Module {
 
 /// Every built-in native module, in id order. A function's id is its global
 /// index across this list; `print` is the very first entry, so its id is 0.
-pub static MODULES: &[Module] = &[io::MODULE, fs::MODULE, env::MODULE, time::MODULE, math::MODULE];
+pub static MODULES: &[Module] = &[
+    io::MODULE,
+    fs::MODULE,
+    env::MODULE,
+    time::MODULE,
+    math::MODULE,
+    string::MODULE,
+];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
 pub const PRINT: u32 = 0;
@@ -315,6 +323,23 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(value, NativeValue::Float(value) if value == 7.5));
+    }
+
+    #[test]
+    fn string_primitives_use_machine_facing_signatures() {
+        let (length_id, length_fn) = resolve("zun:string", "length").unwrap();
+        assert_eq!(length_fn.params, &[NativeTy::Str]);
+        assert_eq!(length_fn.ret, NativeTy::U64);
+        let (concat_id, _) = resolve("zun:string", "concat").unwrap();
+        let mut sink = TestSink;
+        assert!(matches!(
+            dispatch(length_id, &[NativeArg::Str("hé")], &mut sink).unwrap(),
+            NativeValue::Int(2)
+        ));
+        assert!(matches!(
+            dispatch(concat_id, &[NativeArg::Str("a"), NativeArg::Str("b")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "ab"
+        ));
     }
 
     struct TestSink;
