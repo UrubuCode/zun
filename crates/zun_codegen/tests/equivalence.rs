@@ -74,7 +74,7 @@ fn managed_collections_preserve_interpreter_fallback_boundary() {
 #[test]
 fn managed_collection_constructors_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "function main(): int { let map = new Map(); map.set(7.0, 42.0); if (map.has(7.0)) { return map.size(); } return 0; }",
+        "function main(): u64 { let map = new Map(); map.set(7.0, 42.0); if (map.has(7.0)) { return map.size(); } return 0; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
