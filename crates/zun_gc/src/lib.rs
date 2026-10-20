@@ -214,6 +214,7 @@ impl Heap {
             }
             self.records[idx].alive = true;
             self.records[idx].marked = false;
+            self.by_addr.insert(addr as usize, idx);
             return Obj(addr);
         }
 
@@ -1801,6 +1802,40 @@ mod tests {
         assert!(entries.contains(&(key_a, value_a)));
         assert!(entries.contains(&(key_b, value_b)));
     }
+
+    #[test]
+    fn weak_map_stress_cycles_with_collection_at_each_safepoint() {
+        let mut heap = Heap::new();
+        let weak_map = heap.weak_map_new();
+        let mut live_keys = Vec::new();
+        let mut entries = Vec::new();
+        let ref_slots = |type_rid: u32| {
+            if type_rid == 0 { Vec::new() } else { vec![0usize] }
+        };
+
+        for index in 0..32u32 {
+            let key = heap.alloc(index + 1, 1);
+            let value = heap.alloc(index + 100, 1);
+            key.set_field(0, value.addr() as u64);
+            value.set_field(0, key.addr() as u64);
+            assert!(heap.weak_map_set(weak_map, key, value));
+            if index % 2 == 0 {
+                live_keys.push(key);
+            }
+            entries.push((key, value));
+            unsafe { heap.collect(&live_keys, &ref_slots) };
+        }
+
+        let remaining = heap.weak_map_entries(weak_map);
+        for (index, (key, value)) in entries.into_iter().enumerate() {
+            if index % 2 == 0 {
+                assert!(remaining.contains(&(key, value)));
+            } else {
+                assert!(!remaining.iter().any(|(candidate, _)| *candidate == key));
+            }
+        }
+    }
+
 
     #[test]
     fn finalization_queues_token_after_target_is_swept() {
