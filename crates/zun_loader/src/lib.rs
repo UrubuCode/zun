@@ -231,6 +231,22 @@ impl ModuleLoader {
         self.modules.get(name)
     }
 
+    /// Resolve an exported definition from a loaded module by module and
+    /// source-level name. The module and export indexes are both O(1).
+    pub fn resolve_export<'a>(
+        &'a self,
+        module: &str,
+        export: &str,
+    ) -> Result<(&'a ModuleScope, Export), LoadError> {
+        let scope = self
+            .get(module)
+            .ok_or_else(|| LoadError::UnresolvedModule(module.to_owned()))?;
+        let definition = scope
+            .export(export)
+            .ok_or_else(|| LoadError::UnresolvedModule(format!("{module}::{export}")))?;
+        Ok((scope, definition))
+    }
+
     /// Resolve a ModuleRef token using the requesting module's string heap.
     pub fn resolve_module_ref<'a>(
         &'a self,
@@ -394,6 +410,25 @@ mod tests {
         loader.load_bytes("app", &bytes).expect("load app");
         assert_eq!(loader.len(), 2);
         assert_eq!(loader.get("app").unwrap().name(), "app");
+    }
+
+    #[test]
+    fn resolves_an_export_from_a_loaded_module() {
+        let mut module = Module::new();
+        let name = module.strings.intern("main");
+        module.tables.add_method_def(zun_metadata::MethodDef {
+            name,
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: u32::MAX,
+        });
+        let mut loader = ModuleLoader::new();
+        loader
+            .insert(ModuleScope::from_bytes("app", &module.write()).expect("load"))
+            .expect("register");
+        let (scope, export) = loader.resolve_export("app", "main").expect("export");
+        assert_eq!(scope.name(), "app");
+        assert!(matches!(export, Export::Method(_)));
+        assert!(loader.resolve_export("app", "missing").is_err());
     }
 
     #[test]
