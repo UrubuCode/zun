@@ -29,10 +29,14 @@ mod diagnostics;
 mod module_resolution;
 #[path = "native_types.rs"]
 mod native_types;
+#[path = "numeric_literals.rs"]
+mod numeric_literals;
 #[path = "poison.rs"]
 mod poison;
 #[path = "type_expect.rs"]
 mod type_expect;
+
+use numeric_literals::{coerce_numeric_literal, unify_numeric_literal};
 #[path = "types.rs"]
 mod types;
 
@@ -2653,59 +2657,6 @@ impl Checker<'_> {
         }
     }
 
-}
-
-/// Whether `expr` is a default (f64) number literal — a candidate to adopt a
-/// different numeric type from its context.
-fn is_number_literal(expr: &hir::Expr) -> bool {
-    matches!(expr.kind, hir::ExprKind::Number(_)) && expr.ty == Ty::F64
-}
-
-/// Whether `v` fits exactly in the integer kind `k`.
-fn fits_int(v: f64, k: IntKind) -> bool {
-    if v.fract() != 0.0 {
-        return false;
-    }
-    let (lo, hi) = int_range(k);
-    v >= lo && v <= hi
-}
-
-/// Inclusive `(min, max)` of an integer kind, as f64 (exact up to 2^53).
-fn int_range(k: IntKind) -> (f64, f64) {
-    if k.signed {
-        let hi = 2f64.powi(k.bits as i32 - 1);
-        (-hi, hi - 1.0)
-    } else {
-        (0.0, 2f64.powi(k.bits as i32) - 1.0)
-    }
-}
-
-/// Retype a number literal to `expected` when that is a numeric type the
-/// literal can represent: any float, or an integer kind the value fits.
-fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
-    if !is_number_literal(expr) {
-        return;
-    }
-    let v = match expr.kind {
-        hir::ExprKind::Number(v) => v,
-        _ => return,
-    };
-    match expected {
-        Ty::Float(_) => expr.ty = expected,
-        Ty::Int(k) if fits_int(v, k) => expr.ty = expected,
-        _ => {}
-    }
-}
-
-/// If one side of a binary op has a concrete numeric type and the other is a
-/// default number literal that can take it, retype the literal to match — so
-/// `x + 1` checks when `x: u8` (and `1 + x`).
-fn unify_numeric_literal(a: &mut hir::Expr, b: &mut hir::Expr) {
-    if (a.ty.is_int() || a.ty.is_float()) && is_number_literal(b) {
-        coerce_numeric_literal(b, a.ty);
-    } else if (b.ty.is_int() || b.ty.is_float()) && is_number_literal(a) {
-        coerce_numeric_literal(a, b.ty);
-    }
 }
 
 #[cfg(test)]
