@@ -1058,21 +1058,6 @@ impl Parser<'_> {
         }
     }
 
-    fn arrow_body(&mut self) -> Block {
-        if self.at(TokenKind::LBrace) {
-            return self.block();
-        }
-        let value = self.expression();
-        let span = value.span();
-        Block {
-            statements: vec![Stmt::Return {
-                value: Some(value),
-                span,
-            }],
-            span,
-        }
-    }
-
 }
 
 /// Operator and binding level for a binary-operator token. Higher binds tighter.
