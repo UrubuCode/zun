@@ -303,6 +303,30 @@ impl Heap {
         Some(view.write_u32(self.buffers.get_mut(&(object.addr() as usize))?, offset, value))
     }
 
+    pub fn buffer_view_read_u8(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<u8> {
+        view.read_u8(self.buffers.get(&(object.addr() as usize))?, index)
+    }
+
+    pub fn buffer_view_write_u8(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: u8) -> Option<bool> {
+        Some(view.write_u8(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    }
+
+    pub fn buffer_view_read_u16(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<u16> {
+        view.read_u16(self.buffers.get(&(object.addr() as usize))?, index)
+    }
+
+    pub fn buffer_view_write_u16(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: u16) -> Option<bool> {
+        Some(view.write_u16(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    }
+
+    pub fn buffer_view_read_f64(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<f64> {
+        view.read_f64(self.buffers.get(&(object.addr() as usize))?, index)
+    }
+
+    pub fn buffer_view_write_f64(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: f64) -> Option<bool> {
+        Some(view.write_f64(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    }
+
     /// Allocate a runtime-backed Map with insertion-ordered hash storage.
     pub fn alloc_map(&mut self) -> Obj {
         let object = self.alloc(0, 0);
@@ -1017,6 +1041,15 @@ mod tests {
         assert_eq!(heap.buffer_view_write_u32(buffer, view, 0, 0x1234), Some(true));
         assert_eq!(heap.buffer_view_read_u32(buffer, view, 0), Some(0x1234));
         assert_eq!(heap.buffer_view_write_u32(buffer, view, 5, 1), Some(false));
+        let bytes = zun_core::TypedArrayView::new(16, 0, 4, zun_core::TypedElement::U8).unwrap();
+        assert_eq!(heap.buffer_view_write_u8(buffer, bytes, 0, 7), Some(true));
+        assert_eq!(heap.buffer_view_read_u8(buffer, bytes, 0), Some(7));
+        let shorts = zun_core::TypedArrayView::new(16, 0, 4, zun_core::TypedElement::U16).unwrap();
+        assert_eq!(heap.buffer_view_write_u16(buffer, shorts, 1, 0xbeef), Some(true));
+        assert_eq!(heap.buffer_view_read_u16(buffer, shorts, 1), Some(0xbeef));
+        let floats = zun_core::TypedArrayView::new(16, 8, 8, zun_core::TypedElement::F64).unwrap();
+        assert_eq!(heap.buffer_view_write_f64(buffer, floats, 0, 1.5), Some(true));
+        assert_eq!(heap.buffer_view_read_f64(buffer, floats, 0), Some(1.5));
     }
 
     #[test]
