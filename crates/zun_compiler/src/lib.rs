@@ -437,6 +437,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_external_call_with_mismatched_signature() {
+        let diagnostics = compile_with_externals(
+            "import { answer } from \"core\"; function main(): int { return answer(\"wrong\"); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "core".into(),
+                name: "answer".into(),
+                params: vec![zun_sema::Ty::INT],
+                return_ty: zun_sema::Ty::INT,
+            }],
+        )
+        .expect_err("mismatched external signatures must be rejected");
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "SEM0001"));
+    }
+
+    #[test]
     fn compiles_extern_method_to_builtin_call() {
         let module = compile(
             "import { receiverValue } from \"zun:math\";\n\
