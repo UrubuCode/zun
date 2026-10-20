@@ -67,13 +67,13 @@ mod node_api {
 
     unsafe extern "C" fn run_i64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
         let mut argc = 1;
-        let mut argv = core::ptr::null_mut();
+        let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
             napi_get_cb_info(
                 env,
                 info,
                 &mut argc,
-                &mut argv,
+                argv.as_mut_ptr(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
             )
@@ -84,11 +84,11 @@ mod node_api {
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = unsafe { napi_get_arraybuffer_info(env, argv[0], &mut data, &mut length) };
         let status = if status == NAPI_OK {
             status
         } else {
-            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+            unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
@@ -109,19 +109,19 @@ mod node_api {
 
     unsafe extern "C" fn run_f64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
         let mut argc = 1;
-        let mut argv = core::ptr::null_mut();
+        let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
-            napi_get_cb_info(env, info, &mut argc, &mut argv, core::ptr::null_mut(), core::ptr::null_mut())
+            napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
         } != NAPI_OK || argc != 1 {
             return core::ptr::null_mut();
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = unsafe { napi_get_arraybuffer_info(env, argv[0], &mut data, &mut length) };
         let status = if status == NAPI_OK {
             status
         } else {
-            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+            unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
@@ -141,19 +141,19 @@ mod node_api {
 
     unsafe extern "C" fn run_bool(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
         let mut argc = 1;
-        let mut argv = core::ptr::null_mut();
+        let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
-            napi_get_cb_info(env, info, &mut argc, &mut argv, core::ptr::null_mut(), core::ptr::null_mut())
+            napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
         } != NAPI_OK || argc != 1 {
             return core::ptr::null_mut();
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = unsafe { napi_get_arraybuffer_info(env, argv[0], &mut data, &mut length) };
         let status = if status == NAPI_OK {
             status
         } else {
-            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+            unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
@@ -173,19 +173,19 @@ mod node_api {
 
     unsafe extern "C" fn run_string(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
         let mut argc = 1;
-        let mut argv = core::ptr::null_mut();
+        let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
-            napi_get_cb_info(env, info, &mut argc, &mut argv, core::ptr::null_mut(), core::ptr::null_mut())
+            napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
         } != NAPI_OK || argc != 1 {
             return core::ptr::null_mut();
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = unsafe { napi_get_arraybuffer_info(env, argv[0], &mut data, &mut length) };
         let status = if status == NAPI_OK {
             status
         } else {
-            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+            unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
