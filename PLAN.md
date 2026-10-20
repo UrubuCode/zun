@@ -414,7 +414,8 @@ wrapper (Cranelift remains explicitly deferred); `Reflect` now has Tier 0
 property keys through dedicated IL, while `Proxy`
 traps remain on the dynamic `Any`/`DynamicObject` path (Phase 4); `Proxy`
 construction now binds to those strongly traced target/handler records, and
-dynamic handlers can retain named closure traps; `BigInt` needs a bignum
+dynamic handlers can retain named closure traps, and the proxy floor can resolve
+them without invocation; `BigInt` needs a bignum
 (deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
 Cross-cutting rule: data structures with real algorithmic complexity (hashing,
