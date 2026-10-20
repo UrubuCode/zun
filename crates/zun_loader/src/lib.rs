@@ -761,4 +761,27 @@ mod tests {
         assert!(loader.get(&entry.to_string_lossy()).is_some());
         std::fs::remove_dir_all(root).expect("remove temp directory");
     }
+
+    #[test]
+    fn rejects_manifest_with_unresolved_member_reference() {
+        let mut module = Module::new();
+        let missing = module.strings.intern("missing");
+        let member = module.strings.intern("answer");
+        let module_ref = module
+            .tables
+            .add_module_ref(zun_metadata::ModuleRef { name: missing });
+        module.tables.add_member_ref(zun_metadata::MemberRef {
+            parent: module_ref,
+            name: member,
+            signature: zun_metadata::BlobIndex(0),
+        });
+        let scope = ModuleScope::from_bytes("app", &module.write()).expect("load app");
+        let mut loader = ModuleLoader::new();
+        loader.insert(scope).expect("register app");
+        let manifest = ModuleManifest::new("app", Vec::<String>::new());
+        assert!(matches!(
+            loader.validate_member_refs(&manifest),
+            Err(LoadError::UnresolvedModule(name)) if name == "missing"
+        ));
+    }
 }
