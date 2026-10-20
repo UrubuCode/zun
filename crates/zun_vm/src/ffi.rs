@@ -5,6 +5,43 @@
 
 use std::ffi::OsStr;
 
+/// Return the platform library-name candidates for a logical native library.
+///
+/// Names that already contain a path separator or a recognized suffix are
+/// treated as explicit paths and are not rewritten. This mirrors the runtime
+/// loader rule that a caller which supplied a concrete path gets one lookup.
+pub fn library_name_variants(name: &str) -> Vec<String> {
+    let explicit = name.contains('/') || name.contains('\\');
+    let has_suffix = name.ends_with(".dll")
+        || name.ends_with(".so")
+        || name.contains(".so.")
+        || name.ends_with(".dylib");
+    if explicit || has_suffix {
+        return vec![name.to_owned()];
+    }
+
+    #[cfg(windows)]
+    {
+        vec![format!("{name}.dll"), name.to_owned()]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        vec![
+            format!("lib{name}.dylib"),
+            format!("{name}.dylib"),
+            name.to_owned(),
+        ]
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        vec![format!("lib{name}.so"), format!("{name}.so"), name.to_owned()]
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        vec![name.to_owned()]
+    }
+}
+
 /// Errors raised while opening a native library or resolving a symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FfiError {
@@ -48,6 +85,27 @@ impl NativeLibrary {
         Ok(Self {
             library,
             path: path_ref.to_string_lossy().into_owned(),
+        })
+    }
+
+    /// Load a logical library name using platform filename variants.
+    ///
+    /// Explicit paths are passed through unchanged. For logical names, each
+    /// candidate is tried in order and all failures are retained in the final
+    /// error so a missing native dependency is diagnosable.
+    pub unsafe fn open_named(name: &str) -> Result<Self, FfiError> {
+        let mut errors = Vec::new();
+        for candidate in library_name_variants(name) {
+            match unsafe { Self::open(&candidate) } {
+                Ok(library) => return Ok(library),
+                Err(error) => errors.push(error.to_string()),
+            }
+        }
+        Err(FfiError {
+            message: format!(
+                "failed to resolve native library `{name}`; attempts: {}",
+                errors.join("; ")
+            ),
         })
     }
 
@@ -151,6 +209,30 @@ mod tests {
         let result = unsafe { NativeLibrary::open("zun-library-that-does-not-exist") };
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("failed to load"));
+    }
+
+    #[test]
+    fn explicit_library_names_are_not_rewritten() {
+        assert_eq!(library_name_variants("./native/libzun.so"), vec!["./native/libzun.so"]);
+        assert_eq!(library_name_variants("zun.so.1"), vec!["zun.so.1"]);
+    }
+
+    #[test]
+    fn logical_library_names_include_platform_candidates() {
+        let variants = library_name_variants("zun");
+        assert!(!variants.is_empty());
+        assert!(variants.iter().any(|candidate| candidate == "zun"));
+        #[cfg(windows)]
+        assert!(variants.contains(&"zun.dll".to_owned()));
+        #[cfg(unix)]
+        assert!(variants.iter().any(|candidate| candidate.starts_with("libzun")));
+    }
+
+    #[test]
+    fn named_load_reports_all_candidates() {
+        let result = unsafe { NativeLibrary::open_named("zun-library-that-does-not-exist") };
+        let error = result.expect_err("missing logical library must fail");
+        assert!(error.to_string().contains("attempts:"));
     }
 
     #[test]
