@@ -309,6 +309,25 @@ vincula os nomes com suas assinaturas e baixa chamadas para `call.builtin <id>`.
 Módulos de usuário (caminhos relativos) e o sistema de módulos de código Zun
 ficam para uma fase posterior (precisam de compilação multi-arquivo).
 
+## 5. Implementation ledger (2026-10-20)
+
+The following runtime contracts are implemented and covered by tests:
+
+- compact virtual-slot dispatch in both the interpreter and Cranelift JIT;
+- O(1) field metadata lookup and per-type virtual tables;
+- mark-sweep GC with interpreter roots, native root scopes, and registered JIT
+  stack-map metadata;
+- Promise/microtask scheduling and scalar external-library symbol calls;
+- `Any` and `DynamicObject`, including dynamic-property IL, source lowering,
+  and GC tracing of object-tagged dynamic values;
+- interpreted backedge observation as the first OSR integration boundary.
+
+The remaining completion gates are full async state-machine lowering, complete
+typed FFI/ABI integration, N-API hosting, AOT/R2R object emission, true OSR
+frame replacement, and reachability-based trimming. Each gate requires a
+runtime test and an interpreter/JIT equivalence test where JIT execution is
+applicable.
+
 ## 5. Riscos e pontos de atenção
 
 - **Semântica JS vs modelo estático**: o escopo do que `any`/JS dinâmico suporta precisa ser decidido cedo (não dá para ser 100% ECMAScript sem reconstruir um V8). Recomendação: definir Zun como "TS sound-por-padrão, com `Any` como opt-in custoso" e documentar divergências.
