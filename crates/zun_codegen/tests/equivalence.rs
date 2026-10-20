@@ -208,6 +208,17 @@ fn default_parameter_uses_the_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn method_default_parameter_uses_the_interpreter_fallback_boundary() {
+    let module = compile(
+        "class Box { value(factor: number = 3.0): number { return factor; } } function main(): number { let box_value = new Box(); return box_value.value(); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "default method parameter requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Float(3.0, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\

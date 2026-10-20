@@ -1447,6 +1447,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run default parameter");
         assert!(matches!(value, Value::Float(2.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn method_default_parameter_preserves_the_receiver() {
+        let module = zun_compiler::compile(
+            "class Box { value(factor: number = 3.0): number { return factor; } } function main(): number { let box_value = new Box(); return box_value.value(); }",
+        )
+        .expect("compile method default parameter");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run method default parameter");
+        assert!(matches!(value, Value::Float(3.0, zun_il::NumKind::F64)));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
