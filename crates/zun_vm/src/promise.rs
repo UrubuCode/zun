@@ -81,6 +81,55 @@ impl<T, F> core::fmt::Debug for AsyncStateMachine<T, F> {
     }
 }
 
+/// Result of advancing a compiler-generated generator state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GeneratorStep<T> {
+    /// The generator produced a value and can be resumed.
+    Yielded(T),
+    /// The generator reached its terminal return state.
+    Complete,
+}
+
+/// Minimal persistent state-machine contract for synchronous generators.
+pub struct GeneratorStateMachine<T, F> {
+    state: usize,
+    done: bool,
+    step: F,
+    _value: core::marker::PhantomData<fn() -> T>,
+}
+
+impl<T, F> core::fmt::Debug for GeneratorStateMachine<T, F> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("GeneratorStateMachine")
+            .field("state", &self.state)
+            .field("done", &self.done)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T, F> {
+    /// Create a generator at its entry state.
+    pub fn new(step: F) -> Self {
+        Self { state: 0, done: false, step, _value: core::marker::PhantomData }
+    }
+
+    /// Advance once. Completion is sticky, as required by iterator semantics.
+    pub fn next(&mut self) -> GeneratorStep<T> {
+        if self.done {
+            return GeneratorStep::Complete;
+        }
+        let result = (self.step)(&mut self.state);
+        if matches!(result, GeneratorStep::Complete) {
+            self.done = true;
+        }
+        result
+    }
+
+    /// Current generated state, useful to a runtime resume hook.
+    pub fn state(&self) -> usize { self.state }
+}
+
 impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachine<T, F> {
     /// Construct a state machine starting at state zero.
     pub fn new(poller: F) -> Self {
@@ -753,6 +802,20 @@ mod tests {
         assert!(!machine.is_completed());
         assert_eq!(machine.poll(), Poll::Ready(7));
         assert!(machine.is_completed());
+    }
+
+    #[test]
+    fn generator_state_machine_preserves_state_and_sticky_completion() {
+        let mut machine = GeneratorStateMachine::new(|state| match *state {
+            0 => { *state = 1; GeneratorStep::Yielded(10) }
+            1 => { *state = 2; GeneratorStep::Yielded(20) }
+            _ => GeneratorStep::Complete,
+        });
+        assert_eq!(machine.next(), GeneratorStep::Yielded(10));
+        assert_eq!(machine.state(), 1);
+        assert_eq!(machine.next(), GeneratorStep::Yielded(20));
+        assert_eq!(machine.next(), GeneratorStep::Complete);
+        assert_eq!(machine.next(), GeneratorStep::Complete);
     }
 
     #[test]

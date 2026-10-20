@@ -17,7 +17,8 @@ use zun_module::Module;
 pub use ffi::{FfiError, NativeLibrary};
 pub use jit_hook::JitHook;
 pub use promise::{
-    AsyncStateMachine, MicrotaskQueue, Poll, Promise, PromiseAwaiter, PromiseState, Scheduler,
+    AsyncStateMachine, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
+    PromiseAwaiter, PromiseState, Scheduler,
 };
 pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
 
