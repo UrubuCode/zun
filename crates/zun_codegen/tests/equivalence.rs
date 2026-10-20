@@ -104,6 +104,19 @@ fn date_surface_decomposes_utc_timestamps() {
 }
 
 #[test]
+fn date_surface_exposes_time_components_and_string_form() {
+    let module = compile(
+        "import { hour, minute, second, millisecond, isoDateTime } from \"zun:date\";\n\
+         class Date { millis: i64; utcHour(): i32 { return hour(this.millis); } utcMinute(): i32 { return minute(this.millis); } utcSecond(): i32 { return second(this.millis); } utcMillisecond(): i32 { return millisecond(this.millis); } isoDateTime(): string { return isoDateTime(this.millis); } toString(): string { return this.isoDateTime(); } }\n\
+         function main(): int { let value: Date = new Date(3723004); if (value.utcHour() == 1) { if (value.utcMinute() == 2) { if (value.utcSecond() == 3) { if (value.utcMillisecond() == 4) { if (value.toString() == \"1970-01-01T01:02:03.004Z\") { return 1; } } } } } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "date string operations remain interpreter-only");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\

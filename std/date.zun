@@ -15,4 +15,5 @@ class Date {
     utcWeekday(): i32 { return weekday(this.millis); }
     isoDate(): string { return isoDate(this.millis); }
     isoDateTime(): string { return isoDateTime(this.millis); }
+    toString(): string { return this.isoDateTime(); }
 }
