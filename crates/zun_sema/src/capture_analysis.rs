@@ -1,5 +1,54 @@
 use super::*;
 
+pub(super) fn collect_mutated_names(
+    checker: &Checker<'_>,
+    statements: &[ast::Stmt],
+    names: &mut HashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            ast::Stmt::Let { init, .. }
+            | ast::Stmt::ArrayDestructure { init, .. }
+            | ast::Stmt::ObjectDestructure { init, .. }
+            | ast::Stmt::Expr(init) => collect_mutated_expr(checker, init, names),
+            ast::Stmt::If { cond, then_block, else_block, .. } => {
+                collect_mutated_expr(checker, cond, names);
+                collect_mutated_names(checker, &then_block.statements, names);
+                if let Some(block) = else_block { collect_mutated_names(checker, &block.statements, names); }
+            }
+            ast::Stmt::While { cond, body, .. } => {
+                collect_mutated_expr(checker, cond, names);
+                collect_mutated_names(checker, &body.statements, names);
+            }
+            ast::Stmt::DoWhile { body, cond, .. } => {
+                collect_mutated_names(checker, &body.statements, names);
+                collect_mutated_expr(checker, cond, names);
+            }
+            ast::Stmt::For { init, cond, update, body, .. } => {
+                if let Some(init) = init { collect_mutated_names(checker, std::slice::from_ref(init), names); }
+                if let Some(cond) = cond { collect_mutated_expr(checker, cond, names); }
+                if let Some(update) = update { collect_mutated_expr(checker, update, names); }
+                collect_mutated_names(checker, &body.statements, names);
+            }
+            ast::Stmt::ForOf { iterable, body, .. } => {
+                collect_mutated_expr(checker, iterable, names);
+                collect_mutated_names(checker, &body.statements, names);
+            }
+            ast::Stmt::Return { value, .. } => {
+                if let Some(value) = value { collect_mutated_expr(checker, value, names); }
+            }
+            ast::Stmt::Throw { value, .. } => collect_mutated_expr(checker, value, names),
+            ast::Stmt::Try { body, catches, finally, .. } => {
+                collect_mutated_names(checker, &body.statements, names);
+                for catch in catches { collect_mutated_names(checker, &catch.body.statements, names); }
+                if let Some(block) = finally { collect_mutated_names(checker, &block.statements, names); }
+            }
+            ast::Stmt::Labeled { statement, .. } => collect_mutated_names(checker, std::slice::from_ref(statement), names),
+            ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
+        }
+    }
+}
+
 pub(super) fn collect_mutated_expr(
     checker: &Checker<'_>,
     expr: &ast::Expr,
