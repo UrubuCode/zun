@@ -280,6 +280,46 @@ pub struct ByteView {
     length: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypedElement {
+    U8,
+    U16,
+    U32,
+    F64,
+}
+
+impl TypedElement {
+    pub const fn size(self) -> usize {
+        match self { Self::U8 => 1, Self::U16 => 2, Self::U32 => 4, Self::F64 => 8 }
+    }
+}
+
+/// Typed-array view metadata over a bounded byte window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypedArrayView {
+    view: ByteView,
+    element: TypedElement,
+}
+
+impl TypedArrayView {
+    pub fn new(buffer_length: usize, offset: usize, length: usize, element: TypedElement) -> Option<Self> {
+        let view = ByteView::new(buffer_length, offset, length)?;
+        (offset % element.size() == 0 && length % element.size() == 0).then_some(Self { view, element })
+    }
+
+    pub fn len(self) -> usize { self.view.len() / self.element.size() }
+    pub fn element(self) -> TypedElement { self.element }
+
+    pub fn read_u32(self, buffer: &ByteBuffer, index: usize) -> Option<u32> {
+        if self.element != TypedElement::U32 { return None; }
+        self.view.read_u32(buffer, index.checked_mul(4)?)
+    }
+
+    pub fn write_u32(self, buffer: &mut ByteBuffer, index: usize, value: u32) -> bool {
+        self.element == TypedElement::U32 && index.checked_mul(4).is_some_and(|offset| self.view.write_u32(buffer, offset, value))
+    }
+}
+
 impl ByteView {
     pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
         offset.checked_add(length).filter(|&end| end <= buffer_length).map(|_| Self { offset, length })
@@ -622,6 +662,13 @@ mod tests {
         assert_eq!(typed.read_u32(6), Some(7));
         assert!(!view.write_u32(&mut typed, 5, 8));
         assert!(ByteView::new(typed.len(), 15, 2).is_none());
+        let array = TypedArrayView::new(typed.len(), 4, 8, TypedElement::U32).unwrap();
+        assert_eq!(array.len(), 2);
+        assert!(array.write_u32(&mut typed, 1, 0xcafe));
+        assert_eq!(array.read_u32(&typed, 1), Some(0xcafe));
+        assert!(!array.write_u32(&mut typed, 2, 1));
+        assert!(TypedArrayView::new(typed.len(), 1, 4, TypedElement::U32).is_none());
+        assert!(TypedArrayView::new(typed.len(), 0, 6, TypedElement::U32).is_none());
     }
 
     #[test]
