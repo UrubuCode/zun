@@ -292,4 +292,22 @@ impl TypeSystem {
     pub fn is_empty(&self) -> bool {
         self.types.is_empty()
     }
+
+    /// Whether a runtime type is the target type or derives from it.
+    pub fn is_assignable(&self, runtime_type: u32, target_type: u32) -> bool {
+        let mut current = Some(runtime_type);
+        while let Some(type_rid) = current {
+            if type_rid == target_type {
+                return true;
+            }
+            current = self.get(type_rid).and_then(|descriptor| {
+                if descriptor.base.is_null() {
+                    None
+                } else {
+                    Some(descriptor.base.rid())
+                }
+            });
+        }
+        false
+    }
 }

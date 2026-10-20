@@ -471,7 +471,34 @@ impl Interp<'_> {
                     return Ok(stack.pop().unwrap_or(Value::Void));
                 }
                 Opcode::Throw => {
-                    return Err(RunError::Thrown(pop(&mut stack)?));
+                    let exception = pop(&mut stack)?;
+                    let throw_pc = pc - size;
+                    let handler = body
+                        .handlers
+                        .iter()
+                        .filter(|handler| {
+                            handler.try_start as usize <= throw_pc
+                                && throw_pc < handler.try_end as usize
+                        })
+                        .filter(|handler| match handler.kind {
+                            zun_module::HandlerKind::Finally => true,
+                            zun_module::HandlerKind::Catch => {
+                                match (handler.catch_type, &exception) {
+                                    (Some(token), Value::Object(object)) => {
+                                        self.types.is_assignable(object.type_rid(), token.rid())
+                                    }
+                                    _ => false,
+                                }
+                            }
+                        })
+                        .min_by_key(|handler| handler.try_end - handler.try_start);
+                    if let Some(handler) = handler {
+                        stack.clear();
+                        stack.push(exception);
+                        pc = handler.handler_start as usize;
+                    } else {
+                        return Err(RunError::Thrown(exception));
+                    }
                 }
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);
@@ -839,6 +866,17 @@ mod method_tests {
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
+
+    #[test]
+    fn catches_a_thrown_error_in_the_current_frame() {
+        let module = zun_compiler::compile(
+            "class Error {} function main(): int { try { throw new Error(); } catch (error: Error) { return 42; } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("catch should handle throw");
+        assert_eq!(value.as_int(), 42);
+    }
 
     #[test]
     fn runs_non_entry_method_with_arguments() {
