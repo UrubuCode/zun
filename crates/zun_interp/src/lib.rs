@@ -828,6 +828,67 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::CallIndirectRest => {
+                    let (token, argument_count) = operand_token_imm32(&instr.operand);
+                    if token.table() != Some(TableKind::MethodDef) || argument_count < 0 {
+                        return Err(RunError::BadToken);
+                    }
+                    let argument_count = argument_count as usize;
+                    let values = pop_n(&mut stack, argument_count)?;
+                    let function = pop(&mut stack)?;
+                    let Value::Function(handle) = function else {
+                        return Err(RunError::BadToken);
+                    };
+                    if handle.method_rid() != token.rid() {
+                        return Err(RunError::BadToken);
+                    }
+                    let environment = handle
+                        .environment()
+                        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                    let target = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(handle.method_rid() as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let target_body = read_body(&self.module.code, target.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    let hidden = usize::from(environment.is_some());
+                    let rest_index = target_body
+                        .param_count
+                        .checked_sub((hidden + 1) as u16)
+                        .ok_or(RunError::BadToken)? as usize;
+                    if argument_count < rest_index {
+                        return Err(RunError::BadToken);
+                    }
+                    let rest_values = &values[rest_index..];
+                    let rest_array = zun_gc::with_current_heap_mut(|heap| {
+                        let array = heap.alloc_array(rest_values.len());
+                        for (index, value) in rest_values.iter().enumerate() {
+                            let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                            let _ = heap.array_set(array, index, any);
+                        }
+                        Ok::<_, RunError>(array)
+                    })?;
+                    let mut call_args = Vec::with_capacity(hidden + rest_index + 1);
+                    if let Some(environment) = environment {
+                        call_args.push(Value::Object(environment));
+                    }
+                    call_args.extend(values[..rest_index].iter().cloned());
+                    call_args.push(Value::Object(rest_array));
+                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let result = match self.dispatch(handle.method_rid(), call_args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    stack.push(result);
+                }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
                     self.call_builtin(id, &mut stack)?;

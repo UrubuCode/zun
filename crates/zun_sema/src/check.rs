@@ -1917,6 +1917,43 @@ impl Checker<'_> {
                                 optional_count,
                                 rest_param: self.signatures[func as usize].rest_param,
                             };
+                            if let Some(rest_index) = sig.rest_param {
+                                if args.len() < rest_index {
+                                    self.error(
+                                        span,
+                                        format!(
+                                            "function value expects at least {} argument(s), found {}",
+                                            rest_index,
+                                            args.len()
+                                        ),
+                                    );
+                                }
+                                for (arg, &expected) in args.iter_mut().zip(&param_tys).take(rest_index) {
+                                    coerce_numeric_literal(arg, expected);
+                                    if !expected.is_error()
+                                        && !arg.ty.is_error()
+                                        && !self.is_assignable(arg.ty, expected)
+                                    {
+                                        self.error(
+                                            arg.span,
+                                            format!("argument type {:?} does not match {expected:?}", arg.ty),
+                                        );
+                                    }
+                                }
+                                return hir::Expr {
+                                    kind: hir::ExprKind::IndirectCallRest {
+                                        callee: Box::new(hir::Expr {
+                                            kind: hir::ExprKind::Local(slot),
+                                            ty: function_ty,
+                                            span,
+                                        }),
+                                        args,
+                                        func,
+                                    },
+                                    ty: return_ty,
+                                    span,
+                                };
+                            }
                             if args.len() < param_tys.len().saturating_sub(optional_count)
                                 || args.len() > param_tys.len()
                             {
@@ -3073,9 +3110,34 @@ impl Checker<'_> {
                             signature.name.clone(),
                         )
                     };
-                    if rest_param.is_some() {
-                        self.error(span, "computed calls to rest functions are not supported yet");
-                        return self.poison(span);
+                    if let Some(rest_index) = rest_param {
+                        if args.len() < rest_index {
+                            self.error(
+                                span,
+                                format!("function value expects at least {} argument(s), found {}", rest_index, args.len()),
+                            );
+                        }
+                        for (arg, &expected) in args.iter_mut().zip(&param_tys).take(rest_index) {
+                            coerce_numeric_literal(arg, expected);
+                            if !expected.is_error()
+                                && !arg.ty.is_error()
+                                && !self.is_assignable(arg.ty, expected)
+                            {
+                                self.error(
+                                    arg.span,
+                                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                                );
+                            }
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::IndirectCallRest {
+                                callee: Box::new(callee),
+                                args,
+                                func,
+                            },
+                            ty: return_ty,
+                            span,
+                        };
                     }
                     if args.len() < param_tys.len().saturating_sub(optional_count)
                         || args.len() > param_tys.len()

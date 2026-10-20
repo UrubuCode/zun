@@ -275,6 +275,8 @@ define_opcodes! {
     CallVirtRestArray = 0x8A, Token, "callvirt.rest.array", StackEffect::Call;
     /// Virtually invoke a rest method with fixed arguments and an array.
     CallVirtRestArrayFixed = 0x8B, TokenImm32, "callvirt.rest.array.fixed", StackEffect::Call;
+    /// Invoke a function value with an explicit argument count for its rest parameter.
+    CallIndirectRest = 0x8C, TokenImm32, "call.indirect.rest", StackEffect::Call;
 }
 
 #[cfg(test)]

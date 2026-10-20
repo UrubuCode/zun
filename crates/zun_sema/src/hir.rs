@@ -519,6 +519,15 @@ pub enum ExprKind {
         /// Function index providing the static signature token.
         func: FuncIndex,
     },
+    /// Invoke a function value with a trailing rest parameter.
+    IndirectCallRest {
+        /// Function-valued expression.
+        callee: Box<Expr>,
+        /// Arguments in source order.
+        args: Vec<Expr>,
+        /// Function index providing the static signature token.
+        func: FuncIndex,
+    },
     /// Call a runtime intrinsic by its stable id (see `zun_intrinsics`).
     CallBuiltin {
         /// The intrinsic dispatch id.
