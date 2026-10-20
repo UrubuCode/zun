@@ -641,18 +641,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
 }
 
 impl TypedArrayView {
-    pub fn read_u8(self, buffer: &ByteBuffer, index: usize) -> Option<u8> {
-        (self.element == TypedElement::U8)
-            .then(|| buffer.get(self.view.offset + index))
-            .flatten()
-    }
-
-    pub fn write_u8(self, buffer: &mut ByteBuffer, index: usize, value: u8) -> bool {
-        self.element == TypedElement::U8
-            && index < self.len()
-            && buffer.set(self.view.offset + index, value)
-    }
-
     pub fn read_u16(self, buffer: &ByteBuffer, index: usize) -> Option<u16> {
         (self.element == TypedElement::U16)
             .then(|| buffer.read_u16(self.view.offset + index.checked_mul(2)?))

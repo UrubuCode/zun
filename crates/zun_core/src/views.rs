@@ -235,4 +235,16 @@ impl TypedArrayView {
     pub fn element(self) -> TypedElement {
         self.element
     }
+
+    pub fn read_u8(self, buffer: &ByteBuffer, index: usize) -> Option<u8> {
+        (self.element == TypedElement::U8)
+            .then(|| buffer.get(self.view.offset + index))
+            .flatten()
+    }
+
+    pub fn write_u8(self, buffer: &mut ByteBuffer, index: usize, value: u8) -> bool {
+        self.element == TypedElement::U8
+            && index < self.len()
+            && buffer.set(self.view.offset + index, value)
+    }
 }
