@@ -803,6 +803,35 @@ mod tests {
     }
 
     #[test]
+    fn nested_native_root_scopes_restore_the_outer_frame() {
+        let mut heap = Heap::new();
+        let outer_object = heap.alloc(1, 0);
+        let inner_object = heap.alloc(2, 0);
+        let outer = [outer_object];
+        let inner = [inner_object];
+        let outer_scope = unsafe { NativeRootScope::enter(&outer) };
+
+        let mut roots = Vec::new();
+        append_native_roots(&mut roots);
+        assert_eq!(roots, outer);
+
+        {
+            let _inner_scope = unsafe { NativeRootScope::enter(&inner) };
+            roots.clear();
+            append_native_roots(&mut roots);
+            assert_eq!(roots, vec![outer_object, inner_object]);
+        }
+
+        roots.clear();
+        append_native_roots(&mut roots);
+        assert_eq!(roots, outer);
+        drop(outer_scope);
+        roots.clear();
+        append_native_roots(&mut roots);
+        assert!(roots.is_empty());
+    }
+
+    #[test]
     fn stack_map_lookup_matches_the_registered_span() {
         let mut registry = StackMapRegistry::new();
         registry.replace([
