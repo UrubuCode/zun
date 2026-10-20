@@ -56,7 +56,10 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "promiseReject",
         "promiseState",
     ] {
-        if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id)
+        if zun_natives::resolve("zun:collections", name)
+            .or_else(|| zun_natives::resolve("zun:promise", name))
+            .map(|(candidate, _)| candidate)
+            == Some(id)
         {
             return Some(name);
         }
