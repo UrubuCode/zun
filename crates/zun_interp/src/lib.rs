@@ -38,16 +38,22 @@ pub use runner::{ResumableSession, ResumeResult};
 /// Read the result of a settled managed Promise for the synchronous await
 /// fast path. Pending promises deliberately return `None` and must be routed
 /// through the future continuation/state-machine path.
-fn settled_await_value(promise: zun_gc::Obj) -> Option<Value> {
+fn settled_await_value(promise: zun_gc::Obj) -> Result<Option<Value>, RunError> {
     zun_gc::with_current_heap(|heap| {
-        heap.promise_is_ready(promise).and_then(|ready| {
-            ready.then(|| {
-                heap.promise_result(promise)
-                    .and_then(|value| value::Value::unbox_any(value, heap))
-            })
-        })
+        match heap.promise_state(promise) {
+            Some(zun_core::ManagedPromiseState::Pending) => Ok(None),
+            Some(zun_core::ManagedPromiseState::Resolved) => Ok(heap
+                .promise_result(promise)
+                .and_then(|value| value::Value::unbox_any(value, heap))),
+            Some(zun_core::ManagedPromiseState::Rejected) => Err(RunError::Thrown(
+                Value::Str(Rc::from(
+                    heap.promise_error(promise)
+                        .unwrap_or_else(|| "Promise rejected".into()),
+                )),
+            )),
+            None => Err(RunError::BadToken),
+        }
     })
-    .flatten()
 }
 use std::rc::Rc;
 use value::Value;
@@ -1143,7 +1149,8 @@ impl Interp<'_> {
                 }
                 Opcode::Await => {
                     let promise = pop(&mut stack)?.as_object();
-                    let Some(value) = settled_await_value(promise) else {
+                    let settled = settled_await_value(promise)?;
+                    let Some(value) = settled else {
                         let await_pc = (*pc).saturating_sub(size);
                         let mut suspended = ExecutionFrame::new(method_rid, locals.to_vec());
                         suspended.stack = stack.to_vec();
@@ -1229,6 +1236,32 @@ mod method_tests {
     }
 
     #[test]
+    fn resumable_session_propagates_rejected_await() {
+        let module = zun_compiler::compile(
+            "async function main(): Promise { let p = new Promise(); await p; return p; }",
+        )
+        .expect("compile async await function");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session = ResumableSession::new(
+            &module,
+            entry.rid(),
+            Vec::new(),
+            &mut output,
+            None,
+            None,
+        )
+        .expect("create resumable session");
+        assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
+        let promise = session.awaited_promise().expect("awaited promise");
+        assert_eq!(session.heap_mut().promise_reject(promise, "boom"), Some(true));
+        assert!(matches!(
+            session.poll(),
+            Err(RunError::Thrown(Value::Str(_)))
+        ));
+    }
+
+    #[test]
     fn settled_await_reads_the_managed_promise_result() {
         let mut heap = zun_gc::Heap::new();
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
@@ -1236,7 +1269,12 @@ mod method_tests {
         let value = Value::Int(7, zun_il::NumKind::I32);
         let boxed = value.box_any(&mut heap).expect("box await result");
         assert_eq!(heap.promise_resolve(promise, boxed), Some(true));
-        assert_eq!(settled_await_value(promise).map(|resolved| resolved.as_int()), Some(7));
+        assert_eq!(
+            settled_await_value(promise)
+                .unwrap()
+                .map(|resolved| resolved.as_int()),
+            Some(7)
+        );
     }
 
     #[test]

@@ -83,6 +83,12 @@ impl Heap {
         self.promises.get(&(object.addr() as usize)).map(|promise| promise.is_ready())
     }
 
+    pub fn promise_error(&self, object: Obj) -> Option<String> {
+        self.promises
+            .get(&(object.addr() as usize))
+            .and_then(|promise| promise.error().map(str::to_owned))
+    }
+
     pub fn promise_resolve(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
         self.promises
             .get_mut(&(object.addr() as usize))
