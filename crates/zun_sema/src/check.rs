@@ -1318,7 +1318,7 @@ impl Checker<'_> {
                     Some((args.remove(0), name))
                 };
 
-                if name == "dynamic_get" {
+                if name == "dynamic_get" || name == "reflect_get" {
                     let Some((object, property)) = dynamic_property(self, &mut args, span) else {
                         return self.poison(span);
                     };
@@ -1332,7 +1332,7 @@ impl Checker<'_> {
                     };
                 }
 
-                if name == "dynamic_set" {
+                if name == "dynamic_set" || name == "reflect_set" {
                     if args.len() != 3
                         || args[0].ty != Ty::DynamicObject
                         || args[1].ty != Ty::String

@@ -1882,6 +1882,17 @@ mod method_tests {
     }
 
     #[test]
+    fn reflect_aliases_use_dynamic_object_storage() {
+        let module = zun_compiler::compile(
+            "function main(): any { let object = dynamic_new(); reflect_set(object, \"answer\", box_any(41)); return reflect_get(object, \"answer\"); }",
+        )
+        .expect("compile reflect aliases");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run reflect aliases");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(41.0)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
