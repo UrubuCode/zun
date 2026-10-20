@@ -331,6 +331,42 @@ impl DateValue {
         let year = year + if month <= 2 { 1 } else { 0 };
         Some((year as i32, month as u32, day as u32))
     }
+
+    pub fn iso_date(self) -> Option<String> {
+        let (year, month, day) = self.utc_date()?;
+        Some(format!("{year:04}-{month:02}-{day:02}"))
+    }
+
+    pub fn parse_iso_date(value: &str) -> Option<Self> {
+        let mut parts = value.split('-');
+        let year: i32 = parts.next()?.parse().ok()?;
+        let month: u32 = parts.next()?.parse().ok()?;
+        let day: u32 = parts.next()?.parse().ok()?;
+        if parts.next().is_some() || !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+            return None;
+        }
+        let days = days_from_civil(year, month, day)?;
+        Some(Self::from_millis(days.checked_mul(86_400_000)?))
+    }
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
+    let y = i64::from(year) - i64::from(month <= 2);
+    let era = if y >= 0 { y } else { y - 399 }.div_euclid(400);
+    let year_of_era = y - era * 400;
+    let month = i64::from(month);
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
 }
 
 /// Bounds-checked view into a shared byte buffer.
@@ -759,6 +795,10 @@ mod tests {
         assert_eq!(date.compare(DateValue::from_millis(1_700_000_000_124)), Some(std::cmp::Ordering::Less));
         assert_eq!(DateValue::from_millis(0).utc_date(), Some((1970, 1, 1)));
         assert_eq!(DateValue::from_millis(1_700_000_000_000).utc_date(), Some((2023, 11, 14)));
+        assert_eq!(DateValue::from_millis(0).iso_date().as_deref(), Some("1970-01-01"));
+        assert_eq!(DateValue::parse_iso_date("2023-11-14").and_then(DateValue::iso_date).as_deref(), Some("2023-11-14"));
+        assert!(DateValue::parse_iso_date("2023-02-29").is_none());
+        assert!(DateValue::parse_iso_date("bad-date").is_none());
         assert_eq!(DateValue::invalid().compare(date), None);
         let view = ByteView::new(typed.len(), 2, 8).unwrap();
         assert_eq!(view.read_u32(&typed, 0), Some(0xdead_beef));

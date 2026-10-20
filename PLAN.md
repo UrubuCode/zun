@@ -394,7 +394,8 @@ The following runtime contracts are implemented and covered by tests:
   over those windows.
 - Managed millisecond `DateValue` storage with invalid-date propagation and
   comparison semantics, plus UTC Gregorian date decomposition; calendar
-  formatting/parsing and source-level constructors remain follow-up work.
+  formatting/parsing are now covered for `YYYY-MM-DD`; source-level
+  constructors remain follow-up work.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
