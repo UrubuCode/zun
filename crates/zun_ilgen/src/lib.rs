@@ -123,9 +123,7 @@ pub fn lower(program: &hir::Program) -> Module {
             &mut module,
             program.functions.len() as u32,
         );
-        let mut local_kinds = Vec::with_capacity(closure.locals.len() + 1);
-        local_kinds.push(jitkind_byte(Ty::DynamicObject));
-        local_kinds.extend(closure.locals.iter().map(|t| jitkind_byte(*t)));
+        let local_kinds: Vec<u8> = closure.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
             closure.param_count + 1,
@@ -414,6 +412,15 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(init);
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
             }
+            Stmt::BoxedLet { slot, init } => {
+                self.emit(Instruction::simple(Opcode::NewDynamic));
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.expr(init);
+                self.emit(Instruction::simple(Opcode::BoxAny));
+                self.emit_dynamic_store("$value");
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
+            }
             Stmt::Expr(e) => {
                 // Every expression leaves exactly one value on the stack in this
                 // model — including void calls, which push a void value — so an
@@ -570,6 +577,21 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::Local(slot) => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
             }
+            ExprKind::CellLoad { slot } => {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
+                self.emit_dynamic_load("$value");
+                self.emit(Instruction::simple(Opcode::UnboxAny));
+            }
+            ExprKind::CellRef { slot } => {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
+            }
+            ExprKind::CellStore { slot, value } => {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
+                self.expr(value);
+                self.emit(Instruction::simple(Opcode::BoxAny));
+                self.emit_dynamic_store("$value");
+                self.emit(Instruction::simple(Opcode::UnboxAny));
+            }
             ExprKind::FunctionRef { func } => {
                 self.emit(Instruction::new(
                     Opcode::LoadFunction,
@@ -580,21 +602,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
                 for capture in captures {
                     self.emit(Instruction::simple(Opcode::Dup));
-                    if capture.capture.mode == CaptureMode::ByCell {
-                        self.emit(Instruction::simple(Opcode::NewDynamic));
-                        self.emit(Instruction::simple(Opcode::Dup));
-                        self.expr(&capture.value);
-                        self.emit(Instruction::simple(Opcode::BoxAny));
-                        self.emit_dynamic_store("$value");
-                        self.emit(Instruction::simple(Opcode::Pop));
-                        self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
-                        self.emit(Instruction::simple(Opcode::Pop));
-                    } else {
-                        self.expr(&capture.value);
-                        self.emit(Instruction::simple(Opcode::BoxAny));
-                        self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
-                        self.emit(Instruction::simple(Opcode::Pop));
-                    }
+                    self.expr(&capture.value);
+                    self.emit(Instruction::simple(Opcode::BoxAny));
+                    self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
+                    self.emit(Instruction::simple(Opcode::Pop));
                 }
                 let token = Token::new(
                     TableKind::MethodDef,
@@ -864,6 +875,19 @@ mod tests {
         let hir = zun_sema::check(src, &ast, &mut diags);
         assert!(diags.is_empty(), "sema: {diags:?}");
         lower(&hir)
+    }
+
+    #[test]
+    fn lowers_a_non_capturing_arrow_to_a_synthetic_method() {
+        let module = lower_src("function main() { let f = x => x * 2; }");
+        assert_eq!(module.tables.method_defs.len(), 2);
+        let closure = read_body(&module.code, module.tables.method_defs[1].body_offset)
+            .expect("synthetic closure body");
+        assert_eq!(closure.param_count, 2);
+        assert_eq!(closure.local_count, 2);
+        let text = disassemble(closure.code).unwrap();
+        assert!(text.contains("ldloc 1"), "{text}");
+        assert!(text.contains("mul.f64"), "{text}");
     }
 
     #[test]

@@ -166,6 +166,8 @@ pub enum CaptureMode {
 /// One binding stored in a closure environment, in declaration order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capture {
+    /// Source binding name used for diagnostics and environment access.
+    pub name: String,
     /// Local slot in the defining function.
     pub outer_slot: LocalSlot,
     /// Slot in the synthetic function's environment layout.
@@ -252,6 +254,13 @@ pub enum Stmt {
         /// The initializer.
         init: Expr,
     },
+    /// Initialize a local whose storage is a shared closure cell.
+    BoxedLet {
+        /// Destination local slot containing the cell object.
+        slot: LocalSlot,
+        /// Initial cell value.
+        init: Expr,
+    },
     /// Evaluate for effect; the result (if any) is discarded.
     Expr(Expr),
     /// `if (cond) { then } else { otherwise }`.
@@ -317,6 +326,12 @@ pub enum ExprKind {
     Boolean(bool),
     /// Read a local slot.
     Local(LocalSlot),
+    /// Read the value from a shared cell stored in a local slot.
+    CellLoad { slot: LocalSlot },
+    /// Produce the shared cell object stored in a local slot.
+    CellRef { slot: LocalSlot },
+    /// Store a value through a shared cell.
+    CellStore { slot: LocalSlot, value: Box<Expr> },
     /// Load a top-level function value.
     FunctionRef { func: FuncIndex },
     /// Construct a closure value from a synthetic function and environment.

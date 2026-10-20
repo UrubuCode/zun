@@ -64,6 +64,7 @@ fn check_impl(
         methods_by_class: Vec::new(),
         imports: HashMap::new(),
         external_functions: external_by_name,
+        closures: Vec::new(),
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -94,7 +95,7 @@ fn check_impl(
         functions,
         classes,
         main,
-        closures: Vec::new(),
+        closures: checker.closures,
     }
 }
 
@@ -125,6 +126,7 @@ struct Checker<'a> {
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
     /// Imported source-module function signatures by local name.
     external_functions: HashMap<String, ExternalFunction>,
+    closures: Vec<hir::ClosureFunction>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -137,6 +139,9 @@ struct FunctionCx {
     return_ty: Ty,
     loop_depth: usize,
     mutated: HashSet<hir::LocalSlot>,
+    mutated_names: HashSet<String>,
+    boxed: HashSet<hir::LocalSlot>,
+    captures: HashMap<String, hir::Capture>,
 }
 
 #[derive(Default)]
@@ -162,6 +167,228 @@ impl FunctionCx {
 }
 
 impl Checker<'_> {
+    fn rewrite_boxed_lets(&self, statements: &mut [hir::Stmt], boxed: &HashSet<hir::LocalSlot>) {
+        for statement in statements {
+            match statement {
+                hir::Stmt::Let { slot, init } if boxed.contains(slot) => {
+                    let span = init.span;
+                    let slot = *slot;
+                    let value = std::mem::replace(init, hir::Expr {
+                        kind: hir::ExprKind::Error,
+                        ty: Ty::Error,
+                        span,
+                    });
+                    *statement = hir::Stmt::BoxedLet { slot, init: value };
+                }
+                hir::Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    self.rewrite_boxed_lets(then_body, boxed);
+                    self.rewrite_boxed_lets(else_body, boxed);
+                }
+                hir::Stmt::While { body, .. } => self.rewrite_boxed_lets(body, boxed),
+                hir::Stmt::Try {
+                    body,
+                    catches,
+                    finally_body,
+                } => {
+                    self.rewrite_boxed_lets(body, boxed);
+                    for catch in catches {
+                        self.rewrite_boxed_lets(&mut catch.body, boxed);
+                    }
+                    if let Some(finally_body) = finally_body {
+                        self.rewrite_boxed_lets(finally_body, boxed);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn collect_mutated_names(&self, statements: &[ast::Stmt], names: &mut HashSet<String>) {
+        for statement in statements {
+            match statement {
+                ast::Stmt::Let { init, .. } | ast::Stmt::Expr(init) => {
+                    self.collect_mutated_expr(init, names)
+                }
+                ast::Stmt::If {
+                    cond,
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    self.collect_mutated_expr(cond, names);
+                    self.collect_mutated_names(&then_block.statements, names);
+                    if let Some(block) = else_block {
+                        self.collect_mutated_names(&block.statements, names);
+                    }
+                }
+                ast::Stmt::While { cond, body, .. } => {
+                    self.collect_mutated_expr(cond, names);
+                    self.collect_mutated_names(&body.statements, names);
+                }
+                ast::Stmt::Return { value, .. } => {
+                    if let Some(value) = value {
+                        self.collect_mutated_expr(value, names);
+                    }
+                }
+                ast::Stmt::Throw { value, .. } => self.collect_mutated_expr(value, names),
+                ast::Stmt::Try {
+                    body,
+                    catches,
+                    finally,
+                    ..
+                } => {
+                    self.collect_mutated_names(&body.statements, names);
+                    for catch in catches {
+                        self.collect_mutated_names(&catch.body.statements, names);
+                    }
+                    if let Some(block) = finally {
+                        self.collect_mutated_names(&block.statements, names);
+                    }
+                }
+                ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
+            }
+        }
+    }
+
+    fn collect_mutated_expr(&self, expr: &ast::Expr, names: &mut HashSet<String>) {
+        match expr {
+            ast::Expr::Assign { target, value, .. } => {
+                names.insert(self.text(target).to_string());
+                self.collect_mutated_expr(value, names);
+            }
+            ast::Expr::Binary { lhs, rhs, .. } => {
+                self.collect_mutated_expr(lhs, names);
+                self.collect_mutated_expr(rhs, names);
+            }
+            ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
+                self.collect_mutated_expr(operand, names)
+            }
+            ast::Expr::Call { args, .. } | ast::Expr::New { args, .. } => {
+                for arg in args {
+                    self.collect_mutated_expr(arg, names);
+                }
+            }
+            ast::Expr::MethodCall { receiver, args, .. } => {
+                self.collect_mutated_expr(receiver, names);
+                for arg in args {
+                    self.collect_mutated_expr(arg, names);
+                }
+            }
+            ast::Expr::Field { object, .. } | ast::Expr::Index { object, .. } => {
+                self.collect_mutated_expr(object, names)
+            }
+            ast::Expr::FieldAssign { object, value, .. } => {
+                self.collect_mutated_expr(object, names);
+                self.collect_mutated_expr(value, names);
+            }
+            ast::Expr::IndexAssign {
+                object,
+                index,
+                value,
+                ..
+            } => {
+                self.collect_mutated_expr(object, names);
+                self.collect_mutated_expr(index, names);
+                self.collect_mutated_expr(value, names);
+            }
+            ast::Expr::Function(_) | ast::Expr::Ident(_) | ast::Expr::Number { .. }
+            | ast::Expr::String { .. }
+            | ast::Expr::Bool { .. }
+            | ast::Expr::Null { .. } => {}
+        }
+    }
+
+    fn check_closure_expr(
+        &mut self,
+        outer: &mut FunctionCx,
+        function: &ast::FunctionExpr,
+        span: Span,
+    ) -> hir::Expr {
+        let captures = self.analyze_closure_captures(outer, function);
+        for capture in &captures {
+            if capture.mode == hir::CaptureMode::ByCell {
+                outer.boxed.insert(capture.outer_slot);
+            }
+        }
+        let mut inner = FunctionCx {
+            locals: Vec::new(),
+            scopes: vec![Scope::new()],
+            return_ty: function
+                .return_type
+                .as_ref()
+                .map(|annotation| self.resolve_annotation(annotation))
+                .unwrap_or(Ty::Any),
+            loop_depth: 0,
+            mutated: HashSet::new(),
+            mutated_names: HashSet::new(),
+            boxed: HashSet::new(),
+            captures: captures
+                .iter()
+                .map(|capture| (capture.name.clone(), capture.clone()))
+                .collect(),
+        };
+        // The hidden environment is always local zero. User parameters and
+        // ordinary locals follow it, matching the indirect-call ABI.
+        inner.declare("__closure_environment", Ty::DynamicObject);
+        for parameter in &function.params {
+            let ty = parameter
+                .ty
+                .as_ref()
+                .map(|annotation| self.resolve_annotation(annotation))
+                .unwrap_or(Ty::F64);
+            inner.declare(self.text(&parameter.name), ty);
+        }
+        let body = self.check_block(&mut inner, &function.body);
+        let return_ty = if function.return_type.is_some() {
+            inner.return_ty
+        } else {
+            body.iter()
+                .find_map(|statement| match statement {
+                    hir::Stmt::Return(Some(value)) => Some(value.ty),
+                    _ => None,
+                })
+                .unwrap_or(Ty::Void)
+        };
+        let function_index = self.closures.len() as u32;
+        self.closures.push(hir::ClosureFunction {
+            name: format!("<closure@{}>", span.start),
+            param_count: function.params.len() as u16,
+            locals: inner.locals,
+            return_ty,
+            captures: captures.clone(),
+            body,
+        });
+        let capture_values = captures
+            .into_iter()
+            .map(|capture| hir::ClosureCapture {
+                value: Box::new(hir::Expr {
+                    kind: if capture.mode == hir::CaptureMode::ByCell {
+                        hir::ExprKind::CellRef {
+                            slot: capture.outer_slot,
+                        }
+                    } else {
+                        hir::ExprKind::Local(capture.outer_slot)
+                    },
+                    ty: capture.ty,
+                    span,
+                }),
+                capture,
+            })
+            .collect();
+        hir::Expr {
+            kind: hir::ExprKind::Closure {
+                function: function_index,
+                captures: capture_values,
+            },
+            ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+            span,
+        }
+    }
+
     fn analyze_closure_captures(
         &self,
         cx: &FunctionCx,
@@ -179,15 +406,31 @@ impl Checker<'_> {
         uses.slots
             .into_iter()
             .enumerate()
-            .map(|(environment_slot, outer_slot)| hir::Capture {
-                outer_slot,
-                environment_slot: environment_slot as u16,
-                ty: cx.locals[outer_slot as usize],
-                mode: if cx.mutated.contains(&outer_slot) || uses.mutated.contains(&outer_slot) {
-                    hir::CaptureMode::ByCell
-                } else {
-                    hir::CaptureMode::ByValue
-                },
+            .map(|(environment_slot, outer_slot)| {
+                let name = cx
+                    .scopes
+                    .iter()
+                    .rev()
+                    .find_map(|scope| {
+                        scope
+                            .iter()
+                            .find_map(|(name, &slot)| (slot == outer_slot).then(|| name.clone()))
+                    })
+                    .unwrap_or_else(|| format!("capture{outer_slot}"));
+                hir::Capture {
+                    name: name.clone(),
+                    outer_slot,
+                    environment_slot: environment_slot as u16,
+                    ty: cx.locals[outer_slot as usize],
+                    mode: if cx.mutated.contains(&outer_slot)
+                        || cx.mutated_names.contains(&name)
+                        || uses.mutated.contains(&outer_slot)
+                    {
+                        hir::CaptureMode::ByCell
+                    } else {
+                        hir::CaptureMode::ByValue
+                    },
+                }
             })
             .collect()
     }
@@ -637,6 +880,9 @@ impl Checker<'_> {
             return_ty,
             loop_depth: 0,
             mutated: HashSet::new(),
+            mutated_names: HashSet::new(),
+            boxed: HashSet::new(),
+            captures: HashMap::new(),
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -649,6 +895,7 @@ impl Checker<'_> {
             let pname = self.text(&p.name).to_string();
             cx.declare(&pname, ty);
         }
+        self.collect_mutated_names(&f.body.statements, &mut cx.mutated_names);
 
         let body = if f.is_extern {
             let Some((intrinsic_id, intrinsic)) = self.imports.get(&name).copied() else {
@@ -707,7 +954,9 @@ impl Checker<'_> {
                 span: f.name.span,
             }))]
         } else {
-            self.check_block(&mut cx, &f.body)
+            let mut body = self.check_block(&mut cx, &f.body);
+            self.rewrite_boxed_lets(&mut body, &cx.boxed);
+            body
         };
         hir::Function {
             name,
@@ -759,7 +1008,11 @@ impl Checker<'_> {
                 };
                 let name_text = self.text(name).to_string();
                 let slot = cx.declare(&name_text, var_ty);
-                hir::Stmt::Let { slot, init }
+                if cx.boxed.contains(&slot) {
+                    hir::Stmt::BoxedLet { slot, init }
+                } else {
+                    hir::Stmt::Let { slot, init }
+                }
             }
             ast::Stmt::Expr(e) => hir::Stmt::Expr(self.check_expr(cx, e)),
             ast::Stmt::If {
@@ -892,10 +1145,25 @@ impl Checker<'_> {
                 match cx.lookup(&text) {
                     Some(slot) => hir::Expr {
                         ty: cx.locals[slot as usize],
-                        kind: hir::ExprKind::Local(slot),
+                        kind: if cx.boxed.contains(&slot) {
+                            hir::ExprKind::CellLoad { slot }
+                        } else {
+                            hir::ExprKind::Local(slot)
+                        },
                         span,
                     },
                     None => {
+                        if let Some(capture) = cx.captures.get(&text) {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CaptureLoad {
+                                    environment_slot: capture.environment_slot,
+                                    ty: capture.ty,
+                                    mode: capture.mode,
+                                },
+                                ty: capture.ty,
+                                span,
+                            };
+                        }
                         if let Some(&func) = self.by_name.get(&text) {
                             return hir::Expr {
                                 kind: hir::ExprKind::FunctionRef { func },
@@ -927,14 +1195,41 @@ impl Checker<'_> {
                         }
                         hir::Expr {
                             ty: slot_ty,
-                            kind: hir::ExprKind::Assign {
-                                slot,
-                                value: Box::new(value),
+                            kind: if cx.boxed.contains(&slot) {
+                                hir::ExprKind::CellStore {
+                                    slot,
+                                    value: Box::new(value),
+                                }
+                            } else {
+                                hir::ExprKind::Assign {
+                                    slot,
+                                    value: Box::new(value),
+                                }
                             },
                             span,
                         }
                     }
                     None => {
+                        if let Some(capture) = cx.captures.get(&text).cloned() {
+                            cx.mutated.insert(capture.outer_slot);
+                            if capture.mode == hir::CaptureMode::ByValue {
+                                self.error(
+                                    target.span,
+                                    "cannot assign to a read-only closure capture",
+                                );
+                                return self.poison(span);
+                            }
+                            return hir::Expr {
+                                kind: hir::ExprKind::CaptureStore {
+                                    environment_slot: capture.environment_slot,
+                                    ty: capture.ty,
+                                    mode: capture.mode,
+                                    value: Box::new(value),
+                                },
+                                ty: capture.ty,
+                                span,
+                            };
+                        }
                         self.error(target.span, format!("unknown variable `{text}`"));
                         self.poison(span)
                     }
@@ -1621,17 +1916,7 @@ impl Checker<'_> {
                     }
                 }
             }
-            ast::Expr::Function(function) => {
-                let captures = self.analyze_closure_captures(cx, function);
-                self.error(
-                    function.span,
-                    "anonymous functions and arrow closures are not lowered yet",
-                );
-                debug_assert!(captures.iter().all(|capture| {
-                    capture.environment_slot < captures.len() as u16
-                }));
-                self.poison(span)
-            }
+            ast::Expr::Function(function) => self.check_closure_expr(cx, function, span),
         }
     }
 

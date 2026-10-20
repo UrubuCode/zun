@@ -1309,6 +1309,39 @@ mod method_tests {
     }
 
     #[test]
+    fn invokes_a_non_capturing_arrow_closure() {
+        let module = zun_compiler::compile(
+            "function main(): any { let f = x => x * 2.0; return f(21.0); }",
+        )
+        .expect("compile arrow closure");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run arrow closure");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn invokes_an_arrow_closure_with_a_read_only_capture() {
+        let module = zun_compiler::compile(
+            "function main(): any { let k = 10.0; let f = x => x + k; return f(32.0); }",
+        )
+        .expect("compile captured arrow closure");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run captured arrow closure");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn mutable_capture_observes_binding_updates() {
+        let module = zun_compiler::compile(
+            "function main(): any { let k = 10.0; let f = x => x + k; k = 20.0; return f(22.0); }",
+        )
+        .expect("compile mutable captured arrow closure");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run mutable captured arrow closure");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_dynamic_property_il() {
         let mut module = zun_module::Module::new();
         let property = module.strings.intern("answer");
