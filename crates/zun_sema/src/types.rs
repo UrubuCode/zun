@@ -23,6 +23,7 @@ impl<'a> Checker<'a> {
             "Map" | "map" => Ty::Map,
             "Set" | "set" => Ty::Set,
             "WeakMap" | "weakmap" => Ty::WeakMap,
+            "Promise" | "promise" => Ty::Promise,
             "DataView" => Ty::BufferView(hir::BufferViewKind::DataView),
             "Uint8Array" => Ty::BufferView(hir::BufferViewKind::U8),
             "Uint16Array" => Ty::BufferView(hir::BufferViewKind::U16),

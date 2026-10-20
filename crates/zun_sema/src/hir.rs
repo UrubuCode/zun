@@ -91,6 +91,8 @@ pub enum Ty {
     Set,
     /// A GC ephemeron-backed weak map.
     WeakMap,
+    /// A managed asynchronous result object.
+    Promise,
     /// A managed byte-buffer view with a fixed element representation.
     BufferView(BufferViewKind),
     /// A dictionary-backed dynamic object.
