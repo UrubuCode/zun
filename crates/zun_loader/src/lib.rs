@@ -4,10 +4,10 @@
 //! [`ModuleScope`] owns the bytes decoded from one `.zm` module and gives the
 //! future resolver a stable scope boundary for type and member identity.
 
-use std::path::Path;
 use std::collections::HashMap;
-use zun_module::{Module, ReadError};
+use std::path::Path;
 use zun_metadata::{TableKind, Token};
+use zun_module::{Module, ReadError};
 use zun_types::{TypeError, TypeSystem};
 
 /// A loaded module together with its loader-visible identity.
@@ -71,6 +71,8 @@ pub enum LoadError {
     UnresolvedModule(String),
     /// A module identity was registered more than once.
     DuplicateModule(String),
+    /// A manifest contains an invalid dependency ordering or duplicate.
+    InvalidManifest(String),
 }
 
 impl core::fmt::Display for LoadError {
@@ -81,6 +83,7 @@ impl core::fmt::Display for LoadError {
             Self::Types(error) => write!(f, "invalid type metadata: {error}"),
             Self::UnresolvedModule(name) => write!(f, "unresolved module reference: {name}"),
             Self::DuplicateModule(name) => write!(f, "duplicate module identity: {name}"),
+            Self::InvalidManifest(detail) => write!(f, "invalid module manifest: {detail}"),
         }
     }
 }
@@ -116,12 +119,32 @@ impl ModuleManifest {
         if loader.get(&self.entry).is_none() {
             return Err(LoadError::UnresolvedModule(self.entry.clone()));
         }
+        let mut seen = std::collections::HashSet::new();
         for dependency in &self.dependencies {
+            if dependency == &self.entry {
+                return Err(LoadError::InvalidManifest(
+                    "entry module cannot also be a dependency".into(),
+                ));
+            }
+            if !seen.insert(dependency) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "dependency `{dependency}` appears more than once"
+                )));
+            }
             if loader.get(dependency).is_none() {
                 return Err(LoadError::UnresolvedModule(dependency.clone()));
             }
         }
         Ok(())
+    }
+
+    /// Return the deterministic load order represented by this flattened
+    /// manifest. Dependencies precede the entry module.
+    pub fn load_order<'a>(&'a self, loader: &ModuleLoader) -> Result<Vec<&'a str>, LoadError> {
+        self.validate(loader)?;
+        let mut order: Vec<&str> = self.dependencies.iter().map(String::as_str).collect();
+        order.push(&self.entry);
+        Ok(order)
     }
 }
 
@@ -186,7 +209,10 @@ impl ModuleLoader {
         token: Token,
     ) -> Result<&'a ModuleScope, LoadError> {
         if token.table() != Some(TableKind::ModuleRef) {
-            return Err(LoadError::UnresolvedModule(format!("invalid token 0x{:08x}", token.to_raw())));
+            return Err(LoadError::UnresolvedModule(format!(
+                "invalid token 0x{:08x}",
+                token.to_raw()
+            )));
         }
         let module_ref = requester
             .module
@@ -206,7 +232,10 @@ impl ModuleLoader {
         token: Token,
     ) -> Result<ResolvedMember<'a>, LoadError> {
         if token.table() != Some(TableKind::MemberRef) {
-            return Err(LoadError::UnresolvedModule(format!("invalid member token 0x{:08x}", token.to_raw())));
+            return Err(LoadError::UnresolvedModule(format!(
+                "invalid member token 0x{:08x}",
+                token.to_raw()
+            )));
         }
         let member = requester
             .module
@@ -226,12 +255,17 @@ impl ModuleLoader {
                     .ok_or_else(|| LoadError::UnresolvedModule("invalid type reference".into()))?;
                 self.resolve_module_ref(requester, type_ref.scope)?
             }
-            _ => return Err(LoadError::UnresolvedModule("member parent is not a type".into())),
+            _ => {
+                return Err(LoadError::UnresolvedModule(
+                    "member parent is not a type".into(),
+                ))
+            }
         };
         let type_name = match member.parent.table() {
-            Some(TableKind::TypeDef) => requester.module.strings.get(
-                requester.module.tables.type_defs[member.parent.rid() as usize - 1].name,
-            ),
+            Some(TableKind::TypeDef) => requester
+                .module
+                .strings
+                .get(requester.module.tables.type_defs[member.parent.rid() as usize - 1].name),
             Some(TableKind::TypeRef) => {
                 let type_ref = &requester.module.tables.type_refs[member.parent.rid() as usize - 1];
                 requester.module.strings.get(type_ref.name)
@@ -247,7 +281,10 @@ impl ModuleLoader {
             .ok_or_else(|| LoadError::UnresolvedModule(type_name.to_string()))?;
         let member_name = requester.module.strings.get(member.name);
         let method = (ty.method_start..ty.method_end).find(|rid| {
-            target.module.strings.get(target.module.tables.method_defs[*rid as usize - 1].name)
+            target
+                .module
+                .strings
+                .get(target.module.tables.method_defs[*rid as usize - 1].name)
                 == member_name
         });
         if let Some(rid) = method {
@@ -258,14 +295,19 @@ impl ModuleLoader {
             });
         }
         let field = (ty.field_start..ty.field_end).find(|rid| {
-            target.module.strings.get(target.module.tables.field_defs[*rid as usize - 1].name)
+            target
+                .module
+                .strings
+                .get(target.module.tables.field_defs[*rid as usize - 1].name)
                 == member_name
         });
-        field.map(|rid| ResolvedMember {
-            scope: target,
-            token: Token::new(TableKind::FieldDef, rid),
-            kind: MemberKind::Field,
-        }).ok_or_else(|| LoadError::UnresolvedModule(member_name.to_string()))
+        field
+            .map(|rid| ResolvedMember {
+                scope: target,
+                token: Token::new(TableKind::FieldDef, rid),
+                kind: MemberKind::Field,
+            })
+            .ok_or_else(|| LoadError::UnresolvedModule(member_name.to_string()))
     }
 
     /// Number of registered modules.
@@ -321,5 +363,25 @@ mod tests {
         assert!(manifest.validate(&loader).is_ok());
         let missing = ModuleManifest::new("app", vec!["missing".into()]);
         assert!(missing.validate(&loader).is_err());
+        assert_eq!(
+            manifest.load_order(&loader).expect("order"),
+            vec!["core", "app"]
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_duplicate_or_self_dependencies() {
+        let bytes = Module::new().write();
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("app", &bytes).expect("app");
+        loader.load_bytes("x", &bytes).expect("x");
+        assert!(matches!(
+            ModuleManifest::new("app", vec!["app".into()]).validate(&loader),
+            Err(LoadError::InvalidManifest(_))
+        ));
+        assert!(matches!(
+            ModuleManifest::new("app", vec!["x".into(), "x".into()]).validate(&loader),
+            Err(LoadError::InvalidManifest(_))
+        ));
     }
 }
