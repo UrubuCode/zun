@@ -11,6 +11,7 @@ use zun_common::{Diagnostic, Span};
 
 #[path = "parser_helpers.rs"]
 mod parser_helpers;
+use parser_helpers::{decode_template_text, find_template_interpolation_end, find_template_marker};
 
 /// Parse `source` into a [`Program`], appending any diagnostics.
 pub fn parse(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Program {
@@ -561,59 +562,6 @@ fn parse_template_parts(
         parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..])));
     }
     parts
-}
-
-fn find_template_marker(source: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        if bytes[index] == b'\\' {
-            index += 2;
-            continue;
-        }
-        if bytes[index] == b'$' && bytes[index + 1] == b'{' {
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn find_template_interpolation_end(source: &str, start: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut depth = 0usize;
-    let mut quote = None;
-    let mut index = start;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if byte == b'\\' {
-            index += 2;
-            continue;
-        }
-        if let Some(current) = quote {
-            if byte == current {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(byte, b'"' | b'\'') {
-            quote = Some(byte);
-        } else if byte == b'{' {
-            depth += 1;
-        } else if byte == b'}' {
-            if depth == 0 {
-                return Some(index);
-            }
-            depth -= 1;
-        }
-        index += 1;
-    }
-    None
-}
-
-fn decode_template_text(text: &str) -> String {
-    decode_string(&format!("\"{text}\""))
 }
 
 fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {

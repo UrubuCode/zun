@@ -2,6 +2,43 @@
 
 use super::*;
 
+pub(crate) fn find_template_marker(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' { index += 2; continue; }
+        if bytes[index] == b'$' && bytes[index + 1] == b'{' { return Some(index); }
+        index += 1;
+    }
+    None
+}
+
+pub(crate) fn find_template_interpolation_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut index = start;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\\' { index += 2; continue; }
+        if let Some(current) = quote {
+            if byte == current { quote = None; }
+            index += 1;
+            continue;
+        }
+        if matches!(byte, b'"' | b'\'') { quote = Some(byte); }
+        else if byte == b'{' { depth += 1; }
+        else if byte == b'}' {
+            if depth == 0 { return Some(index); }
+            depth -= 1;
+        }
+        index += 1;
+    }
+    None
+}
+
+pub(crate) fn decode_template_text(text: &str) -> String { decode_string(&format!("\"{text}\"")) }
+
 fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
     Some(match kind {
         TokenKind::EqEq => (BinaryOp::Eq, 1),
