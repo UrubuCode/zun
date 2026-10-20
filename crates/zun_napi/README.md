@@ -20,6 +20,8 @@ size, then allocate that many bytes and call it again to copy the result.
 Status codes are exported as `ZUN_HOST_OK`, `ZUN_HOST_INVALID_ARGUMENT`,
 `ZUN_HOST_VM_ERROR`, and `ZUN_HOST_BUFFER_TOO_SMALL`.
 
+The C declarations are available in [`include/zun_napi.h`](include/zun_napi.h).
+
 On platforms that require an import library, provide the Node N-API library at
 build time:
 
