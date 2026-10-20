@@ -1719,6 +1719,11 @@ fn math_hyperbolic_functions_are_jit_equivalent() {
 }
 
 #[test]
+fn math_inverse_hyperbolic_functions_are_jit_equivalent() {
+    assert_equivalent("import { asinhNumber, acoshNumber, atanhNumber } from \"zun:math\"; function main(): number { return asinhNumber(1.0) + acoshNumber(2.0) + atanhNumber(0.5); }");
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

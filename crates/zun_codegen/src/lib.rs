@@ -59,6 +59,9 @@ pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateV
 #[inline] pub extern "C" fn zun_jit_math_sinh(value: f64) -> f64 { value.sinh() }
 #[inline] pub extern "C" fn zun_jit_math_cosh(value: f64) -> f64 { value.cosh() }
 #[inline] pub extern "C" fn zun_jit_math_tanh(value: f64) -> f64 { value.tanh() }
+#[inline] pub extern "C" fn zun_jit_math_asinh(value: f64) -> f64 { value.asinh() }
+#[inline] pub extern "C" fn zun_jit_math_acosh(value: f64) -> f64 { value.acosh() }
+#[inline] pub extern "C" fn zun_jit_math_atanh(value: f64) -> f64 { value.atanh() }
 #[inline] pub extern "C" fn zun_jit_math_tan(value: f64) -> f64 { value.tan() }
 #[inline] pub extern "C" fn zun_jit_math_min(left: f64, right: f64) -> f64 { left.min(right) }
 #[inline] pub extern "C" fn zun_jit_math_max(left: f64, right: f64) -> f64 { left.max(right) }
@@ -235,6 +238,9 @@ impl Jit {
         builder.symbol("zun_jit_math_sinh", zun_jit_math_sinh as *const u8);
         builder.symbol("zun_jit_math_cosh", zun_jit_math_cosh as *const u8);
         builder.symbol("zun_jit_math_tanh", zun_jit_math_tanh as *const u8);
+        builder.symbol("zun_jit_math_asinh", zun_jit_math_asinh as *const u8);
+        builder.symbol("zun_jit_math_acosh", zun_jit_math_acosh as *const u8);
+        builder.symbol("zun_jit_math_atanh", zun_jit_math_atanh as *const u8);
         builder.symbol("zun_jit_math_tan", zun_jit_math_tan as *const u8);
         builder.symbol("zun_jit_math_min", zun_jit_math_min as *const u8);
         builder.symbol("zun_jit_math_max", zun_jit_math_max as *const u8);

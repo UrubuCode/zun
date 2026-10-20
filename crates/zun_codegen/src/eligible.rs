@@ -70,7 +70,7 @@ fn math_builtin(instr: &zun_il::Instruction) -> bool {
         | "floor" | "ceil" | "round" | "truncNumber" | "floorNumber" | "ceilNumber" | "roundNumber"
     | "powNumber" | "sinNumber" | "cosNumber" | "expNumber" | "logNumber" | "log10Number" | "log2Number" | "expm1Number" | "log1pNumber" | "sinhNumber" | "coshNumber" | "tanhNumber"
         | "tanNumber" | "atan2Number" | "hypotNumber" | "signNumber" | "isFinite" | "isNaN"
-        | "isNegativeZero" | "isSafeInteger"
+    | "isNegativeZero" | "isSafeInteger" | "asinhNumber" | "acoshNumber" | "atanhNumber"
     ))
 }
 
