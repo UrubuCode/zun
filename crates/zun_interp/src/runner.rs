@@ -29,7 +29,12 @@ pub(super) fn run_method_with(
 }
 
 impl Interp<'_> {
-    pub(super) fn propagate_suspended(&mut self, frame: ExecutionFrame) -> RunError {
+    pub(super) fn propagate_suspended(
+        &mut self,
+        mut frame: ExecutionFrame,
+        caller: ExecutionFrame,
+    ) -> RunError {
+        frame.parent = Some(Box::new(caller));
         self.suspended = Some(frame);
         RunError::Suspended
     }

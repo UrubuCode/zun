@@ -31,6 +31,7 @@ pub(super) struct ExecutionFrame {
     pub(super) stack: Vec<Value>,
     pub(super) locals: Vec<Value>,
     pub(super) state: FrameState,
+    pub(super) parent: Option<Box<ExecutionFrame>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +77,18 @@ impl ExecutionFrame {
             stack: Vec::new(),
             locals,
             state: FrameState::Runnable,
+            parent: None,
+        }
+    }
+
+    pub(super) fn snapshot(method_rid: u32, pc: usize, stack: &[Value], locals: &[Value]) -> Self {
+        Self {
+            method_rid,
+            pc,
+            stack: stack.to_vec(),
+            locals: locals.to_vec(),
+            state: FrameState::Runnable,
+            parent: None,
         }
     }
 

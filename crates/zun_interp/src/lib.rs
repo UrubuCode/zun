@@ -532,7 +532,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -593,7 +596,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -638,7 +644,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -685,7 +694,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -774,7 +786,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -848,7 +863,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -964,7 +982,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -1044,7 +1065,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
@@ -1108,7 +1132,10 @@ impl Interp<'_> {
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
                         ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(frame));
+                            return Err(self.propagate_suspended(
+                                frame,
+                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                            ));
                         }
                     };
                     stack.push(result);
