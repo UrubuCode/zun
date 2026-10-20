@@ -2418,6 +2418,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_filter_with_generic_function_callback() {
+        let module = zun_compiler::compile(
+            "class Array { filter(callback: Predicate): Array { let result = new Array(0); let index: u64 = 0; while (index < this.length) { let value: any = this[index]; if (callback(value)) { result.push(value); } index = index + 1; } return result; } }\n\
+             function is_positive(value: any): boolean { return (value as number) > 0.0; }\n\
+             function main(): any { let values = new Array(2); values[0] = -1.0; values[1] = 41.0; let filtered = values.filter(is_positive); return filtered[0]; }",
+        )
+        .expect("compile Array.filter callback");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array.filter callback");
+        assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_array_index_of_and_is_empty_methods() {
         let module = zun_compiler::compile(
             "class Array {\n\

@@ -467,7 +467,7 @@ impl FnLowerer<'_> {
                 for a in args {
                     self.expr(a);
                 }
-                let token = if *func == hir::DYNAMIC_FUNCTION {
+                let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
                     Token::null(TableKind::MethodDef)
                 } else {
                     Token::new(TableKind::MethodDef, *func + 1)

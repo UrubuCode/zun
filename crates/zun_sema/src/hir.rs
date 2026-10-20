@@ -134,6 +134,8 @@ impl Ty {
 pub type FuncIndex = u32;
 /// Sentinel function index for the generic unary `Function` callback type.
 pub const DYNAMIC_FUNCTION: FuncIndex = u32::MAX;
+/// Sentinel function index for the generic unary boolean-predicate callback type.
+pub const DYNAMIC_PREDICATE: FuncIndex = u32::MAX - 1;
 /// A local variable slot within one function (params occupy the first slots).
 pub type LocalSlot = u16;
 

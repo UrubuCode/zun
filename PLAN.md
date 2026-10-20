@@ -425,22 +425,24 @@ The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
 Array mutation, ordering, set operations, and numeric aggregation. These
 methods deliberately remain ordinary Zun source and preserve the interpreter
-fallback/equivalence boundary. Higher-order Array methods (`map`, `filter`,
-and `reduce`) are not considered implemented by wrappers: they require a
-complete function-value representation, capture handling, indirect-call IL,
-verifier support, interpreter dispatch, and equivalent JIT lowering.
+fallback/equivalence boundary. Higher-order Array `map` and `filter` now
+execute in Tier 0 through limited unary `Function` and `Predicate` callback
+contracts and
+have interpreter coverage. `reduce` still requires a binary callback ABI,
+capture handling, and equivalent JIT lowering.
 
 Named non-capturing function references now lower through `ldftn` and
 `call.indirect` and execute in Tier 0; closures, function-parameter signatures,
 and Cranelift lowering remain separate gates.
 
 Named callback parameters remain exact and validate both parameter and return
-signatures. The generic `Function` type is now available as a deliberately
-limited unary callback contract: it accepts one argument, returns `any`, and
-currently supports non-capturing top-level function handles only. Its indirect
-call uses a null method token to defer the target RID to the handle. Captures,
+signatures. The generic `Function` and `Predicate` types are now available as
+deliberately limited unary callback contracts: `Function` returns `any`, while
+`Predicate` returns `boolean`. Both currently support non-capturing top-level
+function handles only. Their indirect calls use a null method token to defer
+the target RID to the handle. Captures,
 typed generic function signatures, and Cranelift lowering remain separate gates
-before the full `Array.map`, `filter`, or `reduce` surface is enabled.
+before the full `Array.reduce` surface and Cranelift execution are enabled.
 
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
@@ -458,7 +460,7 @@ dispatch. These figures are machine-specific and should be re-run after
 interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
-The remaining completion gates are Array `map`/`filter`/`reduce` and the
+The remaining completion gates are Array `reduce` and the
 complete String/Number/Array TypeScript core library, full async state-machine
 lowering, complete typed FFI/ABI integration, production Node N-API bindings,
 AOT/R2R support for the full runtime surface, true OSR frame replacement, and

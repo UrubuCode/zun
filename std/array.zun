@@ -39,6 +39,19 @@ class Array {
         return result;
     }
 
+    filter(callback: Predicate): Array {
+        let result = new Array(0);
+        let index: u64 = 0;
+        while (index < this.length) {
+            let value: any = this[index];
+            if (callback(value)) {
+                result.push(value);
+            }
+            index = index + 1;
+        }
+        return result;
+    }
+
     removeAt(index: u64): any {
         let removed: any = this[index];
         let cursor: u64 = index;
