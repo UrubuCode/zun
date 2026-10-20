@@ -8,7 +8,7 @@ use super::Any;
 #[derive(Debug, Clone)]
 pub struct OrderedMap {
     entries: Vec<Option<(Any, Any, u64)>>,
-    buckets: Vec<Vec<usize>>,
+    buckets: Vec<Option<usize>>,
     live_len: usize,
     dead_len: usize,
 }
@@ -19,17 +19,15 @@ impl Default for OrderedMap {
 
 impl OrderedMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8], live_len: 0, dead_len: 0 }
+        Self { entries: Vec::new(), buckets: vec![None; 8], live_len: 0, dead_len: 0 }
     }
 
     pub fn len(&self) -> usize { self.live_len }
     pub fn is_empty(&self) -> bool { self.live_len == 0 }
 
     pub fn get(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
-        let bucket = &self.buckets[(hash as usize) % self.buckets.len()];
-        bucket.iter().find_map(|&index| {
-            self.entries[index].and_then(|(key, value, _)| equal(key).then_some(value))
-        })
+        self.find_index(hash, equal)
+            .and_then(|index| self.entries[index].map(|(_, value, _)| value))
     }
 
     pub fn contains(&self, hash: u64, equal: impl Fn(Any) -> bool) -> bool {
@@ -38,25 +36,20 @@ impl OrderedMap {
 
     pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
         if self.dead_len >= 8 && self.dead_len > self.live_len { self.compact(); }
-        let bucket_index = (hash as usize) % self.buckets.len();
-        if let Some(&index) = self.buckets[bucket_index]
-            .iter().find(|&&index| self.entries[index].is_some_and(|(key, _, _)| equal(key)))
-        {
+        if let Some(index) = self.find_index(hash, &equal) {
             return Some(self.entries[index].as_mut()
                 .map(|entry| std::mem::replace(&mut entry.1, value)).unwrap());
         }
         let index = self.entries.len();
         self.entries.push(Some((key, value, hash)));
-        self.buckets[bucket_index].push(index);
+        self.insert_bucket(index, hash);
         self.live_len += 1;
         if self.live_len * 4 > self.buckets.len() * 3 { self.rehash(); }
         None
     }
 
     pub fn remove(&mut self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<(Any, Any)> {
-        let bucket_index = (hash as usize) % self.buckets.len();
-        let &index = self.buckets[bucket_index]
-            .iter().find(|&&index| self.entries[index].is_some_and(|(key, _, _)| equal(key)))?;
+        let index = self.find_index(hash, equal)?;
         let removed = self.entries[index].take()?;
         self.live_len -= 1;
         self.dead_len += 1;
@@ -73,16 +66,21 @@ impl OrderedMap {
 
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.buckets = vec![Vec::new(); 8];
+        self.buckets = vec![None; 8];
         self.live_len = 0;
         self.dead_len = 0;
     }
 
     fn rehash(&mut self) {
-        let mut buckets = vec![Vec::new(); self.buckets.len() * 2];
-        let bucket_count = buckets.len();
+        let mut buckets = vec![None; self.buckets.len() * 2];
         for (index, entry) in self.entries.iter().enumerate() {
-            if let Some((_, _, hash)) = entry { buckets[(*hash as usize) % bucket_count].push(index); }
+            if let Some((_, _, hash)) = entry {
+                let mut slot = (*hash as usize) % buckets.len();
+                while buckets[slot].is_some() {
+                    slot = (slot + 1) % buckets.len();
+                }
+                buckets[slot] = Some(index);
+            }
         }
         self.buckets = buckets;
     }
@@ -91,5 +89,40 @@ impl OrderedMap {
         self.entries = self.entries.iter().filter_map(|entry| *entry).map(Some).collect();
         self.dead_len = 0;
         self.rehash();
+    }
+
+    fn find_index(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<usize> {
+        let mut slot = (hash as usize) % self.buckets.len();
+        for _ in 0..self.buckets.len() {
+            match self.buckets[slot] {
+                None => return None,
+                Some(index) => {
+                    if self.entries[index].is_some_and(|(key, _, entry_hash)| {
+                        entry_hash == hash && equal(key)
+                    }) {
+                        return Some(index);
+                    }
+                }
+            }
+            slot = (slot + 1) % self.buckets.len();
+        }
+        None
+    }
+
+    fn insert_bucket(&mut self, index: usize, hash: u64) {
+        let mut slot = (hash as usize) % self.buckets.len();
+        loop {
+            match self.buckets[slot] {
+                None => {
+                    self.buckets[slot] = Some(index);
+                    return;
+                }
+                Some(existing) if self.entries[existing].is_none() => {
+                    self.buckets[slot] = Some(index);
+                    return;
+                }
+                Some(_) => slot = (slot + 1) % self.buckets.len(),
+            }
+        }
     }
 }

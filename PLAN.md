@@ -644,13 +644,11 @@ then probe, at N=200k and N=1M (5x apart):
 | 1,000,000 | 428 ns/op (x1.03) | 40 ns/op (x1.22) |
 
 Complexity is confirmed **O(1)** (per-op is flat across a 5x N; it is not an O(n)
-scan). Lookups are fast (~35 ns). Inserts are O(1) but carry a large constant
-(~420 ns, ~12x the lookup), because the table uses separate chaining with a
-heap-allocated `Vec<usize>` per bucket (pointer chasing + per-bucket
-allocations) and a 16-byte `Any` per entry slot. **Fix:** move to open
-addressing (a single contiguous bucket array, Robin Hood / Swiss-table style)
-to cut the insert constant and improve cache behavior; keep insertion-order
-semantics and SameValueZero. Lower priority than the section 6 backlog.
+scan). The runtime now uses open addressing with one contiguous bucket array,
+while the insertion-order entry vector remains independent of bucket layout.
+Collision probing, tombstone reuse, compaction, and SameValueZero callbacks are
+covered by core tests. A Robin Hood/Swiss-table probe policy remains an optional
+constant-factor follow-up, not a correctness or complexity gate.
 
 ### 7.2 Tier 0 interpreter GC is O(n^2) over a run
 

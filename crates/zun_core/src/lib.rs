@@ -370,4 +370,19 @@ mod tests {
         );
         assert_eq!(set_iterator.next(&map), None);
     }
+
+    #[test]
+    fn ordered_map_probes_collisions_and_reuses_deleted_slots() {
+        let mut map = OrderedMap::new();
+        for value in 0..6 {
+            map.insert(Any::int(value), Any::int(value * 10), 1, |key| {
+                key.as_int() == Some(value)
+            });
+        }
+        assert_eq!(map.get(1, |key| key.as_int() == Some(4)).and_then(Any::as_int), Some(40));
+        assert_eq!(map.remove(1, |key| key.as_int() == Some(2)).and_then(|(_, value)| value.as_int()), Some(20));
+        map.insert(Any::int(9), Any::int(90), 1, |key| key.as_int() == Some(9));
+        assert_eq!(map.get(1, |key| key.as_int() == Some(9)).and_then(Any::as_int), Some(90));
+        assert_eq!(map.len(), 6);
+    }
 }
