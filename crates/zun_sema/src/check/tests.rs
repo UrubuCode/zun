@@ -38,6 +38,12 @@
     }
 
     #[test]
+    fn async_source_is_rejected_until_state_machine_lowering_exists() {
+        let message = first_error("async function main(): int { return await load(); }");
+        assert!(message.contains("async functions are parsed"), "{message}");
+    }
+
+    #[test]
     fn let_infers_type_from_initializer() {
         let hir = check_ok("function f() { let x = 1; let s = \"hi\"; }");
         assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);

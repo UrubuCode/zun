@@ -97,7 +97,11 @@ impl Parser<'_> {
         while !self.at(TokenKind::Eof) {
             match self.peek().kind {
                 TokenKind::KwImport => imports.push(self.import()),
-                TokenKind::KwFunction => functions.push(self.function()),
+                TokenKind::KwFunction => functions.push(self.function(false)),
+                TokenKind::KwAsync if self.peek_n(1).kind == TokenKind::KwFunction => {
+                    self.bump();
+                    functions.push(self.function(true));
+                }
                 TokenKind::KwClass => classes.push(self.class()),
                 _ => {
                     let t = self.peek();
@@ -229,12 +233,13 @@ impl Parser<'_> {
             params,
             return_type,
             is_extern,
+            is_async: false,
             body,
             span,
         }
     }
 
-    fn function(&mut self) -> Function {
+    fn function(&mut self, is_async: bool) -> Function {
         let start = self.bump().span; // `function`
         let name = self.name("a function name");
 
@@ -269,6 +274,7 @@ impl Parser<'_> {
             params,
             return_type,
             is_extern: false,
+            is_async,
             body,
             span,
         }

@@ -22,6 +22,10 @@ pub enum TokenKind {
     // Keywords
     /// `function`
     KwFunction,
+    /// `async`
+    KwAsync,
+    /// `await`
+    KwAwait,
     /// `let`
     KwLet,
     /// `if`
@@ -356,6 +360,8 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
 fn keyword_or_ident(text: &str) -> TokenKind {
     match text {
         "function" => TokenKind::KwFunction,
+        "async" => TokenKind::KwAsync,
+        "await" => TokenKind::KwAwait,
         "let" => TokenKind::KwLet,
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,

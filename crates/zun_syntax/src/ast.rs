@@ -66,6 +66,8 @@ pub struct Function {
     pub return_type: Option<TypeAnnotation>,
     /// Whether this declaration is implemented by a runtime intrinsic.
     pub is_extern: bool,
+    /// Whether this declaration uses the source-level `async` modifier.
+    pub is_async: bool,
     /// The body block.
     pub body: Block,
     /// Span of the whole declaration.
@@ -373,6 +375,13 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `await expression` (validated and lowered by the async compiler path).
+    Await {
+        /// The awaited expression.
+        operand: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `lhs op rhs`
     Binary {
         /// The operator.
@@ -533,6 +542,7 @@ impl Expr {
             | Expr::FieldAssign { span, .. }
             | Expr::Index { span, .. } => *span,
             Expr::IndexAssign { span, .. } => *span,
+            Expr::Await { span, .. } => *span,
             Expr::Function(function) => function.span,
             Expr::Ident(name) => name.span,
         }

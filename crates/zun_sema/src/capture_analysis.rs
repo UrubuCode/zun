@@ -71,6 +71,7 @@ pub(super) fn collect_mutated_expr(
         ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
             collect_mutated_expr(checker, operand, names)
         }
+        ast::Expr::Await { operand, .. } => collect_mutated_expr(checker, operand, names),
         ast::Expr::Call { args, .. } | ast::Expr::New { args, .. } => {
             for arg in args { collect_mutated_expr(checker, arg, names); }
         }

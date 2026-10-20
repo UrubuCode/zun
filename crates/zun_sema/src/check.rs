@@ -326,6 +326,12 @@ impl Checker<'_> {
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
         let name = sig.name.clone();
+        if f.is_async {
+            self.error(
+                f.name.span,
+                "async functions are parsed but source-level async lowering is not implemented yet",
+            );
+        }
 
         let mut cx = FunctionCx {
             locals: Vec::new(),
@@ -768,6 +774,18 @@ impl Checker<'_> {
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
+            ast::Expr::Await { operand, .. } => {
+                self.error(
+                    expr.span(),
+                    "await is only available after async lowering is implemented",
+                );
+                let checked = self.check_expr(cx, operand);
+                hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Error,
+                    span: checked.span,
+                }
+            }
             ast::Expr::Number { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Number(*value),
                 ty: Ty::F64,

@@ -25,6 +25,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::Binary { lhs, rhs, .. } => { rebase_expression_names(lhs, base); rebase_expression_names(rhs, base); }
         Expr::Conditional { condition, when_true, when_false, .. } => { rebase_expression_names(condition, base); rebase_expression_names(when_true, base); rebase_expression_names(when_false, base); }
         Expr::Unary { operand, .. } | Expr::Cast { expr: operand, .. } => rebase_expression_names(operand, base),
+        Expr::Await { operand, .. } => rebase_expression_names(operand, base),
         Expr::Call { callee, args, .. } => { shift(&mut callee.span); for arg in args { rebase_expression_names(arg, base); } }
         Expr::ComputedCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
         Expr::MethodCall { receiver, method, args, .. } | Expr::OptionalMethodCall { object: receiver, method, args, .. } => { rebase_expression_names(receiver, base); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
@@ -164,6 +165,11 @@ impl Parser<'_> {
                 Expr::New { class, args, span: start.to(close) }
             }
             TokenKind::KwFunction => self.function_expression(),
+            TokenKind::KwAwait => {
+                let start = self.bump().span;
+                let operand = self.expression();
+                Expr::Await { span: start.to(operand.span()), operand: Box::new(operand) }
+            }
             TokenKind::Ident => {
                 self.bump();
                 let name = Name { span: t.span };

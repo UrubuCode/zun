@@ -364,6 +364,9 @@ impl Checker<'_> {
             ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
                 self.collect_capture_expr(cx, parameters, operand, uses)
             }
+            ast::Expr::Await { operand, .. } => {
+                self.collect_capture_expr(cx, parameters, operand, uses)
+            }
             ast::Expr::Call { args, .. } => {
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);

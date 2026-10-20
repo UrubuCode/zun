@@ -19,6 +19,17 @@
         assert!(f.return_type.is_some());
         assert_eq!(f.body.statements.len(), 1);
     }
+
+    #[test]
+    fn parses_async_function_and_await_expression() {
+        let src = "async function main(): int { return await load(); }";
+        let p = parse_ok(src);
+        assert!(p.functions[0].is_async);
+        let Stmt::Return { value: Some(Expr::Await { .. }), .. } = &p.functions[0].body.statements[0]
+        else {
+            panic!("expected await in return expression");
+        };
+    }
     #[test]
     fn parses_anonymous_function_and_arrow_forms() {
         let src = "function main() { let a = x => x + 1; let b = (x: number, y) => { return x + y; }; let c = function(x) { return x; }; }";
