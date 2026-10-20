@@ -2,8 +2,8 @@
 import { setNew, setAdd, setHas, setSize, setDelete, setClear } from "zun:collections";
 
 function createSet(): any { return setNew(); }
-function addSetValue(set: any, value: any): boolean { return setAdd(set, value); }
-function hasSetValue(set: any, value: any): boolean { return setHas(set, value); }
-function setLength(set: any): u64 { return setSize(set); }
-function deleteSetValue(set: any, value: any): boolean { return setDelete(set, value); }
-function clearSet(set: any): void { setClear(set); }
+function addSetValue(set: Set, value: any): boolean { return setAdd(set, value); }
+function hasSetValue(set: Set, value: any): boolean { return setHas(set, value); }
+function setLength(set: Set): u64 { return setSize(set); }
+function deleteSetValue(set: Set, value: any): boolean { return setDelete(set, value); }
+function clearSet(set: Set): void { setClear(set); }

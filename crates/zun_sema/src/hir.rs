@@ -85,6 +85,12 @@ pub enum Ty {
     Boolean,
     /// A managed contiguous array.
     Array,
+    /// A runtime-owned insertion-ordered hash map.
+    Map,
+    /// A runtime-owned insertion-ordered hash set.
+    Set,
+    /// A GC ephemeron-backed weak map.
+    WeakMap,
     /// A dictionary-backed dynamic object.
     DynamicObject,
     /// A dynamically tagged value.

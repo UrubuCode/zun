@@ -2,9 +2,9 @@
 import { mapNew, mapSet, mapGet, mapHas, mapSize, mapDelete, mapClear } from "zun:collections";
 
 function createMap(): any { return mapNew(); }
-function setMapValue(map: any, key: any, value: any): void { mapSet(map, key, value); }
-function getMapValue(map: any, key: any): any { return mapGet(map, key); }
-function hasMapValue(map: any, key: any): boolean { return mapHas(map, key); }
-function mapLength(map: any): u64 { return mapSize(map); }
-function deleteMapValue(map: any, key: any): boolean { return mapDelete(map, key); }
-function clearMap(map: any): void { mapClear(map); }
+function setMapValue(map: Map, key: any, value: any): void { mapSet(map, key, value); }
+function getMapValue(map: Map, key: any): any { return mapGet(map, key); }
+function hasMapValue(map: Map, key: any): boolean { return mapHas(map, key); }
+function mapLength(map: Map): u64 { return mapSize(map); }
+function deleteMapValue(map: Map, key: any): boolean { return mapDelete(map, key); }
+function clearMap(map: Map): void { mapClear(map); }

@@ -2,5 +2,5 @@
 import { weakMapNew, weakMapSet, weakMapHas } from "zun:collections";
 
 function createWeakMap(): any { return weakMapNew(); }
-function setWeakMapValue(map: any, key: any, value: any): boolean { return weakMapSet(map, key, value); }
-function hasWeakMapValue(map: any, key: any): boolean { return weakMapHas(map, key); }
+function setWeakMapValue(map: WeakMap, key: any, value: any): boolean { return weakMapSet(map, key, value); }
+function hasWeakMapValue(map: WeakMap, key: any): boolean { return weakMapHas(map, key); }

@@ -659,6 +659,9 @@ impl Checker<'_> {
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
             "Array" | "array" => Ty::Array,
+            "Map" | "map" => Ty::Map,
+            "Set" | "set" => Ty::Set,
+            "WeakMap" | "weakmap" => Ty::WeakMap,
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "any" => Ty::Any,
             "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
@@ -2095,6 +2098,9 @@ fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::Str => Ty::String,
         N::Void => Ty::Void,
         N::Opaque => Ty::Any,
+        N::Map => Ty::Map,
+        N::Set => Ty::Set,
+        N::WeakMap => Ty::WeakMap,
     }
 }
 
