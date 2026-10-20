@@ -87,6 +87,16 @@ impl CallHook for JitHook<'_> {
         if kinds.len() != args.len() {
             return None;
         }
+        let native_roots: Vec<zun_gc::Obj> = args
+            .iter()
+            .filter_map(|arg| match arg {
+                Value::Object(obj) => Some(*obj),
+                _ => None,
+            })
+            .collect();
+        // Keep object arguments visible if a future native safepoint requests
+        // collection while this JIT frame is active.
+        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let packed: Vec<u64> = args.iter().zip(kinds).map(|(v, &k)| pack_value(v, k)).collect();
         let result = jit.call_packed(method_rid, &packed).ok()?;
         Some(unpack_value(result, jit.return_kind(method_rid)))

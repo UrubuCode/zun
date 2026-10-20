@@ -489,6 +489,7 @@ impl Interp<'_> {
             collect_frame_roots(l.stack, l.locals, &mut roots);
             link = l.parent;
         }
+        zun_gc::append_native_roots(&mut roots);
         let types = &self.types;
         let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
         // SAFETY: `roots` holds every live object reference reachable by the
