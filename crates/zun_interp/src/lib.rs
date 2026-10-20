@@ -33,6 +33,21 @@ use stack::{
 };
 use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
 use runner::run_method_with;
+
+/// Read the result of a settled managed Promise for the synchronous await
+/// fast path. Pending promises deliberately return `None` and must be routed
+/// through the future continuation/state-machine path.
+fn settled_await_value(promise: zun_gc::Obj) -> Option<Value> {
+    zun_gc::with_current_heap(|heap| {
+        heap.promise_is_ready(promise).and_then(|ready| {
+            ready.then(|| {
+                heap.promise_result(promise)
+                    .and_then(|value| value::Value::unbox_any(value, heap))
+            })
+        })
+    })
+    .flatten()
+}
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -1110,15 +1125,7 @@ impl Interp<'_> {
                 }
                 Opcode::Await => {
                     let promise = pop(&mut stack)?.as_object();
-                    let settled = zun_gc::with_current_heap(|heap| {
-                        heap.promise_is_ready(promise).and_then(|ready| {
-                            ready.then(|| {
-                                heap.promise_result(promise)
-                                    .and_then(|value| value::Value::unbox_any(value, heap))
-                            })
-                        })
-                    });
-                    let Some(Some(value)) = settled else {
+                    let Some(value) = settled_await_value(promise) else {
                         return Err(RunError::Malformed(
                             "pending await requires async state-machine lowering".into(),
                         ));
@@ -1149,6 +1156,17 @@ impl Interp<'_> {
 mod method_tests {
     use super::*;
     use crate::roots::collect_frame_roots;
+
+    #[test]
+    fn settled_await_reads_the_managed_promise_result() {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let promise = heap.alloc_promise();
+        let value = Value::Int(7, zun_il::NumKind::I32);
+        let boxed = value.box_any(&mut heap).expect("box await result");
+        assert_eq!(heap.promise_resolve(promise, boxed), Some(true));
+        assert_eq!(settled_await_value(promise).map(|resolved| resolved.as_int()), Some(7));
+    }
 
     #[test]
     fn executes_do_while_at_least_once() {
