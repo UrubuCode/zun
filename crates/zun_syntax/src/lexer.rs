@@ -28,6 +28,10 @@ pub enum TokenKind {
     KwElse,
     /// `while`
     KwWhile,
+    /// `for`
+    KwFor,
+    /// `of`
+    KwOf,
     /// `break`
     KwBreak,
     /// `continue`
@@ -291,6 +295,8 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
         "while" => TokenKind::KwWhile,
+        "for" => TokenKind::KwFor,
+        "of" => TokenKind::KwOf,
         "break" => TokenKind::KwBreak,
         "continue" => TokenKind::KwContinue,
         "return" => TokenKind::KwReturn,

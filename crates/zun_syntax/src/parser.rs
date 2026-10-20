@@ -311,6 +311,7 @@ impl Parser<'_> {
             TokenKind::KwLet => self.let_statement(),
             TokenKind::KwIf => self.if_statement(),
             TokenKind::KwWhile => self.while_statement(),
+            TokenKind::KwFor => self.for_statement(),
             TokenKind::KwBreak => self.break_statement(),
             TokenKind::KwContinue => self.continue_statement(),
             TokenKind::KwReturn => self.return_statement(),
@@ -370,6 +371,19 @@ impl Parser<'_> {
         let body = self.block();
         let span = start.to(body.span);
         Stmt::While { cond, body, span }
+    }
+
+    fn for_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        self.expect(TokenKind::LParen, "`(` after for");
+        self.expect(TokenKind::KwLet, "`let` in for-of binding");
+        let name = self.name("a for-of binding name");
+        self.expect(TokenKind::KwOf, "`of` in for-of loop");
+        let iterable = self.expression();
+        self.expect(TokenKind::RParen, "`)` after for-of iterable");
+        let body = self.block();
+        let span = start.to(body.span);
+        Stmt::ForOf { name, iterable, body, span }
     }
 
     fn break_statement(&mut self) -> Stmt {
@@ -851,6 +865,18 @@ mod tests {
             panic!("expected anonymous function");
         };
         assert!(!third.is_arrow);
+    }
+
+    #[test]
+    fn parses_for_of_statement() {
+        let src = "function main() { for (let value of values) { print(value); } }";
+        let p = parse_ok(src);
+        let Stmt::ForOf { name, iterable, body, .. } = &p.functions[0].body.statements[0] else {
+            panic!("expected for-of statement");
+        };
+        assert_eq!(ident_text(src, name), "value");
+        assert!(matches!(iterable, Expr::Ident(_)));
+        assert_eq!(body.statements.len(), 1);
     }
 
     #[test]

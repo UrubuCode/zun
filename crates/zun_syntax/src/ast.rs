@@ -168,6 +168,17 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
+    /// `for (let name of iterable) { body }`.
+    ForOf {
+        /// The loop binding.
+        name: Name,
+        /// The iterable expression.
+        iterable: Expr,
+        /// The loop body.
+        body: Block,
+        /// Span of the whole statement.
+        span: Span,
+    },
     /// `break;`
     Break {
         /// Source location of the statement.

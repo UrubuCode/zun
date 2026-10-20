@@ -230,6 +230,10 @@ impl Checker<'_> {
                     self.collect_mutated_expr(cond, names);
                     self.collect_mutated_names(&body.statements, names);
                 }
+                ast::Stmt::ForOf { iterable, body, .. } => {
+                    self.collect_mutated_expr(iterable, names);
+                    self.collect_mutated_names(&body.statements, names);
+                }
                 ast::Stmt::Return { value, .. } => {
                     if let Some(value) = value {
                         self.collect_mutated_expr(value, names);
@@ -492,6 +496,12 @@ impl Checker<'_> {
             }
             ast::Stmt::While { cond, body, .. } => {
                 self.collect_capture_expr(cx, parameters, cond, uses);
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+            }
+            ast::Stmt::ForOf { iterable, body, .. } => {
+                self.collect_capture_expr(cx, parameters, iterable, uses);
                 for statement in &body.statements {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
                 }
@@ -1076,6 +1086,14 @@ impl Checker<'_> {
                 let body = self.check_block(cx, body);
                 cx.loop_depth -= 1;
                 hir::Stmt::While { cond, body }
+            }
+            ast::Stmt::ForOf { span, .. } => {
+                self.error(*span, "for-of iteration is not implemented yet");
+                hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::Number(0.0),
+                    ty: Ty::F64,
+                    span: *span,
+                })
             }
             ast::Stmt::Break { span } => {
                 if cx.loop_depth == 0 {
