@@ -419,8 +419,9 @@ The following runtime contracts are implemented and covered by tests:
 - behavior-preserving concern splits for core runtime contracts (dynamic values,
   symbols, function handles, dates, buffers, arrays, collections, and stable
   identifiers), semantic capture/mutation analysis, and interpreter GC roots;
-- mark-sweep GC with interpreter roots, native root scopes, and registered JIT
-  stack-map metadata;
+- mark-sweep GC with interpreter roots, native root scopes, and precise JIT
+  stack-map reference-slot metadata; the GC can consume a stopped native frame
+  through `(PC, SP)`, while automatic safepoint capture remains pending;
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
