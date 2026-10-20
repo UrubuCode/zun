@@ -194,8 +194,9 @@ pub struct DynamicObject {
 /// order independently of bucket layout.
 #[derive(Debug, Clone)]
 pub struct OrderedMap {
-    entries: Vec<(Any, Any, u64)>,
+    entries: Vec<Option<(Any, Any, u64)>>,
     buckets: Vec<Vec<usize>>,
+    live_len: usize,
 }
 
 impl Default for OrderedMap {
@@ -206,29 +207,31 @@ impl Default for OrderedMap {
 
 impl OrderedMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8] }
+        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8], live_len: 0 }
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn len(&self) -> usize { self.live_len }
+    pub fn is_empty(&self) -> bool { self.live_len == 0 }
 
     pub fn get(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
         let bucket = &self.buckets[(hash as usize) % self.buckets.len()];
         bucket.iter().find_map(|&index| {
-            let (key, value, _) = self.entries[index];
-            equal(key).then_some(value)
+            self.entries[index].and_then(|(key, value, _)| equal(key).then_some(value))
         })
     }
 
     pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
         let bucket_index = (hash as usize) % self.buckets.len();
-        if let Some(&index) = self.buckets[bucket_index].iter().find(|&&index| equal(self.entries[index].0)) {
-            return Some(std::mem::replace(&mut self.entries[index].1, value));
+        if let Some(&index) = self.buckets[bucket_index].iter().find(|&&index| {
+            self.entries[index].is_some_and(|(key, _, _)| equal(key))
+        }) {
+            return Some(self.entries[index].as_mut().map(|entry| std::mem::replace(&mut entry.1, value)).unwrap());
         }
         let index = self.entries.len();
-        self.entries.push((key, value, hash));
+        self.entries.push(Some((key, value, hash)));
         self.buckets[bucket_index].push(index);
-        if self.entries.len() * 4 > self.buckets.len() * 3 {
+        self.live_len += 1;
+        if self.live_len * 4 > self.buckets.len() * 3 {
             self.rehash();
         }
         None
@@ -236,26 +239,25 @@ impl OrderedMap {
 
     pub fn remove(&mut self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<(Any, Any)> {
         let bucket_index = (hash as usize) % self.buckets.len();
-        let position = self.buckets[bucket_index].iter().position(|&index| equal(self.entries[index].0))?;
-        let removed_index = self.buckets[bucket_index].remove(position);
-        let removed = self.entries.remove(removed_index);
-        for bucket in &mut self.buckets {
-            for index in bucket {
-                if *index > removed_index { *index -= 1; }
-            }
-        }
+        let &index = self.buckets[bucket_index].iter().find(|&&index| {
+            self.entries[index].is_some_and(|(key, _, _)| equal(key))
+        })?;
+        let removed = self.entries[index].take()?;
+        self.live_len -= 1;
         Some((removed.0, removed.1))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Any, Any)> + '_ {
-        self.entries.iter().map(|(key, value, _)| (*key, *value))
+        self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
     }
 
     fn rehash(&mut self) {
         let mut buckets = vec![Vec::new(); self.buckets.len() * 2];
-        for (index, (_, _, hash)) in self.entries.iter().enumerate() {
-            let bucket = (*hash as usize) % buckets.len();
-            buckets[bucket].push(index);
+        for (index, entry) in self.entries.iter().enumerate() {
+            if let Some((_, _, hash)) = entry {
+                let bucket = (*hash as usize) % buckets.len();
+                buckets[bucket].push(index);
+            }
         }
         self.buckets = buckets;
     }
