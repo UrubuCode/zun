@@ -26,6 +26,8 @@ pub enum OperandKind {
     Float64,
     /// A 4-byte metadata token.
     Token,
+    /// A metadata token followed by a signed 32-bit immediate.
+    TokenImm32,
     /// A 2-byte local-variable slot index.
     Local,
     /// A 4-byte index into the module's string heap.
@@ -46,6 +48,7 @@ impl OperandKind {
             | OperandKind::Branch
             | OperandKind::StringRef => 4,
             OperandKind::Imm64 | OperandKind::Float64 => 8,
+            OperandKind::TokenImm32 => 8,
         }
     }
 }

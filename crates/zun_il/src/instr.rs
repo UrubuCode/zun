@@ -22,6 +22,8 @@ pub enum Operand {
     Float64(f64),
     /// A metadata token.
     Token(Token),
+    /// A metadata token paired with a signed 32-bit immediate.
+    TokenImm32(Token, i32),
     /// A local-variable slot index.
     Local(u16),
     /// An index into the module's string heap.
@@ -39,6 +41,7 @@ impl Operand {
             Operand::Imm64(_) => OperandKind::Imm64,
             Operand::Float64(_) => OperandKind::Float64,
             Operand::Token(_) => OperandKind::Token,
+            Operand::TokenImm32(_, _) => OperandKind::TokenImm32,
             Operand::Local(_) => OperandKind::Local,
             Operand::StringRef(_) => OperandKind::StringRef,
             Operand::Branch(_) => OperandKind::Branch,
@@ -110,6 +113,10 @@ pub fn encode(instr: &Instruction, out: &mut Vec<u8>) {
         Operand::Imm64(v) => out.extend_from_slice(&v.to_le_bytes()),
         Operand::Float64(v) => out.extend_from_slice(&v.to_bits().to_le_bytes()),
         Operand::Token(t) => out.extend_from_slice(&t.to_raw().to_le_bytes()),
+        Operand::TokenImm32(t, v) => {
+            out.extend_from_slice(&t.to_raw().to_le_bytes());
+            out.extend_from_slice(&v.to_le_bytes());
+        }
         Operand::Local(v) => out.extend_from_slice(&v.to_le_bytes()),
         Operand::StringRef(v) => out.extend_from_slice(&v.to_le_bytes()),
         Operand::Branch(v) => out.extend_from_slice(&v.to_le_bytes()),
@@ -136,6 +143,10 @@ pub fn decode_one(bytes: &[u8]) -> Result<(Instruction, usize), DecodeError> {
         OperandKind::Token => Operand::Token(Token::from_raw(u32::from_le_bytes(
             body[..4].try_into().unwrap(),
         ))),
+        OperandKind::TokenImm32 => Operand::TokenImm32(
+            Token::from_raw(u32::from_le_bytes(body[..4].try_into().unwrap())),
+            i32::from_le_bytes(body[4..8].try_into().unwrap()),
+        ),
         OperandKind::Local => Operand::Local(u16::from_le_bytes(body[..2].try_into().unwrap())),
         OperandKind::StringRef => {
             Operand::StringRef(u32::from_le_bytes(body[..4].try_into().unwrap()))
