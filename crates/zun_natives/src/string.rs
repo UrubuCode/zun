@@ -4,7 +4,7 @@ use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
 fn length(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Int(value.chars().count() as i64)),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Int(value.encode_utf16().count() as i64)),
         _ => Err(NativeError("length: expected a string".to_string())),
     }
 }
@@ -37,9 +37,9 @@ fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
         _ => return Err(NativeError("charCodeAt: expected a non-negative index".to_string())),
     };
     value
-        .chars()
+        .encode_utf16()
         .nth(index)
-        .map(|character| NativeValue::Int(character as u32 as i64))
+        .map(|unit| NativeValue::Int(unit as i64))
         .ok_or_else(|| NativeError(format!("charCodeAt: index {index} is out of bounds")))
 }
 

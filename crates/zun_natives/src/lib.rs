@@ -339,6 +339,10 @@ mod tests {
             NativeValue::Int(2)
         ));
         assert!(matches!(
+            dispatch(length_id, &[NativeArg::Str("😀")], &mut sink).unwrap(),
+            NativeValue::Int(2)
+        ));
+        assert!(matches!(
             dispatch(concat_id, &[NativeArg::Str("a"), NativeArg::Str("b")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "ab"
         ));
@@ -351,6 +355,10 @@ mod tests {
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),
             NativeValue::Int(0xE9)
+        ));
+        assert!(matches!(
+            dispatch(char_code_id, &[NativeArg::Str("😀"), NativeArg::Int(0)], &mut sink).unwrap(),
+            NativeValue::Int(0xD83D)
         ));
     }
 
