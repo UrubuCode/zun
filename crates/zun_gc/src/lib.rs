@@ -38,6 +38,7 @@ mod object;
 mod records;
 mod value_ops;
 mod weak;
+mod strings;
 mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
@@ -921,40 +922,6 @@ impl Heap {
     /// object reference absent from `roots` — otherwise it could be freed while
     /// still in use. (Collecting with precise roots from both engines is the
     /// remaining integration; see PLAN.md Â§4.3.)
-    pub fn intern_string(&mut self, s: Rc<str>) -> u32 {
-        let handle = self.strings.len() as u32;
-        self.strings.push(s);
-        handle
-    }
-
-    /// Resolve a string handle back to its string.
-    pub fn string(&self, handle: u32) -> &Rc<str> {
-        &self.strings[handle as usize]
-    }
-
-    /// Resolve a string handle without panicking on malformed dynamic data.
-    pub fn try_string(&self, handle: u32) -> Option<&Rc<str>> {
-        self.strings.get(handle as usize)
-    }
-
-    /// Create a unique symbol in this heap's isolate.
-    pub fn symbol_create(&mut self, description: Option<impl Into<String>>) -> zun_core::SymbolId {
-        self.symbols.create(description)
-    }
-
-    /// Get the canonical symbol for a registry key in this isolate.
-    pub fn symbol_for(&mut self, key: impl Into<String>) -> zun_core::SymbolId {
-        self.symbols.for_key(key)
-    }
-
-    pub fn symbol_description(&self, symbol: zun_core::SymbolId) -> Option<&str> {
-        self.symbols.description(symbol)
-    }
-
-    pub fn symbol_count(&self) -> usize {
-        self.symbols.len()
-    }
-
     /// Number of objects' worth of chunks currently held (for diagnostics).
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
