@@ -159,4 +159,16 @@ mod tests {
         let result = unsafe { library.call_f64_0(b"zun_missing_symbol") };
         assert!(result.is_err());
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn calls_a_real_system_library_symbol() {
+        let library = unsafe { NativeLibrary::open("kernel32.dll") }.expect("load kernel32");
+        let process_id = unsafe {
+            library
+                .call_i64_0(b"GetCurrentProcessId")
+                .expect("resolve GetCurrentProcessId")
+        };
+        assert!(process_id > 0);
+    }
 }
