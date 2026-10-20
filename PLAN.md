@@ -148,6 +148,25 @@ State machines async, Promise/event loop, `Any`/`DynamicObject` para JS não tip
 **Fase 5 — Hosting e distribuição**
 `zun_napi` (Node embedding), módulos pré-compilados/cache R2R-like, OSR, trimming/alcançabilidade.
 
+### Estado de implementação
+
+As fases não são apenas marcos históricos: cada item abaixo precisa ter um
+contrato observável no código e um teste que o exercite.
+
+- **Entregue:** formato `.zm` com round-trip determinístico, parser/sema/ilgen,
+  verificador, loader, interpretador, GC mark-sweep, layouts compartilhados,
+  intrinsics indexados, módulos de código Zun (`std/math` e `std/string`),
+  manifesto binário e geração do manifesto pelo compiler.
+- **Entregue parcialmente:** Tier 1 Cranelift para valores numéricos, booleanos
+  e objetos com fields numéricos; equivalência interp↔JIT coberta por testes.
+  Chamadas virtuais com override ainda ficam no Tier 0.
+- **Entregue parcialmente:** resolução de exports e `MemberRef` entre escopos
+  carregados. Imports de módulos de usuário são validados no build, mas ainda
+  não são baixados para uma chamada executável no VM.
+- **Ainda aberto:** execução multi-módulo, dispatch virtual dinâmico no JIT,
+  safepoints e stack maps precisos, async/Promise, `Any`/`DynamicObject`, FFI,
+  `zun_napi`, AOT/R2R, OSR e trimming.
+
 ## 4.1 Modos de distribuição (decisão: suportar os três)
 
 O usuário final nunca instala um runtime. Os três modos são empacotamentos do mesmo pipeline — o codegen atrás do trait estilo `ICorJitInfo` serve JIT (`cranelift-jit`) e AOT (`cranelift-object`) sem saber a diferença:
