@@ -1532,6 +1532,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_palindrome_source_method() {
+        let module = zun_compiler::compile(
+            "import { reverse } from \"zun:string\"; class String { extern reverse(): string; isPalindrome(): boolean { return this == this.reverse(); } } function main(): boolean { let value: string = \"level\"; return value.isPalindrome(); }",
+        )
+        .expect("compile String isPalindrome");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isPalindrome");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_to_string_source_method() {
         let module = zun_compiler::compile(
             "class String { toString(): string { return this; } }\n\

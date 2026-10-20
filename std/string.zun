@@ -120,6 +120,10 @@ class String {
         return this.trim().isEmpty();
     }
 
+    isPalindrome(): boolean {
+        return this == this.reverse();
+    }
+
     extern length(): u64;
     extern contains(needle: string): boolean;
     extern count(needle: string): int;
