@@ -13,6 +13,8 @@ use zun_syntax::ast;
 
 #[path = "closures.rs"]
 mod closures;
+#[path = "diagnostics.rs"]
+mod diagnostics;
 
 /// Check `program`, producing HIR and appending diagnostics.
 pub fn check(
@@ -377,18 +379,6 @@ impl Checker<'_> {
             | ast::Expr::Null { .. } => {}
             ast::Expr::Spread { expr, .. } => self.collect_mutated_expr(expr, names),
         }
-    }
-
-    fn text(&self, name: &ast::Name) -> &str {
-        &self.source[name.span.start as usize..name.span.end as usize]
-    }
-
-    fn error(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics.push(
-            Diagnostic::error(message)
-                .with_code("SEM0001")
-                .with_span(span),
-        );
     }
 
     /// Resolve a written type annotation to a [`Ty`].
