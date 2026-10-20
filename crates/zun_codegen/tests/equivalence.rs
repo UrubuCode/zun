@@ -3006,6 +3006,30 @@ fn numeric_array_push_is_jit_equivalent() {
 }
 
 #[test]
+fn numeric_array_allocation_is_jit_equivalent() {
+    let src = "function make(length: u64): Array { return new Array(length); }\n\
+               function main(): Array { return make(3); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "make")
+        .map(|index| index as u32 + 1)
+        .expect("make method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array allocation");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let bits = {
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_packed(rid, &[3]).expect("jit array allocation")
+    };
+    let array = unsafe { zun_gc::Obj::from_addr(bits as *mut u64) };
+    assert_eq!(heap.array_len(array), Some(3));
+    assert!(matches!(interp_entry(&module), Value::Object(_)));
+}
+
+#[test]
 fn non_overridden_virtual_call_is_jit_eligible() {
     let src = "class Counter { n: int; get(): int { return this.n; } }\n\
                function read(c: Counter): int { return c.get(); }\n\

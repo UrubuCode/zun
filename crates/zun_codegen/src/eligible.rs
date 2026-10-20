@@ -57,6 +57,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::LoadField
             | Opcode::StoreField
             | Opcode::ArrayLength
+            | Opcode::NewArray
             | Opcode::LoadArray
             | Opcode::StoreArray
             | Opcode::ArrayPop
@@ -246,6 +247,11 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         if instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
             && (!body.returns_value
                 || JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64))
+        {
+            continue;
+        }
+        if instrs.iter().any(|i| i.opcode == Opcode::NewArray)
+            && (!body.returns_value || JitKind::from_byte(body.return_kind) != JitKind::Object)
         {
             continue;
         }

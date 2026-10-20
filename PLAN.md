@@ -614,10 +614,10 @@ The following runtime contracts are implemented and covered by tests:
   IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
 - Array instructions have verifier fixtures and explicit interpreter/JIT
   equivalence coverage. Read-only `ArrayLength` and numeric `LoadArray` now
-  lower through non-allocating Cranelift helpers; numeric indexed mutation now
-  uses the same narrow value ABI, while array allocation and reference-valued
-  loads/stores remain Tier 0 pending managed JIT value lowering, precise
-  safepoints, and write barriers.
+  lower through Cranelift helpers; numeric allocation and indexed mutation use
+  the narrow non-reference value ABI, while reference-valued loads/stores and
+  collection-triggering allocation remain Tier 0 pending managed JIT value
+  lowering, precise safepoints, and write barriers.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
   tracing of managed keys and values. Source-level `Map` and `Set` classes

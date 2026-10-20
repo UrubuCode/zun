@@ -746,6 +746,22 @@ impl Translator<'_> {
                     let result = self.builder.inst_results(inst)[0];
                     stack.push((result, JitKind::Num(NumKind::U64)));
                 }
+                Opcode::NewArray => {
+                    let (length, length_kind) = stack.pop().ok_or("stack underflow")?;
+                    if !matches!(length_kind, JitKind::Num(kind) if kind.int_parts().is_some()) {
+                        return Err("array length must be an integer".into());
+                    }
+                    let length = match clif_ty(length_kind) {
+                        types::I64 => length,
+                        ty if ty.is_int() => self.builder.ins().uextend(types::I64, length),
+                        _ => return Err("array length must be an integer".into()),
+                    };
+                    let alloc = self.array_new_fref();
+                    let inst = self.builder.ins().call(alloc, &[length]);
+                    let result = self.builder.inst_results(inst)[0];
+                    self.builder.declare_value_needs_stack_map(result);
+                    stack.push((result, JitKind::Object));
+                }
                 // A numeric array load already decodes the dynamic carrier at
                 // the helper boundary; the source-level cast is therefore a
                 // representation-preserving check for this narrow JIT path.
@@ -753,6 +769,16 @@ impl Translator<'_> {
                     let value = stack.pop().ok_or("stack underflow")?;
                     if value.1 == JitKind::Other {
                         return Err("unbox.any requires a typed JIT value".into());
+                    }
+                    stack.push(value);
+                }
+                // Numeric values are already represented in their native JIT
+                // form; the managed Any carrier is materialized only by the
+                // runtime array helper at the store boundary.
+                Opcode::BoxAny => {
+                    let value = stack.pop().ok_or("stack underflow")?;
+                    if !matches!(value.1, JitKind::Num(_) | JitKind::Bool) {
+                        return Err("box.any requires a scalar JIT value".into());
                     }
                     stack.push(value);
                 }
@@ -1030,6 +1056,18 @@ impl Translator<'_> {
             .declare_function("zun_jit_array_length", Linkage::Import, &sig)
             .expect("declare zun_jit_array_length");
         self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn array_new_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_array_new", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_new");
+        self.module
+            .declare_func_in_func(id, self.builder.func)
     }
 
     fn array_load_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {

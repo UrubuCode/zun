@@ -37,6 +37,15 @@ pub extern "C" fn zun_jit_array_length(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.array_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+/// Allocate an empty managed array without triggering collection.
+#[inline]
+pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
+    if length < 0 {
+        return 0;
+    }
+    zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length as usize).addr() as i64)
+}
+
 /// Read a numeric dynamic array element without allocating or collecting.
 ///
 /// This helper is intentionally limited to numeric `Any` values. Array
@@ -441,6 +450,7 @@ impl Jit {
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
+    builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);
