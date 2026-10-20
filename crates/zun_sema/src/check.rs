@@ -891,6 +891,9 @@ impl Checker<'_> {
                     "String" => Ty::String,
                     "Number" => Ty::F64,
                     "Array" => Ty::Array,
+                    "Map" => Ty::Map,
+                    "Set" => Ty::Set,
+                    "WeakMap" => Ty::WeakMap,
                     _ => Ty::Instance(class_idx as u32),
                 };
                 let mut params = vec![receiver_ty];

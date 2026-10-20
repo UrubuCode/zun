@@ -1,10 +1,11 @@
-// Thin source wrapper over the runtime-owned ordered hash table.
-import { mapNew, mapSet, mapGet, mapHas, mapSize, mapDelete, mapClear } from "zun:collections";
+// Thin class wrapper over the runtime-owned ordered hash table.
+import { mapSet, mapGet, mapHas, mapSize, mapDelete, mapClear } from "zun:collections";
 
-function createMap(): any { return mapNew(); }
-function setMapValue(map: Map, key: any, value: any): void { mapSet(map, key, value); }
-function getMapValue(map: Map, key: any): any { return mapGet(map, key); }
-function hasMapValue(map: Map, key: any): boolean { return mapHas(map, key); }
-function mapLength(map: Map): u64 { return mapSize(map); }
-function deleteMapValue(map: Map, key: any): boolean { return mapDelete(map, key); }
-function clearMap(map: Map): void { mapClear(map); }
+class Map {
+    set(key: any, value: any): void { mapSet(this, key, value); }
+    get(key: any): any { return mapGet(this, key); }
+    has(key: any): boolean { return mapHas(this, key); }
+    size(): u64 { return mapSize(this); }
+    delete(key: any): boolean { return mapDelete(this, key); }
+    clear(): void { mapClear(this); }
+}

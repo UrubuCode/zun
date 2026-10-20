@@ -1,9 +1,10 @@
-// Thin source wrapper over the runtime-owned ordered hash table.
-import { setNew, setAdd, setHas, setSize, setDelete, setClear } from "zun:collections";
+// Thin class wrapper over the runtime-owned ordered hash table.
+import { setAdd, setHas, setSize, setDelete, setClear } from "zun:collections";
 
-function createSet(): any { return setNew(); }
-function addSetValue(set: Set, value: any): boolean { return setAdd(set, value); }
-function hasSetValue(set: Set, value: any): boolean { return setHas(set, value); }
-function setLength(set: Set): u64 { return setSize(set); }
-function deleteSetValue(set: Set, value: any): boolean { return setDelete(set, value); }
-function clearSet(set: Set): void { setClear(set); }
+class Set {
+    add(value: any): boolean { return setAdd(this, value); }
+    has(value: any): boolean { return setHas(this, value); }
+    size(): u64 { return setSize(this); }
+    delete(value: any): boolean { return setDelete(this, value); }
+    clear(): void { setClear(this); }
+}
