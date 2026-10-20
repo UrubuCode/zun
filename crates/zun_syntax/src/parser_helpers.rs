@@ -2,6 +2,26 @@
 
 use super::*;
 
+fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
+    Some(match kind {
+        TokenKind::EqEq => (BinaryOp::Eq, 1),
+        TokenKind::BangEq => (BinaryOp::Ne, 1),
+        TokenKind::Lt => (BinaryOp::Lt, 2),
+        TokenKind::LtEq => (BinaryOp::Le, 2),
+        TokenKind::Gt => (BinaryOp::Gt, 2),
+        TokenKind::GtEq => (BinaryOp::Ge, 2),
+        TokenKind::OrOr => (BinaryOp::Or, 0),
+        TokenKind::Nullish => (BinaryOp::Nullish, 0),
+        TokenKind::AndAnd => (BinaryOp::And, 1),
+        TokenKind::Plus => (BinaryOp::Add, 3),
+        TokenKind::Minus => (BinaryOp::Sub, 3),
+        TokenKind::Star => (BinaryOp::Mul, 4),
+        TokenKind::Slash => (BinaryOp::Div, 4),
+        TokenKind::Percent => (BinaryOp::Rem, 4),
+        _ => return None,
+    })
+}
+
 impl Parser<'_> {
     pub(crate) fn primary(&mut self) -> Expr {
         let t = self.peek();
