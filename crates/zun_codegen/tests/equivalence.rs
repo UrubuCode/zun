@@ -166,6 +166,26 @@ fn date_surface_exposes_ecmascript_utc_aliases() {
 }
 
 #[test]
+fn date_surface_provides_timestamp_factories() {
+    let module = compile(
+        "\n\
+         class Date { millis: i64; valueOf(): i64 { return this.millis; } }\n\
+         function dateFromMillis(value: i64): Date { return new Date(value); }\n\
+         function main(): int { let fixed: Date = dateFromMillis(42); if (fixed.valueOf() == 42) { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    let interp_result = interp_entry(&module);
+    assert!(matches!((jit_result, interp_result),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\
