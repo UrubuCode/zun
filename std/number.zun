@@ -29,6 +29,12 @@ class Number {
         return this <= high;
     }
 
+    isApproximately(other: number, epsilon: number): boolean {
+        let difference: number = this - other;
+        if (difference < 0.0) { difference = -difference; }
+        return difference <= epsilon;
+    }
+
     isNaN(): boolean {
         return this != this;
     }

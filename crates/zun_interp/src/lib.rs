@@ -1453,6 +1453,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_is_approximately_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",
+        )
+        .expect("compile Number isApproximately");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number isApproximately");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_math_power_intrinsic() {
         let module = zun_compiler::compile(
             "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
