@@ -381,9 +381,9 @@ mirroring the way weak collections forced dedicated GC work.
 - Iteration protocol (`for...of`, `Symbol.iterator`) and generators
   (`function*`). Generators lower to a state machine, reusing the async
   state-machine substrate. *Status: `SymbolRegistry`, `for...of` for Array,
-  Map, and Set, and source-level iterator calls are implemented in Tier 0;
-  `yield` is represented by the parser/AST; generator declaration syntax,
-  state-machine lowering, and runtime resume remain pending.*
+  Map, and Set, source-level iterator calls, generator declaration syntax,
+  state-machine planning/lowering, and persistent Tier 0 resume are implemented;
+  broader Cranelift generator support remains an optimization gate.*
 
 **Group 2 — syntactic / medium features (no deep runtime change):** spread/rest
 (`...`), array and object destructuring, default and rest parameters, optional
