@@ -93,6 +93,8 @@ pub struct StackMapInfo {
     pub code_offset: u32,
     /// Number of bytes covered by the map in the native frame.
     pub span: u32,
+    /// Absolute address of the safepoint after JIT finalization.
+    pub pc: usize,
 }
 
 /// A compiled method's call shape.
@@ -270,6 +272,7 @@ impl Jit {
         for m in batch {
             self.defined.insert(m);
         }
+        self.refresh_stack_map_pcs();
         self.refresh_virtual_table();
         Ok(true)
     }
@@ -313,7 +316,11 @@ impl Jit {
                 code.buffer
                     .user_stack_maps()
                     .iter()
-                    .map(|&(code_offset, span, _)| StackMapInfo { code_offset, span })
+                    .map(|&(code_offset, span, _)| StackMapInfo {
+                        code_offset,
+                        span,
+                        pc: 0,
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -359,6 +366,18 @@ impl Jit {
                 }
                 let ptr = self.module.get_finalized_function(func_id);
                 self.virtual_table[type_rid as usize * slots + slot] = ptr as usize as u64;
+            }
+        }
+    }
+
+    fn refresh_stack_map_pcs(&mut self) {
+        for (&rid, maps) in &mut self.stack_maps {
+            let Some(&func_id) = self.func_ids.get(&rid) else {
+                continue;
+            };
+            let base = self.module.get_finalized_function(func_id) as usize;
+            for map in maps {
+                map.pc = base + map.code_offset as usize;
             }
         }
     }
