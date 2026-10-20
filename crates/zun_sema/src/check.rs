@@ -1684,6 +1684,42 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                let managed_method = match (receiver.ty, mname.as_str()) {
+                    (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
+                    (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
+                    (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Map, "size") => Some(("mapSize", Ty::Int(IntKind::U64), vec![])),
+                    (Ty::Map, "delete") => Some(("mapDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Map, "clear") => Some(("mapClear", Ty::Void, vec![])),
+                    (Ty::Set, "add") => Some(("setAdd", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Set, "has") => Some(("setHas", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),
+                    (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Set, "clear") => Some(("setClear", Ty::Void, vec![])),
+                    (Ty::WeakMap, "set") => Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any])),
+                    (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
+                    _ => None,
+                };
+                if let Some((native_name, return_ty, expected)) = managed_method {
+                    if args.len() != expected.len() {
+                        self.error(span, format!("`{mname}` expects {} argument(s), found {}", expected.len(), args.len()));
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver];
+                    for (arg, expected_ty) in args.into_iter().zip(expected) {
+                        let mut value = self.check_expr(cx, arg);
+                        coerce_numeric_literal(&mut value, expected_ty);
+                        if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
+                            self.error(value.span, format!("argument type {:?} does not match {expected_ty:?}", value.ty));
+                        }
+                        call_args.push(value);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty: return_ty, span };
+                }
                 let class = match receiver.ty {
                     Ty::String => match self.classes_by_name.get("String") {
                         Some(&class) => class,

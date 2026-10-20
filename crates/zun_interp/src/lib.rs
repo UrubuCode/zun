@@ -1500,6 +1500,17 @@ mod method_tests {
     }
 
     #[test]
+    fn calls_managed_collection_methods_with_a_receiver() {
+        let module = zun_compiler::compile(
+            "class Key {} function main(): int { let map = new Map(); map.set(1.0, 2.0); let set = new Set(); set.add(1.0); let key = new Key(); let value = new Key(); let weak = new WeakMap(); weak.set(key, value); if (map.has(1.0)) { if (set.has(1.0)) { if (weak.has(key)) { if (map.size() == 1) { if (set.size() == 1) { map.clear(); set.clear(); return 1; } } } } } return 0; }",
+        )
+        .expect("compile managed collection methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run managed collection methods");
+        assert!(matches!(result, Value::Int(1, _)));
+    }
+
+    #[test]
     fn removes_and_clears_runtime_backed_collections() {
         let module = zun_compiler::compile(
             "import { mapNew, mapSet, mapHas, mapDelete, mapClear, setNew, setAdd, setHas, setDelete, setClear } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 1.0, 2.0); mapDelete(map, 1.0); if (mapHas(map, 1.0)) { return 1; } mapSet(map, 1.0, 2.0); mapClear(map); let set = setNew(); setAdd(set, 1.0); setDelete(set, 1.0); if (setHas(set, 1.0)) { return 2; } setAdd(set, 1.0); setClear(set); if (setHas(set, 1.0)) { return 3; } return 0; }",
