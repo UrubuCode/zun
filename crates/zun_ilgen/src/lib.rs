@@ -221,6 +221,7 @@ fn lower_function(
         break_patches: Vec::new(),
         continue_targets: Vec::new(),
         handlers: Vec::new(),
+        finally_bodies: Vec::new(),
     };
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
@@ -238,16 +239,17 @@ struct BranchPatch {
     operand_at: usize,
 }
 
-struct FnLowerer<'a> {
+struct FnLowerer<'a, 'b> {
     code: Vec<u8>,
     layout: &'a Layout,
-    module: &'a mut Module,
+    module: &'b mut Module,
     break_patches: Vec<Vec<BranchPatch>>,
     continue_targets: Vec<Vec<usize>>,
     handlers: Vec<ExceptionHandler>,
+    finally_bodies: Vec<&'a [Stmt]>,
 }
 
-impl FnLowerer<'_> {
+impl<'a, 'b> FnLowerer<'a, 'b> {
     fn emit(&mut self, instr: Instruction) {
         encode(&instr, &mut self.code);
     }
@@ -323,13 +325,13 @@ impl FnLowerer<'_> {
         self.emit(Instruction::new(opcode, Operand::Branch(disp as i32)));
     }
 
-    fn stmts(&mut self, stmts: &[Stmt]) {
+    fn stmts(&mut self, stmts: &'a [Stmt]) {
         for s in stmts {
             self.stmt(s);
         }
     }
 
-    fn stmt(&mut self, stmt: &Stmt) {
+    fn stmt(&mut self, stmt: &'a Stmt) {
         match stmt {
             Stmt::Let { slot, init } => {
                 self.expr(init);
@@ -389,6 +391,10 @@ impl FnLowerer<'_> {
                 }
             }
             Stmt::Return(value) => {
+                let cleanups: Vec<&[Stmt]> = self.finally_bodies.iter().rev().copied().collect();
+                for cleanup in cleanups {
+                    self.stmts(cleanup);
+                }
                 if let Some(v) = value {
                     self.expr(v);
                 }
@@ -404,7 +410,13 @@ impl FnLowerer<'_> {
                 finally_body,
             } => {
                 let try_start = self.code.len() as u32;
+                if let Some(finally_body) = finally_body {
+                    self.finally_bodies.push(finally_body);
+                }
                 self.stmts(body);
+                if finally_body.is_some() {
+                    self.finally_bodies.pop();
+                }
                 let try_end = self.code.len() as u32;
                 let mut exits = Vec::new();
                 if let Some(finally_body) = finally_body {
@@ -420,7 +432,13 @@ impl FnLowerer<'_> {
                         Opcode::StoreLocal,
                         Operand::Local(catch.slot),
                     ));
+                    if let Some(finally_body) = finally_body {
+                        self.finally_bodies.push(finally_body);
+                    }
                     self.stmts(&catch.body);
+                    if finally_body.is_some() {
+                        self.finally_bodies.pop();
+                    }
                     if let Some(finally_body) = finally_body {
                         self.stmts(finally_body);
                     }

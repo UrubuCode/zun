@@ -882,6 +882,30 @@ mod method_tests {
     }
 
     #[test]
+    fn finally_runs_before_a_normal_return() {
+        let module = zun_compiler::compile(
+            "function main(): int { try { return 1; } finally { print(2); } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("return should succeed");
+        assert_eq!(value.as_int(), 1);
+        assert_eq!(output.lines, vec!["2"]);
+    }
+
+    #[test]
+    fn finally_runs_before_an_unhandled_rethrow() {
+        let module = zun_compiler::compile(
+            "class Error {} function main() { try { throw new Error(); } finally { print(2); } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output);
+        assert!(matches!(result, Err(RunError::Thrown(_))));
+        assert_eq!(output.lines, vec!["2"]);
+    }
+
+    #[test]
     fn runs_non_entry_method_with_arguments() {
         let module = zun_compiler::compile(
             "function add_one(value: int): int { return value + 1; } function main(): int { return 0; }",
