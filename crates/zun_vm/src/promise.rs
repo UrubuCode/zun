@@ -81,7 +81,14 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
     pub fn poll(&mut self) -> Poll<T> {
         if self.completed {
             return self.failure.as_ref().map_or_else(
-                || Poll::Ready(self.result.as_ref().expect("completed machine has a result").clone()),
+                || {
+                    Poll::Ready(
+                        self.result
+                            .as_ref()
+                            .expect("completed machine has a result")
+                            .clone(),
+                    )
+                },
                 |error| Poll::Failed(error.clone()),
             );
         }
@@ -227,7 +234,10 @@ impl<T: Send + 'static> Promise<T> {
             let mut inner = self.inner.lock().expect("promise mutex poisoned");
             match self.state.load(Ordering::Acquire) {
                 PENDING => {
-                    assert!(inner.rejection.is_none(), "promise already has a rejection handler");
+                    assert!(
+                        inner.rejection.is_none(),
+                        "promise already has a rejection handler"
+                    );
                     inner.rejection = rejection.take();
                     None
                 }
@@ -278,6 +288,38 @@ impl<T: Send + 'static> Promise<T> {
         let target = chained.clone_handle();
         self.catch(move |error| target.reject(error));
         chained
+    }
+
+    /// Run a cleanup callback after settlement while preserving the original
+    /// value or rejection in the returned promise.
+    pub fn finally(&self, cleanup: impl FnOnce() + Send + 'static) -> Promise<T> {
+        let completed = Promise::new();
+        let cleanup = Arc::new(Mutex::new(Some(cleanup)));
+        let success = completed.clone_handle();
+        let success_cleanup = Arc::clone(&cleanup);
+        self.then(move |value| {
+            if let Some(cleanup) = success_cleanup
+                .lock()
+                .expect("promise mutex poisoned")
+                .take()
+            {
+                cleanup();
+            }
+            success.resolve(value);
+        });
+        let failure = completed.clone_handle();
+        let failure_cleanup = Arc::clone(&cleanup);
+        self.catch(move |error| {
+            if let Some(cleanup) = failure_cleanup
+                .lock()
+                .expect("promise mutex poisoned")
+                .take()
+            {
+                cleanup();
+            }
+            failure.reject(error);
+        });
+        completed
     }
 
     /// Register a continuation that is always delivered through a microtask
@@ -498,6 +540,7 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -644,6 +687,29 @@ mod tests {
         let chained: Promise<u32> = failed.then_async(|_| panic!("transform must not run"));
         assert!(failed.reject("boom"));
         assert_eq!(chained.error().as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn finally_runs_on_success_and_preserves_value() {
+        let promise = Promise::new();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&cleaned);
+        let completed = promise.finally(move || marker.store(true, Ordering::SeqCst));
+        assert!(promise.resolve(42));
+        assert_eq!(completed.state(), PromiseState::Resolved);
+        assert!(cleaned.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn finally_runs_on_failure_and_preserves_error() {
+        let promise = Promise::<u32>::new();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&cleaned);
+        let completed = promise.finally(move || marker.store(true, Ordering::SeqCst));
+        assert!(promise.reject("boom"));
+        assert_eq!(completed.state(), PromiseState::Rejected);
+        assert_eq!(completed.error().as_deref(), Some("boom"));
+        assert!(cleaned.load(Ordering::SeqCst));
     }
 
     #[test]
