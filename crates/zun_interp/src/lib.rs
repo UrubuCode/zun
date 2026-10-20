@@ -394,6 +394,7 @@ impl Interp<'_> {
                         if let Some(hook) = self.hook {
                             hook.on_backedge(method_rid, target);
                         }
+                        self.poll_gc(&stack, &locals, parent);
                     }
                     *pc = target;
                 }
@@ -404,6 +405,7 @@ impl Interp<'_> {
                             if let Some(hook) = self.hook {
                                 hook.on_backedge(method_rid, target);
                             }
+                            self.poll_gc(&stack, &locals, parent);
                         }
                         *pc = target;
                     }
@@ -415,6 +417,7 @@ impl Interp<'_> {
                             if let Some(hook) = self.hook {
                                 hook.on_backedge(method_rid, target);
                             }
+                            self.poll_gc(&stack, &locals, parent);
                         }
                         *pc = target;
                     }
@@ -888,11 +891,7 @@ impl Interp<'_> {
                     // the current frame plus the ancestor root chain (no JIT
                     // frame is executing at this point).
                     self.allocs += 1;
-                    if self.allocs >= self.gc_interval {
-                        self.allocs = 0;
-                        let reclaimed = self.collect(&stack, &locals, parent);
-                        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed);
-                    }
+                    self.poll_gc(&stack, &locals, parent);
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
                     let args = pop_n(&mut stack, field_count)?;
@@ -1183,6 +1182,19 @@ impl Interp<'_> {
     /// `parent` chain. Reference fields are traced via the module's type layout.
     fn collect(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>) -> usize {
         roots::collect(&self.types, stack, locals, parent)
+    }
+
+    /// Poll the adaptive GC budget at an interpreter safepoint.
+    ///
+    /// Backedges and allocation sites are both safe because the current frame
+    /// and its caller chain are fully materialized for precise root scanning.
+    fn poll_gc(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>) {
+        if self.allocs < self.gc_interval {
+            return;
+        }
+        self.allocs = 0;
+        let reclaimed = self.collect(stack, locals, parent);
+        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed);
     }
 
 }
