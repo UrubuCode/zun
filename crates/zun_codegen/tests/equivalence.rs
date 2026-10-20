@@ -78,6 +78,19 @@ fn managed_error_hierarchy_constructs_and_preserves_fields() {
 }
 
 #[test]
+fn managed_error_to_string_uses_name_and_message() {
+    let module = compile(
+        "class Error { name: string; message: string; toString(): string { return this.name + \": \" + this.message; } }\n\
+         class RangeError extends Error {}\n\
+         function main(): int { let error: RangeError = new RangeError(\"RangeError\", \"outside\"); let text: string = error.toString(); if (text == \"RangeError: outside\") { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "string operations stay interpreter-only");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\
