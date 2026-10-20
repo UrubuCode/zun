@@ -287,12 +287,15 @@ de implementação:
 
 Estado: alocação, layout, acesso a fields e coleta mark-sweep estão implementados
 e testados. O JIT já suporta `newobj`, `ldfld` e `stfld` para campos numéricos e
-mantém equivalência com o interpretador. `callvirt` ainda é executado no Tier 0;
+mantém equivalência com o interpretador. Resultados de `newobj` são marcados como
+referências gerenciadas nos mapas precisos do Cranelift e foram cobertos enquanto
+o objeto permanece vivo através de uma chamada JIT. `callvirt` ainda é executado no Tier 0;
 o próximo passo de execução de objetos no JIT é introduzir dispatch virtual por
 slot, preservando a resolução de tokens e a tabela de métodos como contrato.
 
-Depois do dispatch virtual, permanece a integração de raízes precisas
-(safepoints no interpretador e stack maps do Cranelift para frames nativos).
+Depois do dispatch virtual, permanece a integração operacional de raízes precisas:
+safepoints automáticos no interpretador/JIT e a captura de `(PC, SP)` nos pontos
+em que uma coleta pode ocorrer (a metadata de slots do Cranelift já está pronta).
 Esse é o maior risco de memória e deve ser implementado isoladamente, com sua
 própria suíte de equivalência e testes de coleta durante chamadas JIT.
 
@@ -420,8 +423,9 @@ The following runtime contracts are implemented and covered by tests:
   symbols, function handles, dates, buffers, arrays, collections, and stable
   identifiers), semantic capture/mutation analysis, and interpreter GC roots;
 - mark-sweep GC with interpreter roots, native root scopes, and precise JIT
-  stack-map reference-slot metadata; the GC can consume a stopped native frame
-  through `(PC, SP)`, while automatic safepoint capture remains pending;
+  stack-map reference-slot metadata; object-producing JIT values are registered
+  in those maps and the GC can consume a stopped native frame through `(PC, SP)`,
+  while automatic safepoint capture remains pending;
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
