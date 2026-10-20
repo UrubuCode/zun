@@ -200,6 +200,19 @@ fn date_surface_parses_iso_datetime_values() {
 }
 
 #[test]
+fn date_surface_json_representation_matches_iso() {
+    let module = compile(
+        "import { isoDateTime } from \"zun:date\";\n\
+         class Date { millis: i64; isoDateTime(): string { return isoDateTime(this.millis); } toISOString(): string { return this.isoDateTime(); } toJSON(): string { return this.toISOString(); } }\n\
+         function main(): int { let value: Date = new Date(42); if (value.toJSON() == \"1970-01-01T00:00:00.042Z\") { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "Date JSON strings remain interpreter-only");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\

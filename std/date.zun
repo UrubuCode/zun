@@ -41,6 +41,7 @@ class Date {
     getUTCSeconds(): i32 { return this.utcSecond(); }
     getUTCMilliseconds(): i32 { return this.utcMillisecond(); }
     toISOString(): string { return this.isoDateTime(); }
+    toJSON(): string { return this.toISOString(); }
     toString(): string { return this.isoDateTime(); }
 }
 
