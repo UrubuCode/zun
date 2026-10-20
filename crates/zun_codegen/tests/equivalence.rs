@@ -2359,4 +2359,16 @@ fn exception_regions_fall_back_to_the_interpreter() {
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
     assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
+fn nested_exception_control_flow_keeps_interpreter_result_under_jit_fallback() {
+    let module = compile(
+        "class Error {} function main(): int { try { try { throw new Error(); } finally { print(1); } } catch (outer: Error) { return 42; } }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(42, _)));
 }
