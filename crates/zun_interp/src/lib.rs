@@ -9,6 +9,7 @@
 mod builtins;
 mod collections;
 mod native;
+mod operands;
 mod roots;
 mod stack;
 mod unwind;
@@ -17,6 +18,7 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
+use operands::{operand_f64, operand_i32, operand_i64};
 use stack::{
     bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
     Ordering,
@@ -3820,7 +3822,6 @@ mod method_tests {
     }
 }
 
-/// A relational comparison operator.
 /// Ordered comparison over two ints (signed or unsigned by kind) or two floats;
 /// sema guarantees the operands share a numeric kind.
 fn branch_target(instr_end: usize, operand: &Operand) -> usize {
@@ -3831,24 +3832,6 @@ fn branch_target(instr_end: usize, operand: &Operand) -> usize {
     (instr_end as i64 + disp as i64) as usize
 }
 
-fn operand_f64(o: &Operand) -> f64 {
-    match o {
-        Operand::Float64(v) => *v,
-        _ => 0.0,
-    }
-}
-fn operand_i64(o: &Operand) -> i64 {
-    match o {
-        Operand::Imm64(v) => *v,
-        _ => 0,
-    }
-}
-fn operand_i32(o: &Operand) -> i32 {
-    match o {
-        Operand::Imm32(v) => *v,
-        _ => 0,
-    }
-}
 fn operand_local(o: &Operand) -> usize {
     match o {
         Operand::Local(v) => *v as usize,
