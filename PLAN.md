@@ -408,7 +408,8 @@ covers Array plus insertion-ordered Map/Set values through the interpreter
 fallback. Source-level `Symbol.iterator` calls now resolve to canonical
 iterator handles, and typed-array/DataView source constructors are available
 through the interpreter path. `DataView` is integrated with the managed
-buffers; `RegExp` needs a regex engine (deferred); `Proxy`/`Reflect` go through
+buffers; `RegExp` now has a managed Rust regex floor and a Tier 0 source
+wrapper (Cranelift remains explicitly deferred); `Proxy`/`Reflect` go through
 the dynamic `Any`/`DynamicObject` path (Phase 4); `BigInt` needs a bignum
 (deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
