@@ -1089,6 +1089,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_ascii_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\";\n\
+             class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAscii(): boolean { let index: u64 = 0; while (index < this.length()) { if (this.charCodeAt(index) > 127) { return false; } index = index + 1; } return true; } }\n\
+             function main(): boolean { let value: string = \"zun\"; return value.isAscii(); }",
+        )
+        .expect("compile String isAscii");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isAscii");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
