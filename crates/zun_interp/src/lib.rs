@@ -93,13 +93,13 @@ pub fn run_with(
     // the interpreter and any JIT code allocate into the same one.
     let mut heap = zun_gc::Heap::new();
     let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
-    let caches = LookupCaches::build(module)?;
+    let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
     Interp {
         module,
         output,
         hook,
         allocs: 0,
-        caches,
+        types,
     }
     .call(rid, Vec::new(), None)
 }
@@ -113,68 +113,7 @@ struct Interp<'a> {
     hook: Option<&'a dyn CallHook>,
     /// Object allocations since the last collection (GC trigger counter).
     allocs: u32,
-    caches: LookupCaches,
-}
-
-/// Metadata resolved once when a module starts running. The interpreter's
-/// hot field and virtual-call paths only perform indexed lookups into these
-/// tables.
-struct LookupCaches {
-    /// Field RID -> (object slot, value kind).
-    fields: Vec<Option<(usize, u8)>>,
-    /// Runtime type RID -> static method RID -> most-derived method RID.
-    virtual_targets: Vec<Vec<u32>>,
-}
-
-impl LookupCaches {
-    fn build(module: &Module) -> Result<Self, RunError> {
-        let mut fields = vec![None; module.tables.field_defs.len() + 1];
-        for ty in &module.tables.type_defs {
-            for rid in ty.field_start..ty.field_end {
-                let field = module
-                    .tables
-                    .field_defs
-                    .get(rid as usize - 1)
-                    .ok_or(RunError::BadToken)?;
-                fields[rid as usize] = Some(((rid - ty.field_start) as usize, field.kind));
-            }
-        }
-
-        let mut virtual_targets =
-            vec![vec![0; module.tables.method_defs.len() + 1]; module.tables.type_defs.len() + 1];
-        for type_rid in 1..=module.tables.type_defs.len() as u32 {
-            for method_rid in 1..=module.tables.method_defs.len() as u32 {
-                let name = module
-                    .tables
-                    .method_defs
-                    .get(method_rid as usize - 1)
-                    .ok_or(RunError::BadToken)?
-                    .name;
-                let mut current = type_rid;
-                loop {
-                    let ty = module
-                        .tables
-                        .type_defs
-                        .get(current as usize - 1)
-                        .ok_or(RunError::BadToken)?;
-                    let target = (ty.method_start..ty.method_end)
-                        .find(|rid| module.tables.method_defs[*rid as usize - 1].name == name);
-                    if let Some(target) = target {
-                        virtual_targets[type_rid as usize][method_rid as usize] = target;
-                        break;
-                    }
-                    if ty.base.is_null() {
-                        break;
-                    }
-                    current = ty.base.rid();
-                }
-            }
-        }
-        Ok(Self {
-            fields,
-            virtual_targets,
-        })
-    }
+    types: zun_types::TypeSystem,
 }
 
 /// A link in the chain of suspended caller frames, used to find precise GC
@@ -369,12 +308,12 @@ impl Interp<'_> {
                 }
                 Opcode::LoadField => {
                     let token = operand_token(&instr.operand);
-                    let (slot, kind) = self
-                        .caches
-                        .fields
-                        .get(token.rid() as usize)
-                        .and_then(|entry| *entry)
+                    let field = self
+                        .types
+                        .get_field(token.rid())
                         .ok_or(RunError::BadToken)?;
+                    let slot = field.slot;
+                    let kind = field.kind;
                     let obj = pop(&mut stack)?.as_object();
                     let v = zun_gc::with_current_heap(|h| {
                         value::decode_field(kind, obj.field(slot), h)
@@ -383,12 +322,12 @@ impl Interp<'_> {
                 }
                 Opcode::StoreField => {
                     let token = operand_token(&instr.operand);
-                    let (slot, kind) = self
-                        .caches
-                        .fields
-                        .get(token.rid() as usize)
-                        .and_then(|entry| *entry)
+                    let field = self
+                        .types
+                        .get_field(token.rid())
                         .ok_or(RunError::BadToken)?;
+                    let slot = field.slot;
+                    let kind = field.kind;
                     let value = pop(&mut stack)?;
                     let obj = pop(&mut stack)?.as_object();
                     let raw =
@@ -413,12 +352,9 @@ impl Interp<'_> {
                     let args = pop_n(&mut stack, static_body.param_count as usize)?;
                     // Dispatch on the receiver's runtime class.
                     let type_rid = args[0].as_object().type_rid();
-                    let target = *self
-                        .caches
-                        .virtual_targets
-                        .get(type_rid as usize)
-                        .and_then(|targets| targets.get(token.rid() as usize))
-                        .filter(|target| **target != 0)
+                    let target = self
+                        .types
+                        .resolve_virtual(type_rid, token.rid())
                         .ok_or(RunError::BadToken)?;
                     let link = RootLink {
                         stack: &stack,

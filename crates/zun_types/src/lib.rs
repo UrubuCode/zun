@@ -55,6 +55,7 @@ impl std::error::Error for TypeError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeSystem {
     types: Vec<TypeDescriptor>,
+    fields: Vec<Option<FieldLayout>>,
 }
 
 impl TypeSystem {
@@ -62,20 +63,23 @@ impl TypeSystem {
     pub fn from_module(module: &Module) -> Result<Self, TypeError> {
         let method_count = module.tables.method_defs.len();
         let mut types = Vec::with_capacity(module.tables.type_defs.len());
+        let mut field_index = vec![None; module.tables.field_defs.len() + 1];
         for (index, ty) in module.tables.type_defs.iter().enumerate() {
             let type_rid = index as u32 + 1;
-            let mut fields = Vec::new();
+            let mut type_fields = Vec::new();
             for field_rid in ty.field_start..ty.field_end {
                 let field = module
                     .tables
                     .field_defs
                     .get(field_rid as usize - 1)
                     .ok_or(TypeError::BadMetadata)?;
-                fields.push(FieldLayout {
+                let layout = FieldLayout {
                     field_rid,
                     slot: (field_rid - ty.field_start) as usize,
                     kind: field.kind,
-                });
+                };
+                field_index[field_rid as usize] = Some(layout);
+                type_fields.push(layout);
             }
 
             let mut vtable = vec![0; method_count + 1];
@@ -106,16 +110,21 @@ impl TypeSystem {
             types.push(TypeDescriptor {
                 type_rid,
                 base: ty.base,
-                fields,
+                fields: type_fields,
                 vtable,
             });
         }
-        Ok(Self { types })
+        Ok(Self { types, fields: field_index })
     }
 
     /// Resolve a local type RID to its descriptor.
     pub fn get(&self, type_rid: u32) -> Option<&TypeDescriptor> {
         type_rid.checked_sub(1).and_then(|rid| self.types.get(rid as usize))
+    }
+
+    /// Resolve a field RID to its physical slot and encoded value kind.
+    pub fn get_field(&self, field_rid: u32) -> Option<FieldLayout> {
+        self.fields.get(field_rid as usize).copied().flatten()
     }
 
     /// Resolve a virtual method token for a runtime type in O(1).
