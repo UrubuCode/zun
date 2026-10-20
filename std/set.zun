@@ -8,5 +8,6 @@ class Set {
     delete(value: any): boolean { return setDelete(this, value); }
     clear(): void { setClear(this); }
     values(): Array { return setValues(this); }
+    keys(): Array { return setValues(this); }
     entries(): Array { return setEntries(this); }
 }

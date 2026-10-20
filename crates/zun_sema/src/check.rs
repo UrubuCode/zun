@@ -2292,6 +2292,7 @@ impl Checker<'_> {
                     (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "clear") => Some(("setClear", Ty::Void, vec![])),
                     (Ty::Set, "values") => Some(("setValues", Ty::Array, vec![])),
+                    (Ty::Set, "keys") => Some(("setValues", Ty::Array, vec![])),
                     (Ty::Set, "entries") => Some(("setEntries", Ty::Array, vec![])),
                     (Ty::WeakMap, "set") => {
                         Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any]))

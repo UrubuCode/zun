@@ -125,6 +125,17 @@ fn set_entries_are_exposed_as_instance_methods() {
 }
 
 #[test]
+fn set_keys_alias_values() {
+    let module = compile(
+        "function main(): int { let set = new Set(); set.add(9.0); let keys: Array = set.keys(); if ((keys[0] as number) == 9.0) { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn parenthesized_function_values_use_indirect_call_equivalence() {
     let module = compile(
         "function add(value: int): int { return value + 1; } function main(): int { let callback = add; return (callback)(7); }",
