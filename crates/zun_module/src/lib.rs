@@ -156,6 +156,8 @@ pub enum ReadError {
     },
     /// The file is shorter than its header or section table claims.
     Truncated,
+    /// A method body contains an invalid exception handler region.
+    InvalidHandler,
 }
 
 impl core::fmt::Display for ReadError {
@@ -166,6 +168,7 @@ impl core::fmt::Display for ReadError {
                 write!(f, "unsupported format major version {major}")
             }
             ReadError::Truncated => write!(f, "file is truncated"),
+            ReadError::InvalidHandler => write!(f, "invalid exception handler region"),
         }
     }
 }
