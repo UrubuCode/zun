@@ -9,6 +9,7 @@
 mod builtins;
 mod collections;
 mod errors;
+mod hooks;
 mod native;
 mod metadata;
 mod output;
@@ -39,6 +40,7 @@ use zun_module::{read_body, Module};
 /// re-exported so callers keep using `Output`.
 pub use zun_natives::Sink as Output;
 pub use output::{CaptureOutput, StdoutOutput};
+pub use hooks::CallHook;
 
 /// Errors the interpreter can raise at runtime.
 #[derive(Debug, Clone)]
@@ -58,15 +60,6 @@ pub enum RunError {
 /// A hook the interpreter consults before interpreting a call, so a faster
 /// backend (the JIT) can execute an eligible method instead. Returning `None`
 /// means "not handled — interpret it".
-pub trait CallHook {
-    /// Try to execute method `method_rid` with `args`.
-    fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value>;
-
-    /// Observe a backwards branch in an interpreted method. Backedges are the
-    /// stable safepoint boundary used by future OSR implementations.
-    fn on_backedge(&self, _method_rid: u32, _target_pc: usize) {}
-}
-
 /// Run a module's entry point with no arguments, on the interpreter alone.
 pub fn run(module: &Module, output: &mut dyn Output) -> Result<Value, RunError> {
     run_with(module, output, None)
