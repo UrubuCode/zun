@@ -38,6 +38,7 @@ pub struct AsyncStateMachine<T, F> {
     poller: F,
     completion: Promise<T>,
     completed: bool,
+    result: Option<T>,
 }
 
 impl<T, F> core::fmt::Debug for AsyncStateMachine<T, F> {
@@ -57,19 +58,26 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
             poller,
             completion: Promise::new(),
             completed: false,
+            result: None,
         }
     }
 
     /// Advance the machine once.
     pub fn poll(&mut self) -> Poll<T> {
         if self.completed {
-            return Poll::Pending;
+            return Poll::Ready(
+                self.result
+                    .as_ref()
+                    .expect("completed machine has a result")
+                    .clone(),
+            );
         }
         match (self.poller)(&mut self.state) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(value) => {
                 self.completed = true;
                 self.completion.resolve(value.clone());
+                self.result = Some(value.clone());
                 Poll::Ready(value)
             }
         }
@@ -385,6 +393,7 @@ mod tests {
         });
         assert_eq!(machine.poll(), Poll::Pending);
         assert_eq!(machine.state(), 1);
+        assert_eq!(machine.poll(), Poll::Ready(42));
         assert_eq!(machine.poll(), Poll::Ready(42));
         assert!(machine.promise().is_resolved());
     }
