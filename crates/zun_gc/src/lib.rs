@@ -365,6 +365,10 @@ impl Heap {
         self.maps.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
     }
 
+    pub fn map_entries(&self, object: Obj) -> Option<Vec<(zun_core::Any, zun_core::Any)>> {
+        Some(self.maps.get(&(object.addr() as usize))?.iter().collect())
+    }
+
     /// Allocate a runtime-backed Set with insertion-ordered hash storage.
     pub fn alloc_set(&mut self) -> Obj {
         let object = self.alloc(0, 0);
@@ -404,6 +408,10 @@ impl Heap {
 
     pub fn set_len(&self, object: Obj) -> Option<usize> {
         self.sets.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
+    }
+
+    pub fn set_values(&self, object: Obj) -> Option<Vec<zun_core::Any>> {
+        Some(self.sets.get(&(object.addr() as usize))?.iter().map(|(key, _)| key).collect())
     }
 
     fn any_hash(&self, value: zun_core::Any) -> u64 {
@@ -966,6 +974,7 @@ mod tests {
         assert_eq!(heap.map_get(map, zun_core::Any::int(1)).and_then(|v| v.as_string()).and_then(|h| heap.try_string(h)).map(|s| s.as_ref()), Some("one"));
         assert_eq!(heap.map_get(map, zun_core::Any::float(f64::NAN)).and_then(|v| v.as_bool()), Some(true));
         assert_eq!(heap.map_len(map), Some(2));
+        assert_eq!(heap.map_entries(map).unwrap().iter().filter_map(|(key, _)| key.as_int()).collect::<Vec<_>>(), vec![1]);
         assert_eq!(heap.map_remove(map, zun_core::Any::int(1)).and_then(|(_, value)| value.as_string()), Some(0));
         assert_eq!(heap.map_len(map), Some(1));
     }
@@ -992,6 +1001,7 @@ mod tests {
         assert_eq!(heap.set_add(set, zun_core::Any::object(key.addr() as usize)), Some(false));
         assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(true));
         assert_eq!(heap.set_len(set), Some(1));
+        assert_eq!(heap.set_values(set).unwrap().iter().filter_map(|value| value.as_object()).count(), 1);
         assert_eq!(heap.set_remove(set, zun_core::Any::object(key.addr() as usize)), Some(true));
         assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(false));
     }
