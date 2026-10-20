@@ -1789,6 +1789,27 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                let managed_collection = match name.as_str() {
+                    "Map" => Some(("mapNew", Ty::Map)),
+                    "Set" => Some(("setNew", Ty::Set)),
+                    "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
+                    _ => None,
+                };
+                if let Some((native_name, ty)) = managed_collection {
+                    if !args.is_empty() {
+                        self.error(span, format!("`{name}` expects no constructor arguments"));
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                        ty,
+                        span,
+                    };
+                }
                 if name == "Array" || name == "array" {
                     if args.len() != 1 {
                         self.error(span, "`Array` expects one length argument");

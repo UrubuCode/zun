@@ -1489,6 +1489,17 @@ mod method_tests {
     }
 
     #[test]
+    fn constructs_managed_collections_from_source() {
+        let module = zun_compiler::compile(
+            "import { mapSet, mapHas, setAdd, setHas, weakMapSet, weakMapHas } from \"zun:collections\"; class Key {} function main(): int { let map = new Map(); mapSet(map, 1.0, 2.0); let set = new Set(); setAdd(set, 1.0); let key = new Key(); let value = new Key(); let weak = new WeakMap(); weakMapSet(weak, key, value); if (mapHas(map, 1.0)) { if (setHas(set, 1.0)) { if (weakMapHas(weak, key)) { return 1; } } } return 0; }",
+        )
+        .expect("compile managed collection constructors");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run managed collection constructors");
+        assert!(matches!(result, Value::Int(1, _)));
+    }
+
+    #[test]
     fn removes_and_clears_runtime_backed_collections() {
         let module = zun_compiler::compile(
             "import { mapNew, mapSet, mapHas, mapDelete, mapClear, setNew, setAdd, setHas, setDelete, setClear } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 1.0, 2.0); mapDelete(map, 1.0); if (mapHas(map, 1.0)) { return 1; } mapSet(map, 1.0, 2.0); mapClear(map); let set = setNew(); setAdd(set, 1.0); setDelete(set, 1.0); if (setHas(set, 1.0)) { return 2; } setAdd(set, 1.0); setClear(set); if (setHas(set, 1.0)) { return 3; } return 0; }",
