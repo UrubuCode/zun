@@ -73,6 +73,20 @@ fn int_recursion() {
 }
 
 #[test]
+fn extern_method_uses_interpreter_fallback_until_native_jit_lowering_exists() {
+    let module = zun_compiler::compile(
+        "import { receiverValue } from \"zun:math\";\n\
+         class Service { extern receiverValue(value: number): number; }\n\
+         function main(): number { let service = new Service(); return service.receiverValue(7.5); }",
+    )
+    .expect("compile extern method");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback methods");
+    assert!(!jit.is_compiled(entry), "native builtin call must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 7.5));
+}
+
+#[test]
 fn unsigned_wrap_u8() {
     assert_equivalent(
         "function main(): u8 { let b: u8 = 250; return b + 10 as u8; }",
