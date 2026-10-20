@@ -128,6 +128,11 @@ impl SymbolRegistry {
         id
     }
 
+    /// Return the isolate-local well-known symbol used by the iteration protocol.
+    pub fn iterator(&mut self) -> SymbolId {
+        self.for_key("Symbol.iterator")
+    }
+
     pub fn description(&self, id: SymbolId) -> Option<&str> {
         self.descriptions
             .get(id.0 as usize)
@@ -1236,6 +1241,15 @@ mod tests {
         assert_eq!(global_a, global_b);
         assert_eq!(symbols.description(first), Some("iterator"));
         assert_eq!(symbols.len(), 3);
+    }
+
+    #[test]
+    fn iterator_symbol_is_canonical_within_an_isolate() {
+        let mut symbols = SymbolRegistry::new();
+        let first = symbols.iterator();
+        let second = symbols.iterator();
+        assert_eq!(first, second);
+        assert_eq!(symbols.description(first), Some("Symbol.iterator"));
     }
 
     #[test]
