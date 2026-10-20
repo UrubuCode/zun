@@ -345,6 +345,14 @@ impl Checker<'_> {
         function: &ast::FunctionExpr,
         span: Span,
     ) -> hir::Expr {
+        for parameter in &function.params {
+            if parameter.default_value.is_some() {
+                self.error(
+                    parameter.name.span,
+                    "default parameters are parsed but not yet supported in calls",
+                );
+            }
+        }
         let captures = self.analyze_closure_captures(outer, function);
         for capture in &captures {
             if capture.mode == hir::CaptureMode::ByCell {
@@ -985,6 +993,14 @@ impl Checker<'_> {
         f: &ast::Function,
         this_class: Option<u32>,
     ) -> hir::Function {
+        for parameter in &f.params {
+            if parameter.default_value.is_some() {
+                self.error(
+                    parameter.name.span,
+                    "default parameters are parsed but not yet supported in calls",
+                );
+            }
+        }
         let sig = &self.signatures[index];
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();

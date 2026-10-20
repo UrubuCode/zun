@@ -95,6 +95,8 @@ pub struct Param {
     pub name: Name,
     /// Declared type, if annotated.
     pub ty: Option<TypeAnnotation>,
+    /// Optional default expression evaluated when the argument is omitted.
+    pub default_value: Option<Box<Expr>>,
 }
 
 /// A type annotation. Phase 1 only knows named types (`number`, `string`,

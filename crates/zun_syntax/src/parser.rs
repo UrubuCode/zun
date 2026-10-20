@@ -182,7 +182,12 @@ impl Parser<'_> {
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let pname = self.name("a parameter name");
             let ty = self.optional_type_annotation();
-            params.push(Param { name: pname, ty });
+            let default_value = if self.eat(TokenKind::Eq) {
+                Some(Box::new(self.expression()))
+            } else {
+                None
+            };
+            params.push(Param { name: pname, ty, default_value });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -221,7 +226,12 @@ impl Parser<'_> {
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let pname = self.name("a parameter name");
             let ty = self.optional_type_annotation();
-            params.push(Param { name: pname, ty });
+            let default_value = if self.eat(TokenKind::Eq) {
+                Some(Box::new(self.expression()))
+            } else {
+                None
+            };
+            params.push(Param { name: pname, ty, default_value });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -264,7 +274,12 @@ impl Parser<'_> {
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let name = self.name("a parameter name");
             let ty = self.optional_type_annotation();
-            params.push(Param { name, ty });
+            let default_value = if self.eat(TokenKind::Eq) {
+                Some(Box::new(self.expression()))
+            } else {
+                None
+            };
+            params.push(Param { name, ty, default_value });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -856,7 +871,7 @@ impl Parser<'_> {
                 if self.eat(TokenKind::Arrow) {
                     let body = self.arrow_body();
                     return Expr::Function(FunctionExpr {
-                        params: vec![Param { name, ty: None }],
+                        params: vec![Param { name, ty: None, default_value: None }],
                         return_type: None,
                         span: t.span.to(body.span),
                         body,
@@ -1018,6 +1033,12 @@ mod tests {
             panic!("expected anonymous function");
         };
         assert!(!third.is_arrow);
+    }
+
+    #[test]
+    fn parses_default_parameter_expressions() {
+        let p = parse_ok("function add(value: number = 2.0): number { return value; }");
+        assert!(p.functions[0].params[0].default_value.is_some());
     }
 
     #[test]
