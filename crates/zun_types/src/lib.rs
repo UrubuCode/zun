@@ -63,14 +63,14 @@ pub struct TypeSystem {
 /// Immutable load-time binding for the types supplied by `zun:core`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreTypes {
-    type_rids: [Option<u32>; 6],
+    type_rids: [Option<u32>; 7],
 }
 
 impl CoreTypes {
     /// Bind the conventional core type names once while loading the core module.
     /// Runtime lookups thereafter use the positional [`zun_core::CoreTypeId`].
     pub fn from_module(module: &Module, types: &TypeSystem) -> Self {
-        let mut type_rids = [None; 6];
+        let mut type_rids = [None; 7];
         for (index, type_def) in module.tables.type_defs.iter().enumerate() {
             let id = match module.strings.get(type_def.name) {
                 "Object" => zun_core::CoreTypeId::Object,
@@ -79,6 +79,7 @@ impl CoreTypes {
                 "Boolean" => zun_core::CoreTypeId::Boolean,
                 "Array" => zun_core::CoreTypeId::Array,
                 "Function" => zun_core::CoreTypeId::Function,
+                "Promise" => zun_core::CoreTypeId::Promise,
                 _ => continue,
             };
             if types.get(index as u32 + 1).is_some() {
@@ -142,6 +143,18 @@ mod tests {
         let slot = types.virtual_slot(speak).expect("speak slot");
         assert!(slot < slots);
         assert_eq!(types.get(2).expect("derived type").vtable.len(), slots);
+    }
+
+    #[test]
+    fn core_types_bind_the_managed_promise_anchor() {
+        let module = zun_compiler::compile(
+            "class Promise { state: int; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        let core = CoreTypes::from_module(&module, &types);
+        assert!(core.get(zun_core::CoreTypeId::Promise).is_some());
     }
 
     #[test]
