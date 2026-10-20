@@ -350,6 +350,12 @@ mod tests {
             dispatch(to_int_id, &[NativeArg::Str(" -42 ")], &mut sink).unwrap(),
             NativeValue::Int(-42)
         ));
+        let (to_float_id, to_float_fn) = resolve("zun:string", "toFloat").unwrap();
+        assert_eq!(to_float_fn.params, &[NativeTy::Str]);
+        assert!(matches!(
+            dispatch(to_float_id, &[NativeArg::Str(" 3.5 ")], &mut sink).unwrap(),
+            NativeValue::Float(value) if value == 3.5
+        ));
         assert!(matches!(
             dispatch(length_id, &[NativeArg::Str("😀")], &mut sink).unwrap(),
             NativeValue::Int(2)

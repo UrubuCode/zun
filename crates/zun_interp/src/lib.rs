@@ -1312,6 +1312,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_to_float_native_method() {
+        let module = zun_compiler::compile(
+            "import { toFloat } from \"zun:string\";\n\
+             class String { extern toFloat(): number; }\n\
+             function main(): number { let value: string = \" 3.5 \"; return value.toFloat(); }",
+        )
+        .expect("compile String toFloat");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String toFloat");
+        assert!(matches!(result, Value::Float(value, _) if value == 3.5));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

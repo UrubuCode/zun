@@ -395,6 +395,20 @@ fn string_to_int_uses_interpreter_fallback() {
 }
 
 #[test]
+fn string_to_float_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { toFloat } from \"zun:string\";\n\
+         class String { extern toFloat(): number; }\n\
+         function main(): number { let value: string = \" 3.5 \"; return value.toFloat(); }",
+    )
+    .expect("compile String toFloat");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 3.5));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\
