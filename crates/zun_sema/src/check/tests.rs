@@ -39,8 +39,14 @@
 
     #[test]
     fn async_source_is_rejected_until_state_machine_lowering_exists() {
-        let message = first_error("async function main(): int { return await load(); }");
+        let message = first_error("async function main(): Promise { return await load(); }");
         assert!(message.contains("async functions are parsed"), "{message}");
+    }
+
+    #[test]
+    fn async_functions_require_a_promise_return_type() {
+        let message = first_error("async function main(): int { return 1; }");
+        assert!(message.contains("Promise return type"), "{message}");
     }
 
     #[test]

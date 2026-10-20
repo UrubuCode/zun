@@ -327,6 +327,12 @@ impl Checker<'_> {
         let param_tys = sig.params.clone();
         let name = sig.name.clone();
         if f.is_async {
+            if return_ty != Ty::Promise {
+                self.error(
+                    f.name.span,
+                    "async functions must declare a Promise return type",
+                );
+            }
             self.error(
                 f.name.span,
                 "async functions are parsed but source-level async lowering is not implemented yet",
