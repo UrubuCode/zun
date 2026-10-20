@@ -26,11 +26,11 @@ use zun_sema::hir::{
 
 #[path = "helpers.rs"]
 mod helpers;
-use helpers::int_or_float;
+use helpers::{field_kind_byte, int_or_float, jitkind_byte};
 
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
 /// is not numeric.
-fn numkind_of(ty: Ty) -> Option<NumKind> {
+pub(crate) fn numkind_of(ty: Ty) -> Option<NumKind> {
     Some(match ty {
         Ty::Int(IntKind {
             bits: 8,
@@ -149,27 +149,6 @@ pub fn lower(program: &hir::Program) -> Module {
 }
 
 /// The method-body value-type code ([`zun_il::JitKind`]) for a checked type.
-fn jitkind_byte(ty: Ty) -> u8 {
-    use zun_il::JitKind;
-    let kind = match numkind_of(ty) {
-        Some(n) => JitKind::Num(n),
-        None if ty == Ty::Boolean => JitKind::Bool,
-        None if matches!(ty, Ty::Instance(_) | Ty::Array | Ty::BufferView(_)) => JitKind::Object,
-        None => JitKind::Other,
-    };
-    kind.to_byte()
-}
-
-/// The field value-type code: like [`jitkind_byte`] but with a distinct string
-/// code (12) so the runtime reconstructs the right `Value` from a raw slot
-/// (see `zun_interp::value`). Objects share code 11 with `JitKind::Object`.
-fn field_kind_byte(ty: Ty) -> u8 {
-    match ty {
-        Ty::String => 12, // FIELD_STRING
-        _ => jitkind_byte(ty),
-    }
-}
-
 /// Total number of methods across all classes.
 fn total_methods(program: &hir::Program) -> usize {
     program.classes.iter().map(|c| c.methods.len()).sum()
