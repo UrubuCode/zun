@@ -27,6 +27,8 @@ mod module_resolution;
 mod native_types;
 #[path = "poison.rs"]
 mod poison;
+#[path = "type_expect.rs"]
+mod type_expect;
 #[path = "types.rs"]
 mod types;
 
@@ -2666,20 +2668,6 @@ impl Checker<'_> {
                     Ty::Error
                 }
             }
-        }
-    }
-
-    fn expect_ty(&mut self, expr: &hir::Expr, expected: Ty) -> Ty {
-        if expr.ty.is_error() {
-            Ty::Error
-        } else if expr.ty == expected {
-            expected
-        } else {
-            self.error(
-                expr.span,
-                format!("expected {expected:?}, found {:?}", expr.ty),
-            );
-            Ty::Error
         }
     }
 
