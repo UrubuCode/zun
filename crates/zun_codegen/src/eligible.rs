@@ -203,6 +203,11 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         let Ok(body) = read_body(&module.code, method.body_offset) else {
             continue;
         };
+        // Exception regions require interpreter unwind/landing-pad support;
+        // keep them on Tier 0 until the Cranelift EH lowering is implemented.
+        if !body.handlers.is_empty() {
+            continue;
+        }
         // Return and every local must be a representable JIT type.
         if !kind_supported(body.return_kind) && body.returns_value {
             continue;

@@ -2351,3 +2351,12 @@ fn ineligible_methods_are_not_compiled() {
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
     assert!(!jit.is_compiled(entry));
 }
+
+#[test]
+fn exception_regions_fall_back_to_the_interpreter() {
+    let module =
+        compile("function main(): int { try { return 1; } finally { let cleanup: int = 2; } }");
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+}
