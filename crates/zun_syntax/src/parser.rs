@@ -1113,7 +1113,7 @@ fn parse_template_parts(
     let inner = &raw[1..raw.len() - 1];
     let mut parts = Vec::new();
     let mut cursor = 0;
-    while let Some(relative) = inner[cursor..].find("${") {
+    while let Some(relative) = find_template_marker(&inner[cursor..]) {
         let start = cursor + relative;
         if start > cursor {
             parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..start])));
@@ -1144,6 +1144,22 @@ fn parse_template_parts(
         parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..])));
     }
     parts
+}
+
+fn find_template_marker(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' {
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'$' && bytes[index + 1] == b'{' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn find_template_interpolation_end(source: &str, start: usize) -> Option<usize> {
@@ -1319,6 +1335,16 @@ mod tests {
             panic!("expected template literal");
         };
         assert!(matches!(&parts[0], crate::ast::TemplatePart::Expr(expression) if matches!(expression.as_ref(), Expr::String { value, .. } if value == "}")));
+    }
+
+    #[test]
+    fn escaped_template_marker_stays_literal_text() {
+        let src = r#"function main() { return `literal \${name}`; }"#;
+        let p = parse_ok(src);
+        let Stmt::Return { value: Some(Expr::Template { parts, .. }), .. } = &p.functions[0].body.statements[0] else {
+            panic!("expected template literal");
+        };
+        assert_eq!(parts.as_slice(), [crate::ast::TemplatePart::Text("literal ${name}".into())]);
     }
 
     #[test]
