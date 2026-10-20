@@ -48,6 +48,16 @@ impl Heap {
                     }
                 }
             }
+            if let Some(proxy) = self.proxies.get(&(obj.addr() as usize)) {
+                for child in [proxy.target, proxy.handler] {
+                    if let Some(&cidx) = self.by_addr.get(&(child.addr() as usize)) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
             if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
                 for child in array.object_references() {
                     if let Some(&cidx) = self.by_addr.get(&child) {
@@ -230,6 +240,7 @@ impl Heap {
                 self.weak_map_objects.remove(&(r.addr as usize));
                 self.promises.remove(&(r.addr as usize));
                 self.regexes.remove(&(r.addr as usize));
+                self.proxies.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }
