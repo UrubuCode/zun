@@ -919,6 +919,22 @@ mod tests {
     }
 
     #[test]
+    fn active_stack_map_collection_falls_back_to_explicit_roots() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let freed = unsafe {
+            heap.collect_with_active_native_frame(
+                &[object],
+                100,
+                std::ptr::null(),
+                &|_| Vec::new(),
+            )
+        };
+        assert_eq!(freed, 0);
+        assert_eq!(heap.live_count(), 1);
+    }
+
+    #[test]
     fn stack_map_reads_reference_slots_from_a_stopped_frame() {
         let mut heap = Heap::new();
         let object = heap.alloc(1, 0);
