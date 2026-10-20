@@ -8,3 +8,6 @@ description = "Frozen runtime contracts and intrinsic identifiers for the Zun co
 
 [lints]
 workspace = true
+
+[dependencies]
+regex.workspace = true

@@ -18,6 +18,7 @@ mod any_value;
 mod function_handle;
 mod symbols;
 mod promise_value;
+mod regexp;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
@@ -31,6 +32,7 @@ pub use any_value::{Any, AnyTag};
 pub use function_handle::FunctionHandle;
 pub use symbols::{SymbolId, SymbolRegistry};
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
+pub use regexp::{RegexError, RegexValue};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
