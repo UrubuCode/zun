@@ -1774,6 +1774,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_identifier_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isIdentifier(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code == 95) { valid = true; } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (index > 0) { if (code >= 48) { if (code <= 57) { valid = true; } } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zun_core2\"; return value.isIdentifier(); }",
+        )
+        .expect("compile String isIdentifier");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isIdentifier");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_to_string_source_method() {
         let module = zun_compiler::compile(
             "class String { toString(): string { return this; } }\n\
