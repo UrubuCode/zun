@@ -325,6 +325,17 @@ class Array {
         return false;
     }
 
+    isConstant(): boolean {
+        if (this.length < 2) { return true; }
+        let first: any = this[0];
+        let index: u64 = 1;
+        while (index < this.length) {
+            if (this[index] != first) { return false; }
+            index = index + 1;
+        }
+        return true;
+    }
+
     count(value: any): u64 {
         let total: u64 = 0;
         let index: u64 = 0;

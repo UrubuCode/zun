@@ -1489,6 +1489,18 @@ fn array_any_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_is_constant_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { isConstant(): boolean { if (this.length < 2) { return true; } let first: any = this[0]; let index: u64 = 1; while (index < this.length) { if (this[index] != first) { return false; } index = index + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 9.0; values[1] = 9.0; values[2] = 9.0; return values.isConstant(); }",
+    )
+    .expect("compile Array isConstant");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

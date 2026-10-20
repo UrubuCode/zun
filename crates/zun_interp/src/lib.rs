@@ -969,6 +969,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_is_constant_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { isConstant(): boolean { if (this.length < 2) { return true; } let first: any = this[0]; let index: u64 = 1; while (index < this.length) { if (this[index] != first) { return false; } index = index + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 9.0; values[1] = 9.0; values[2] = 9.0; return values.isConstant(); }",
+        )
+        .expect("compile Array isConstant");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array isConstant");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_swap_source_method() {
         let module = zun_compiler::compile(
             "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\
