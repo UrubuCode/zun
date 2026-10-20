@@ -833,4 +833,30 @@ mod tests {
         let roots = unsafe { registry.roots_at(101, frame.as_ptr() as *const u8) };
         assert_eq!(roots, vec![object]);
     }
+
+    #[test]
+    fn native_frame_stack_map_roots_participate_in_collection() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut frame = [0u64; 2];
+        frame[1] = object.addr() as u64;
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap {
+            pc: 100,
+            span: 4,
+            reference_slots: vec![8],
+        }]);
+
+        let freed = unsafe {
+            heap.collect_with_native_frame(
+                &[],
+                &registry,
+                101,
+                frame.as_ptr() as *const u8,
+                &|_| Vec::new(),
+            )
+        };
+        assert_eq!(freed, 0);
+        assert_eq!(heap.live_count(), 1);
+    }
 }

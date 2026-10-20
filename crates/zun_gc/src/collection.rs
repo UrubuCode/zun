@@ -262,4 +262,22 @@ impl Heap {
         unsafe { self.collect(&all_roots, ref_slots) }
     }
 
+    /// Collect using roots described by a stopped JIT frame's stack map.
+    ///
+    /// # Safety
+    /// `pc` and `sp` must identify the same stopped native frame, and the stack
+    /// map must describe valid managed-reference slots for that frame.
+    pub unsafe fn collect_with_native_frame(
+        &mut self,
+        roots: &[Obj],
+        registry: &StackMapRegistry,
+        pc: usize,
+        sp: *const u8,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        let mut all_roots = roots.to_vec();
+        all_roots.extend(unsafe { registry.roots_at(pc, sp) });
+        unsafe { self.collect(&all_roots, ref_slots) }
+    }
+
 }
