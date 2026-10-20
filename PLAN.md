@@ -560,8 +560,9 @@ dispatch. These figures are machine-specific and should be re-run after
 interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
-The remaining completion gates are JIT lowering for managed heap values,
-precise JIT-frame stack maps, true OSR frame replacement, compacting GC,
+The remaining completion gates are broader JIT lowering for managed heap values,
+automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
+consumer are implemented), true OSR frame replacement, compacting GC,
 async/generator lowering, complete typed FFI/ABI integration, production Node
 N-API bindings, AOT/R2R support for the full runtime surface, and the deferred
 language surfaces listed in section 4.4.2. Each gate requires a runtime test
@@ -624,9 +625,11 @@ an optimization gate.
    optional property/method chaining, nullish coalescing, `switch`, loops,
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
-6. **Remaining architecture**: continue module-hygiene splits, then managed
-   Cranelift values, precise JIT stack maps, true OSR, compaction, async and
-   generators, typed FFI/N-API, AOT/R2R, and the remaining performance backlog.
+6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
+   safepoints, true OSR, compaction, async and generators, typed FFI/N-API,
+   AOT/R2R, and the remaining performance backlog. Module-hygiene splits are
+   maintained separately by the reviewer and are not part of this execution
+   backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
 
 Stop condition: stop only on a real environment blocker, a design decision not
