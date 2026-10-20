@@ -363,6 +363,25 @@ impl Heap {
         Some(view.write_u8(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
     }
 
+    /// Allocate a managed `Float64Array` view over an existing buffer.
+    pub fn alloc_f64_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::F64)?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
+
+    pub fn f64_array_get(&self, object: Obj, index: usize) -> Option<f64> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+        view.read_f64(self.buffers.get(&(buffer.addr() as usize))?, index)
+    }
+
+    pub fn f64_array_set(&mut self, object: Obj, index: usize, value: f64) -> Option<bool> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
+        Some(view.write_f64(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+    }
+
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
         let object = self.alloc(0, 0);
         self.dates.insert(

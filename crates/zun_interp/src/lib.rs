@@ -1069,6 +1069,25 @@ impl Interp<'_> {
                 let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u8, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.u8_array_set(array, index, value)).ok_or(RunError::BadToken)?))
             }
+            "f64ArrayNew" => {
+                let buffer = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let number = |value: &Value| match value { Value::Int(value, _) => Ok(*value as usize), _ => Err(RunError::BadToken) };
+                let offset = number(args.get(1).ok_or(RunError::BadToken)?)?;
+                let length = number(args.get(2).ok_or(RunError::BadToken)?)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_f64_array(buffer, offset, length)).ok_or(RunError::BadToken)?;
+                Ok(Value::Object(array))
+            }
+            "f64ArrayGet" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                Ok(Value::Float(zun_gc::with_current_heap(|heap| heap.f64_array_get(array, index)).ok_or(RunError::BadToken)?, zun_il::NumKind::F64))
+            }
+            "f64ArraySet" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.f64_array_set(array, index, value)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1186,7 +1205,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet", "f64ArrayNew", "f64ArrayGet", "f64ArraySet"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1723,6 +1742,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run Uint8Array intrinsics");
         assert!(matches!(result, Value::Int(255, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn accesses_gc_backed_f64_typed_arrays_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, f64ArrayNew, f64ArraySet, f64ArrayGet } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); let values = f64ArrayNew(buffer, 0, 16); f64ArraySet(values, 1, 2.5); return f64ArrayGet(values, 1); }",
+        )
+        .expect("compile Float64Array intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Float64Array intrinsics");
+        assert!(matches!(result, Value::Float(2.5, zun_il::NumKind::F64)));
     }
 
     #[test]
