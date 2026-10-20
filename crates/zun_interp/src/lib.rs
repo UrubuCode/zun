@@ -1115,7 +1115,7 @@ impl Interp<'_> {
             "arrayIteratorNext" => {
                 let iterator = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(zun_gc::with_current_heap_mut(|heap| heap.array_iterator_next(iterator))
-                    .map(Value::Any)
+                    .and_then(|value| zun_gc::with_current_heap_mut(|heap| Value::unbox_any(value, heap)))
                     .unwrap_or(Value::Void))
             }
             "arrayIteratorDone" => {
@@ -1130,7 +1130,7 @@ impl Interp<'_> {
             "setIteratorNext" => {
                 let iterator = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(zun_gc::with_current_heap_mut(|heap| heap.set_iterator_next(iterator))
-                    .map(Value::Any)
+                    .and_then(|value| zun_gc::with_current_heap_mut(|heap| Value::unbox_any(value, heap)))
                     .unwrap_or(Value::Void))
             }
             "setIteratorDone" => {
@@ -1733,7 +1733,7 @@ mod method_tests {
     #[test]
     fn iterates_map_and_set_values_in_insertion_order() {
         let module = zun_compiler::compile(
-            "function main(): any { let map = new Map(); map.set(1.0, 10.0); map.set(2.0, 20.0); let set = new Set(); set.add(3.0); set.add(4.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",
+            "function main(): any { let map = new Map(); map.set(1.0, 10.0); map.set(2.0, 20.0); let set = new Set(); set.add(3.0); set.add(4.0); for (let value of map) { let pair: Array = value as Array; print(pair[1]); } for (let value of set) { print(value); } return 42.0; }",
         )
         .expect("compile managed collection for-of");
         let mut output = CaptureOutput::default();
@@ -1872,7 +1872,7 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array iterator intrinsics");
         assert!(matches!(result, Value::Void));
-        assert_eq!(output.lines, vec!["[any:Float]", "[any:Float]"]);
+        assert_eq!(output.lines, vec!["7", "9"]);
     }
 
     #[test]
@@ -1884,7 +1884,7 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run set iterator intrinsics");
         assert!(matches!(result, Value::Void));
-        assert_eq!(output.lines, vec!["[any:Float]", "[any:Float]"]);
+        assert_eq!(output.lines, vec!["7", "9"]);
     }
 
     #[test]

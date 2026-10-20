@@ -1091,33 +1091,39 @@ impl Checker<'_> {
                 hir::Stmt::While { cond, body }
             }
             ast::Stmt::ForOf { name, iterable, body, span: _ } => {
-                let mut iterable_expr = self.check_expr(cx, iterable);
-                if matches!(iterable_expr.ty, Ty::Map | Ty::Set) {
-                    let intrinsic = match iterable_expr.ty {
-                        Ty::Map => "mapValues",
-                        Ty::Set => "setValues",
-                        _ => unreachable!(),
-                    };
-                    if let Some((id, _)) = zun_natives::resolve("zun:collections", intrinsic) {
-                        let source = iterable_expr;
-                        let span = source.span;
-                        iterable_expr = hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![source] },
-                            ty: Ty::Array,
-                            span,
-                        };
+                let iterable_expr = self.check_expr(cx, iterable);
+                let (new_name, done_name, next_name) = match iterable_expr.ty {
+                    Ty::Array => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
+                    Ty::Map => ("mapIteratorNew", "mapIteratorDone", "mapIteratorNext"),
+                    Ty::Set => ("setIteratorNew", "setIteratorDone", "setIteratorNext"),
+                    Ty::Error => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
+                    other => {
+                        self.error(iterable_expr.span, format!("type {other:?} is not iterable"));
+                        ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext")
                     }
-                }
-                if iterable_expr.ty != Ty::Array && !iterable_expr.ty.is_error() {
-                    self.error(iterable_expr.span, "for-of currently requires an Array iterable");
-                }
-                let iterable_slot = cx.declare("__for_of_iterable", Ty::Array);
-                let index_slot = cx.declare("__for_of_index", Ty::Int(IntKind::I32));
+                };
+                let span = iterable_expr.span;
+                let Some((new_id, _)) = zun_natives::resolve("zun:buffer", new_name) else {
+                    self.error(span, "missing iterator constructor intrinsic");
+                    return hir::Stmt::Expr(self.poison(span));
+                };
+                let Some((done_id, _)) = zun_natives::resolve("zun:buffer", done_name) else {
+                    self.error(span, "missing iterator completion intrinsic");
+                    return hir::Stmt::Expr(self.poison(span));
+                };
+                let Some((next_id, _)) = zun_natives::resolve("zun:buffer", next_name) else {
+                    self.error(span, "missing iterator next intrinsic");
+                    return hir::Stmt::Expr(self.poison(span));
+                };
+                let iterator = hir::Expr { kind: hir::ExprKind::CallBuiltin { id: new_id, args: vec![iterable_expr] }, ty: Ty::Any, span };
+                let iterator_slot = cx.declare("__for_of_iterator", Ty::Any);
+                let done = hir::Expr { kind: hir::ExprKind::CallBuiltin { id: done_id, args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }] }, ty: Ty::Boolean, span };
+                let next = hir::Expr { kind: hir::ExprKind::CallBuiltin { id: next_id, args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }] }, ty: Ty::Any, span };
                 cx.scopes.push(Scope::new());
                 let binding = cx.declare(self.text(name), Ty::Any);
                 let body = self.check_block(cx, body);
                 cx.scopes.pop();
-                hir::Stmt::ForOf { iterable: iterable_expr, iterable_slot, index: index_slot, binding, body }
+                hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
             }
             ast::Stmt::Break { span } => {
                 if cx.loop_depth == 0 {

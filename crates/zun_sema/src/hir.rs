@@ -299,11 +299,12 @@ pub enum Stmt {
         /// The loop body.
         body: Vec<Stmt>,
     },
-    /// Iterate an array by index while preserving the source-level for-of shape.
+    /// Iterate through the runtime iterator protocol.
     ForOf {
-        iterable: Expr,
-        iterable_slot: LocalSlot,
-        index: LocalSlot,
+        iterator: Expr,
+        iterator_slot: LocalSlot,
+        done: Expr,
+        next: Expr,
         binding: LocalSlot,
         body: Vec<Stmt>,
     },
