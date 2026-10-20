@@ -176,6 +176,18 @@ impl Heap {
         self.arrays.get_mut(&(object.addr() as usize))?.set(index, value)
     }
 
+    /// Insert an array element with bounds checking.
+    pub fn array_insert(&mut self, object: Obj, index: usize, value: zun_core::Any) -> bool {
+        self.arrays
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|array| array.insert(index, value))
+    }
+
+    /// Remove an array element with bounds checking.
+    pub fn array_remove(&mut self, object: Obj, index: usize) -> Option<zun_core::Any> {
+        self.arrays.get_mut(&(object.addr() as usize))?.remove(index)
+    }
+
     /// Read a dynamic property from an object allocated by [`Self::alloc_dynamic`].
     pub fn dynamic_get(&self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects
@@ -588,6 +600,8 @@ mod tests {
         assert_eq!(heap.array_len(array), Some(1));
         assert_eq!(heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)), Some(zun_core::Any::int(0)));
         assert_eq!(heap.array_get(array, 0).and_then(zun_core::Any::as_object), Some(child.addr() as usize));
+        assert!(heap.array_insert(array, 1, zun_core::Any::int(9)));
+        assert_eq!(heap.array_remove(array, 1).and_then(zun_core::Any::as_int), Some(9));
         let unreachable = heap.alloc(8, 0);
         let no_refs = |_: u32| Vec::<usize>::new();
         let freed = unsafe { heap.collect(&[array], &no_refs) };

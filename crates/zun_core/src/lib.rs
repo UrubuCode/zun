@@ -195,6 +195,20 @@ impl ArrayStorage {
         self.elements.resize(new_length, Any::int(0));
     }
 
+    /// Insert an element at an existing index, or append at `len`.
+    pub fn insert(&mut self, index: usize, value: Any) -> bool {
+        if index > self.elements.len() {
+            return false;
+        }
+        self.elements.insert(index, value);
+        true
+    }
+
+    /// Remove an element with bounds checking.
+    pub fn remove(&mut self, index: usize) -> Option<Any> {
+        (index < self.elements.len()).then(|| self.elements.remove(index))
+    }
+
     /// Iterate over elements without exposing the backing vector.
     pub fn iter(&self) -> impl Iterator<Item = Any> + '_ {
         self.elements.iter().copied()
@@ -366,5 +380,8 @@ mod tests {
         assert_eq!(array.iter().count(), 4);
         array.resize(1);
         assert_eq!(array.len(), 1);
+        assert!(array.insert(1, Any::int(13)));
+        assert_eq!(array.remove(1).and_then(Any::as_int), Some(13));
+        assert!(!array.insert(3, Any::int(14)));
     }
 }
