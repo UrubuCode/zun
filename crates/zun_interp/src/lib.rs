@@ -1841,6 +1841,17 @@ mod method_tests {
     }
 
     #[test]
+    fn constructs_array_buffers_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferLength } from \"zun:buffer\"; function main(): u64 { let buffer = new ArrayBuffer(4); return bufferLength(buffer); }",
+        )
+        .expect("compile ArrayBuffer constructor");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run ArrayBuffer constructor");
+        assert!(matches!(result, Value::Int(4, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn exposes_array_iterator_handles_to_source() {
         let module = zun_compiler::compile(
             "import { arrayIteratorNew, arrayIteratorNext } from \"zun:buffer\"; function main(): any { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; let iterator = arrayIteratorNew(values); print(arrayIteratorNext(iterator)); print(arrayIteratorNext(iterator)); return arrayIteratorNext(iterator); }",

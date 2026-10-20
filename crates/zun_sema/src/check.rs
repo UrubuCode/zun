@@ -1848,6 +1848,26 @@ impl Checker<'_> {
                     "Float64Array" => Some("f64ArrayNew"),
                     _ => None,
                 };
+                if name == "ArrayBuffer" {
+                    if args.len() != 1 {
+                        self.error(span, "`ArrayBuffer` expects one length argument");
+                        return self.poison(span);
+                    }
+                    let mut length = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut length, Ty::INT);
+                    if !length.ty.is_int() {
+                        self.error(length.span, "ArrayBuffer length must be an integer");
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:buffer", "bufferNew") else {
+                        self.error(span, "missing ArrayBuffer intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![length] },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 if name == "DataView" {
                     if args.len() != 3 {
                         self.error(span, "`DataView` expects buffer, offset, and length");
