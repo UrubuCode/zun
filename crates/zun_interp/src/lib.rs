@@ -1887,6 +1887,17 @@ mod method_tests {
     }
 
     #[test]
+    fn typed_array_views_expose_instance_accessors() {
+        let module = zun_compiler::compile(
+            "import { bufferNew } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); values.set(1, 255); return values.get(1) as u64; }",
+        )
+        .expect("compile typed-array instance accessors");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run typed-array instance accessors");
+        assert!(matches!(result, Value::Int(255, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn constructs_data_views_from_source() {
         let module = zun_compiler::compile(
             "import { bufferNew, dataViewSetU32, dataViewGetU32 } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let view = new DataView(buffer, 0, 8); dataViewSetU32(view, 0, 16909060, true); return dataViewGetU32(view, 0, true) as u64; }",
@@ -1894,6 +1905,17 @@ mod method_tests {
         .expect("compile DataView constructor");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run DataView constructor");
+        assert!(matches!(result, Value::Int(16909060, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn data_views_expose_instance_accessors() {
+        let module = zun_compiler::compile(
+            "import { bufferNew } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let view = new DataView(buffer, 0, 8); view.setUint32(0, 16909060, true); return view.getUint32(0, true) as u64; }",
+        )
+        .expect("compile DataView instance accessors");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run DataView instance accessors");
         assert!(matches!(result, Value::Int(16909060, zun_il::NumKind::U64)));
     }
 

@@ -116,6 +116,17 @@ fn symbol_iterator_calls_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn typed_view_instance_accessors_preserve_interpreter_fallback_boundary() {
+    let module = compile(
+        "import { bufferNew } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); values.set(1, 255); return values.get(1) as u64; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "typed views require Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Int(255, _)));
+}
+
+#[test]
 fn switch_lowering_is_jit_equivalent() {
     let module = compile(
         "function main(): u64 { let value: u64 = 2; switch (value) { case 1: return 10; case 2: return 20; default: return 30; } }",

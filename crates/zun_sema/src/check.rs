@@ -674,6 +674,11 @@ impl Checker<'_> {
             "Map" | "map" => Ty::Map,
             "Set" | "set" => Ty::Set,
             "WeakMap" | "weakmap" => Ty::WeakMap,
+            "DataView" => Ty::BufferView(hir::BufferViewKind::DataView),
+            "Uint8Array" => Ty::BufferView(hir::BufferViewKind::U8),
+            "Uint16Array" => Ty::BufferView(hir::BufferViewKind::U16),
+            "Uint32Array" => Ty::BufferView(hir::BufferViewKind::U32),
+            "Float64Array" => Ty::BufferView(hir::BufferViewKind::F64),
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "any" => Ty::Any,
             "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
@@ -1737,6 +1742,20 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some(("u8ArrayGet", Ty::Int(IntKind::U8), vec![Ty::Int(IntKind::U64)])),
+                    (Ty::BufferView(hir::BufferViewKind::U8), "set") => Some(("u8ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U8)])),
+                    (Ty::BufferView(hir::BufferViewKind::U16), "get") => Some(("u16ArrayGet", Ty::Int(IntKind::U16), vec![Ty::Int(IntKind::U64)])),
+                    (Ty::BufferView(hir::BufferViewKind::U16), "set") => Some(("u16ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16)])),
+                    (Ty::BufferView(hir::BufferViewKind::U32), "get") => Some(("u32ArrayGet", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64)])),
+                    (Ty::BufferView(hir::BufferViewKind::U32), "set") => Some(("u32ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32)])),
+                    (Ty::BufferView(hir::BufferViewKind::F64), "get") => Some(("f64ArrayGet", Ty::F64, vec![Ty::Int(IntKind::U64)])),
+                    (Ty::BufferView(hir::BufferViewKind::F64), "set") => Some(("f64ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::F64])),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint32") => Some(("dataViewGetU32", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64), Ty::Boolean])),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint32") => Some(("dataViewSetU32", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32), Ty::Boolean])),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint16") => Some(("dataViewGetU16", Ty::Int(IntKind::U16), vec![Ty::Int(IntKind::U64), Ty::Boolean])),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint16") => Some(("dataViewSetU16", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16), Ty::Boolean])),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getFloat64") => Some(("dataViewGetF64", Ty::F64, vec![Ty::Int(IntKind::U64), Ty::Boolean])),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setFloat64") => Some(("dataViewSetF64", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::F64, Ty::Boolean])),
                     _ => None,
                 };
                 if let Some((native_name, return_ty, expected)) = managed_method {
@@ -1753,7 +1772,12 @@ impl Checker<'_> {
                         }
                         call_args.push(value);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    let module = if native_name.starts_with("dataView") || native_name.ends_with("ArrayGet") || native_name.ends_with("ArraySet") {
+                        "zun:buffer"
+                    } else {
+                        "zun:collections"
+                    };
+                    let Some((id, _)) = zun_natives::resolve(module, native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -1906,7 +1930,7 @@ impl Checker<'_> {
                     };
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin { id, args: call_args },
-                        ty: Ty::Any,
+                        ty: Ty::BufferView(hir::BufferViewKind::DataView),
                         span,
                     };
                 }
@@ -1923,9 +1947,16 @@ impl Checker<'_> {
                         self.error(span, format!("missing typed-array intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
+                    let view_kind = match name.as_str() {
+                        "Uint8Array" => hir::BufferViewKind::U8,
+                        "Uint16Array" => hir::BufferViewKind::U16,
+                        "Uint32Array" => hir::BufferViewKind::U32,
+                        "Float64Array" => hir::BufferViewKind::F64,
+                        _ => unreachable!(),
+                    };
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin { id, args: call_args },
-                        ty: Ty::Any,
+                        ty: Ty::BufferView(view_kind),
                         span,
                     };
                 }

@@ -91,6 +91,8 @@ pub enum Ty {
     Set,
     /// A GC ephemeron-backed weak map.
     WeakMap,
+    /// A managed byte-buffer view with a fixed element representation.
+    BufferView(BufferViewKind),
     /// A dictionary-backed dynamic object.
     DynamicObject,
     /// A dynamically tagged value.
@@ -104,6 +106,21 @@ pub enum Ty {
     /// A type that failed to check. Propagates silently so one error does not
     /// cascade into dozens.
     Error,
+}
+
+/// The element representation of a managed buffer view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferViewKind {
+    /// Mixed-width, possibly unaligned view.
+    DataView,
+    /// Unsigned 8-bit elements.
+    U8,
+    /// Unsigned 16-bit elements.
+    U16,
+    /// Unsigned 32-bit elements.
+    U32,
+    /// 64-bit floating-point elements.
+    F64,
 }
 
 impl Ty {

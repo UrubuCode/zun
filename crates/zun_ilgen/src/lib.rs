@@ -149,7 +149,7 @@ fn jitkind_byte(ty: Ty) -> u8 {
     let kind = match numkind_of(ty) {
         Some(n) => JitKind::Num(n),
         None if ty == Ty::Boolean => JitKind::Bool,
-        None if matches!(ty, Ty::Instance(_) | Ty::Array) => JitKind::Object,
+        None if matches!(ty, Ty::Instance(_) | Ty::Array | Ty::BufferView(_)) => JitKind::Object,
         None => JitKind::Other,
     };
     kind.to_byte()
