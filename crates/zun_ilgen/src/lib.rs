@@ -24,6 +24,10 @@ use zun_sema::hir::{
     self, BinaryOp, CaptureMode, CaptureSource, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp,
 };
 
+#[path = "helpers.rs"]
+mod helpers;
+use helpers::int_or_float;
+
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
 /// is not numeric.
 fn numkind_of(ty: Ty) -> Option<NumKind> {
@@ -163,15 +167,6 @@ fn field_kind_byte(ty: Ty) -> u8 {
     match ty {
         Ty::String => 12, // FIELD_STRING
         _ => jitkind_byte(ty),
-    }
-}
-
-/// Choose between the integer and float opcode for a numeric operation.
-fn int_or_float(is_int: bool, int_op: Opcode, float_op: Opcode) -> Opcode {
-    if is_int {
-        int_op
-    } else {
-        float_op
     }
 }
 
