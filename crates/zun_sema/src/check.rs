@@ -187,6 +187,7 @@ impl Checker<'_> {
             "any" => Ty::Any,
             "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
             "Predicate" => Ty::Function(hir::DYNAMIC_PREDICATE),
+            "Reducer" => Ty::Function(hir::DYNAMIC_REDUCER),
             "void" => Ty::Void,
             other => {
                 if let Some(&func) = self.by_name.get(other) {
@@ -346,6 +347,7 @@ impl Checker<'_> {
             (Ty::Instance(d), Ty::Instance(b)) => self.is_subclass(d, b),
             (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_FUNCTION => true,
             (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_PREDICATE => true,
+            (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_REDUCER => true,
             (_, Ty::Any) => true,
             (a, b) => a == b,
         }
@@ -772,6 +774,11 @@ impl Checker<'_> {
                                 self.error(span, format!("generic Predicate callback expects exactly one argument, found {}", args.len()));
                             }
                             Ty::Boolean
+                        } else if func == hir::DYNAMIC_REDUCER {
+                            if args.len() != 2 {
+                                self.error(span, format!("generic Reducer callback expects exactly two arguments, found {}", args.len()));
+                            }
+                            Ty::Any
                         } else {
                             let (param_tys, return_ty) = {
                                 let sig = &self.signatures[func as usize];

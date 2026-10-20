@@ -6,6 +6,7 @@
 //! safe for the interpreter and, later, the JIT to consume without guards.
 
 use zun_il::{Opcode, Operand};
+use zun_metadata::TableKind;
 use zun_loader::{ModuleLoader, ModuleScope};
 use zun_module::{read_body, Module};
 use zun_verify::{verify, MethodInfo};
@@ -119,7 +120,7 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
                 _ => return None,
             };
             if opcode == Opcode::CallIndirect && token.rid() == 0 {
-                return Some((2, 1));
+                return Some((if token.table() == Some(TableKind::MemberRef) { 3 } else { 2 }, 1));
             }
             let callee = module.tables.method_defs.get(token.rid() as usize - 1)?;
             if callee.body_offset == u32::MAX {

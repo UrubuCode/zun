@@ -52,6 +52,16 @@ class Array {
         return result;
     }
 
+    reduce(callback: Reducer, initial: any): any {
+        let accumulator: any = initial;
+        let index: u64 = 0;
+        while (index < this.length) {
+            accumulator = callback(accumulator, this[index]);
+            index = index + 1;
+        }
+        return accumulator;
+    }
+
     removeAt(index: u64): any {
         let removed: any = this[index];
         let cursor: u64 = index;

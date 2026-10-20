@@ -427,9 +427,9 @@ Array mutation, ordering, set operations, and numeric aggregation. These
 methods deliberately remain ordinary Zun source and preserve the interpreter
 fallback/equivalence boundary. Higher-order Array `map` and `filter` now
 execute in Tier 0 through limited unary `Function` and `Predicate` callback
-contracts and
-have interpreter coverage. `reduce` still requires a binary callback ABI,
-capture handling, and equivalent JIT lowering.
+contracts and have interpreter coverage. `reduce` now uses the explicit
+binary `Reducer` contract in Tier 0; captures and equivalent JIT lowering
+remain separate gates.
 
 Named non-capturing function references now lower through `ldftn` and
 `call.indirect` and execute in Tier 0; closures, function-parameter signatures,
@@ -438,9 +438,10 @@ and Cranelift lowering remain separate gates.
 Named callback parameters remain exact and validate both parameter and return
 signatures. The generic `Function` and `Predicate` types are now available as
 deliberately limited unary callback contracts: `Function` returns `any`, while
-`Predicate` returns `boolean`. Both currently support non-capturing top-level
-function handles only. Their indirect calls use a null method token to defer
-the target RID to the handle. Captures,
+`Predicate` returns `boolean`, and `Reducer` accepts two arguments and returns
+`any`. All currently support non-capturing top-level function handles only.
+Their indirect calls use typed null tokens to defer the target RID to the
+handle. Captures,
 typed generic function signatures, and Cranelift lowering remain separate gates
 before the full `Array.reduce` surface and Cranelift execution are enabled.
 
@@ -460,7 +461,7 @@ dispatch. These figures are machine-specific and should be re-run after
 interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
-The remaining completion gates are Array `reduce` and the
+The remaining completion gates are capturing callbacks and the
 complete String/Number/Array TypeScript core library, full async state-machine
 lowering, complete typed FFI/ABI integration, production Node N-API bindings,
 AOT/R2R support for the full runtime surface, true OSR frame replacement, and

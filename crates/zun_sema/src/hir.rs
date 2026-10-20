@@ -136,6 +136,8 @@ pub type FuncIndex = u32;
 pub const DYNAMIC_FUNCTION: FuncIndex = u32::MAX;
 /// Sentinel function index for the generic unary boolean-predicate callback type.
 pub const DYNAMIC_PREDICATE: FuncIndex = u32::MAX - 1;
+/// Sentinel function index for the generic binary reducer callback type.
+pub const DYNAMIC_REDUCER: FuncIndex = u32::MAX - 2;
 /// A local variable slot within one function (params occupy the first slots).
 pub type LocalSlot = u16;
 

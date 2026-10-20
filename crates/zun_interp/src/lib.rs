@@ -474,12 +474,13 @@ impl Interp<'_> {
                 }
                 Opcode::CallIndirect => {
                     let token = operand_token(&instr.operand);
-                    if token.table() != Some(TableKind::MethodDef) {
+                    if !matches!(token.table(), Some(TableKind::MethodDef | TableKind::MemberRef)) {
                         return Err(RunError::BadToken);
                     }
                     let dynamic = token.rid() == 0;
+                    let reducer = dynamic && token.table() == Some(TableKind::MemberRef);
                     let expected_params = if dynamic {
-                        1
+                        if reducer { 2 } else { 1 }
                     } else {
                         let signature = self
                             .module
@@ -507,7 +508,7 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let target_body = read_body(&self.module.code, target.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                    if dynamic && target_body.param_count != 1 {
+                    if dynamic && target_body.param_count != expected_params as u16 {
                         return Err(RunError::BadToken);
                     }
                     let link = RootLink {
@@ -2428,6 +2429,19 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run Array.filter callback");
         assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn executes_array_reduce_with_generic_reducer_callback() {
+        let module = zun_compiler::compile(
+            "class Array { reduce(callback: Reducer, initial: any): any { let accumulator: any = initial; let index: u64 = 0; while (index < this.length) { accumulator = callback(accumulator, this[index]); index = index + 1; } return accumulator; } }\n\
+             function add(accumulator: any, value: any): any { return (accumulator as number) + (value as number); }\n\
+             function main(): any { let values = new Array(2); values[0] = 20.0; values[1] = 22.0; return values.reduce(add, 0.0); }",
+        )
+        .expect("compile Array.reduce callback");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array.reduce callback");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 
     #[test]

@@ -469,6 +469,8 @@ impl FnLowerer<'_> {
                 }
                 let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
                     Token::null(TableKind::MethodDef)
+                } else if *func == hir::DYNAMIC_REDUCER {
+                    Token::null(TableKind::MemberRef)
                 } else {
                     Token::new(TableKind::MethodDef, *func + 1)
                 };
