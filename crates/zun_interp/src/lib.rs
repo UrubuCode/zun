@@ -426,8 +426,8 @@ impl Interp<'_> {
             collect_frame_roots(l.stack, l.locals, &mut roots);
             link = l.parent;
         }
-        let module = self.module;
-        let ref_fn = |type_rid: u32| object_ref_slots(module, type_rid);
+        let types = &self.types;
+        let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
         // SAFETY: `roots` holds every live object reference reachable by the
         // running program at this safepoint (no JIT frame is active here), so
         // only genuinely-unreachable objects are reclaimed.
@@ -500,26 +500,6 @@ fn collect_frame_roots(stack: &[Value], locals: &[Value], roots: &mut Vec<zun_gc
             roots.push(*o);
         }
     }
-}
-
-/// The field-slot indices of a type's object-reference fields, so the collector
-/// can trace the object graph. Derived from the field value-type codes.
-fn object_ref_slots(module: &Module, type_rid: u32) -> Vec<usize> {
-    let Some(ty) = module.tables.type_defs.get(type_rid as usize - 1) else {
-        return Vec::new();
-    };
-    (ty.field_start..ty.field_end)
-        .enumerate()
-        .filter(|&(_, rid)| {
-            module
-                .tables
-                .field_defs
-                .get(rid as usize - 1)
-                .map(|f| f.kind == value::FIELD_OBJECT)
-                .unwrap_or(false)
-        })
-        .map(|(slot, _)| slot)
-        .collect()
 }
 
 fn underflow() -> RunError {

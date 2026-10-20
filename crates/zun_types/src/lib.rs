@@ -6,6 +6,7 @@
 
 use zun_metadata::Token;
 use zun_module::Module;
+use zun_il::JitKind;
 
 /// A field's resolved object-layout information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +126,20 @@ impl TypeSystem {
     /// Resolve a field RID to its physical slot and encoded value kind.
     pub fn get_field(&self, field_rid: u32) -> Option<FieldLayout> {
         self.fields.get(field_rid as usize).copied().flatten()
+    }
+
+    /// Return object slots whose values are references and must be traced.
+    pub fn reference_slots(&self, type_rid: u32) -> Vec<usize> {
+        self.get(type_rid)
+            .map(|descriptor| {
+                descriptor
+                    .fields
+                    .iter()
+                    .filter(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+                    .map(|field| field.slot)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Resolve a virtual method token for a runtime type in O(1).
