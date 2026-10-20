@@ -200,21 +200,6 @@ impl Heap {
         ))
     }
 
-    /// Allocate a managed `Uint32Array` view over an existing buffer.
-    pub fn alloc_u32_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(
-            self.buffer_len(buffer)?,
-            offset,
-            length,
-            zun_core::TypedElement::U32,
-        )?;
-        let object = self.alloc(0, 1);
-        object.set_field(0, buffer.addr() as u64);
-        self.typed_views
-            .insert(object.addr() as usize, (buffer, view));
-        Some(object)
-    }
-
     pub fn u32_array_get(&self, object: Obj, index: usize) -> Option<u32> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
         view.read_u32(self.buffers.get(&(buffer.addr() as usize))?, index)
@@ -227,21 +212,6 @@ impl Heap {
             index,
             value,
         ))
-    }
-
-    /// Allocate a managed `Uint8Array` view over an existing buffer.
-    pub fn alloc_u8_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(
-            self.buffer_len(buffer)?,
-            offset,
-            length,
-            zun_core::TypedElement::U8,
-        )?;
-        let object = self.alloc(0, 1);
-        object.set_field(0, buffer.addr() as u64);
-        self.typed_views
-            .insert(object.addr() as usize, (buffer, view));
-        Some(object)
     }
 
     pub fn u8_array_get(&self, object: Obj, index: usize) -> Option<u8> {
@@ -258,21 +228,6 @@ impl Heap {
         ))
     }
 
-    /// Allocate a managed `Float64Array` view over an existing buffer.
-    pub fn alloc_f64_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(
-            self.buffer_len(buffer)?,
-            offset,
-            length,
-            zun_core::TypedElement::F64,
-        )?;
-        let object = self.alloc(0, 1);
-        object.set_field(0, buffer.addr() as u64);
-        self.typed_views
-            .insert(object.addr() as usize, (buffer, view));
-        Some(object)
-    }
-
     pub fn f64_array_get(&self, object: Obj, index: usize) -> Option<f64> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
         view.read_f64(self.buffers.get(&(buffer.addr() as usize))?, index)
@@ -285,21 +240,6 @@ impl Heap {
             index,
             value,
         ))
-    }
-
-    /// Allocate a managed `Uint16Array` view over an existing buffer.
-    pub fn alloc_u16_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(
-            self.buffer_len(buffer)?,
-            offset,
-            length,
-            zun_core::TypedElement::U16,
-        )?;
-        let object = self.alloc(0, 1);
-        object.set_field(0, buffer.addr() as u64);
-        self.typed_views
-            .insert(object.addr() as usize, (buffer, view));
-        Some(object)
     }
 
     pub fn u16_array_get(&self, object: Obj, index: usize) -> Option<u16> {

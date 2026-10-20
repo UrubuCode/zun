@@ -86,4 +86,44 @@ impl Heap {
         self.data_views.insert(object.addr() as usize, view);
         Some(object)
     }
+
+    pub fn alloc_u32_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U32,
+        )?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
+
+    pub fn alloc_u8_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U8,
+        )?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
+
+    pub fn alloc_f64_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::F64,
+        )?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
+
+    pub fn alloc_u16_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U16,
+        )?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
 }
