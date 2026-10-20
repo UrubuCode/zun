@@ -1,0 +1,11 @@
+// Numeric conversion helpers implemented in Zun source.
+
+import { parseFloat, toFixed } from "zun:number";
+
+function numberParse(value: string): number {
+    return parseFloat(value);
+}
+
+function numberToFixed(value: number, digits: int): string {
+    return toFixed(value, digits);
+}

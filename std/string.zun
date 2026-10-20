@@ -1,9 +1,23 @@
 // String helpers implemented in Zun source.
 
+import { length, contains, charCodeAt } from "zun:string";
+
 function stringConcat(left: string, right: string): string {
     return left + right;
 }
 
 function stringWithSeparator(left: string, separator: string, right: string): string {
     return left + separator + right;
+}
+
+function stringLength(value: string): u64 {
+    return length(value);
+}
+
+function stringContains(value: string, needle: string): boolean {
+    return contains(value, needle);
+}
+
+function stringCharCodeAt(value: string, index: u64): u32 {
+    return charCodeAt(value, index);
 }
