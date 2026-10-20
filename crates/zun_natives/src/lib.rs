@@ -549,6 +549,28 @@ mod tests {
             dispatch(nan_id, &[NativeArg::Float(f64::NAN)], &mut sink).unwrap(),
             NativeValue::Bool(true)
         ));
+        let (negative_zero_id, _) = resolve("zun:number", "isNegativeZero").unwrap();
+        let (safe_integer_id, _) = resolve("zun:number", "isSafeInteger").unwrap();
+        assert!(matches!(
+            dispatch(negative_zero_id, &[NativeArg::Float(-0.0)], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        assert!(matches!(
+            dispatch(negative_zero_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+        assert!(matches!(
+            dispatch(safe_integer_id, &[NativeArg::Float(9_007_199_254_740_991.0)], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        assert!(matches!(
+            dispatch(safe_integer_id, &[NativeArg::Float(1.5)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+        assert!(matches!(
+            dispatch(safe_integer_id, &[NativeArg::Float(f64::INFINITY)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
     }
 
     #[test]
