@@ -27,7 +27,7 @@ mod runtime_alloc;
 mod stack_maps;
 mod heap_context;
 pub use native_roots::{append_native_roots, NativeRootScope};
-pub use runtime_alloc::zun_gc_alloc;
+pub use runtime_alloc::{zun_gc_alloc, zun_rt_alloc};
 pub use stack_maps::{NativeStackMap, StackMapRegistry};
 pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
@@ -1423,15 +1423,6 @@ impl Heap {
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
     }
-}
-
-/// The allocation entry point native (JIT) code calls for `newobj`, using the
-/// thread's current heap.
-///
-/// # Safety
-/// A current heap must be registered (via [`HeapScope`]) for the call.
-pub unsafe extern "C" fn zun_rt_alloc(type_rid: u32, field_count: usize) -> *mut u64 {
-    with_current_heap_mut(|h| h.alloc(type_rid, field_count).addr())
 }
 
 #[cfg(test)]
