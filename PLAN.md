@@ -396,7 +396,8 @@ The following runtime contracts are implemented and covered by tests:
   comparison semantics, plus UTC Gregorian date decomposition; calendar
   formatting/parsing are now covered for `YYYY-MM-DD`; source-level
   constructors remain follow-up work. UTC time-of-day decomposition and strict
-  `YYYY-MM-DDTHH:MM:SS.mmmZ` formatting/parsing are also available.
+  `YYYY-MM-DDTHH:MM:SS.mmmZ` formatting/parsing are also available through
+  heap-level Date accessors.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

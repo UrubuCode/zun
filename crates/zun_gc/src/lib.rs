@@ -279,6 +279,22 @@ impl Heap {
         self.dates.get(&(left.addr() as usize))?.compare(*self.dates.get(&(right.addr() as usize))?)
     }
 
+    pub fn date_utc_date(&self, object: Obj) -> Option<(i32, u32, u32)> {
+        self.dates.get(&(object.addr() as usize))?.utc_date()
+    }
+
+    pub fn date_utc_time(&self, object: Obj) -> Option<(u32, u32, u32, u32)> {
+        self.dates.get(&(object.addr() as usize))?.utc_time()
+    }
+
+    pub fn date_iso(&self, object: Obj) -> Option<String> {
+        self.dates.get(&(object.addr() as usize))?.iso_date()
+    }
+
+    pub fn date_iso_datetime(&self, object: Obj) -> Option<String> {
+        self.dates.get(&(object.addr() as usize))?.iso_datetime()
+    }
+
     pub fn buffer_len(&self, object: Obj) -> Option<usize> {
         self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::len)
     }
@@ -1168,6 +1184,10 @@ mod tests {
         let invalid = heap.alloc_date(None);
         assert_eq!(heap.date_millis(earlier), Some(100));
         assert_eq!(heap.date_compare(earlier, later), Some(std::cmp::Ordering::Less));
+        assert_eq!(heap.date_utc_date(earlier), Some((1970, 1, 1)));
+        assert_eq!(heap.date_utc_time(earlier), Some((0, 0, 0, 100)));
+        assert_eq!(heap.date_iso(earlier).as_deref(), Some("1970-01-01"));
+        assert_eq!(heap.date_iso_datetime(earlier).as_deref(), Some("1970-01-01T00:00:00.100Z"));
         assert_eq!(heap.date_millis(invalid), None);
         assert_eq!(heap.date_compare(earlier, invalid), None);
     }
