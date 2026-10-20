@@ -1038,6 +1038,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_is_sorted_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { isSorted(): boolean { if (this.length < 2) { return true; } let index: u64 = 1; while (index < this.length) { let previous: number = this[index - 1] as number; let current: number = this[index] as number; if (current < previous) { return false; } index = index + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 1.0; values[1] = 2.0; values[2] = 2.0; return values.isSorted(); }",
+        )
+        .expect("compile Array isSorted");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array isSorted");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\
