@@ -343,6 +343,47 @@ pub unsafe extern "C" fn zun_host_execute_bool(
     0
 }
 
+/// Execute a compiled module and copy its UTF-8 string result into `out`.
+///
+/// `written` receives the required byte length. Returns zero on success, one
+/// for invalid pointers, two for a VM/type error, and three when `out_len` is
+/// too small. A null `out` is accepted only when `out_len` is zero, allowing a
+/// caller to query the required size first.
+#[no_mangle]
+pub unsafe extern "C" fn zun_host_execute_string(
+    host: *mut ZunHost,
+    module_ptr: *const u8,
+    module_len: usize,
+    out: *mut u8,
+    out_len: usize,
+    written: *mut usize,
+) -> i32 {
+    if host.is_null() || module_ptr.is_null() || written.is_null() || (out.is_null() && out_len != 0) {
+        return 1;
+    }
+    // SAFETY: caller supplies a valid immutable byte range for this call.
+    let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
+    let value = match zun_vm::execute(bytes) {
+        Ok(value) => value,
+        Err(_) => return 2,
+    };
+    let zun_interp::value::Value::Str(value) = value else {
+        return 2;
+    };
+    let value = value.as_bytes();
+    // SAFETY: caller supplies writable storage for the required length.
+    unsafe { *written = value.len() };
+    if out_len < value.len() {
+        return 3;
+    }
+    if !value.is_empty() {
+        // SAFETY: the preceding size check proves the destination is large
+        // enough and the caller owns the writable buffer for this call.
+        unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), out, value.len()) };
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,5 +433,36 @@ mod tests {
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert!(result);
+    }
+
+    #[test]
+    fn host_executes_a_compiled_string_module() {
+        let module = zun_compiler::compile("function main(): string { return \"zun\"; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = [0u8; 3];
+        let mut written = 0;
+        let status = unsafe {
+            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), result.as_mut_ptr(), result.len(), &mut written)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, 0);
+        assert_eq!(written, 3);
+        assert_eq!(&result, b"zun");
+    }
+
+    #[test]
+    fn host_string_execution_reports_required_buffer_size() {
+        let module = zun_compiler::compile("function main(): string { return \"zun\"; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = [0u8; 2];
+        let mut written = 0;
+        let status = unsafe {
+            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), result.as_mut_ptr(), result.len(), &mut written)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, 3);
+        assert_eq!(written, 3);
     }
 }
