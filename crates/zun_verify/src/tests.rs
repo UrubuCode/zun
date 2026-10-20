@@ -31,6 +31,7 @@ fn resolver(opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
             Operand::TokenImm32(_, count) if *count >= 0 => Some((*count as u8, 1)),
             _ => None,
         },
+        Opcode::CallRestArray => Some((1, 1)),
         Opcode::CallBuiltin => Some((1, 1)),
         Opcode::NewObj => Some((0, 1)),
         _ => None,

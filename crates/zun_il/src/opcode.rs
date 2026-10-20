@@ -265,6 +265,8 @@ define_opcodes! {
     CallIndirect = 0x82, Token, "call.indirect", StackEffect::Call;
     /// Invoke a rest-parameter function with an explicit argument count.
     CallRest = 0x86, TokenImm32, "call.rest", StackEffect::Call;
+    /// Invoke a rest-parameter function with an array of arguments.
+    CallRestArray = 0x87, Token, "call.rest.array", StackEffect::Call;
 }
 
 #[cfg(test)]

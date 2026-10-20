@@ -480,6 +480,13 @@ pub enum ExprKind {
         /// Arguments in source order; the callee packs the trailing values.
         args: Vec<Expr>,
     },
+    /// Call a zero-fixed-parameter rest function with an existing Array.
+    CallRestArray {
+        /// Index into [`Program::functions`].
+        func: FuncIndex,
+        /// Array expression containing the arguments.
+        args: Box<Expr>,
+    },
     /// Invoke a function-valued expression indirectly.
     IndirectCall {
         /// Function value expression.

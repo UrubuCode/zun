@@ -1737,6 +1737,28 @@ impl Checker<'_> {
             }
             ast::Expr::Call { callee, args, .. } => {
                 let name = self.text(callee).to_string();
+                if args.len() == 1 {
+                    if let ast::Expr::Spread { expr, .. } = &args[0] {
+                        if let Some(&func) = self.by_name.get(&name) {
+                            let rest_param = self.signatures[func as usize].rest_param;
+                            if rest_param == Some(0) {
+                                let array = self.check_expr(cx, expr);
+                                if array.ty != Ty::Array && !array.ty.is_error() {
+                                    self.error(array.span, "spread call requires an Array value");
+                                    return self.poison(span);
+                                }
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallRestArray {
+                                        func,
+                                        args: Box::new(array),
+                                    },
+                                    ty: self.signatures[func as usize].return_ty,
+                                    span,
+                                };
+                            }
+                        }
+                    }
+                }
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
 
