@@ -88,7 +88,30 @@ pub fn run_with(
     hook: Option<&dyn CallHook>,
 ) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
-    let rid = entry.rid();
+    run_method_with(module, entry.rid(), Vec::new(), output, hook)
+}
+
+/// Execute a specific method body with positional arguments.
+///
+/// Hosts use this primitive when a loader resolves a method outside the entry
+/// module. The method still runs with the same heap, native output, and GC
+/// safeguards as entry-point execution.
+pub fn run_method(
+    module: &Module,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    run_method_with(module, method_rid, args, output, None)
+}
+
+fn run_method_with(
+    module: &Module,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+    hook: Option<&dyn CallHook>,
+) -> Result<Value, RunError> {
     // Own the heap for the run and register it as the thread's current heap so
     // the interpreter and any JIT code allocate into the same one.
     let mut heap = zun_gc::Heap::new();
@@ -101,7 +124,7 @@ pub fn run_with(
         allocs: 0,
         types,
     }
-    .call(rid, Vec::new(), None)
+    .call(method_rid, args, None)
 }
 
 /// How many object allocations trigger a collection attempt.
