@@ -221,6 +221,10 @@ impl OrderedMap {
         })
     }
 
+    pub fn contains(&self, hash: u64, equal: impl Fn(Any) -> bool) -> bool {
+        self.get(hash, equal).is_some()
+    }
+
     pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
         if self.dead_len >= 8 && self.dead_len > self.live_len {
             self.compact();
@@ -254,6 +258,13 @@ impl OrderedMap {
 
     pub fn iter(&self) -> impl Iterator<Item = (Any, Any)> + '_ {
         self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.buckets = vec![Vec::new(); 8];
+        self.live_len = 0;
+        self.dead_len = 0;
     }
 
     fn rehash(&mut self) {

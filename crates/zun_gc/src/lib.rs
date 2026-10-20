@@ -352,6 +352,19 @@ impl Heap {
         })
     }
 
+    pub fn map_has(&self, object: Obj, key: zun_core::Any) -> Option<bool> {
+        let hash = self.any_hash(key);
+        let strings = &self.strings;
+        Some(self.maps.get(&(object.addr() as usize))?.contains(hash, |candidate| {
+            any_same_value_zero(candidate, key, strings)
+        }))
+    }
+
+    pub fn map_clear(&mut self, object: Obj) -> Option<()> {
+        self.maps.get_mut(&(object.addr() as usize))?.clear();
+        Some(())
+    }
+
     /// Remove a key and return its key/value pair.
     pub fn map_remove(&mut self, object: Obj, key: zun_core::Any) -> Option<(zun_core::Any, zun_core::Any)> {
         let hash = self.any_hash(key);
@@ -408,6 +421,11 @@ impl Heap {
 
     pub fn set_len(&self, object: Obj) -> Option<usize> {
         self.sets.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
+    }
+
+    pub fn set_clear(&mut self, object: Obj) -> Option<()> {
+        self.sets.get_mut(&(object.addr() as usize))?.clear();
+        Some(())
     }
 
     pub fn set_values(&self, object: Obj) -> Option<Vec<zun_core::Any>> {
@@ -975,8 +993,14 @@ mod tests {
         assert_eq!(heap.map_get(map, zun_core::Any::float(f64::NAN)).and_then(|v| v.as_bool()), Some(true));
         assert_eq!(heap.map_len(map), Some(2));
         assert_eq!(heap.map_entries(map).unwrap().iter().filter_map(|(key, _)| key.as_int()).collect::<Vec<_>>(), vec![1]);
-        assert_eq!(heap.map_remove(map, zun_core::Any::int(1)).and_then(|(_, value)| value.as_string()), Some(0));
-        assert_eq!(heap.map_len(map), Some(1));
+        assert_eq!(heap.map_has(map, zun_core::Any::int(1)), Some(true));
+        assert_eq!(heap.map_clear(map), Some(()));
+        assert_eq!(heap.map_len(map), Some(0));
+        assert_eq!(heap.map_has(map, zun_core::Any::int(1)), Some(false));
+        let one = heap.intern_string(Rc::from("one-again"));
+        heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one));
+        assert_eq!(heap.map_remove(map, zun_core::Any::int(1)).and_then(|(_, value)| value.as_string()), Some(one));
+        assert_eq!(heap.map_len(map), Some(0));
     }
 
     #[test]
@@ -1002,7 +1026,9 @@ mod tests {
         assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(true));
         assert_eq!(heap.set_len(set), Some(1));
         assert_eq!(heap.set_values(set).unwrap().iter().filter_map(|value| value.as_object()).count(), 1);
-        assert_eq!(heap.set_remove(set, zun_core::Any::object(key.addr() as usize)), Some(true));
+        assert_eq!(heap.set_clear(set), Some(()));
+        assert_eq!(heap.set_len(set), Some(0));
+        assert_eq!(heap.set_remove(set, zun_core::Any::object(key.addr() as usize)), Some(false));
         assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(false));
     }
 
