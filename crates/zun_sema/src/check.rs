@@ -2284,6 +2284,8 @@ impl Checker<'_> {
                     (Ty::Map, "delete") => Some(("mapDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Map, "clear") => Some(("mapClear", Ty::Void, vec![])),
                     (Ty::Map, "values") => Some(("mapValues", Ty::Array, vec![])),
+                    (Ty::Map, "keys") => Some(("mapKeys", Ty::Array, vec![])),
+                    (Ty::Map, "entries") => Some(("mapEntries", Ty::Array, vec![])),
                     (Ty::Set, "add") => Some(("setAdd", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "has") => Some(("setHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),

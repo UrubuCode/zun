@@ -60,6 +60,8 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Array,
             imp: unavailable,
         },
+        NativeFn { name: "mapKeys", params: &[Map], ret: Array, imp: unavailable },
+        NativeFn { name: "mapEntries", params: &[Map], ret: Array, imp: unavailable },
         NativeFn {
             name: "setNew",
             params: &[],

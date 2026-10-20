@@ -1766,6 +1766,29 @@ impl Interp<'_> {
                 }
                 Ok(Value::Object(array))
             }
+            "mapKeys" | "mapEntries" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let entries = zun_gc::with_current_heap(|heap| heap.map_entries(object))
+                    .ok_or(RunError::BadToken)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(entries.len()));
+                for (index, (key, value)) in entries.into_iter().enumerate() {
+                    let item = if name == "mapKeys" {
+                        key
+                    } else {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let item = heap.alloc_array(2);
+                            let _ = heap.array_set(item, 0, key);
+                            let _ = heap.array_set(item, 1, value);
+                            zun_core::Any::object(item.addr() as usize)
+                        })
+                    };
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let _ = heap.array_set(array, index, item);
+                    });
+                }
+                Ok(Value::Object(array))
+            }
             "setNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1892,6 +1915,8 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "mapDelete",
         "mapClear",
         "mapValues",
+        "mapKeys",
+        "mapEntries",
         "setNew",
         "setAdd",
         "setHas",
