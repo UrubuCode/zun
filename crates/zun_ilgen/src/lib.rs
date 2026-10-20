@@ -16,7 +16,9 @@
 //!   (displacements are relative to the end of the branch instruction).
 
 use zun_il::{encode, Instruction, NumKind, Opcode, Operand};
-use zun_metadata::{BlobIndex, FieldDef, MethodDef, TableKind, Token, TypeDef};
+use zun_metadata::{
+    BlobIndex, FieldDef, MemberRef, MethodDef, ModuleRef, TableKind, Token, TypeDef,
+};
 use zun_module::{write_body, Module};
 use zun_sema::hir::{self, BinaryOp, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp};
 
@@ -442,8 +444,26 @@ impl FnLowerer<'_> {
                     Operand::Imm32(*id as i32),
                 ));
             }
-            ExprKind::ExternalCall { .. } => {
-                unreachable!("external calls require module linking before IL generation")
+            ExprKind::ExternalCall {
+                module,
+                name,
+                args,
+            } => {
+                for a in args {
+                    self.expr(a);
+                }
+                let module_name = self.module.strings.intern(module);
+                let member_name = self.module.strings.intern(name);
+                let module_ref = self
+                    .module
+                    .tables
+                    .add_module_ref(ModuleRef { name: module_name });
+                let member_ref = self.module.tables.add_member_ref(MemberRef {
+                    parent: module_ref,
+                    name: member_name,
+                    signature: BlobIndex(0),
+                });
+                self.emit(Instruction::new(Opcode::Call, Operand::Token(member_ref)));
             }
             ExprKind::MethodCall { func, args } => {
                 // args[0] is the receiver; push it and the rest, then dispatch
