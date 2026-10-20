@@ -16,6 +16,7 @@
 
 mod date;
 mod collections;
+mod buffer;
 mod env;
 mod fs;
 mod io;
@@ -188,6 +189,7 @@ pub static MODULES: &[Module] = &[
     string::MODULE,
     date::MODULE,
     collections::MODULE,
+    buffer::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

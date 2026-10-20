@@ -903,7 +903,7 @@ impl Interp<'_> {
         // Pop the arguments, convert them to neutral native values, run the
         // native body (in zun_natives), then convert the result back.
         let args = pop_n(stack, zun_natives::param_count(id))?;
-        if let Some(name) = managed_collection_builtin(id) {
+        if let Some(name) = managed_collection_builtin(id).or_else(|| managed_buffer_builtin(id)) {
             stack.push(self.call_managed_collection(name, &args)?);
             return Ok(());
         }
@@ -930,6 +930,38 @@ impl Interp<'_> {
             zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
         };
         match name {
+            "bufferNew" => {
+                let length = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_buffer(length));
+                Ok(Value::Object(object))
+            }
+            "bufferLength" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.buffer_len(object)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+            }
+            "bufferGetU8" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.buffer_get(object, index)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U8))
+            }
+            "bufferSetU8" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u8,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.buffer_set(object, index, value)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1038,8 +1070,17 @@ impl Interp<'_> {
 }
 
 fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "mapValues", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "setValues", "weakMapNew", "weakMapSet", "weakMapHas"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "mapValues", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "setValues", "weakMapNew", "weakMapSet", "weakMapHas"] {
         if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8"] {
+        if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }
@@ -1509,6 +1550,17 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run managed collection for-of");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
         assert_eq!(output.lines, vec!["10", "20", "3", "4"]);
+    }
+
+    #[test]
+    fn accesses_gc_backed_byte_buffers_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, bufferSetU8, bufferGetU8, bufferLength } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); bufferSetU8(buffer, 2, 127); if (bufferLength(buffer) == 4) { return bufferGetU8(buffer, 2) as u64; } return 0; }",
+        )
+        .expect("compile buffer intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run buffer intrinsics");
+        assert!(matches!(result, Value::Int(127, zun_il::NumKind::U64)));
     }
 
     #[test]
