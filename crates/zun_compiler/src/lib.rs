@@ -10,6 +10,14 @@ use zun_module::Module;
 
 /// Compile source text with the standard prelude into a `.zm` module.
 pub fn compile(source: &str) -> Result<Module, Vec<Diagnostic>> {
+    compile_with_externals(source, &[])
+}
+
+/// Compile source text with linker-provided source-module signatures.
+pub fn compile_with_externals(
+    source: &str,
+    external_functions: &[zun_sema::check::ExternalFunction],
+) -> Result<Module, Vec<Diagnostic>> {
     let source_with_prelude = zun_prelude::with_prelude(source);
     let source = source_with_prelude.as_str();
     let mut diagnostics = Vec::new();
@@ -17,7 +25,7 @@ pub fn compile(source: &str) -> Result<Module, Vec<Diagnostic>> {
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
     }
-    let hir = zun_sema::check(source, &ast, &mut diagnostics);
+    let hir = zun_sema::check_with_externals(source, &ast, &mut diagnostics, external_functions);
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
     }
@@ -185,6 +193,22 @@ mod tests {
         let module = compile("function main(): int { return 7; }").expect("compile");
         assert!(module.entry_point.is_some());
         assert!(!module.code.is_empty());
+    }
+
+    #[test]
+    fn compiles_external_call_to_member_reference() {
+        let module = compile_with_externals(
+            "import { answer } from \"core\"; function main(): int { return answer(41); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "core".into(),
+                name: "answer".into(),
+                params: vec![zun_sema::Ty::INT],
+                return_ty: zun_sema::Ty::INT,
+            }],
+        )
+        .expect("compile external call");
+        assert_eq!(module.tables.member_refs.len(), 1);
+        assert_eq!(module.tables.module_refs.len(), 1);
     }
 
     #[test]
