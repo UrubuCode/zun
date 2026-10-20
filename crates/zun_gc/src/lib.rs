@@ -23,7 +23,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 mod native_roots;
+mod stack_maps;
 pub use native_roots::{append_native_roots, NativeRootScope};
+pub use stack_maps::{NativeStackMap, StackMapRegistry};
 
 mod collection;
 
@@ -1442,57 +1444,6 @@ thread_local! {
     /// sets it before executing and clears it after, so interpreter and JIT
     /// share one heap. Raw pointer because the heap is owned on the stack.
     static CURRENT_HEAP: std::cell::Cell<*mut Heap> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-/// A native safepoint description published by a code generator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NativeStackMap {
-    /// Absolute program counter of the safepoint.
-    pub pc: usize,
-    /// Number of bytes covered by the native frame map.
-    pub span: u32,
-}
-
-/// Registry of native safepoint maps known to the GC boundary.
-#[derive(Debug, Default)]
-pub struct StackMapRegistry {
-    maps: Vec<NativeStackMap>,
-}
-
-impl StackMapRegistry {
-    /// Create an empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Replace the registered map set with the maps from the current JIT image.
-    pub fn replace(&mut self, maps: impl IntoIterator<Item = NativeStackMap>) {
-        self.maps.clear();
-        self.maps.extend(maps);
-        self.maps.sort_unstable_by_key(|map| map.pc);
-    }
-
-    /// Find the map covering `pc`, if one is registered.
-    pub fn lookup(&self, pc: usize) -> Option<NativeStackMap> {
-        let index = match self.maps.binary_search_by_key(&pc, |map| map.pc) {
-            Ok(index) => index,
-            Err(0) => return None,
-            Err(index) => index - 1,
-        };
-        let map = self.maps[index];
-        let end = map.pc.saturating_add(map.span as usize);
-        (pc < end).then_some(map)
-    }
-
-    /// Number of registered safepoints.
-    pub fn len(&self) -> usize {
-        self.maps.len()
-    }
-
-    /// Whether the registry has no safepoints.
-    pub fn is_empty(&self) -> bool {
-        self.maps.is_empty()
-    }
 }
 
 /// A guard that registers `heap` as the current heap and clears it on drop.
