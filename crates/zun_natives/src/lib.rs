@@ -375,6 +375,12 @@ mod tests {
             dispatch(trim_id, &[NativeArg::Str("  zun  ")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun"
         ));
+        let (repeat_id, repeat_fn) = resolve("zun:string", "repeat").unwrap();
+        assert_eq!(repeat_fn.params, &[NativeTy::Str, NativeTy::U64]);
+        assert!(matches!(
+            dispatch(repeat_id, &[NativeArg::Str("zu"), NativeArg::Int(3)], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "zuzuzu"
+        ));
     }
 
     #[test]

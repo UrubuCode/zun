@@ -68,6 +68,18 @@ fn trim(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
     }
 }
 
+fn repeat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("repeat: expected a string".to_string())),
+    };
+    let count = match args.get(1) {
+        Some(NativeArg::Int(count)) if *count >= 0 => *count as usize,
+        _ => return Err(NativeError("repeat: expected a non-negative count".to_string())),
+    };
+    Ok(NativeValue::Str(value.repeat(count)))
+}
+
 /// The machine-facing string primitives used by `zun:core`.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:string",
@@ -79,5 +91,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },
         NativeFn { name: "trim", params: &[Str], ret: Str, imp: trim },
+        NativeFn { name: "repeat", params: &[Str, U64], ret: Str, imp: repeat },
     ],
 };

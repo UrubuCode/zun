@@ -1,6 +1,6 @@
 // String helpers implemented in Zun source.
 
-import { length, contains, charCodeAt, startsWith, endsWith, trim } from "zun:string";
+import { length, contains, charCodeAt, startsWith, endsWith, trim, repeat } from "zun:string";
 
 function stringConcat(left: string, right: string): string {
     return left + right;
@@ -32,4 +32,8 @@ function stringEndsWith(value: string, suffix: string): boolean {
 
 function stringTrim(value: string): string {
     return trim(value);
+}
+
+function stringRepeat(value: string, count: u64): string {
+    return repeat(value, count);
 }
