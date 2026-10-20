@@ -968,3 +968,24 @@ fn body_signature<M: ClifModule>(
     }
     sig
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{zun_jit_array_load_any, JitAnyAbi};
+
+    #[test]
+    fn dynamic_array_load_helper_preserves_both_abi_words() {
+        let mut heap = zun_gc::Heap::new();
+        let array = heap.alloc_array(1);
+        heap.array_set(array, 0, zun_core::Any::object(0x1234));
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap) };
+        let mut carrier = JitAnyAbi { tag: 5, payload: 0 };
+        let loaded = unsafe {
+            zun_jit_array_load_any(array.addr() as i64, 0, &mut carrier)
+        };
+        assert_eq!(loaded, 1);
+        assert_eq!(carrier, JitAnyAbi { tag: 3, payload: 0x1234 });
+        assert_eq!(unsafe { zun_jit_array_load_any(array.addr() as i64, -1, &mut carrier) }, 0);
+        assert_eq!(unsafe { zun_jit_array_load_any(array.addr() as i64, 0, std::ptr::null_mut()) }, 0);
+    }
+}
