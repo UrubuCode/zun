@@ -15,6 +15,10 @@ class String {
         return this.length() == 0;
     }
 
+    toString(): string {
+        return this;
+    }
+
     extern length(): u64;
     extern contains(needle: string): boolean;
     extern charCodeAt(index: u64): u32;

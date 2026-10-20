@@ -142,6 +142,19 @@ fn string_is_empty_uses_interpreter_fallback() {
 }
 
 #[test]
+fn string_to_string_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class String { toString(): string { return this; } }\n\
+         function main(): string { let value: string = \"zun\"; return value.toString(); }",
+    )
+    .expect("compile String toString");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "zun"));
+}
+
+#[test]
 fn array_source_methods_keep_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array {\n\

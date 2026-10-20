@@ -947,6 +947,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_to_string_source_method() {
+        let module = zun_compiler::compile(
+            "class String { toString(): string { return this; } }\n\
+             function main(): string { let value: string = \"zun\"; return value.toString(); }",
+        )
+        .expect("compile String toString");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String toString");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zun"));
+    }
+
+    #[test]
     fn executes_array_source_methods_with_array_receiver_binding() {
         let module = zun_compiler::compile(
             "class Array {\n\
