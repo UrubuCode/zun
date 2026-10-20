@@ -4,8 +4,6 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
-use std::collections::HashMap;
-
 #[path = "views.rs"]
 mod views;
 mod ordered_map;
@@ -18,6 +16,7 @@ mod date_value;
 mod ids;
 mod any_value;
 mod function_handle;
+mod symbols;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
@@ -29,6 +28,7 @@ pub use date_value::DateValue;
 pub use ids::{CoreTypeId, IntrinsicId};
 pub use any_value::{Any, AnyTag};
 pub use function_handle::FunctionHandle;
+pub use symbols::{SymbolId, SymbolRegistry};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -43,63 +43,6 @@ pub const OBJECT_HEADER_SLOTS: usize = 2;
 /// Convert an object field slot to its byte offset in the frozen layout.
 pub const fn field_offset(slot: usize) -> usize {
     (OBJECT_HEADER_SLOTS + slot) * SLOT_SIZE
-}
-
-/// Runtime identity for a Symbol. Symbols with the same description are still
-/// distinct unless obtained through the global registry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct SymbolId(u64);
-
-impl SymbolId {
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-/// Per-isolate symbol storage. The registry is deliberately separate from
-/// ordinary string interning: Symbol descriptions do not define identity.
-#[derive(Debug, Default)]
-pub struct SymbolRegistry {
-    descriptions: Vec<Option<String>>,
-    global: HashMap<String, SymbolId>,
-}
-
-impl SymbolRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn create(&mut self, description: Option<impl Into<String>>) -> SymbolId {
-        let id = SymbolId(self.descriptions.len() as u64);
-        self.descriptions.push(description.map(Into::into));
-        id
-    }
-
-    pub fn for_key(&mut self, key: impl Into<String>) -> SymbolId {
-        let key = key.into();
-        if let Some(&id) = self.global.get(&key) {
-            return id;
-        }
-        let id = self.create(Some(key.clone()));
-        self.global.insert(key, id);
-        id
-    }
-
-    /// Return the isolate-local well-known symbol used by the iteration protocol.
-    pub fn iterator(&mut self) -> SymbolId {
-        self.for_key("Symbol.iterator")
-    }
-
-    pub fn description(&self, id: SymbolId) -> Option<&str> {
-        self.descriptions
-            .get(id.0 as usize)
-            .and_then(Option::as_deref)
-    }
-
-    pub fn len(&self) -> usize {
-        self.descriptions.len()
-    }
 }
 
 /// Stable identifier for a runtime intrinsic.
