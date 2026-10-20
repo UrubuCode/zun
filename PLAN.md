@@ -572,16 +572,18 @@ Ordered backlog:
    `Array` `map`/`filter`/`reduce`/`forEach` to inline arrows. Tests: map with an
    arrow, capture of an outer variable, mutation-after-capture visible in the
    closure, nested closures; interpreter↔JIT equivalence.
-2. **Iteration protocol**: Array `for...of` is implemented and Map/Set
-   insertion-ordered values are available through the collection fallback;
-   first-class `Symbol.iterator` objects remain pending.
+2. **Iteration protocol**: Array `for...of` is implemented; managed iterator
+   handles now exist for Array, Map, and Set, preserving insertion order and
+   Map entry-pair semantics. First-class `Symbol.iterator` syntax/dispatch
+   remains pending.
 3. **Built-in class surface**: `Map`, `Set`, and `WeakMap` constructors plus
-   intrinsic receiver bindings are implemented. Typed arrays and `DataView`
-   remain pending source bindings over the existing runtime floor.
-4. **Weak-GC hardening**: a stress harness (GC forced at every safepoint, random
-   object graphs with cycles through `WeakMap`, liveness assertions) for the
-   ephemeron / weak-clear paths; a finalization test if `FinalizationRegistry`
-   exists.
+   intrinsic receiver bindings are implemented. Source bindings now cover
+   managed `DataView` and `Uint8Array`, `Uint16Array`, `Uint32Array`, and
+   `Float64Array` views over GC-owned buffers.
+4. **Weak-GC hardening**: multi-entry ephemerons, address-index restoration
+   after block reuse, key-aware managed lookup, and repeated-cycle stress
+   coverage are implemented. FinalizationRegistry-specific behavior remains
+   pending because no source-level FinalizationRegistry exists yet.
 5. **Group 2 syntax** (section 4.4.2), by utility: spread/rest, destructuring,
    default parameters, optional chaining `?.` and `??`, template literals,
    `switch`.
