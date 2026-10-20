@@ -55,6 +55,18 @@ pub extern "C" fn zun_jit_array_load_f64(address: i64, index: i64) -> f64 {
     })
 }
 
+/// Store a numeric array element without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_array_store_f64(address: i64, index: i64, value: f64) -> i32 {
+    if index < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_set(object, index as usize, zun_core::Any::float(value)).is_some() as i32
+    })
+}
+
 /// Copy one dynamic array element into the stable two-word JIT carrier.
 ///
 /// The out-parameter ABI is intentional: it keeps `tag` and `payload`
@@ -408,6 +420,7 @@ impl Jit {
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
+    builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
         builder.symbol(
             "zun_jit_array_load_any",
             zun_jit_array_load_any as *const u8,

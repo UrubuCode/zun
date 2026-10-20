@@ -26,6 +26,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::ConstFalse
             | Opcode::Conv
             | Opcode::UnboxAny
+            | Opcode::BoxAny
             | Opcode::LoadLocal
             | Opcode::StoreLocal
             | Opcode::Pop
@@ -57,6 +58,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::StoreField
             | Opcode::ArrayLength
             | Opcode::LoadArray
+            | Opcode::StoreArray
     );
     supported || (op == Opcode::CallBuiltin && (date_builtin(instr) || math_builtin(instr)))
 }
@@ -228,6 +230,12 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         // The managed array helper currently has a stable f64 ABI only. Keep
         // integer and reference-valued array consumers in Tier 0.
         if instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
+            && (!body.returns_value
+                || JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64))
+        {
+            continue;
+        }
+        if instrs.iter().any(|i| i.opcode == Opcode::StoreArray)
             && (!body.returns_value
                 || JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64))
         {
