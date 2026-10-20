@@ -355,6 +355,25 @@ fn fixture_invalid_await_underflow() {
 }
 
 #[test]
+fn fixture_valid_yield_stack_effect() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+        Instruction::simple(Opcode::Yield),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_yield_underflow() {
+    let code = asm(&[Instruction::simple(Opcode::Yield), Instruction::simple(Opcode::Ret)]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+    ));
+}
+
+#[test]
 fn fixture_invalid_any_box_underflow() {
     let code = asm(&[
         Instruction::simple(Opcode::BoxAny),

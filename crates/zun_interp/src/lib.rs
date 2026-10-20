@@ -1162,6 +1162,11 @@ impl Interp<'_> {
                     };
                     stack.push(value);
                 }
+                Opcode::Yield => {
+                    return Err(RunError::Native(
+                        "generator yield reached the interpreter before lowering".into(),
+                    ));
+                }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
                     stack.push(Value::Null);

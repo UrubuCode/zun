@@ -283,6 +283,11 @@ define_opcodes! {
     /// and semantic checker must not emit it until continuation metadata and
     /// interpreter resumption are available.
     Await = 0x8D, None, "await", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Suspend a generator and publish the value on its iterator result.
+    ///
+    /// The state-machine lowering owns resumption metadata; ordinary source
+    /// functions are rejected before this opcode can be emitted.
+    Yield = 0x8E, None, "yield", StackEffect::Fixed { pops: 1, pushes: 0 };
 }
 
 #[cfg(test)]
