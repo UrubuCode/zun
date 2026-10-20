@@ -4,6 +4,25 @@ use super::RunError;
 use super::value::Value;
 use super::value;
 
+#[derive(Clone, Copy)]
+pub(crate) enum Ordering {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Ordering {
+    pub(crate) fn apply<T: PartialOrd>(self, a: T, b: T) -> bool {
+        match self {
+            Ordering::Lt => a < b,
+            Ordering::Le => a <= b,
+            Ordering::Gt => a > b,
+            Ordering::Ge => a >= b,
+        }
+    }
+}
+
 pub(crate) fn underflow() -> RunError {
     RunError::Malformed("stack underflow".to_string())
 }

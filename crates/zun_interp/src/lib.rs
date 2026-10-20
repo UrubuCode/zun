@@ -17,7 +17,9 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
-use stack::{bin_float, bin_int, bin_int_signed_aware, convert, pop, pop_n, underflow};
+use stack::{
+    bin_float, bin_int, bin_int_signed_aware, convert, pop, pop_n, underflow, Ordering,
+};
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3818,25 +3820,6 @@ mod method_tests {
 }
 
 /// A relational comparison operator.
-#[derive(Clone, Copy)]
-enum Ordering {
-    Lt,
-    Le,
-    Gt,
-    Ge,
-}
-
-impl Ordering {
-    fn apply<T: PartialOrd>(self, a: T, b: T) -> bool {
-        match self {
-            Ordering::Lt => a < b,
-            Ordering::Le => a <= b,
-            Ordering::Gt => a > b,
-            Ordering::Ge => a >= b,
-        }
-    }
-}
-
 /// Ordered comparison over two ints (signed or unsigned by kind) or two floats;
 /// sema guarantees the operands share a numeric kind.
 fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunError> {
