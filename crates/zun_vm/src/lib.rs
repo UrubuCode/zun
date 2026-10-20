@@ -90,14 +90,8 @@ pub fn execute_manifest(
         .entry_point
         .ok_or(RunError::NoEntryPoint)
         .map_err(VmError::Run)?;
-    zun_interp::run_method_loaded(
-        scope,
-        loader,
-        entry.rid(),
-        Vec::new(),
-        output,
-    )
-    .map_err(VmError::Run)
+    zun_interp::run_method_loaded(scope, loader, entry.rid(), Vec::new(), output)
+        .map_err(VmError::Run)
 }
 
 /// Validate every module selected by a manifest before any code executes.
@@ -199,6 +193,28 @@ mod tests {
             &mut output,
         )
         .unwrap();
+        assert!(matches!(
+            result,
+            zun_interp::value::Value::Int(42, zun_il::NumKind::I32)
+        ));
+    }
+
+    #[test]
+    fn executes_linked_member_reference_call() {
+        let loader = zun_compiler::compile_linked_modules([
+            (
+                "core",
+                "function answer(value: int): int { return value + 1; }",
+            ),
+            (
+                "app",
+                "import { answer } from \"core\"; function main(): int { return answer(41); }",
+            ),
+        ])
+        .expect("linked modules compile");
+        let manifest = zun_loader::ModuleManifest::new("app", vec!["core".into()]);
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = execute_manifest(&loader, &manifest, &mut output).unwrap();
         assert!(matches!(
             result,
             zun_interp::value::Value::Int(42, zun_il::NumKind::I32)

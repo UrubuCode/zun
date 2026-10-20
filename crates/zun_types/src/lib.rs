@@ -115,7 +115,7 @@ impl TypeSystem {
                 });
             method_slots[index + 1] = Some(slot);
         }
-        let mut types = Vec::with_capacity(module.tables.type_defs.len());
+        let mut types: Vec<TypeDescriptor> = Vec::with_capacity(module.tables.type_defs.len());
         let mut field_index = vec![None; module.tables.field_defs.len() + 1];
         for (index, ty) in module.tables.type_defs.iter().enumerate() {
             let type_rid = index as u32 + 1;
@@ -135,12 +135,18 @@ impl TypeSystem {
                 type_fields.push(layout);
             }
 
-            let mut vtable = ty.base.is_null().then(|| Vec::new()).unwrap_or_else(|| {
+            let mut vtable = if ty.base.is_null() {
+                Vec::new()
+            } else {
+                if ty.base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                    return Err(TypeError::BadBase);
+                }
                 types
                     .get(ty.base.rid() as usize - 1)
-                    .map(|base: &TypeDescriptor| base.vtable.clone())
-                    .unwrap_or_default()
-            });
+                    .ok_or(TypeError::BadBase)?
+                    .vtable
+                    .clone()
+            };
             if vtable.len() < slot_names.len() {
                 vtable.resize(slot_names.len(), 0);
             }
