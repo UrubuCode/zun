@@ -274,4 +274,26 @@ impl TypedArrayView {
                 .checked_mul(4)
                 .is_some_and(|offset| self.view.write_u32(buffer, offset, value))
     }
+
+    pub fn read_f64(self, buffer: &ByteBuffer, index: usize) -> Option<f64> {
+        if self.element != TypedElement::F64 {
+            return None;
+        }
+        let offset = index.checked_mul(8)?;
+        (offset.checked_add(8)? <= self.view.len())
+            .then(|| buffer.read_f64(self.view.offset() + offset))
+            .flatten()
+    }
+
+    pub fn write_f64(self, buffer: &mut ByteBuffer, index: usize, value: f64) -> bool {
+        if self.element != TypedElement::F64 {
+            return false;
+        }
+        let Some(offset) = index.checked_mul(8) else {
+            return false;
+        };
+        offset.checked_add(8).is_some_and(|end| {
+            end <= self.view.len() && buffer.write_f64(self.view.offset() + offset, value)
+        })
+    }
 }
