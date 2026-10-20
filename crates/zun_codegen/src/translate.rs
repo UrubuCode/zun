@@ -388,6 +388,7 @@ impl Translator<'_> {
                         Some("floor" | "floorNumber") => ("zun_jit_math_floor", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("ceil" | "ceilNumber") => ("zun_jit_math_ceil", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("round" | "roundNumber") => ("zun_jit_math_round", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("truncNumber") => ("zun_jit_math_trunc", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("sinNumber") => ("zun_jit_math_sin", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("cosNumber") => ("zun_jit_math_cos", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("expNumber") => ("zun_jit_math_exp", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),

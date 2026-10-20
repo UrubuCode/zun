@@ -1681,6 +1681,13 @@ fn math_sign_preserves_zero_sign_in_jit() {
 }
 
 #[test]
+fn math_trunc_is_jit_equivalent_for_both_signs() {
+    assert_equivalent(
+        "import { truncNumber } from \"zun:math\"; function main(): number { return truncNumber(-2.9) + truncNumber(2.9); }",
+    );
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

@@ -73,6 +73,10 @@ fn round(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     unary_float(args, "round", f64::round)
 }
 
+fn trunc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "trunc", f64::trunc)
+}
+
 fn pow(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let base = float_arg(args, "pow")?;
     let exponent = match args.get(1) {
@@ -141,6 +145,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "floorNumber", params: &[F64], ret: F64, imp: floor },
         NativeFn { name: "ceilNumber", params: &[F64], ret: F64, imp: ceil },
         NativeFn { name: "roundNumber", params: &[F64], ret: F64, imp: round },
+        NativeFn { name: "truncNumber", params: &[F64], ret: F64, imp: trunc },
         NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
         NativeFn { name: "powNumber", params: &[F64, F64], ret: F64, imp: pow },
         NativeFn { name: "sinNumber", params: &[F64], ret: F64, imp: sin },

@@ -45,6 +45,7 @@ pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateV
 #[inline] pub extern "C" fn zun_jit_math_floor(value: f64) -> f64 { value.floor() }
 #[inline] pub extern "C" fn zun_jit_math_ceil(value: f64) -> f64 { value.ceil() }
 #[inline] pub extern "C" fn zun_jit_math_round(value: f64) -> f64 { value.round() }
+#[inline] pub extern "C" fn zun_jit_math_trunc(value: f64) -> f64 { value.trunc() }
 #[inline] pub extern "C" fn zun_jit_math_sin(value: f64) -> f64 { value.sin() }
 #[inline] pub extern "C" fn zun_jit_math_cos(value: f64) -> f64 { value.cos() }
 #[inline] pub extern "C" fn zun_jit_math_exp(value: f64) -> f64 { value.exp() }
@@ -211,6 +212,7 @@ impl Jit {
         builder.symbol("zun_jit_math_floor", zun_jit_math_floor as *const u8);
         builder.symbol("zun_jit_math_ceil", zun_jit_math_ceil as *const u8);
         builder.symbol("zun_jit_math_round", zun_jit_math_round as *const u8);
+        builder.symbol("zun_jit_math_trunc", zun_jit_math_trunc as *const u8);
         builder.symbol("zun_jit_math_sin", zun_jit_math_sin as *const u8);
         builder.symbol("zun_jit_math_cos", zun_jit_math_cos as *const u8);
         builder.symbol("zun_jit_math_exp", zun_jit_math_exp as *const u8);

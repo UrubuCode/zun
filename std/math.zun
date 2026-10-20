@@ -8,6 +8,7 @@ import { expNumber, logNumber } from "zun:math";
 import { tanNumber, atan2Number } from "zun:math";
 import { hypotNumber } from "zun:math";
 import { signNumber } from "zun:math";
+import { truncNumber } from "zun:math";
 
 
 function mathAbs(value: number): number {
@@ -79,5 +80,9 @@ function mathHypot(left: number, right: number): number {
 
 function mathSign(value: number): number {
     return signNumber(value);
+}
+
+function mathTrunc(value: number): number {
+    return truncNumber(value);
 }
 
