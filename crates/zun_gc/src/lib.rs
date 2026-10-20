@@ -161,20 +161,6 @@ impl Heap {
         ))
     }
 
-    pub fn u16_array_get(&self, object: Obj, index: usize) -> Option<u16> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
-        view.read_u16(self.buffers.get(&(buffer.addr() as usize))?, index)
-    }
-
-    pub fn u16_array_set(&mut self, object: Obj, index: usize, value: u16) -> Option<bool> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u16(
-            self.buffers.get_mut(&(buffer.addr() as usize))?,
-            index,
-            value,
-        ))
-    }
-
     pub fn array_iterator_next(&mut self, iterator: Obj) -> Option<zun_core::Any> {
         let (array, state) = self.array_iterators.get_mut(&(iterator.addr() as usize))?;
         let storage = self.arrays.get(&(array.addr() as usize))?;
