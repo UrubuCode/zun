@@ -367,7 +367,10 @@ mirroring the way weak collections forced dedicated GC work.
 - Exceptions: `throw`/`try`/`catch`/`finally`. Requires IL handler regions,
   verifier support, interpreter unwinding, and Cranelift landing pads. The
   `Error` hierarchy already exists but is unusable without throw/catch control
-  flow. *Status: pending — the next large architectural item.*
+  flow. *Status: Tier 0 complete — handler regions, verifier checks, nested
+  unwind, cross-frame propagation, and finally-on-return/throw are covered;
+  Cranelift methods with exception regions explicitly fall back to the
+  interpreter.*
 - Iteration protocol (`for...of`, `Symbol.iterator`) and, later, generators
   (`function*`). Generators lower to a state machine, reusing the async
   state-machine substrate. *Status: a `SymbolRegistry` exists; `for...of` and
@@ -411,6 +414,9 @@ The following runtime contracts are implemented and covered by tests:
 - mark-sweep GC with interpreter roots, native root scopes, and registered JIT
   stack-map metadata;
 - Promise/microtask scheduling and scalar external-library symbol calls;
+- `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
+  Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
+  exception-bearing methods;
 - `Any` and `DynamicObject`, including dynamic-property IL, source lowering,
   and GC tracing of object-tagged dynamic values;
 - interpreted backedge observation as the first OSR integration boundary.
