@@ -86,6 +86,8 @@ pub struct FunctionExpr {
     pub body: Block,
     /// Whether this expression used arrow syntax.
     pub is_arrow: bool,
+    /// Whether this expression uses the source-level `async` modifier.
+    pub is_async: bool,
     /// Span of the whole expression.
     pub span: Span,
 }

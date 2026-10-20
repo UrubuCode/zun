@@ -9,6 +9,12 @@ impl Checker<'_> {
         function: &ast::FunctionExpr,
         span: Span,
     ) -> hir::Expr {
+        if function.is_async {
+            self.error(
+                span,
+                "async closures are parsed but source-level async lowering is not implemented yet",
+            );
+        }
         let captures = self.analyze_closure_captures(outer, function);
         let mut saw_default = false;
         for parameter in &function.params {

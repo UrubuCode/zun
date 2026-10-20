@@ -164,7 +164,32 @@ impl Parser<'_> {
                 let close = self.tokens[self.pos - 1].span;
                 Expr::New { class, args, span: start.to(close) }
             }
-            TokenKind::KwFunction => self.function_expression(),
+            TokenKind::KwFunction => self.function_expression(false),
+            TokenKind::KwAsync => {
+                let start = self.bump().span;
+                if self.at(TokenKind::KwFunction) {
+                    return self.function_expression(true);
+                }
+                let params = if self.at(TokenKind::Ident) {
+                    let name = self.name("an async arrow parameter");
+                    vec![Param { name, ty: None, default_value: None, is_rest: false }]
+                } else {
+                    self.expect(TokenKind::LParen, "`(` after async");
+                    let params = self.parameters();
+                    self.expect(TokenKind::RParen, "`)` after async arrow parameters");
+                    params
+                };
+                self.expect(TokenKind::Arrow, "`=>` after async arrow parameters");
+                let body = self.arrow_body();
+                Expr::Function(FunctionExpr {
+                    params,
+                    return_type: None,
+                    span: start.to(body.span),
+                    body,
+                    is_arrow: true,
+                    is_async: true,
+                })
+            }
             TokenKind::KwAwait => {
                 let start = self.bump().span;
                 let operand = self.expression();
@@ -181,6 +206,7 @@ impl Parser<'_> {
                         span: t.span.to(body.span),
                         body,
                         is_arrow: true,
+                        is_async: false,
                     });
                 }
                 Expr::Ident(name)
@@ -192,7 +218,7 @@ impl Parser<'_> {
                     self.expect(TokenKind::RParen, "`)` after arrow parameters");
                     self.expect(TokenKind::Arrow, "`=>` after arrow parameters");
                     let body = self.arrow_body();
-                    return Expr::Function(FunctionExpr { params, return_type: None, span: start.to(body.span), body, is_arrow: true });
+                    return Expr::Function(FunctionExpr { params, return_type: None, span: start.to(body.span), body, is_arrow: true, is_async: false });
                 }
                 self.bump();
                 let inner = self.expression();
@@ -207,7 +233,7 @@ impl Parser<'_> {
         }
     }
 
-    pub(crate) fn function_expression(&mut self) -> Expr {
+    pub(crate) fn function_expression(&mut self, is_async: bool) -> Expr {
         let start = self.bump().span;
         self.expect(TokenKind::LParen, "`(` after anonymous function");
         let params = self.parameters();
@@ -220,6 +246,7 @@ impl Parser<'_> {
             span: start.to(body.span),
             body,
             is_arrow: false,
+            is_async,
         })
     }
 
