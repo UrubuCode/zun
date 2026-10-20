@@ -107,7 +107,7 @@ pub(super) fn run_method_with(
     let mut heap = zun_gc::Heap::new();
     let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
     let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
-    Interp {
+    let mut interp = Interp {
         module,
         output,
         hook,
@@ -117,11 +117,36 @@ pub(super) fn run_method_with(
         types,
         suspended: None,
         resume_frame: None,
-    }
-    .call(method_rid, args, None)
+    };
+    let result = interp.call(method_rid, args, None)?;
+    interp.deliver_finalization_callbacks()?;
+    Ok(result)
 }
 
 impl Interp<'_> {
+    /// Deliver callbacks queued by completed GC cycles on this interpreter's
+    /// heap. Callback invocation reuses the same interpreter and heap, so
+    /// closure environments and managed arguments remain valid.
+    fn deliver_finalization_callbacks(&mut self) -> Result<(), RunError> {
+        let records = zun_gc::with_current_heap_mut(|heap| heap.finalization_drain_records());
+        for record in records {
+            let Some(callback) = record.callback else {
+                continue;
+            };
+            let token = Value::Int(record.token as i64, zun_il::NumKind::U64);
+            let environment = callback
+                .environment()
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+            let mut args = Vec::with_capacity(2);
+            if let Some(environment) = environment {
+                args.push(Value::Object(environment));
+            }
+            args.push(token);
+            self.call(callback.method_rid(), args, None)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn propagate_suspended(
         &mut self,
         mut frame: ExecutionFrame,
