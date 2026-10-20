@@ -208,6 +208,8 @@ pub enum MemberKind {
     Method,
     /// A field definition.
     Field,
+    /// A type definition.
+    Type,
 }
 
 /// A member token together with the scope that owns it.
@@ -312,6 +314,27 @@ impl ModuleLoader {
             .member_refs
             .get(token.rid() as usize - 1)
             .ok_or_else(|| LoadError::UnresolvedModule(format!("member RID {}", token.rid())))?;
+
+        if member.parent.table() == Some(TableKind::ModuleRef) {
+            let target = self.resolve_module_ref(requester, member.parent)?;
+            let member_name = requester.module.strings.get(member.name);
+            return match target.export(member_name) {
+                Some(Export::Method(token)) => Ok(ResolvedMember {
+                    scope: target,
+                    token,
+                    kind: MemberKind::Method,
+                }),
+                Some(Export::Type(token)) => Ok(ResolvedMember {
+                    scope: target,
+                    token,
+                    kind: MemberKind::Type,
+                }),
+                None => Err(LoadError::UnresolvedModule(format!(
+                    "{}::{member_name}",
+                    target.name()
+                ))),
+            };
+        }
 
         let target = match member.parent.table() {
             Some(TableKind::TypeDef) => requester,
@@ -470,6 +493,41 @@ mod tests {
             ModuleScope::from_bytes("app", &module.write()),
             Err(LoadError::DuplicateExport(export)) if export == "main"
         ));
+    }
+
+    #[test]
+    fn resolves_top_level_member_ref_through_module_ref() {
+        let mut target = Module::new();
+        let export_name = target.strings.intern("answer");
+        target.tables.add_method_def(zun_metadata::MethodDef {
+            name: export_name,
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: u32::MAX,
+        });
+
+        let mut requester = Module::new();
+        let module_name = requester.strings.intern("core");
+        let member_name = requester.strings.intern("answer");
+        let module_ref = requester
+            .tables
+            .add_module_ref(zun_metadata::ModuleRef { name: module_name });
+        let member_ref = requester.tables.add_member_ref(zun_metadata::MemberRef {
+            parent: module_ref,
+            name: member_name,
+            signature: zun_metadata::BlobIndex(0),
+        });
+
+        let target = ModuleScope::from_bytes("core", &target.write()).expect("target");
+        let requester = ModuleScope::from_bytes("app", &requester.write()).expect("requester");
+        let mut loader = ModuleLoader::new();
+        loader.insert(target).expect("target registration");
+        loader.insert(requester).expect("requester registration");
+        let resolved = loader
+            .resolve_member_ref(loader.get("app").unwrap(), member_ref)
+            .expect("member ref");
+        assert_eq!(resolved.scope.name(), "core");
+        assert_eq!(resolved.kind, MemberKind::Method);
+        assert_eq!(resolved.token.rid(), 1);
     }
 
     #[test]
