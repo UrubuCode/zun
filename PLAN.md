@@ -354,12 +354,13 @@ The following runtime contracts are implemented and covered by tests:
 - Array instructions have verifier fixtures and an explicit Tier 0 fallback
   test while Cranelift lowering for array storage remains pending.
 
-The release benchmark baseline on 2026-10-20 is 402.555 ns/iteration for the
-integer Tier 0 loop and 0.486 ns/iteration for the equivalent JIT loop
-(828.64x). The metadata-focused Tier 0 workloads measure 359.803 ns/iteration
-for field load/store and 523.990 ns/iteration for virtual dispatch. These
-figures are machine-specific and should be re-run after interpreter or OSR
-changes; the benchmark source is `crates/zun_codegen/examples/bench.rs`.
+The release benchmark rerun on 2026-10-20 measured 454.657 ns/iteration for
+the integer Tier 0 loop and 0.480 ns/iteration for the equivalent JIT loop
+(947.53x). The metadata-focused Tier 0 workloads measured 360.892
+ns/iteration for field load/store and 488.019 ns/iteration for virtual
+dispatch. These figures are machine-specific and should be re-run after
+interpreter or OSR changes; the benchmark source is
+`crates/zun_codegen/examples/bench.rs`.
 
 The remaining completion gates are Array `map`/`filter`/`reduce` and the
 complete String/Number/Array TypeScript core library, full async state-machine
