@@ -1127,6 +1127,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_nullish_and_optional_property_expressions() {
+        let p = parse_ok(
+            "function main(): any { let value: any = null; return value?.answer ?? null; }",
+        );
+        let Stmt::Return { value: Some(expr), .. } = &p.functions[0].body.statements[1] else {
+            panic!("expected return expression");
+        };
+        assert!(matches!(expr, Expr::Binary { op: BinaryOp::Nullish, .. }));
+    }
+
+    #[test]
     fn string_escapes_decode() {
         let src = r#"function f() { let s = "a\nb\"c"; }"#;
         let p = parse_ok(src);
