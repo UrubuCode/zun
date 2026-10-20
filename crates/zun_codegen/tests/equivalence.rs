@@ -114,6 +114,17 @@ fn managed_promise_class_methods_use_interpreter_fallback() {
 }
 
 #[test]
+fn async_function_without_await_returns_a_promise_through_tier0() {
+    let module = compile(
+        "async function immediate(): Promise { return new Promise(); } function main(): int { let promise = immediate(); return promise.state() as int; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "managed Promise requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Int(0, _)));
+}
+
+#[test]
 fn map_and_set_values_are_exposed_as_instance_methods() {
     let module = compile(
         "function main(): int { let map = new Map(); map.set(7.0, 42.0); let set = new Set(); set.add(9.0); let map_values: Array = map.values(); let set_values: Array = set.values(); if ((map_values[0] as number) == 42.0) { if ((set_values[0] as number) == 9.0) { return 1; } } return 0; }",
