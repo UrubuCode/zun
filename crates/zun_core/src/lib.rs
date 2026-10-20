@@ -143,6 +143,47 @@ pub struct DynamicObject {
     properties: BTreeMap<String, Any>,
 }
 
+/// Contiguous storage contract for a managed array.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArrayStorage {
+    elements: Vec<Any>,
+}
+
+impl ArrayStorage {
+    /// Create an array with `length` initialized to `undefined`-like void values.
+    pub fn with_length(length: usize) -> Self {
+        Self {
+            elements: vec![Any::int(0); length],
+        }
+    }
+
+    /// Return the number of elements.
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+
+    /// Whether the array has no elements.
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+
+    /// Read an element with bounds checking.
+    pub fn get(&self, index: usize) -> Option<Any> {
+        self.elements.get(index).copied()
+    }
+
+    /// Replace an element with bounds checking and return its previous value.
+    pub fn set(&mut self, index: usize, value: Any) -> Option<Any> {
+        let slot = self.elements.get_mut(index)?;
+        Some(std::mem::replace(slot, value))
+    }
+
+    /// Return object references stored in the array for precise GC tracing.
+    pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
+        self.elements.iter().filter_map(|value| value.as_object())
+    }
+}
+
 impl DynamicObject {
     /// Create an empty dynamic object.
     pub fn new() -> Self {
@@ -285,5 +326,16 @@ mod tests {
         assert!(object.contains("answer"));
         assert_eq!(object.remove("answer").and_then(Any::as_int), Some(42));
         assert_eq!(object.len(), 0);
+    }
+
+    #[test]
+    fn array_storage_is_contiguous_and_bounds_checked() {
+        let mut array = ArrayStorage::with_length(2);
+        assert_eq!(array.len(), 2);
+        assert_eq!(array.get(0).and_then(Any::as_int), Some(0));
+        assert_eq!(array.set(1, Any::int(7)).and_then(Any::as_int), Some(0));
+        assert_eq!(array.get(1).and_then(Any::as_int), Some(7));
+        assert_eq!(array.get(2), None);
+        assert_eq!(array.set(2, Any::int(9)), None);
     }
 }
