@@ -17,6 +17,8 @@ mod closures;
 mod class_layout;
 #[path = "classes.rs"]
 mod classes;
+#[path = "conditions.rs"]
+mod conditions;
 #[path = "blocks.rs"]
 mod blocks;
 #[path = "default_args.rs"]
@@ -964,17 +966,6 @@ impl Checker<'_> {
                 }
             }
         }
-    }
-
-    fn check_condition(&mut self, cx: &mut FunctionCx, cond: &ast::Expr) -> hir::Expr {
-        let cond = self.check_expr(cx, cond);
-        if !cond.ty.is_error() && cond.ty != Ty::Boolean {
-            self.error(
-                cond.span,
-                format!("condition must be boolean, found {:?}", cond.ty),
-            );
-        }
-        cond
     }
 
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
