@@ -1211,6 +1211,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_whitespace_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, trim } from \"zun:string\";\n\
+             class String { extern length(): u64; extern trim(): string; isEmpty(): boolean { return this.length() == 0; } isWhitespace(): boolean { if (this.isEmpty()) { return false; } return this.trim().isEmpty(); } }\n\
+             function main(): boolean { let value: string = \"   \"; return value.isWhitespace(); }",
+        )
+        .expect("compile String isWhitespace");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isWhitespace");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

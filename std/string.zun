@@ -40,6 +40,11 @@ class String {
         return true;
     }
 
+    isWhitespace(): boolean {
+        if (this.isEmpty()) { return false; }
+        return this.trim().isEmpty();
+    }
+
     toString(): string {
         return this;
     }
