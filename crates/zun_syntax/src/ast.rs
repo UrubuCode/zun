@@ -105,6 +105,17 @@ pub struct Block {
     pub span: Span,
 }
 
+/// A typed catch clause attached to a try statement.
+#[derive(Debug, PartialEq)]
+pub struct CatchClause {
+    /// The local receiving the thrown value.
+    pub binding: Name,
+    /// The error type matched by this clause.
+    pub ty: TypeAnnotation,
+    /// The handler body.
+    pub body: Block,
+}
+
 /// A statement.
 #[derive(Debug, PartialEq)]
 pub enum Stmt {
@@ -155,6 +166,24 @@ pub enum Stmt {
     Return {
         /// The returned value, if any.
         value: Option<Expr>,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `throw expression;`
+    Throw {
+        /// The value being thrown.
+        value: Expr,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `try { ... } catch (...) { ... } finally { ... }`.
+    Try {
+        /// Protected body.
+        body: Block,
+        /// Optional typed catch clauses.
+        catches: Vec<CatchClause>,
+        /// Optional cleanup body.
+        finally: Option<Block>,
         /// Span of the whole statement.
         span: Span,
     },

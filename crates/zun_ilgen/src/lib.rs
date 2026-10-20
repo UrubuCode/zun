@@ -387,6 +387,13 @@ impl FnLowerer<'_> {
                 }
                 self.emit(Instruction::simple(Opcode::Ret));
             }
+            Stmt::Throw(value) => {
+                self.expr(value);
+                self.emit(Instruction::simple(Opcode::Throw));
+            }
+            Stmt::Try { .. } => {
+                unreachable!("try lowering requires handler-region emission")
+            }
         }
     }
 

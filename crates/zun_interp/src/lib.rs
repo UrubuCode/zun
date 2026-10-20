@@ -42,7 +42,7 @@ impl Output for StdoutOutput {
 }
 
 /// Errors the interpreter can raise at runtime.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum RunError {
     /// The module has no entry point to run.
     NoEntryPoint,
@@ -52,6 +52,8 @@ pub enum RunError {
     Malformed(String),
     /// A runtime intrinsic (e.g. a `zun:fs` operation) failed.
     Native(String),
+    /// An exception escaped the current method because no handler matched.
+    Thrown(Value),
 }
 
 impl core::fmt::Display for RunError {
@@ -61,6 +63,7 @@ impl core::fmt::Display for RunError {
             RunError::BadToken => write!(f, "call did not resolve to a method"),
             RunError::Malformed(m) => write!(f, "malformed bytecode: {m}"),
             RunError::Native(m) => write!(f, "{m}"),
+            RunError::Thrown(value) => write!(f, "unhandled exception: {value:?}"),
         }
     }
 }
@@ -466,6 +469,9 @@ impl Interp<'_> {
                 }
                 Opcode::Ret => {
                     return Ok(stack.pop().unwrap_or(Value::Void));
+                }
+                Opcode::Throw => {
+                    return Err(RunError::Thrown(pop(&mut stack)?));
                 }
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);

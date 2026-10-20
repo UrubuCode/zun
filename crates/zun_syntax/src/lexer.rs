@@ -34,6 +34,14 @@ pub enum TokenKind {
     KwContinue,
     /// `return`
     KwReturn,
+    /// `throw`
+    KwThrow,
+    /// `try`
+    KwTry,
+    /// `catch`
+    KwCatch,
+    /// `finally`
+    KwFinally,
     /// `true`
     KwTrue,
     /// `false`
@@ -281,6 +289,10 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "break" => TokenKind::KwBreak,
         "continue" => TokenKind::KwContinue,
         "return" => TokenKind::KwReturn,
+        "throw" => TokenKind::KwThrow,
+        "try" => TokenKind::KwTry,
+        "catch" => TokenKind::KwCatch,
+        "finally" => TokenKind::KwFinally,
         "true" => TokenKind::KwTrue,
         "false" => TokenKind::KwFalse,
         "null" => TokenKind::KwNull,

@@ -638,6 +638,32 @@ impl Checker<'_> {
                 }
                 hir::Stmt::Return(value)
             }
+            ast::Stmt::Throw { value, .. } => hir::Stmt::Throw(self.check_expr(cx, value)),
+            ast::Stmt::Try {
+                body,
+                catches,
+                finally,
+                ..
+            } => {
+                let body = self.check_block(cx, body);
+                let catches = catches
+                    .iter()
+                    .map(|catch| {
+                        let ty = self.resolve_annotation(&catch.ty);
+                        cx.scopes.push(Scope::new());
+                        let slot = cx.declare(self.text(&catch.binding), ty);
+                        let body = self.check_block(cx, &catch.body);
+                        cx.scopes.pop();
+                        hir::CatchClause { slot, ty, body }
+                    })
+                    .collect();
+                let finally_body = finally.as_ref().map(|block| self.check_block(cx, block));
+                hir::Stmt::Try {
+                    body,
+                    catches,
+                    finally_body,
+                }
+            }
         }
     }
 

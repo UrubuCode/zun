@@ -224,6 +224,22 @@ pub enum Stmt {
     Continue,
     /// Return, with a value unless the function returns `void`.
     Return(Option<Expr>),
+    /// Transfer control to an enclosing exception handler.
+    Throw(Expr),
+    /// Protected body with typed handlers and optional cleanup.
+    Try {
+        body: Vec<Stmt>,
+        catches: Vec<CatchClause>,
+        finally_body: Option<Vec<Stmt>>,
+    },
+}
+
+/// A checked exception handler.
+#[derive(Debug)]
+pub struct CatchClause {
+    pub slot: LocalSlot,
+    pub ty: Ty,
+    pub body: Vec<Stmt>,
 }
 
 /// A checked expression: a kind plus its type and origin.
