@@ -22,6 +22,16 @@ class Number {
         return this;
     }
 
+    min(other: number): number {
+        if (this < other) { return this; }
+        return other;
+    }
+
+    max(other: number): number {
+        if (this > other) { return this; }
+        return other;
+    }
+
     extern toFixed(digits: int): string;
     extern toString(): string;
 }

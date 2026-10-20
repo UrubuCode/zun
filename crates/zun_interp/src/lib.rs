@@ -1037,6 +1037,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_min_and_max_source_methods() {
+        let module = zun_compiler::compile(
+            "class Number { min(other: number): number { if (this < other) { return this; } return other; } max(other: number): number { if (this > other) { return this; } return other; } }\n\
+             function main(): number { let value: number = 7.0; return value.min(10.0) + value.max(3.0); }",
+        )
+        .expect("compile Number min max");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number min max");
+        assert!(matches!(result, Value::Float(14.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_string_source_methods_with_primitive_receiver() {
         let module = zun_compiler::compile(
             "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\
