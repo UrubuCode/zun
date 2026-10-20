@@ -491,6 +491,35 @@ Grounded in docs 07/09 (DLR) and 03/04/05 (object layout, dispatch, allocation).
 Scope: the `any` / `DynamicObject` / `Proxy` / `Reflect` path (section 4.4.2);
 typed code is unaffected.
 
+### Validated reuse opportunities (benchmarked 2026-10-20)
+
+The same "resolve-once + cache + indexed access" principle was benchmarked in an
+isolated worktree in the places it was proposed (ns/op; `x` = how many times
+faster the indexed/cached form is). All confirmed:
+
+| Case | lookup / linear | cached / indexed | x |
+|---|---|---|---|
+| Dynamic object property read (BTreeMap vs shape+IC) | 25.9 ns | 3.0 ns | 8.6 |
+| Dynamic object property write | 104.5 ns | 2.3 ns | 45 |
+| Interface dispatch, monomorphic (selector lookup vs inline cache) | 7.6 ns | 2.0 ns | 3.8 |
+| `switch` over 32 cases (if-chain vs jump table) | 5.6 ns | 0.5 ns | 11.3 |
+| IC guard (string-eq vs interned-id-eq) | 4.6 ns | 0.55 ns | 8.3 |
+| Symbol-keyed property read (`BTreeMap<id>` vs flat slot) | 20.1 ns | 1.2 ns | 16.5 |
+
+Consequences for the design:
+
+- **Interface dispatch**: build **one** polymorphic inline-cache primitive and
+  reuse it for both dynamic member operations (this section) and interface calls
+  (section 3). Caveat from the numbers: a precomputed **slot-indexed** vtable is
+  already ~as fast as the IC for the monomorphic case, so prefer a slot when the
+  concrete type resolves to one and use the IC for the interface→impl resolution
+  that a slot cannot express directly. The 3.8x is over selector-by-name lookup.
+- **Guards must use interned name ids** (`u32`), not strings — ~8x cheaper; use
+  `zun_common`'s interner as the substrate for both shapes and ICs.
+- **Symbol-keyed properties** (`DynamicObject.symbol_properties` /
+  `symbol_functions`, today `BTreeMap`) must live in the shape/slot model too.
+- **`switch`** over many/dense cases should lower to a jump table in ilgen/codegen.
+
 ## 5. Implementation ledger (2026-10-20)
 
 The following runtime contracts are implemented and covered by tests:
@@ -530,23 +559,12 @@ The following runtime contracts are implemented and covered by tests:
   microtask-scheduled success/failure continuations, settlement-preserving
   `finally` cleanup, and a readiness/continuation `PromiseAwaiter` protocol.
   Source-level
-  `async`/`await` lowering remains a separate pending gate; the source syntax
-  is now tokenized and represented in the AST, with sema rejecting it until
-  state-machine lowering is available.
-
-The next async lowering gate has an explicit representation boundary. The
-current `zun_vm::Promise<T>` is a Rust-side handle and cannot yet be returned
-as a Zun `Value`: Zun managed references are `zun_gc::Obj` values, while the
-semantic type and IL ABI have no Promise carrier. Source lowering must first
-introduce a managed Promise object whose state is traced through the heap and
-whose settlement/awaiter operations are exposed as typed intrinsics. The
-state-machine compiler must then lower `async` functions to that object using
-the existing poll/awaiter contract. It must preserve the .NET-style invariants
-from `.docs-dotnet/06-blocks-control-flow/05-async-await-maquina-de-estados.md`:
-hoisted locals survive suspension, synchronous completion avoids suspension,
-exceptions settle the returned Promise as rejection, and resumption does not
-run inside an exception handler. Until this boundary exists, accepting source
-`async`/`await` would generate no valid IL and remains prohibited.
+  `async`/`await` source lowering through a managed Promise carrier. The Tier 0
+  path now preserves hoisted locals across suspension, has a synchronous
+  completion fast path, propagates rejection, resumes nested caller frames, and
+  rejects suspension inside exception handlers. The interpreter remains the
+  correct fallback; Cranelift compilation of methods containing `await` is an
+  explicit eligibility boundary. Generator lowering remains a separate gate.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
@@ -728,7 +746,7 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
-   safepoints, true OSR, compaction, async and generators, typed FFI/N-API,
+   safepoints, true OSR, compaction, generators, typed FFI/N-API,
    AOT/R2R, and the remaining performance backlog. Module-hygiene splits are
    maintained separately by the reviewer and are not part of this execution
    backlog.
@@ -775,6 +793,25 @@ scan. A generational/incremental collector remains the long-term fix; precise
 JIT-frame stack maps and safe native-frame scanning are also still required
 before hot managed code can leave Tier 0. This remains the real performance
 ceiling for large programs today, independent of any individual data structure.
+
+### 7.3 Benchmarked opportunity sizing (2026-10-20)
+
+Five further ideas, each measured in an isolated worktree before being recorded
+(`#2`/`#4` on the real pipeline; `#1`/`#3`/`#5` on optimizer-resistant models).
+Ranked by payoff:
+
+| Idea | measurement | verdict |
+|---|---|---|
+| **Generational GC (nursery)** | full mark-sweep is O(n²) over a run (4× N → **16×** time); a nursery that scans only the young is **~22× faster** at N=40k and the gap grows with N | **highest** — the real ceiling (§7.2); a gen0 with bump alloc + cheap minor GC (doc 09/01, 09/03) is the fix, not just the adaptive interval |
+| **OSR / eager-JIT-for-loops** | a hot loop stuck in Tier 0 runs at ~217 ns/iter vs **0.49 ns/iter** in the JIT — a **~440×** gap | **highest** — a loop in `main` never leaves Tier 0 today; OSR (doc 06) or "compile any method with a loop straight to Tier 1" recovers it |
+| **Interpreter superinstructions** | fusing a hot opcode sequence on the same tagged-stack VM: **~4–5×** fewer-dispatch speedup | **medium** — helps startup, cold code, everything before it is hot; stable Rust (no computed-goto); pairs with a leaner stack value |
+| **Cache the compiled std/prelude (R2R-lite)** | compiling a trivial program costs **~39 µs**, almost all of it the std/prelude, **paid at every process start** | **medium/low effort** — persist the compiled std `.zm` (the format already reserves an R2R extension header, doc 02/05) for fast cold start |
+| **Escape analysis to elide `any` box/unbox** | scalar `Any` box/unbox overhead is **~0.03 ns** (negligible — `Any` is a value type) | **low for scalars** — not worth a pass on its own; the real dynamic cost is heap object allocation, which is covered by generational GC (#1), not escape analysis |
+
+Takeaway: the two big wins (generational GC and getting hot loops out of Tier 0)
+are already in the section 6 cluster — this confirms their priority with numbers.
+Superinstructions and the std cache are good medium wins. Scalar box/unbox
+elision is **not** worth pursuing on its own.
 
 ## 5. Riscos e pontos de atenção
 
