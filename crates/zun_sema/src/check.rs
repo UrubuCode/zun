@@ -200,10 +200,6 @@ impl Checker<'_> {
         capture_analysis::collect_mutated_names(self, statements, names);
     }
 
-    fn collect_mutated_expr(&self, expr: &ast::Expr, names: &mut HashSet<String>) {
-        capture_analysis::collect_mutated_expr(self, expr, names);
-    }
-
     fn collect_signatures(&mut self, program: &ast::Program) {
         // Register every top-level name before resolving annotations. This
         // permits a function-typed parameter to refer to a function declared
