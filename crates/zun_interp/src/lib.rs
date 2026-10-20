@@ -2405,6 +2405,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_map_with_generic_function_callback() {
+        let module = zun_compiler::compile(
+            "class Array { map(callback: Function): Array { let result = new Array(this.length); let index: u64 = 0; while (index < this.length) { result[index] = callback(this[index]); index = index + 1; } return result; } }\n\
+             function add_one(value: any): any { return (value as number) + 1.0; }\n\
+             function main(): any { let values = new Array(1); values[0] = 41.0; let mapped = values.map(add_one); return mapped[0]; }",
+        )
+        .expect("compile Array.map callback");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array.map callback");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_array_index_of_and_is_empty_methods() {
         let module = zun_compiler::compile(
             "class Array {\n\

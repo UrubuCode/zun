@@ -344,6 +344,7 @@ impl Checker<'_> {
         match (from, to) {
             (Ty::Instance(d), Ty::Instance(b)) => self.is_subclass(d, b),
             (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_FUNCTION => true,
+            (_, Ty::Any) => true,
             (a, b) => a == b,
         }
     }

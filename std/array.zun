@@ -29,6 +29,16 @@ class Array {
         return value;
     }
 
+    map(callback: Function): Array {
+        let result = new Array(this.length);
+        let index: u64 = 0;
+        while (index < this.length) {
+            result[index] = callback(this[index]);
+            index = index + 1;
+        }
+        return result;
+    }
+
     removeAt(index: u64): any {
         let removed: any = this[index];
         let cursor: u64 = index;
