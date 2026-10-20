@@ -767,7 +767,8 @@ an optimization gate.
    coverage are implemented. The source-level `FinalizationRegistry` wrapper,
    registration IDs, unregister, and closure callback preservation are now
    available through Tier 0; callbacks are delivered at both normal and
-   resumable-session completion boundaries.
+   resumable-session completion boundaries, draining cascading registrations
+   until the queue is empty.
 5. **Group 2 syntax — complete for the planned current subset** (section 4.4.2): implemented through template
    literals, including spread/rest, destructuring, default parameters,
    optional property/method chaining, nullish coalescing, `switch`, loops,
