@@ -962,6 +962,28 @@ impl Interp<'_> {
                 };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.buffer_set(object, index, value)).ok_or(RunError::BadToken)?))
             }
+            "bufferReadU32" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let offset = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.buffer_read_u32(object, offset)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U32))
+            }
+            "bufferWriteU32" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let offset = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u32, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.buffer_write_u32(object, offset, value)).ok_or(RunError::BadToken)?))
+            }
+            "bufferReadF64" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let offset = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                Ok(Value::Float(zun_gc::with_current_heap(|heap| heap.buffer_read_f64(object, offset)).ok_or(RunError::BadToken)?, zun_il::NumKind::F64))
+            }
+            "bufferWriteF64" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let offset = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.buffer_write_f64(object, offset, value)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1079,7 +1101,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1561,6 +1583,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run buffer intrinsics");
         assert!(matches!(result, Value::Int(127, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn accesses_numeric_values_in_gc_backed_buffers_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, bufferWriteU32, bufferReadU32, bufferWriteF64, bufferReadF64 } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); bufferWriteU32(buffer, 0, 16909060); bufferWriteF64(buffer, 8, 2.5); if (bufferReadU32(buffer, 0) == 16909060) { return bufferReadF64(buffer, 8); } return 0.0; }",
+        )
+        .expect("compile numeric buffer intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run numeric buffer intrinsics");
+        assert!(matches!(result, Value::Float(2.5, zun_il::NumKind::F64)));
     }
 
     #[test]
