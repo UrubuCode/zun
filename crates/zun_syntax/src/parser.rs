@@ -372,6 +372,15 @@ impl Parser<'_> {
                         span,
                     };
                 }
+                Expr::Index { object, index, .. } => {
+                    let span = object.span().to(value.span());
+                    return Expr::IndexAssign {
+                        object,
+                        index,
+                        value: Box::new(value),
+                        span,
+                    };
+                }
                 _ => self.error_at(eq_span, "invalid assignment target"),
             }
         }

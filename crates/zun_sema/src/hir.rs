@@ -348,6 +348,15 @@ pub enum ExprKind {
         /// The numeric index expression.
         index: Box<Expr>,
     },
+    /// Write an element in a managed array.
+    ArraySet {
+        /// The array expression.
+        object: Box<Expr>,
+        /// The numeric index expression.
+        index: Box<Expr>,
+        /// The assigned value.
+        value: Box<Expr>,
+    },
     /// A numeric conversion (`as`). The target type is the expression's `ty`.
     Convert {
         /// The value being converted.

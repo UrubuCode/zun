@@ -313,6 +313,17 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `object[index] = value` — write an array element.
+    IndexAssign {
+        /// The array expression.
+        object: Box<Expr>,
+        /// The numeric index expression.
+        index: Box<Expr>,
+        /// The assigned value.
+        value: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -333,6 +344,7 @@ impl Expr {
             | Expr::Field { span, .. }
             | Expr::FieldAssign { span, .. }
             | Expr::Index { span, .. } => *span,
+            Expr::IndexAssign { span, .. } => *span,
             Expr::Ident(name) => name.span,
         }
     }
