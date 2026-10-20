@@ -397,7 +397,10 @@ The following runtime contracts are implemented and covered by tests:
   classes remain the next integration gate. `ByteView` now enforces bounded
   shared windows without copying the underlying storage, and `TypedArrayView`
   enforces element alignment and indexed `u8`, `u16`, `u32`, and `f64` access
-  over those windows.
+  over those windows. `DataView` now provides mixed-width, unaligned,
+  little- or big-endian `u8`, `u16`, `u32`, and `f64` access over the same
+  bounded storage; source-level view classes remain a separate integration
+  gate.
 - Managed millisecond `DateValue` storage with invalid-date propagation and
   comparison semantics, plus UTC Gregorian date decomposition; calendar
   formatting/parsing are now covered for `YYYY-MM-DD`; source-level

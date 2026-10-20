@@ -45,11 +45,17 @@ impl FunctionHandle {
     }
 
     /// Metadata method RID targeted by this function value.
-    pub const fn method_rid(self) -> u32 { self.method_rid }
+    pub const fn method_rid(self) -> u32 {
+        self.method_rid
+    }
 
     /// Captured environment address, if this value is a closure.
     pub const fn environment(self) -> Option<usize> {
-        if self.environment == 0 { None } else { Some(self.environment) }
+        if self.environment == 0 {
+            None
+        } else {
+            Some(self.environment)
+        }
     }
 }
 
@@ -88,7 +94,9 @@ pub struct Any {
 pub struct SymbolId(u64);
 
 impl SymbolId {
-    pub const fn get(self) -> u64 { self.0 }
+    pub const fn get(self) -> u64 {
+        self.0
+    }
 }
 
 /// Per-isolate symbol storage. The registry is deliberately separate from
@@ -100,7 +108,9 @@ pub struct SymbolRegistry {
 }
 
 impl SymbolRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn create(&mut self, description: Option<impl Into<String>>) -> SymbolId {
         let id = SymbolId(self.descriptions.len() as u64);
@@ -119,10 +129,14 @@ impl SymbolRegistry {
     }
 
     pub fn description(&self, id: SymbolId) -> Option<&str> {
-        self.descriptions.get(id.0 as usize).and_then(Option::as_deref)
+        self.descriptions
+            .get(id.0 as usize)
+            .and_then(Option::as_deref)
     }
 
-    pub fn len(&self) -> usize { self.descriptions.len() }
+    pub fn len(&self) -> usize {
+        self.descriptions.len()
+    }
 }
 
 impl Any {
@@ -244,11 +258,20 @@ impl Default for OrderedMap {
 
 impl OrderedMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8], live_len: 0, dead_len: 0 }
+        Self {
+            entries: Vec::new(),
+            buckets: vec![Vec::new(); 8],
+            live_len: 0,
+            dead_len: 0,
+        }
     }
 
-    pub fn len(&self) -> usize { self.live_len }
-    pub fn is_empty(&self) -> bool { self.live_len == 0 }
+    pub fn len(&self) -> usize {
+        self.live_len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.live_len == 0
+    }
 
     pub fn get(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
         let bucket = &self.buckets[(hash as usize) % self.buckets.len()];
@@ -261,15 +284,27 @@ impl OrderedMap {
         self.get(hash, equal).is_some()
     }
 
-    pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
+    pub fn insert(
+        &mut self,
+        key: Any,
+        value: Any,
+        hash: u64,
+        equal: impl Fn(Any) -> bool,
+    ) -> Option<Any> {
         if self.dead_len >= 8 && self.dead_len > self.live_len {
             self.compact();
         }
         let bucket_index = (hash as usize) % self.buckets.len();
-        if let Some(&index) = self.buckets[bucket_index].iter().find(|&&index| {
-            self.entries[index].is_some_and(|(key, _, _)| equal(key))
-        }) {
-            return Some(self.entries[index].as_mut().map(|entry| std::mem::replace(&mut entry.1, value)).unwrap());
+        if let Some(&index) = self.buckets[bucket_index]
+            .iter()
+            .find(|&&index| self.entries[index].is_some_and(|(key, _, _)| equal(key)))
+        {
+            return Some(
+                self.entries[index]
+                    .as_mut()
+                    .map(|entry| std::mem::replace(&mut entry.1, value))
+                    .unwrap(),
+            );
         }
         let index = self.entries.len();
         self.entries.push(Some((key, value, hash)));
@@ -283,9 +318,9 @@ impl OrderedMap {
 
     pub fn remove(&mut self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<(Any, Any)> {
         let bucket_index = (hash as usize) % self.buckets.len();
-        let &index = self.buckets[bucket_index].iter().find(|&&index| {
-            self.entries[index].is_some_and(|(key, _, _)| equal(key))
-        })?;
+        let &index = self.buckets[bucket_index]
+            .iter()
+            .find(|&&index| self.entries[index].is_some_and(|(key, _, _)| equal(key)))?;
         let removed = self.entries[index].take()?;
         self.live_len -= 1;
         self.dead_len += 1;
@@ -293,7 +328,9 @@ impl OrderedMap {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Any, Any)> + '_ {
-        self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
     }
 
     pub fn clear(&mut self) {
@@ -315,7 +352,12 @@ impl OrderedMap {
     }
 
     fn compact(&mut self) {
-        let entries: Vec<_> = self.entries.iter().filter_map(|entry| *entry).map(Some).collect();
+        let entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|entry| *entry)
+            .map(Some)
+            .collect();
         self.entries = entries;
         self.dead_len = 0;
         self.rehash();
@@ -349,20 +391,47 @@ pub struct ErrorValue {
 
 impl ErrorValue {
     pub fn new(name: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { name: name.into(), message: message.into() }
+        Self {
+            name: name.into(),
+            message: message.into(),
+        }
     }
-    pub fn name(&self) -> &str { &self.name }
-    pub fn message(&self) -> &str { &self.message }
-    pub fn set_name(&mut self, name: impl Into<String>) { self.name = name.into(); }
-    pub fn set_message(&mut self, message: impl Into<String>) { self.message = message.into(); }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = name.into();
+    }
+    pub fn set_message(&mut self, message: impl Into<String>) {
+        self.message = message.into();
+    }
 }
 
 impl DateValue {
-    pub const fn from_millis(millis: i64) -> Self { Self { millis, valid: true } }
-    pub const fn invalid() -> Self { Self { millis: 0, valid: false } }
-    pub const fn is_valid(self) -> bool { self.valid }
+    pub const fn from_millis(millis: i64) -> Self {
+        Self {
+            millis,
+            valid: true,
+        }
+    }
+    pub const fn invalid() -> Self {
+        Self {
+            millis: 0,
+            valid: false,
+        }
+    }
+    pub const fn is_valid(self) -> bool {
+        self.valid
+    }
     pub const fn millis(self) -> Option<i64> {
-        if self.valid { Some(self.millis) } else { None }
+        if self.valid {
+            Some(self.millis)
+        } else {
+            None
+        }
     }
     pub fn compare(self, other: Self) -> Option<std::cmp::Ordering> {
         Some(self.millis()?.cmp(&other.millis()?))
@@ -374,7 +443,9 @@ impl DateValue {
         let z = days + 719_468;
         let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
         let day_of_era = z - era * 146_097;
-        let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096).div_euclid(365);
+        let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
+            - day_of_era / 146_096)
+            .div_euclid(365);
         let year = year_of_era + era * 400;
         let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
         let month_part = (5 * day_of_year + 2).div_euclid(153);
@@ -413,7 +484,9 @@ impl DateValue {
     pub fn iso_datetime(self) -> Option<String> {
         let (year, month, day) = self.utc_date()?;
         let (hour, minute, second, millisecond) = self.utc_time()?;
-        Some(format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}Z"))
+        Some(format!(
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}Z"
+        ))
     }
 
     pub fn parse_iso_datetime(value: &str) -> Option<Self> {
@@ -424,7 +497,16 @@ impl DateValue {
         let minute: i64 = fields.next()?.parse().ok()?;
         let second: i64 = fields.next()?.parse().ok()?;
         let millisecond: i64 = fields.next()?.parse().ok()?;
-        if fields.next().is_some() || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 || millisecond < 0 || millisecond > 999 {
+        if fields.next().is_some()
+            || hour < 0
+            || hour > 23
+            || minute < 0
+            || minute > 59
+            || second < 0
+            || second > 59
+            || millisecond < 0
+            || millisecond > 999
+        {
             return None;
         }
         let day = date.millis()?;
@@ -437,7 +519,11 @@ impl DateValue {
         let year: i32 = parts.next()?.parse().ok()?;
         let month: u32 = parts.next()?.parse().ok()?;
         let day: u32 = parts.next()?.parse().ok()?;
-        if parts.next().is_some() || !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+        if parts.next().is_some()
+            || !(1..=12).contains(&month)
+            || day == 0
+            || day > days_in_month(year, month)
+        {
             return None;
         }
         let days = days_from_civil(year, month, day)?;
@@ -459,7 +545,8 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
     let era = if y >= 0 { y } else { y - 399 }.div_euclid(400);
     let year_of_era = y - era * 400;
     let month = i64::from(month);
-    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
+    let day_of_year =
+        (153 * (month + if month > 2 { -3 } else { 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Some(era * 146_097 + day_of_era - 719_468)
 }
@@ -469,6 +556,146 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
 pub struct ByteView {
     offset: usize,
     length: usize,
+}
+
+/// Unaligned, endian-aware view into a shared byte buffer.
+///
+/// Unlike a typed array, a data view permits mixed element widths and offsets
+/// that are not aligned to the element size. The view itself never owns or
+/// copies the backing storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataView {
+    view: ByteView,
+}
+
+impl DataView {
+    pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
+        Some(Self {
+            view: ByteView::new(buffer_length, offset, length)?,
+        })
+    }
+
+    pub fn offset(self) -> usize {
+        self.view.offset()
+    }
+    pub fn len(self) -> usize {
+        self.view.len()
+    }
+
+    fn bytes(self, relative: usize, width: usize) -> Option<usize> {
+        relative
+            .checked_add(width)
+            .filter(|&end| end <= self.len())
+            .map(|_| self.offset() + relative)
+    }
+
+    pub fn get_u8(self, buffer: &ByteBuffer, relative: usize) -> Option<u8> {
+        buffer.get(self.bytes(relative, 1)?)
+    }
+
+    pub fn set_u8(&self, buffer: &mut ByteBuffer, relative: usize, value: u8) -> bool {
+        (*self)
+            .bytes(relative, 1)
+            .is_some_and(|offset| buffer.set(offset, value))
+    }
+
+    pub fn get_u16(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<u16> {
+        let offset = self.bytes(relative, 2)?;
+        let bytes = [buffer.get(offset)?, buffer.get(offset + 1)?];
+        Some(if little_endian {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        })
+    }
+
+    pub fn set_u16(
+        &self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: u16,
+        little_endian: bool,
+    ) -> bool {
+        let Some(offset) = (*self).bytes(relative, 2) else {
+            return false;
+        };
+        let bytes = if little_endian {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        buffer.set(offset, bytes[0]) && buffer.set(offset + 1, bytes[1])
+    }
+
+    pub fn get_u32(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<u32> {
+        let offset = self.bytes(relative, 4)?;
+        let bytes = [
+            buffer.get(offset)?,
+            buffer.get(offset + 1)?,
+            buffer.get(offset + 2)?,
+            buffer.get(offset + 3)?,
+        ];
+        Some(if little_endian {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        })
+    }
+
+    pub fn set_u32(
+        &self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: u32,
+        little_endian: bool,
+    ) -> bool {
+        let Some(offset) = (*self).bytes(relative, 4) else {
+            return false;
+        };
+        let bytes = if little_endian {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        bytes
+            .into_iter()
+            .enumerate()
+            .all(|(index, byte)| buffer.set(offset + index, byte))
+    }
+
+    pub fn get_f64(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<f64> {
+        let offset = self.bytes(relative, 8)?;
+        let mut bytes = [0; 8];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = buffer.get(offset + index)?;
+        }
+        Some(f64::from_bits(if little_endian {
+            u64::from_le_bytes(bytes)
+        } else {
+            u64::from_be_bytes(bytes)
+        }))
+    }
+
+    pub fn set_f64(
+        &self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> bool {
+        let Some(offset) = (*self).bytes(relative, 8) else {
+            return false;
+        };
+        let bytes = if little_endian {
+            value.to_bits().to_le_bytes()
+        } else {
+            value.to_bits().to_be_bytes()
+        };
+        bytes
+            .into_iter()
+            .enumerate()
+            .all(|(index, byte)| buffer.set(offset + index, byte))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -481,7 +708,12 @@ pub enum TypedElement {
 
 impl TypedElement {
     pub const fn size(self) -> usize {
-        match self { Self::U8 => 1, Self::U16 => 2, Self::U32 => 4, Self::F64 => 8 }
+        match self {
+            Self::U8 => 1,
+            Self::U16 => 2,
+            Self::U32 => 4,
+            Self::F64 => 8,
+        }
     }
 }
 
@@ -493,92 +725,155 @@ pub struct TypedArrayView {
 }
 
 impl TypedArrayView {
-    pub fn new(buffer_length: usize, offset: usize, length: usize, element: TypedElement) -> Option<Self> {
+    pub fn new(
+        buffer_length: usize,
+        offset: usize,
+        length: usize,
+        element: TypedElement,
+    ) -> Option<Self> {
         let view = ByteView::new(buffer_length, offset, length)?;
-        (offset % element.size() == 0 && length % element.size() == 0).then_some(Self { view, element })
+        (offset % element.size() == 0 && length % element.size() == 0)
+            .then_some(Self { view, element })
     }
 
-    pub fn len(self) -> usize { self.view.len() / self.element.size() }
-    pub fn element(self) -> TypedElement { self.element }
+    pub fn len(self) -> usize {
+        self.view.len() / self.element.size()
+    }
+    pub fn element(self) -> TypedElement {
+        self.element
+    }
 
     pub fn read_u8(self, buffer: &ByteBuffer, index: usize) -> Option<u8> {
-        (self.element == TypedElement::U8).then(|| buffer.get(self.view.offset + index)).flatten()
+        (self.element == TypedElement::U8)
+            .then(|| buffer.get(self.view.offset + index))
+            .flatten()
     }
 
     pub fn write_u8(self, buffer: &mut ByteBuffer, index: usize, value: u8) -> bool {
-        self.element == TypedElement::U8 && index < self.len() && buffer.set(self.view.offset + index, value)
+        self.element == TypedElement::U8
+            && index < self.len()
+            && buffer.set(self.view.offset + index, value)
     }
 
     pub fn read_u16(self, buffer: &ByteBuffer, index: usize) -> Option<u16> {
-        (self.element == TypedElement::U16).then(|| buffer.read_u16(self.view.offset + index.checked_mul(2)?)).flatten()
+        (self.element == TypedElement::U16)
+            .then(|| buffer.read_u16(self.view.offset + index.checked_mul(2)?))
+            .flatten()
     }
 
     pub fn write_u16(self, buffer: &mut ByteBuffer, index: usize, value: u16) -> bool {
-        self.element == TypedElement::U16 && index.checked_mul(2).is_some_and(|offset| self.view.write_u16(buffer, offset, value))
+        self.element == TypedElement::U16
+            && index
+                .checked_mul(2)
+                .is_some_and(|offset| self.view.write_u16(buffer, offset, value))
     }
 
     pub fn read_u32(self, buffer: &ByteBuffer, index: usize) -> Option<u32> {
-        if self.element != TypedElement::U32 { return None; }
+        if self.element != TypedElement::U32 {
+            return None;
+        }
         self.view.read_u32(buffer, index.checked_mul(4)?)
     }
 
     pub fn write_u32(self, buffer: &mut ByteBuffer, index: usize, value: u32) -> bool {
-        self.element == TypedElement::U32 && index.checked_mul(4).is_some_and(|offset| self.view.write_u32(buffer, offset, value))
+        self.element == TypedElement::U32
+            && index
+                .checked_mul(4)
+                .is_some_and(|offset| self.view.write_u32(buffer, offset, value))
     }
 
     pub fn read_f64(self, buffer: &ByteBuffer, index: usize) -> Option<f64> {
-        if self.element != TypedElement::F64 { return None; }
+        if self.element != TypedElement::F64 {
+            return None;
+        }
         let offset = index.checked_mul(8)?;
-        (offset.checked_add(8)? <= self.view.len()).then(|| buffer.read_f64(self.view.offset() + offset)).flatten()
+        (offset.checked_add(8)? <= self.view.len())
+            .then(|| buffer.read_f64(self.view.offset() + offset))
+            .flatten()
     }
 
     pub fn write_f64(self, buffer: &mut ByteBuffer, index: usize, value: f64) -> bool {
-        if self.element != TypedElement::F64 { return false; }
-        let Some(offset) = index.checked_mul(8) else { return false; };
-        offset.checked_add(8).is_some_and(|end| end <= self.view.len() && buffer.write_f64(self.view.offset() + offset, value))
+        if self.element != TypedElement::F64 {
+            return false;
+        }
+        let Some(offset) = index.checked_mul(8) else {
+            return false;
+        };
+        offset.checked_add(8).is_some_and(|end| {
+            end <= self.view.len() && buffer.write_f64(self.view.offset() + offset, value)
+        })
     }
 }
 
 impl ByteView {
     pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
-        offset.checked_add(length).filter(|&end| end <= buffer_length).map(|_| Self { offset, length })
+        offset
+            .checked_add(length)
+            .filter(|&end| end <= buffer_length)
+            .map(|_| Self { offset, length })
     }
 
-    pub fn offset(self) -> usize { self.offset }
-    pub fn len(self) -> usize { self.length }
+    pub fn offset(self) -> usize {
+        self.offset
+    }
+    pub fn len(self) -> usize {
+        self.length
+    }
 
     pub fn read_u16(self, buffer: &ByteBuffer, relative: usize) -> Option<u16> {
         let end = relative.checked_add(2)?;
-        (end <= self.length).then(|| buffer.read_u16(self.offset + relative)).flatten()
+        (end <= self.length)
+            .then(|| buffer.read_u16(self.offset + relative))
+            .flatten()
     }
 
     pub fn write_u16(self, buffer: &mut ByteBuffer, relative: usize, value: u16) -> bool {
-        relative.checked_add(2).is_some_and(|end| end <= self.length && buffer.write_u16(self.offset + relative, value))
+        relative.checked_add(2).is_some_and(|end| {
+            end <= self.length && buffer.write_u16(self.offset + relative, value)
+        })
     }
 
     pub fn read_u32(self, buffer: &ByteBuffer, relative: usize) -> Option<u32> {
         let end = relative.checked_add(4)?;
-        if end > self.length { return None; }
+        if end > self.length {
+            return None;
+        }
         buffer.read_u32(self.offset + relative)
     }
 
     pub fn write_u32(self, buffer: &mut ByteBuffer, relative: usize, value: u32) -> bool {
-        let Some(end) = relative.checked_add(4) else { return false; };
+        let Some(end) = relative.checked_add(4) else {
+            return false;
+        };
         end <= self.length && buffer.write_u32(self.offset + relative, value)
     }
 }
 
 impl ByteBuffer {
-    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length] } }
-    pub fn len(&self) -> usize { self.bytes.len() }
-    pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
-    pub fn get(&self, index: usize) -> Option<u8> { self.bytes.get(index).copied() }
+    pub fn new(length: usize) -> Self {
+        Self {
+            bytes: vec![0; length],
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+    pub fn get(&self, index: usize) -> Option<u8> {
+        self.bytes.get(index).copied()
+    }
     pub fn set(&mut self, index: usize, value: u8) -> bool {
-        let Some(slot) = self.bytes.get_mut(index) else { return false; };
+        let Some(slot) = self.bytes.get_mut(index) else {
+            return false;
+        };
         *slot = value;
         true
     }
-    pub fn as_slice(&self) -> &[u8] { &self.bytes }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
 
     pub fn read_u16(&self, offset: usize) -> Option<u16> {
         let bytes = self.bytes.get(offset..offset.checked_add(2)?)?;
@@ -586,8 +881,12 @@ impl ByteBuffer {
     }
 
     pub fn write_u16(&mut self, offset: usize, value: u16) -> bool {
-        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(2)) else { return false; };
-        if bytes.len() != 2 { return false; }
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(2)) else {
+            return false;
+        };
+        if bytes.len() != 2 {
+            return false;
+        }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
     }
@@ -598,8 +897,12 @@ impl ByteBuffer {
     }
 
     pub fn write_u32(&mut self, offset: usize, value: u32) -> bool {
-        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(4)) else { return false; };
-        if bytes.len() != 4 { return false; }
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(4)) else {
+            return false;
+        };
+        if bytes.len() != 4 {
+            return false;
+        }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
     }
@@ -610,8 +913,12 @@ impl ByteBuffer {
     }
 
     pub fn write_f64(&mut self, offset: usize, value: f64) -> bool {
-        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(8)) else { return false; };
-        if bytes.len() != 8 { return false; }
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(8)) else {
+            return false;
+        };
+        if bytes.len() != 8 {
+            return false;
+        }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
     }
@@ -851,7 +1158,10 @@ mod tests {
         assert!(object.is_empty());
         assert_eq!(object.set("answer", Any::int(41)), None);
         assert_eq!(object.get("answer").and_then(Any::as_int), Some(41));
-        assert_eq!(object.set("answer", Any::int(42)).and_then(Any::as_int), Some(41));
+        assert_eq!(
+            object.set("answer", Any::int(42)).and_then(Any::as_int),
+            Some(41)
+        );
         assert!(object.contains("answer"));
         assert_eq!(object.remove("answer").and_then(Any::as_int), Some(42));
         assert_eq!(object.len(), 0);
@@ -899,19 +1209,50 @@ mod tests {
         let date = DateValue::from_millis(1_700_000_000_123);
         assert!(date.is_valid());
         assert_eq!(date.millis(), Some(1_700_000_000_123));
-        assert_eq!(date.compare(DateValue::from_millis(1_700_000_000_124)), Some(std::cmp::Ordering::Less));
+        assert_eq!(
+            date.compare(DateValue::from_millis(1_700_000_000_124)),
+            Some(std::cmp::Ordering::Less)
+        );
         assert_eq!(DateValue::from_millis(0).utc_date(), Some((1970, 1, 1)));
         assert_eq!(DateValue::from_millis(0).weekday(), Some(4));
         assert_eq!(DateValue::from_millis(0).ordinal(), Some(1));
-        assert_eq!(DateValue::from_millis(1_700_000_000_000).utc_date(), Some((2023, 11, 14)));
-        assert_eq!(DateValue::from_millis(1_700_000_000_000).ordinal(), Some(318));
-        assert_eq!(DateValue::from_millis(3_723_004).utc_time(), Some((1, 2, 3, 4)));
-        assert_eq!(DateValue::from_millis(-1).utc_time(), Some((23, 59, 59, 999)));
-        assert_eq!(DateValue::from_millis(3_723_004).iso_datetime().as_deref(), Some("1970-01-01T01:02:03.004Z"));
-        assert_eq!(DateValue::parse_iso_datetime("1970-01-01T01:02:03.004Z").and_then(DateValue::iso_datetime).as_deref(), Some("1970-01-01T01:02:03.004Z"));
+        assert_eq!(
+            DateValue::from_millis(1_700_000_000_000).utc_date(),
+            Some((2023, 11, 14))
+        );
+        assert_eq!(
+            DateValue::from_millis(1_700_000_000_000).ordinal(),
+            Some(318)
+        );
+        assert_eq!(
+            DateValue::from_millis(3_723_004).utc_time(),
+            Some((1, 2, 3, 4))
+        );
+        assert_eq!(
+            DateValue::from_millis(-1).utc_time(),
+            Some((23, 59, 59, 999))
+        );
+        assert_eq!(
+            DateValue::from_millis(3_723_004).iso_datetime().as_deref(),
+            Some("1970-01-01T01:02:03.004Z")
+        );
+        assert_eq!(
+            DateValue::parse_iso_datetime("1970-01-01T01:02:03.004Z")
+                .and_then(DateValue::iso_datetime)
+                .as_deref(),
+            Some("1970-01-01T01:02:03.004Z")
+        );
         assert!(DateValue::parse_iso_datetime("1970-01-01T24:00:00.000Z").is_none());
-        assert_eq!(DateValue::from_millis(0).iso_date().as_deref(), Some("1970-01-01"));
-        assert_eq!(DateValue::parse_iso_date("2023-11-14").and_then(DateValue::iso_date).as_deref(), Some("2023-11-14"));
+        assert_eq!(
+            DateValue::from_millis(0).iso_date().as_deref(),
+            Some("1970-01-01")
+        );
+        assert_eq!(
+            DateValue::parse_iso_date("2023-11-14")
+                .and_then(DateValue::iso_date)
+                .as_deref(),
+            Some("2023-11-14")
+        );
         assert!(DateValue::parse_iso_date("2023-02-29").is_none());
         assert!(DateValue::parse_iso_date("bad-date").is_none());
         assert_eq!(DateValue::invalid().compare(date), None);
@@ -937,19 +1278,42 @@ mod tests {
         let floats = TypedArrayView::new(typed.len(), 8, 8, TypedElement::F64).unwrap();
         assert!(floats.write_f64(&mut typed, 0, 1.25));
         assert_eq!(floats.read_f64(&typed, 0), Some(1.25));
+        let data = DataView::new(typed.len(), 1, 10).unwrap();
+        assert!(data.set_u16(&mut typed, 1, 0x1234, true));
+        assert_eq!(data.get_u16(&typed, 1, true), Some(0x1234));
+        assert_eq!(data.get_u16(&typed, 1, false), Some(0x3412));
+        assert!(data.set_u32(&mut typed, 3, 0xdead_beef, false));
+        assert_eq!(data.get_u32(&typed, 3, false), Some(0xdead_beef));
+        assert!(data.set_f64(&mut typed, 2, -3.5, true));
+        assert_eq!(data.get_f64(&typed, 2, true), Some(-3.5));
+        assert!(!data.set_u32(&mut typed, 7, 1, true));
     }
 
     #[test]
     fn ordered_map_preserves_insertion_order_and_updates_in_place() {
         let mut map = OrderedMap::new();
         let key = |candidate: Any, wanted: i64| candidate.as_int() == Some(wanted);
-        assert_eq!(map.insert(Any::int(2), Any::int(20), 2, |k| key(k, 2)), None);
-        assert_eq!(map.insert(Any::int(1), Any::int(10), 1, |k| key(k, 1)), None);
-        assert_eq!(map.insert(Any::int(2), Any::int(22), 2, |k| key(k, 2)).and_then(Any::as_int), Some(20));
+        assert_eq!(
+            map.insert(Any::int(2), Any::int(20), 2, |k| key(k, 2)),
+            None
+        );
+        assert_eq!(
+            map.insert(Any::int(1), Any::int(10), 1, |k| key(k, 1)),
+            None
+        );
+        assert_eq!(
+            map.insert(Any::int(2), Any::int(22), 2, |k| key(k, 2))
+                .and_then(Any::as_int),
+            Some(20)
+        );
         assert_eq!(map.get(2, |k| key(k, 2)).and_then(Any::as_int), Some(22));
         let values: Vec<i64> = map.iter().filter_map(|(_, value)| value.as_int()).collect();
         assert_eq!(values, vec![22, 10]);
-        assert_eq!(map.remove(1, |k| key(k, 1)).map(|(_, value)| value.as_int()), Some(Some(10)));
+        assert_eq!(
+            map.remove(1, |k| key(k, 1))
+                .map(|(_, value)| value.as_int()),
+            Some(Some(10))
+        );
         assert_eq!(map.len(), 1);
     }
 
@@ -957,12 +1321,18 @@ mod tests {
     fn ordered_map_compacts_tombstones_without_changing_order() {
         let mut map = OrderedMap::new();
         for key in 0..12 {
-            map.insert(Any::int(key), Any::int(key * 10), key as u64, |candidate| candidate.as_int() == Some(key));
+            map.insert(Any::int(key), Any::int(key * 10), key as u64, |candidate| {
+                candidate.as_int() == Some(key)
+            });
         }
         for key in 0..10 {
-            assert!(map.remove(key as u64, |candidate| candidate.as_int() == Some(key)).is_some());
+            assert!(map
+                .remove(key as u64, |candidate| candidate.as_int() == Some(key))
+                .is_some());
         }
-        map.insert(Any::int(12), Any::int(120), 12, |candidate| candidate.as_int() == Some(12));
+        map.insert(Any::int(12), Any::int(120), 12, |candidate| {
+            candidate.as_int() == Some(12)
+        });
         let keys: Vec<i64> = map.iter().filter_map(|(key, _)| key.as_int()).collect();
         assert_eq!(keys, vec![10, 11, 12]);
     }
