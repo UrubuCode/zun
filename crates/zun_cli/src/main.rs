@@ -50,7 +50,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
     };
 
-    let module = match compile(&source) {
+    let module = match zun_compiler::compile(&source) {
         Ok(m) => m,
         Err(diags) => {
             report(file, &source, &diags);
@@ -84,31 +84,6 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
             ExitCode::SUCCESS
         }
     }
-}
-
-/// Run the shared front-end pipeline. Returns the module or the diagnostics
-/// that stopped compilation.
-///
-/// The base prelude is concatenated after the user source, so std functions
-/// like `abs`/`clamp`/`powi` are always in scope while user diagnostics keep
-/// their original line and column.
-fn compile(user_source: &str) -> Result<Module, Vec<Diagnostic>> {
-    let source = zun_prelude::with_prelude(user_source);
-    let source = source.as_str();
-    let mut diags = Vec::new();
-    let ast = zun_syntax::parse(source, &mut diags);
-    if diags.iter().any(is_error) {
-        return Err(diags);
-    }
-    let hir = zun_sema::check(source, &ast, &mut diags);
-    if diags.iter().any(is_error) {
-        return Err(diags);
-    }
-    Ok(zun_ilgen::lower(&hir))
-}
-
-fn is_error(d: &Diagnostic) -> bool {
-    d.severity == zun_common::Severity::Error
 }
 
 /// Print each function's name and ZIL body.

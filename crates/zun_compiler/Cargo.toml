@@ -1,0 +1,13 @@
+[package]
+name = "zun_compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zun_common = { path = "../zun_common" }
+zun_module = { path = "../zun_module" }
+zun_prelude = { path = "../zun_prelude" }
+zun_syntax = { path = "../zun_syntax" }
+zun_sema = { path = "../zun_sema" }
+zun_ilgen = { path = "../zun_ilgen" }

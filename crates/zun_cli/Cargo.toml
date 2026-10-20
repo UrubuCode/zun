@@ -11,6 +11,7 @@ name = "zun"
 path = "src/main.rs"
 
 [dependencies]
+zun_compiler = { path = "../zun_compiler" }
 zun_common = { path = "../zun_common" }
 zun_syntax = { path = "../zun_syntax" }
 zun_sema = { path = "../zun_sema" }
