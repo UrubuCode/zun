@@ -16,5 +16,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "bufferWriteU32", params: &[Opaque, U64, U32], ret: Bool, imp: unavailable },
         NativeFn { name: "bufferReadF64", params: &[Opaque, U64], ret: F64, imp: unavailable },
         NativeFn { name: "bufferWriteF64", params: &[Opaque, U64, F64], ret: Bool, imp: unavailable },
+        NativeFn { name: "dataViewNew", params: &[Opaque, U64, U64], ret: Opaque, imp: unavailable },
+        NativeFn { name: "dataViewGetU32", params: &[Opaque, U64, Bool], ret: U32, imp: unavailable },
+        NativeFn { name: "dataViewSetU32", params: &[Opaque, U64, U32, Bool], ret: Bool, imp: unavailable },
     ],
 };

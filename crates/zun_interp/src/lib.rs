@@ -984,6 +984,27 @@ impl Interp<'_> {
                 let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.buffer_write_f64(object, offset, value)).ok_or(RunError::BadToken)?))
             }
+            "dataViewNew" => {
+                let buffer = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let number = |value: &Value| match value { Value::Int(value, _) => Ok(*value as usize), _ => Err(RunError::BadToken) };
+                let offset = number(args.get(1).ok_or(RunError::BadToken)?)?;
+                let length = number(args.get(2).ok_or(RunError::BadToken)?)?;
+                let view = zun_gc::with_current_heap_mut(|heap| heap.alloc_data_view(buffer, offset, length)).ok_or(RunError::BadToken)?;
+                Ok(Value::Object(view))
+            }
+            "dataViewGetU32" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let little_endian = match args.get(2).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_get_u32(view, relative, little_endian)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U32))
+            }
+            "dataViewSetU32" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u32, _ => return Err(RunError::BadToken) };
+                let little_endian = match args.get(3).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.data_view_set_u32(view, relative, value, little_endian)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1101,7 +1122,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1594,6 +1615,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run numeric buffer intrinsics");
         assert!(matches!(result, Value::Float(2.5, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn accesses_data_views_over_gc_backed_buffers_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, dataViewNew, dataViewSetU32, dataViewGetU32 } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let view = dataViewNew(buffer, 2, 4); dataViewSetU32(view, 0, 16909060, true); return dataViewGetU32(view, 0, true) as u64; }",
+        )
+        .expect("compile DataView intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run DataView intrinsics");
+        assert!(matches!(result, Value::Int(16909060, zun_il::NumKind::U64)));
     }
 
     #[test]

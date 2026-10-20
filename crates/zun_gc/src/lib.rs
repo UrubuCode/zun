@@ -171,6 +171,8 @@ pub struct Heap {
     arrays: HashMap<usize, zun_core::ArrayStorage>,
     /// Contiguous byte storage associated with ArrayBuffer objects.
     buffers: HashMap<usize, zun_core::ByteBuffer>,
+    /// DataView descriptors associated with managed view objects.
+    data_views: HashMap<usize, zun_core::DataView>,
     /// Date values associated with Date objects.
     dates: HashMap<usize, zun_core::DateValue>,
     /// Error values associated with Error objects.
@@ -277,6 +279,26 @@ impl Heap {
         self.buffers
             .insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
         object
+    }
+
+    /// Allocate a DataView whose first field keeps its backing buffer alive.
+    pub fn alloc_data_view(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::DataView::new(self.buffer_len(buffer)?, offset, length)?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.data_views.insert(object.addr() as usize, view);
+        Some(object)
+    }
+
+    pub fn data_view_get_u32(&self, object: Obj, relative: usize, little_endian: bool) -> Option<u32> {
+        let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
+        self.data_views.get(&(object.addr() as usize))?.get_u32(self.buffers.get(&(buffer.addr() as usize))?, relative, little_endian)
+    }
+
+    pub fn data_view_set_u32(&mut self, object: Obj, relative: usize, value: u32, little_endian: bool) -> Option<bool> {
+        let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
+        let view = *self.data_views.get(&(object.addr() as usize))?;
+        Some(view.set_u32(self.buffers.get_mut(&(buffer.addr() as usize))?, relative, value, little_endian))
     }
 
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
@@ -1073,6 +1095,7 @@ impl Heap {
                 self.dynamic_objects.remove(&(r.addr as usize));
                 self.arrays.remove(&(r.addr as usize));
                 self.buffers.remove(&(r.addr as usize));
+                self.data_views.remove(&(r.addr as usize));
                 self.dates.remove(&(r.addr as usize));
                 self.errors.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
