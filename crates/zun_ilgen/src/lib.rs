@@ -822,6 +822,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(operand);
                 self.emit(Instruction::simple(Opcode::Await));
             }
+            ExprKind::Yield { value } => {
+                self.expr(value);
+                self.emit(Instruction::simple(Opcode::Yield));
+            }
             ExprKind::Binary { op, lhs, rhs } => {
                 if *op == BinaryOp::Nullish {
                     self.expr(lhs);

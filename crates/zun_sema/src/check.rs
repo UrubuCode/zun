@@ -844,8 +844,14 @@ impl Checker<'_> {
             }
             ast::Expr::Yield { value, .. } => {
                 self.error(span, "generators are not supported yet");
-                let _ = self.check_expr(cx, value);
-                hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span }
+                let checked = self.check_expr(cx, value);
+                hir::Expr {
+                    kind: hir::ExprKind::Yield {
+                        value: Box::new(checked),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
             }
             ast::Expr::Number { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Number(*value),

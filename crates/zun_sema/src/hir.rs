@@ -504,6 +504,12 @@ pub enum ExprKind {
     /// Suspend the async state machine until the operand's Promise settles.
     /// This remains gated until async state-machine lowering is enabled.
     Await { operand: Box<Expr> },
+    /// Yield a value from a generator state machine.
+    ///
+    /// The frontend preserves this node even while generator execution
+    /// remains gated; lowering emits the existing verified yield opcode so
+    /// the resumable runtime can consume it in a later phase.
+    Yield { value: Box<Expr> },
     /// A binary operation. Operand types already checked.
     Binary {
         /// The operator.
