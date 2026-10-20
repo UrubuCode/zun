@@ -186,6 +186,20 @@ fn date_surface_provides_timestamp_factories() {
 }
 
 #[test]
+fn date_surface_parses_iso_datetime_values() {
+    let module = compile(
+        "import { parseIsoDateTime } from \"zun:date\";\n\
+         class Date { millis: i64; valueOf(): i64 { return this.millis; } }\n\
+         function dateParse(value: string): Date { return new Date(parseIsoDateTime(value)); }\n\
+         function main(): int { let value: Date = dateParse(\"1970-01-01T00:00:00.042Z\"); if (value.valueOf() == 42) { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "ISO parsing remains interpreter-only until native JIT calls are lowered");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\

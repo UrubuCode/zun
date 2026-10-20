@@ -346,6 +346,8 @@ mod tests {
         assert!(matches!(dispatch(second_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(3)));
         assert!(matches!(dispatch(millisecond_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(4)));
         assert!(matches!(dispatch(iso_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Str(value) if value == "1970-01-01T01:02:03.004Z"));
+        let (parse_id, _) = resolve("zun:date", "parseIsoDateTime").unwrap();
+        assert!(matches!(dispatch(parse_id, &[NativeArg::Str("1970-01-01T01:02:03.004Z")], &mut sink).unwrap(), NativeValue::Int(value) if value == timestamp));
     }
 
     #[test]

@@ -53,6 +53,17 @@ fn iso_datetime(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
     date(args, "isoDateTime")?.iso_datetime().map(NativeValue::Str).ok_or_else(|| NativeError("isoDateTime: invalid date".into()))
 }
 
+fn parse_iso_datetime(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => *value,
+        _ => return Err(NativeError("parseIsoDateTime: expected a string".into())),
+    };
+    zun_core::DateValue::parse_iso_datetime(value)
+        .and_then(zun_core::DateValue::millis)
+        .map(NativeValue::Int)
+        .ok_or_else(|| NativeError(format!("parseIsoDateTime: invalid ISO datetime `{value}`")))
+}
+
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:date",
     functions: &[
@@ -66,5 +77,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "weekday", params: &[I64], ret: I32, imp: weekday },
         NativeFn { name: "isoDate", params: &[I64], ret: Str, imp: iso },
         NativeFn { name: "isoDateTime", params: &[I64], ret: Str, imp: iso_datetime },
+        NativeFn { name: "parseIsoDateTime", params: &[Str], ret: I64, imp: parse_iso_datetime },
     ],
 };

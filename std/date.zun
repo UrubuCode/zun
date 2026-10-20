@@ -1,6 +1,7 @@
 // UTC calendar surface over a millisecond timestamp.
 
 import { year, month, day, hour, minute, second, millisecond, weekday, isoDate, isoDateTime } from "zun:date";
+import { parseIsoDateTime } from "zun:date";
 import { nowMillis } from "zun:time";
 
 class Date {
@@ -48,4 +49,8 @@ function dateFromMillis(value: i64): Date {
 
 function dateNow(): Date {
     return new Date(nowMillis());
+}
+
+function dateParse(value: string): Date {
+    return new Date(parseIsoDateTime(value));
 }
