@@ -4,6 +4,8 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
+use std::collections::BTreeMap;
+
 /// Size of one raw object slot in bytes.
 pub const SLOT_SIZE: usize = 8;
 
@@ -130,6 +132,54 @@ impl Any {
     }
 }
 
+/// A dictionary-backed object for opt-in dynamic property access.
+///
+/// Property storage is deliberately kept out of the static object layout:
+/// typed Zun classes continue to use fixed field slots, while dynamic values
+/// pay for name lookup only when they opt into this representation. A
+/// `BTreeMap` keeps iteration deterministic for serialization and tests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DynamicObject {
+    properties: BTreeMap<String, Any>,
+}
+
+impl DynamicObject {
+    /// Create an empty dynamic object.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Read a property without removing it.
+    pub fn get(&self, name: &str) -> Option<Any> {
+        self.properties.get(name).copied()
+    }
+
+    /// Insert or replace a property and return its previous value, if any.
+    pub fn set(&mut self, name: impl Into<String>, value: Any) -> Option<Any> {
+        self.properties.insert(name.into(), value)
+    }
+
+    /// Remove a property and return its value, if present.
+    pub fn remove(&mut self, name: &str) -> Option<Any> {
+        self.properties.remove(name)
+    }
+
+    /// Whether the object contains a property with this name.
+    pub fn contains(&self, name: &str) -> bool {
+        self.properties.contains_key(name)
+    }
+
+    /// Number of stored properties.
+    pub fn len(&self) -> usize {
+        self.properties.len()
+    }
+
+    /// Whether the object has no properties.
+    pub fn is_empty(&self) -> bool {
+        self.properties.is_empty()
+    }
+}
+
 /// Stable identifier for a runtime intrinsic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -170,5 +220,17 @@ mod tests {
         assert_eq!(Any::object(0x1234).as_object(), Some(0x1234));
         assert_eq!(Any::string(9).as_string(), Some(9));
         assert_eq!(Any::int(1).as_float(), None);
+    }
+
+    #[test]
+    fn dynamic_object_stores_and_replaces_properties() {
+        let mut object = DynamicObject::new();
+        assert!(object.is_empty());
+        assert_eq!(object.set("answer", Any::int(41)), None);
+        assert_eq!(object.get("answer").and_then(Any::as_int), Some(41));
+        assert_eq!(object.set("answer", Any::int(42)).and_then(Any::as_int), Some(41));
+        assert!(object.contains("answer"));
+        assert_eq!(object.remove("answer").and_then(Any::as_int), Some(42));
+        assert_eq!(object.len(), 0);
     }
 }
