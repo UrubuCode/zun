@@ -1753,6 +1753,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_incompatible_named_function_callback() {
+        let msg = first_error(
+            "function takes_text(value: string): number { return 1.0; }\n\
+             function apply(f: takes_text, value: number): number { return f(value); }",
+        );
+        assert!(msg.contains("does not match"), "{msg}");
+    }
+
+    #[test]
     fn any_does_not_implicitly_enable_arithmetic() {
         let msg = first_error("function f(value: any) { let result = value + 1; }");
         assert!(msg.contains("cannot add"), "{msg}");
