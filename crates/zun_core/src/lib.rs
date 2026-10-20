@@ -315,6 +315,22 @@ impl DateValue {
     pub fn compare(self, other: Self) -> Option<std::cmp::Ordering> {
         Some(self.millis()?.cmp(&other.millis()?))
     }
+
+    /// Return UTC calendar components using the proleptic Gregorian calendar.
+    pub fn utc_date(self) -> Option<(i32, u32, u32)> {
+        let days = self.millis()?.div_euclid(86_400_000);
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
+        let day_of_era = z - era * 146_097;
+        let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096).div_euclid(365);
+        let year = year_of_era + era * 400;
+        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+        let month_part = (5 * day_of_year + 2).div_euclid(153);
+        let day = day_of_year - (153 * month_part + 2).div_euclid(5) + 1;
+        let month = month_part + if month_part < 10 { 3 } else { -9 };
+        let year = year + if month <= 2 { 1 } else { 0 };
+        Some((year as i32, month as u32, day as u32))
+    }
 }
 
 /// Bounds-checked view into a shared byte buffer.
@@ -741,6 +757,8 @@ mod tests {
         assert!(date.is_valid());
         assert_eq!(date.millis(), Some(1_700_000_000_123));
         assert_eq!(date.compare(DateValue::from_millis(1_700_000_000_124)), Some(std::cmp::Ordering::Less));
+        assert_eq!(DateValue::from_millis(0).utc_date(), Some((1970, 1, 1)));
+        assert_eq!(DateValue::from_millis(1_700_000_000_000).utc_date(), Some((2023, 11, 14)));
         assert_eq!(DateValue::invalid().compare(date), None);
         let view = ByteView::new(typed.len(), 2, 8).unwrap();
         assert_eq!(view.read_u32(&typed, 0), Some(0xdead_beef));
