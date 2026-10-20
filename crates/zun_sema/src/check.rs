@@ -17,6 +17,8 @@ mod closures;
 mod class_layout;
 #[path = "classes.rs"]
 mod classes;
+#[path = "blocks.rs"]
+mod blocks;
 #[path = "default_args.rs"]
 mod default_args;
 #[path = "diagnostics.rs"]
@@ -652,17 +654,6 @@ impl Checker<'_> {
             return_ty,
             body,
         }
-    }
-
-    fn check_block(&mut self, cx: &mut FunctionCx, block: &ast::Block) -> Vec<hir::Stmt> {
-        cx.scopes.push(Scope::new());
-        let stmts = block
-            .statements
-            .iter()
-            .map(|s| self.check_stmt(cx, s))
-            .collect();
-        cx.scopes.pop();
-        stmts
     }
 
     fn check_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
