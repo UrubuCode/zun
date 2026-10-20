@@ -30,6 +30,18 @@
             panic!("expected await in return expression");
         };
     }
+
+    #[test]
+    fn parses_yield_expression_for_generator_frontend() {
+        let src = "function main(): int { return yield 1; }";
+        let mut diagnostics = Vec::new();
+        let program = parse(src, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            Stmt::Return { value: Some(Expr::Yield { .. }), .. }
+        ));
+    }
     #[test]
     fn parses_anonymous_function_and_arrow_forms() {
         let src = "function main() { let a = x => x + 1; let b = (x: number, y) => { return x + y; }; let c = function(x) { return x; }; }";

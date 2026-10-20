@@ -825,6 +825,11 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::Yield { value, .. } => {
+                self.error(span, "generators are not supported yet");
+                let _ = self.check_expr(cx, value);
+                hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span }
+            }
             ast::Expr::Number { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Number(*value),
                 ty: Ty::F64,
@@ -2580,7 +2585,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
                 ast::TemplatePart::Expr(expr) => count_awaits_in_expr(expr),
             })
             .sum(),
-        Assign { value, .. } | Await { operand: value, .. } | Unary { operand: value, .. }
+        Assign { value, .. } | Await { operand: value, .. } | Yield { value, .. } | Unary { operand: value, .. }
         | Spread { expr: value, .. } | Cast { expr: value, .. } => {
             usize::from(matches!(expr, Await { .. })) + count_awaits_in_expr(value)
         }

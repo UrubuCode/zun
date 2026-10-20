@@ -26,6 +26,8 @@ pub enum TokenKind {
     KwAsync,
     /// `await`
     KwAwait,
+    /// `yield`
+    KwYield,
     /// `let`
     KwLet,
     /// `if`
@@ -362,6 +364,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "function" => TokenKind::KwFunction,
         "async" => TokenKind::KwAsync,
         "await" => TokenKind::KwAwait,
+        "yield" => TokenKind::KwYield,
         "let" => TokenKind::KwLet,
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,

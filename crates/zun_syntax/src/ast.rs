@@ -384,6 +384,13 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `yield expression` (generator suspension point).
+    Yield {
+        /// The value produced by the generator.
+        value: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `lhs op rhs`
     Binary {
         /// The operator.
@@ -545,6 +552,7 @@ impl Expr {
             | Expr::Index { span, .. } => *span,
             Expr::IndexAssign { span, .. } => *span,
             Expr::Await { span, .. } => *span,
+            Expr::Yield { span, .. } => *span,
             Expr::Function(function) => function.span,
             Expr::Ident(name) => name.span,
         }

@@ -373,6 +373,9 @@ impl Checker<'_> {
             ast::Expr::Await { operand, .. } => {
                 self.collect_capture_expr(cx, parameters, operand, uses)
             }
+            ast::Expr::Yield { value, .. } => {
+                self.collect_capture_expr(cx, parameters, value, uses)
+            }
             ast::Expr::Call { args, .. } => {
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);

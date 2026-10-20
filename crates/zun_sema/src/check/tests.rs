@@ -87,6 +87,12 @@
     }
 
     #[test]
+    fn generators_are_rejected_until_state_machine_lowering_exists() {
+        let (_, diagnostics) = check_src("function main(): int { return yield 1; }");
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("generators are not supported yet")), "{diagnostics:?}");
+    }
+
+    #[test]
     fn await_requires_a_promise_operand() {
         let message = first_error(
             "async function main(): Promise { await 1; return new Promise(); }",
