@@ -29,6 +29,11 @@ pub(super) fn run_method_with(
 }
 
 impl Interp<'_> {
+    pub(super) fn propagate_suspended(&mut self, frame: ExecutionFrame) -> RunError {
+        self.suspended = Some(frame);
+        RunError::Suspended
+    }
+
     /// Resume a previously suspended frame from its saved program counter.
     /// The scheduler owns the decision about when the awaited Promise settled.
     pub(super) fn resume_suspended(&mut self, frame: ExecutionFrame) -> ExecutionOutcome {

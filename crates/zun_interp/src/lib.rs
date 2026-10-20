@@ -531,10 +531,8 @@ impl Interp<'_> {
                             return Err(RunError::Thrown(exception));
                         }
                         ExecutionOutcome::Fault(error) => return Err(error),
-                        ExecutionOutcome::Suspended(_) => {
-                            return Err(RunError::Malformed(
-                                "suspended execution crossed synchronous call boundary".into(),
-                            ));
+                        ExecutionOutcome::Suspended(frame) => {
+                            return Err(self.propagate_suspended(frame));
                         }
                     };
                     stack.push(result);
