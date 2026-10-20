@@ -1433,6 +1433,13 @@ impl Checker<'_> {
                     }
                 }
             }
+            ast::Expr::Function(function) => {
+                self.error(
+                    function.span,
+                    "anonymous functions and arrow closures are not lowered yet",
+                );
+                self.poison(span)
+            }
         }
     }
 

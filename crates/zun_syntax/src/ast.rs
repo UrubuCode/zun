@@ -72,6 +72,22 @@ pub struct Function {
     pub span: Span,
 }
 
+/// An anonymous function expression or arrow function.
+#[derive(Debug, PartialEq)]
+pub struct FunctionExpr {
+    /// Parameters in declaration order.
+    pub params: Vec<Param>,
+    /// Declared return type, if present.
+    pub return_type: Option<TypeAnnotation>,
+    /// Function body. Expression-bodied arrows are represented by a single
+    /// return statement so later phases share one body representation.
+    pub body: Block,
+    /// Whether this expression used arrow syntax.
+    pub is_arrow: bool,
+    /// Span of the whole expression.
+    pub span: Span,
+}
+
 /// A parameter: `name: type`.
 #[derive(Debug, PartialEq)]
 pub struct Param {
@@ -228,6 +244,8 @@ pub enum UnaryOp {
 /// An expression.
 #[derive(Debug, PartialEq)]
 pub enum Expr {
+    /// An anonymous `function` or arrow function expression.
+    Function(FunctionExpr),
     /// A numeric literal.
     Number {
         /// The parsed value (JS numbers are f64).
@@ -384,6 +402,7 @@ impl Expr {
             | Expr::FieldAssign { span, .. }
             | Expr::Index { span, .. } => *span,
             Expr::IndexAssign { span, .. } => *span,
+            Expr::Function(function) => function.span,
             Expr::Ident(name) => name.span,
         }
     }

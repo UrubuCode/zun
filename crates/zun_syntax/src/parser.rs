@@ -241,6 +241,37 @@ impl Parser<'_> {
         }
     }
 
+    fn function_expression(&mut self) -> Expr {
+        let start = self.bump().span; // `function`
+        // A name is deliberately not accepted here: named declarations are
+        // parsed at the program/class level, while this form is anonymous.
+        self.expect(TokenKind::LParen, "`(` after anonymous function");
+        let params = self.parameters();
+        self.expect(TokenKind::RParen, "`)`");
+        let return_type = self.optional_type_annotation();
+        let body = self.block();
+        Expr::Function(FunctionExpr {
+            params,
+            return_type,
+            span: start.to(body.span),
+            body,
+            is_arrow: false,
+        })
+    }
+
+    fn parameters(&mut self) -> Vec<Param> {
+        let mut params = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let name = self.name("a parameter name");
+            let ty = self.optional_type_annotation();
+            params.push(Param { name, ty });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        params
+    }
+
     fn name(&mut self, what: &str) -> Name {
         match self.expect(TokenKind::Ident, what) {
             Some(t) => Name { span: t.span },
@@ -654,11 +685,37 @@ impl Parser<'_> {
                     span: start.to(close),
                 }
             }
+            TokenKind::KwFunction => self.function_expression(),
             TokenKind::Ident => {
                 self.bump();
-                Expr::Ident(Name { span: t.span })
+                let name = Name { span: t.span };
+                if self.eat(TokenKind::Arrow) {
+                    let body = self.arrow_body();
+                    return Expr::Function(FunctionExpr {
+                        params: vec![Param { name, ty: None }],
+                        return_type: None,
+                        span: t.span.to(body.span),
+                        body,
+                        is_arrow: true,
+                    });
+                }
+                Expr::Ident(name)
             }
             TokenKind::LParen => {
+                if self.parenthesized_arrow_start() {
+                    let start = self.bump().span;
+                    let params = self.parameters();
+                    self.expect(TokenKind::RParen, "`)` after arrow parameters");
+                    self.expect(TokenKind::Arrow, "`=>` after arrow parameters");
+                    let body = self.arrow_body();
+                    return Expr::Function(FunctionExpr {
+                        params,
+                        return_type: None,
+                        span: start.to(body.span),
+                        body,
+                        is_arrow: true,
+                    });
+                }
                 self.bump();
                 let inner = self.expression();
                 self.expect(TokenKind::RParen, "`)`");
@@ -670,6 +727,39 @@ impl Parser<'_> {
                 Expr::Null { span: t.span }
             }
         }
+    }
+
+    fn arrow_body(&mut self) -> Block {
+        if self.at(TokenKind::LBrace) {
+            return self.block();
+        }
+        let value = self.expression();
+        let span = value.span();
+        Block {
+            statements: vec![Stmt::Return {
+                value: Some(value),
+                span,
+            }],
+            span,
+        }
+    }
+
+    fn parenthesized_arrow_start(&self) -> bool {
+        let mut index = self.pos + 1;
+        let mut expect_name = true;
+        while index < self.tokens.len() {
+            match self.tokens[index].kind {
+                TokenKind::RParen => {
+                    return self.tokens.get(index + 1).map(|t| t.kind) == Some(TokenKind::Arrow);
+                }
+                TokenKind::Ident if expect_name => expect_name = false,
+                TokenKind::Colon if !expect_name => expect_name = true,
+                TokenKind::Comma if !expect_name => expect_name = true,
+                _ => return false,
+            }
+            index += 1;
+        }
+        false
     }
 }
 
@@ -740,6 +830,27 @@ mod tests {
         assert_eq!(f.params.len(), 2);
         assert!(f.return_type.is_some());
         assert_eq!(f.body.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_anonymous_function_and_arrow_forms() {
+        let src = "function main() { let a = x => x + 1; let b = (x: number, y) => { return x + y; }; let c = function(x) { return x; }; }";
+        let p = parse_ok(src);
+        let body = &p.functions[0].body.statements;
+        let Stmt::Let { init: Expr::Function(first), .. } = &body[0] else {
+            panic!("expected single-parameter arrow");
+        };
+        assert!(first.is_arrow);
+        assert_eq!(first.params.len(), 1);
+        let Stmt::Let { init: Expr::Function(second), .. } = &body[1] else {
+            panic!("expected parenthesized arrow");
+        };
+        assert!(second.is_arrow);
+        assert_eq!(second.params.len(), 2);
+        let Stmt::Let { init: Expr::Function(third), .. } = &body[2] else {
+            panic!("expected anonymous function");
+        };
+        assert!(!third.is_arrow);
     }
 
     #[test]
