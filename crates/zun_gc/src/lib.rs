@@ -1062,6 +1062,29 @@ impl Heap {
             .set_symbol(symbol, value)
     }
 
+    /// Read a callable symbol-keyed property from a dynamic object.
+    pub fn dynamic_get_symbol_function(
+        &self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_symbol_function(symbol))
+    }
+
+    /// Insert or replace a callable symbol-keyed property.
+    pub fn dynamic_set_symbol_function(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        function: zun_core::FunctionHandle,
+    ) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set_symbol_function(symbol, function)
+    }
+
     /// Remove a dynamic property.
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects
@@ -2131,6 +2154,22 @@ mod tests {
             heap.dynamic_get_symbol(object, iterator)
                 .and_then(zun_core::Any::as_int),
             Some(7)
+        );
+    }
+
+    #[test]
+    fn callable_symbol_properties_keep_closure_environment_live() {
+        let mut heap = Heap::new();
+        let object = heap.alloc_dynamic();
+        let iterator = heap.symbol_for("Symbol.iterator");
+        let function = zun_core::FunctionHandle::new(17, Some(0x2000));
+        assert_eq!(
+            heap.dynamic_set_symbol_function(object, iterator, function),
+            None
+        );
+        assert_eq!(
+            heap.dynamic_get_symbol_function(object, iterator),
+            Some(function)
         );
     }
 

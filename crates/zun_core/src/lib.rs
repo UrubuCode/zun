@@ -241,6 +241,7 @@ impl Any {
 pub struct DynamicObject {
     properties: BTreeMap<String, Any>,
     symbol_properties: BTreeMap<SymbolId, Any>,
+    symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
 }
 
 /// An insertion-ordered hash table used by the runtime-backed Map/Set types.
@@ -1113,6 +1114,20 @@ impl DynamicObject {
         self.symbol_properties.insert(symbol, value)
     }
 
+    /// Read a callable property keyed by a runtime symbol.
+    pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
+        self.symbol_functions.get(&symbol).copied()
+    }
+
+    /// Insert or replace a callable symbol-keyed property.
+    pub fn set_symbol_function(
+        &mut self,
+        symbol: SymbolId,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
+        self.symbol_functions.insert(symbol, function)
+    }
+
     /// Remove a property and return its value, if present.
     pub fn remove(&mut self, name: &str) -> Option<Any> {
         self.properties.remove(name)
@@ -1139,6 +1154,7 @@ impl DynamicObject {
             .values()
             .filter_map(|value| value.as_object())
             .chain(self.symbol_properties.values().filter_map(|value| value.as_object()))
+            .chain(self.symbol_functions.values().filter_map(|value| value.environment()))
     }
 }
 
@@ -1290,6 +1306,18 @@ mod tests {
         assert_eq!(object.get("Symbol.iterator").and_then(Any::as_int), Some(1));
         assert_eq!(object.get_symbol(iterator).and_then(Any::as_int), Some(2));
         assert_eq!(object.len(), 1);
+    }
+
+    #[test]
+    fn dynamic_object_stores_callable_symbol_properties() {
+        let mut symbols = SymbolRegistry::new();
+        let iterator = symbols.iterator();
+        let mut object = DynamicObject::new();
+        let function = FunctionHandle::new(17, Some(0x2000));
+
+        assert_eq!(object.set_symbol_function(iterator, function), None);
+        assert_eq!(object.get_symbol_function(iterator), Some(function));
+        assert_eq!(object.object_references().collect::<Vec<_>>(), vec![0x2000]);
     }
 
     #[test]
