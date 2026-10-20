@@ -746,6 +746,32 @@ impl Translator<'_> {
                     let result = self.builder.inst_results(inst)[0];
                     stack.push((result, JitKind::Num(NumKind::U64)));
                 }
+                // A numeric array load already decodes the dynamic carrier at
+                // the helper boundary; the source-level cast is therefore a
+                // representation-preserving check for this narrow JIT path.
+                Opcode::UnboxAny => {
+                    let value = stack.pop().ok_or("stack underflow")?;
+                    if value.1 == JitKind::Other {
+                        return Err("unbox.any requires a typed JIT value".into());
+                    }
+                    stack.push(value);
+                }
+                Opcode::LoadArray => {
+                    let (index, index_kind) = stack.pop().ok_or("stack underflow")?;
+                    let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
+                    if array_kind != JitKind::Object {
+                        return Err("array load requires an object receiver".into());
+                    }
+                    self.builder.declare_value_needs_stack_map(array);
+                    let index = match clif_ty(index_kind) {
+                        types::I64 => index,
+                        ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
+                        _ => return Err("array index must be an integer".into()),
+                    };
+                    let load = self.array_load_f64_fref();
+                    let result = self.builder.ins().call(load, &[array, index]);
+                    stack.push((self.builder.inst_results(result)[0], JitKind::Num(NumKind::F64)));
+                }
                 Opcode::LoadField => {
                     let (kind, slot) = self.field_info(&instr.operand)?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
@@ -966,6 +992,19 @@ impl Translator<'_> {
             .declare_function("zun_jit_array_length", Linkage::Import, &sig)
             .expect("declare zun_jit_array_length");
         self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn array_load_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::F64));
+        let id = self
+            .module
+            .declare_function("zun_jit_array_load_f64", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_load_f64");
+        self.module
+            .declare_func_in_func(id, self.builder.func)
     }
 
     /// Resolve a field token to its `(kind, slot)` using module metadata.

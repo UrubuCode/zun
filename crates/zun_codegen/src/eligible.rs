@@ -5,7 +5,8 @@
 //! `f64`, or `bool`), and the body may use only opcodes the translator handles.
 //! Heap operations (strings, objects, fields, `callvirt`, and unsupported
 //! builtins) and the
-//! float-remainder libcall stay on the interpreter. Eligibility is a
+//! float-remainder libcall stay on the interpreter. Numeric array loads are a
+//! narrow read-only exception. Eligibility is a
 //! whole-call-graph fixpoint, so a JIT frame never calls back into the
 //! interpreter.
 
@@ -24,6 +25,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::ConstTrue
             | Opcode::ConstFalse
             | Opcode::Conv
+            | Opcode::UnboxAny
             | Opcode::LoadLocal
             | Opcode::StoreLocal
             | Opcode::Pop
@@ -54,6 +56,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::LoadField
             | Opcode::StoreField
             | Opcode::ArrayLength
+            | Opcode::LoadArray
     );
     supported || (op == Opcode::CallBuiltin && (date_builtin(instr) || math_builtin(instr)))
 }
@@ -220,6 +223,14 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
             continue;
         };
         if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
+            continue;
+        }
+        // The managed array helper currently has a stable f64 ABI only. Keep
+        // integer and reference-valued array consumers in Tier 0.
+        if instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
+            && (!body.returns_value
+                || JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64))
+        {
             continue;
         }
         // Reject methods whose field/newobj operands touch non-JIT types

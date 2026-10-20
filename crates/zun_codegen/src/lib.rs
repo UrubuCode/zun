@@ -37,6 +37,24 @@ pub extern "C" fn zun_jit_array_length(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.array_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+/// Read a numeric dynamic array element without allocating or collecting.
+///
+/// This helper is intentionally limited to numeric `Any` values. Array
+/// mutation, allocation, and reference-valued elements remain Tier 0 until
+/// their managed ABI and write-barrier contracts are lowered.
+#[inline]
+pub extern "C" fn zun_jit_array_load_f64(address: i64, index: i64) -> f64 {
+    if index < 0 {
+        return f64::NAN;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.array_get(object, index as usize)
+            .and_then(|value| value.as_float().or_else(|| value.as_int().map(|value| value as f64)))
+            .unwrap_or(f64::NAN)
+    })
+}
+
 /// Copy one dynamic array element into the stable two-word JIT carrier.
 ///
 /// The out-parameter ABI is intentional: it keeps `tag` and `payload`
@@ -389,6 +407,7 @@ impl Jit {
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
+    builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
         builder.symbol(
             "zun_jit_array_load_any",
             zun_jit_array_load_any as *const u8,

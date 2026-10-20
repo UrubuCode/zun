@@ -2901,6 +2901,33 @@ fn object_alloc_and_field_access_in_jit() {
 }
 
 #[test]
+fn numeric_array_load_is_jit_equivalent() {
+    let src = "function read(values: Array): number { return values[1] as number; }\n\
+               function main(): number { let values = new Array(2); values[0] = box_any(7.0); values[1] = box_any(41.0); return read(values); }";
+    let module = compile(src);
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array load");
+    assert!(jit.is_compiled(read_rid), "numeric array reader should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(2);
+    heap.array_set(array, 0, zun_core::Any::float(7.0));
+    heap.array_set(array, 1, zun_core::Any::float(41.0));
+    let jit_value = {
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_packed(read_rid, &[array.addr() as u64])
+            .expect("jit array load")
+    };
+    assert_eq!(f64::from_bits(jit_value), 41.0);
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 41.0));
+}
+
+#[test]
 fn non_overridden_virtual_call_is_jit_eligible() {
     let src = "class Counter { n: int; get(): int { return this.n; } }\n\
                function read(c: Counter): int { return c.get(); }\n\
