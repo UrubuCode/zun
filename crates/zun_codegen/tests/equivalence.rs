@@ -337,6 +337,19 @@ fn number_finiteness_methods_use_interpreter_fallback() {
 }
 
 #[test]
+fn number_is_integer_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { isInteger(): boolean { return (this as int) as number == this; } }\n\
+         function main(): boolean { let value: number = 42.0; return value.isInteger(); }",
+    )
+    .expect("compile Number isInteger");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn number_to_string_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { toString } from \"zun:number\";\n\

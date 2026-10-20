@@ -24,6 +24,10 @@ class Number {
         return this == this;
     }
 
+    isInteger(): boolean {
+        return (this as int) as number == this;
+    }
+
     sign(): number {
         if (this < 0.0) { return -1.0; }
         if (this > 0.0) { return 1.0; }

@@ -1152,6 +1152,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_is_integer_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { isInteger(): boolean { return (this as int) as number == this; } }\n\
+             function main(): boolean { let value: number = 42.0; return value.isInteger(); }",
+        )
+        .expect("compile Number isInteger");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number isInteger");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
             "import { toString } from \"zun:number\";\n\
