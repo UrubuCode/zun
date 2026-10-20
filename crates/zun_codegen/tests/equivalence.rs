@@ -153,6 +153,19 @@ fn date_surface_supports_time_aliases_and_comparisons() {
 }
 
 #[test]
+fn date_surface_exposes_ecmascript_utc_aliases() {
+    let module = compile(
+        "import { year, month, day, hour, minute, second, millisecond, isoDateTime } from \"zun:date\";\n\
+         class Date { millis: i64; utcYear(): i32 { return year(this.millis); } utcMonth(): i32 { return month(this.millis); } utcDay(): i32 { return day(this.millis); } utcHour(): i32 { return hour(this.millis); } utcMinute(): i32 { return minute(this.millis); } utcSecond(): i32 { return second(this.millis); } utcMillisecond(): i32 { return millisecond(this.millis); } isoDateTime(): string { return isoDateTime(this.millis); } getUTCFullYear(): i32 { return this.utcYear(); } getUTCMonth(): i32 { return this.utcMonth(); } getUTCDate(): i32 { return this.utcDay(); } getUTCHours(): i32 { return this.utcHour(); } getUTCMinutes(): i32 { return this.utcMinute(); } getUTCSeconds(): i32 { return this.utcSecond(); } getUTCMilliseconds(): i32 { return this.utcMillisecond(); } toISOString(): string { return this.isoDateTime(); } }\n\
+         function main(): int { let value: Date = new Date(3723004); if (value.getUTCFullYear() == 1970) { if (value.getUTCMonth() == 1) { if (value.getUTCDate() == 1) { if (value.getUTCHours() == 1) { if (value.getUTCMinutes() == 2) { if (value.getUTCSeconds() == 3) { if (value.getUTCMilliseconds() == 4) { if (value.toISOString() == \"1970-01-01T01:02:03.004Z\") { return 1; } } } } } } } } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "date string aliases remain interpreter-only");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\

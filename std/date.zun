@@ -30,5 +30,13 @@ class Date {
     utcWeekday(): i32 { return weekday(this.millis); }
     isoDate(): string { return isoDate(this.millis); }
     isoDateTime(): string { return isoDateTime(this.millis); }
+    getUTCFullYear(): i32 { return this.utcYear(); }
+    getUTCMonth(): i32 { return this.utcMonth(); }
+    getUTCDate(): i32 { return this.utcDay(); }
+    getUTCHours(): i32 { return this.utcHour(); }
+    getUTCMinutes(): i32 { return this.utcMinute(); }
+    getUTCSeconds(): i32 { return this.utcSecond(); }
+    getUTCMilliseconds(): i32 { return this.utcMillisecond(); }
+    toISOString(): string { return this.isoDateTime(); }
     toString(): string { return this.isoDateTime(); }
 }
