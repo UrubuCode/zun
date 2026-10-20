@@ -1199,6 +1199,18 @@ fn number_is_between_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn number_is_in_unit_interval_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { isBetween(low: number, high: number): boolean { if (this < low) { return false; } return this <= high; } isInUnitInterval(): boolean { return this.isBetween(0.0, 1.0); } } function main(): boolean { let value: number = 0.75; return value.isInUnitInterval(); }",
+    )
+    .expect("compile Number isInUnitInterval");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn number_is_approximately_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",
