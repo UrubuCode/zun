@@ -275,6 +275,16 @@ impl Heap {
         self.dates.get(&(object.addr() as usize))?.millis()
     }
 
+    pub fn date_set_millis(&mut self, object: Obj, millis: i64) -> Option<()> {
+        *self.dates.get_mut(&(object.addr() as usize))? = zun_core::DateValue::from_millis(millis);
+        Some(())
+    }
+
+    pub fn date_invalidate(&mut self, object: Obj) -> Option<()> {
+        *self.dates.get_mut(&(object.addr() as usize))? = zun_core::DateValue::invalid();
+        Some(())
+    }
+
     pub fn date_compare(&self, left: Obj, right: Obj) -> Option<std::cmp::Ordering> {
         self.dates.get(&(left.addr() as usize))?.compare(*self.dates.get(&(right.addr() as usize))?)
     }
@@ -1188,6 +1198,10 @@ mod tests {
         assert_eq!(heap.date_utc_time(earlier), Some((0, 0, 0, 100)));
         assert_eq!(heap.date_iso(earlier).as_deref(), Some("1970-01-01"));
         assert_eq!(heap.date_iso_datetime(earlier).as_deref(), Some("1970-01-01T00:00:00.100Z"));
+        assert_eq!(heap.date_set_millis(earlier, 200), Some(()));
+        assert_eq!(heap.date_millis(earlier), Some(200));
+        assert_eq!(heap.date_invalidate(earlier), Some(()));
+        assert_eq!(heap.date_millis(earlier), None);
         assert_eq!(heap.date_millis(invalid), None);
         assert_eq!(heap.date_compare(earlier, invalid), None);
     }
