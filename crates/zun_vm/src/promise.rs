@@ -249,6 +249,25 @@ impl<T: Send + 'static> Promise<T> {
         mapped
     }
 
+    /// Chain an asynchronous transform and flatten its returned promise.
+    pub fn then_async<U: Send + 'static>(
+        &self,
+        transform: impl FnOnce(T) -> Promise<U> + Send + 'static,
+    ) -> Promise<U> {
+        let chained = Promise::new();
+        let target = chained.clone_handle();
+        self.then(move |value| {
+            let next = transform(value);
+            let success = target.clone();
+            next.then(move |value| success.resolve(value));
+            let failure = target.clone();
+            next.catch(move |error| failure.reject(error));
+        });
+        let target = chained.clone_handle();
+        self.catch(move |error| target.reject(error));
+        chained
+    }
+
     /// Register a continuation that is always delivered through a microtask
     /// queue, including when this promise has already resolved.
     pub fn then_scheduled(
@@ -310,6 +329,15 @@ impl<T: Send + 'static> Promise<T> {
 struct PromiseHandle<T> {
     state: Arc<AtomicU8>,
     inner: Arc<Mutex<Inner<T>>>,
+}
+
+impl<T> Clone for PromiseHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<T> PromiseHandle<T> {
@@ -566,6 +594,24 @@ mod tests {
         assert!(promise.reject("boom"));
         assert!(mapped.is_rejected());
         assert_eq!(mapped.error().as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn then_async_flattens_inner_promise_and_propagates_failures() {
+        let source = Promise::<u32>::new();
+        let chained = source.then_async(|_| {
+            let promise = Promise::new();
+            assert!(promise.resolve(42));
+            promise
+        });
+        assert!(source.resolve(7));
+        assert!(chained.is_resolved());
+        assert_eq!(chained.error(), None);
+
+        let failed = Promise::<u32>::new();
+        let chained: Promise<u32> = failed.then_async(|_| panic!("transform must not run"));
+        assert!(failed.reject("boom"));
+        assert_eq!(chained.error().as_deref(), Some("boom"));
     }
 
     #[test]
