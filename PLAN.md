@@ -454,7 +454,9 @@ The following runtime contracts are implemented and covered by tests:
   indexing, indexed assignment, `length`, `push`, and `pop` lower to verified
   IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
 - Array instructions have verifier fixtures and an explicit Tier 0 fallback
-  test while Cranelift lowering for array storage remains pending.
+  test. Read-only `ArrayLength` now lowers through a non-allocating Cranelift
+  helper; array allocation and indexed mutation remain Tier 0 pending precise
+  JIT roots and write barriers.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
   tracing of managed keys and values. Source-level `Map` and `Set` classes
