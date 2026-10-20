@@ -136,6 +136,7 @@ struct FunctionCx {
     scopes: Vec<Scope>,
     return_ty: Ty,
     loop_depth: usize,
+    mutated: HashSet<hir::LocalSlot>,
 }
 
 #[derive(Default)]
@@ -182,7 +183,7 @@ impl Checker<'_> {
                 outer_slot,
                 environment_slot: environment_slot as u16,
                 ty: cx.locals[outer_slot as usize],
-                mode: if uses.mutated.contains(&outer_slot) {
+                mode: if cx.mutated.contains(&outer_slot) || uses.mutated.contains(&outer_slot) {
                     hir::CaptureMode::ByCell
                 } else {
                     hir::CaptureMode::ByValue
@@ -635,6 +636,7 @@ impl Checker<'_> {
             scopes: vec![Scope::new()],
             return_ty,
             loop_depth: 0,
+            mutated: HashSet::new(),
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -911,6 +913,7 @@ impl Checker<'_> {
                 let text = self.text(target).to_string();
                 match cx.lookup(&text) {
                     Some(slot) => {
+                        cx.mutated.insert(slot);
                         let slot_ty = cx.locals[slot as usize];
                         coerce_numeric_literal(&mut value, slot_ty);
                         if !slot_ty.is_error()
