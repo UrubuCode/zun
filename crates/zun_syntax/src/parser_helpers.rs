@@ -3,6 +3,22 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn cast(&mut self) -> Expr {
+        let mut expr = self.call();
+        while self.eat(TokenKind::KwAs) {
+            let ty = TypeAnnotation {
+                name: self.name("a type name"),
+            };
+            let span = expr.span().to(ty.name.span);
+            expr = Expr::Cast {
+                expr: Box::new(expr),
+                ty,
+                span,
+            };
+        }
+        expr
+    }
+
     pub(crate) fn unary(&mut self) -> Expr {
         let op = match self.peek().kind {
             TokenKind::Minus => Some(UnaryOp::Neg),
