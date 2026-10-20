@@ -58,6 +58,17 @@ class Array {
         return this;
     }
 
+    slice(start: u64, end: u64): Array {
+        let count: u64 = end - start;
+        let result = new Array(count);
+        let index: u64 = 0;
+        while (index < count) {
+            result[index] = this[start + index];
+            index = index + 1;
+        }
+        return result;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {
