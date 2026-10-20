@@ -291,8 +291,20 @@ pub struct Function {
     /// machine. The lowering pass remains gated until await suspension is
     /// represented in IL.
     pub is_async: bool,
+    /// Structural state-machine plan for an async function. The lowering pass
+    /// consumes this after Promise suspension points have an IL representation.
+    pub async_plan: Option<AsyncStateMachinePlan>,
     /// The body statements.
     pub body: Vec<Stmt>,
+}
+
+/// Compiler-owned metadata for a stackless async state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsyncStateMachinePlan {
+    /// State zero is the entry state; later states resume after an await.
+    pub state_count: u16,
+    /// Locals whose lifetime crosses a suspension point.
+    pub hoisted_locals: Vec<LocalSlot>,
 }
 
 /// A checked statement.

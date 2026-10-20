@@ -363,6 +363,7 @@ impl Checker<'_> {
                     f.name.span,
                     format!("extern method `{name}` must be bound to an imported intrinsic"),
                 );
+                let local_count = cx.locals.len();
                 return hir::Function {
                     name,
                     param_count: param_tys.len() as u16,
@@ -375,6 +376,10 @@ impl Checker<'_> {
                     locals: cx.locals,
                     return_ty,
                     is_async: f.is_async,
+                    async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
+                        state_count: 1,
+                        hoisted_locals: (0..local_count as u16).collect(),
+                    }),
                     body: Vec::new(),
                 };
             };
@@ -447,6 +452,7 @@ impl Checker<'_> {
                 })
             })
             .collect();
+        let local_count = cx.locals.len();
         hir::Function {
             name,
             param_count: param_tys.len() as u16,
@@ -459,6 +465,10 @@ impl Checker<'_> {
             locals: cx.locals,
             return_ty,
             is_async: f.is_async,
+            async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
+                state_count: 1,
+                hoisted_locals: (0..local_count as u16).collect(),
+            }),
             body,
         }
     }
