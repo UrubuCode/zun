@@ -502,6 +502,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::Closure { .. } => {
                 unreachable!("closure HIR is not lowered until closure sema is enabled")
             }
+            ExprKind::CaptureLoad { .. } | ExprKind::CaptureStore { .. } => {
+                unreachable!("capture accesses are not lowered until closure sema is enabled")
+            }
             ExprKind::Assign { slot, value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Dup));

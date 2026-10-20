@@ -176,6 +176,16 @@ pub struct Capture {
     pub mode: CaptureMode,
 }
 
+/// A capture together with the expression evaluated in the enclosing scope
+/// when the closure environment is constructed.
+#[derive(Debug)]
+pub struct ClosureCapture {
+    /// Environment layout entry.
+    pub capture: Capture,
+    /// Value or cell reference supplied by the enclosing function.
+    pub value: Box<Expr>,
+}
+
 /// A closure body represented as a synthetic function with an explicit hidden
 /// environment parameter. It is not produced until closure sema is enabled.
 #[derive(Debug)]
@@ -314,7 +324,27 @@ pub enum ExprKind {
         /// Index into [`Program::closures`].
         function: u32,
         /// Bindings copied/shared into the environment.
-        captures: Vec<Capture>,
+        captures: Vec<ClosureCapture>,
+    },
+    /// Read one entry from the hidden closure environment parameter.
+    CaptureLoad {
+        /// Environment layout slot.
+        environment_slot: u16,
+        /// Static type after unboxing.
+        ty: Ty,
+        /// Whether the entry is a shared mutable cell.
+        mode: CaptureMode,
+    },
+    /// Write one entry in the hidden closure environment parameter.
+    CaptureStore {
+        /// Environment layout slot.
+        environment_slot: u16,
+        /// Static type of the assigned value.
+        ty: Ty,
+        /// Whether the entry is a shared mutable cell.
+        mode: CaptureMode,
+        /// Assigned value.
+        value: Box<Expr>,
     },
     /// Write a local slot; the expression's value is the stored value.
     Assign {
