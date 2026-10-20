@@ -72,3 +72,26 @@ pub(crate) fn bin_int_signed_aware(
     stack.push(Value::Int(value::wrap_int(result, kind), kind));
     Ok(())
 }
+
+/// Convert a numeric value according to the interpreter's numeric lattice.
+pub(crate) fn convert(v: &Value, target: zun_il::NumKind) -> Result<Value, RunError> {
+    use zun_il::NumKind;
+    let as_f64 = match v {
+        Value::Int(n, _) => *n as f64,
+        Value::Float(n, _) => *n,
+        other => return Err(RunError::Malformed(format!("cannot convert {other:?}"))),
+    };
+    Ok(if target.is_int() {
+        let truncated = match v {
+            Value::Int(n, _) => *n,
+            Value::Float(n, _) => *n as i64,
+            _ => unreachable!(),
+        };
+        Value::Int(value::wrap_int(truncated, target), target)
+    } else {
+        match target {
+            NumKind::F32 => Value::Float(as_f64 as f32 as f64, NumKind::F32),
+            _ => Value::Float(as_f64, NumKind::F64),
+        }
+    })
+}

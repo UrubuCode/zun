@@ -17,7 +17,7 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
-use stack::{bin_float, bin_int, bin_int_signed_aware, pop, pop_n, underflow};
+use stack::{bin_float, bin_int, bin_int_signed_aware, convert, pop, pop_n, underflow};
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3815,31 +3815,6 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
-}
-
-/// Convert a numeric value to `target`, following the lattice rules: int↔int
-/// re-wraps, float→int truncates toward zero (saturating is a JIT concern), and
-/// int→float / float→float rounds.
-fn convert(v: &Value, target: zun_il::NumKind) -> Result<Value, RunError> {
-    use zun_il::NumKind;
-    let as_f64 = match v {
-        Value::Int(n, _) => *n as f64,
-        Value::Float(n, _) => *n,
-        other => return Err(RunError::Malformed(format!("cannot convert {other:?}"))),
-    };
-    Ok(if target.is_int() {
-        let truncated = match v {
-            Value::Int(n, _) => *n,
-            Value::Float(n, _) => *n as i64,
-            _ => unreachable!(),
-        };
-        Value::Int(value::wrap_int(truncated, target), target)
-    } else {
-        match target {
-            NumKind::F32 => Value::Float(as_f64 as f32 as f64, NumKind::F32),
-            _ => Value::Float(as_f64, NumKind::F64),
-        }
-    })
 }
 
 /// A relational comparison operator.
