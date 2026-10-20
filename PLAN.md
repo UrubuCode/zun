@@ -376,7 +376,8 @@ The following runtime contracts are implemented and covered by tests:
   `Symbol.for`-style keys; iterator protocol bindings remain a source/compiler
   integration gate.
 - GC weak-reference slots with post-mark clearing; `WeakMap` ephemeron
-  fixed-point marking and finalization queues remain separate follow-up gates.
+  fixed-point marking is now implemented for direct object values; finalization
+  queues and source-level bindings remain separate follow-up gates.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

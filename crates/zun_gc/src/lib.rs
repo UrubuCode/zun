@@ -110,6 +110,16 @@ struct WeakSlot {
     target: Option<usize>,
 }
 
+/// Handle into the heap's ephemeron table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WeakMapId(u32);
+
+#[derive(Debug, Clone, Copy)]
+struct Ephemeron {
+    key: Option<usize>,
+    value: Option<usize>,
+}
+
 /// Bookkeeping for one allocated object, enabling the sweep phase.
 #[derive(Debug)]
 struct Record {
@@ -133,6 +143,8 @@ pub struct Heap {
     symbols: zun_core::SymbolRegistry,
     /// Weak references are cleared after marking and never keep targets alive.
     weak_refs: Vec<WeakSlot>,
+    /// WeakMap entries promoted only when their keys are marked.
+    weak_maps: Vec<Ephemeron>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
@@ -478,6 +490,35 @@ impl Heap {
             }
         }
 
+        // Ephemeron fixed point: a marked key promotes its value, while strong
+        // fields of promoted values can make later keys reachable.
+        loop {
+            let mut promoted = false;
+            for entry in &self.weak_maps {
+                let (Some(key), Some(value)) = (entry.key, entry.value) else { continue; };
+                let Some(&key_idx) = self.by_addr.get(&key) else { continue; };
+                let Some(&value_idx) = self.by_addr.get(&value) else { continue; };
+                if self.records[key_idx].marked && !self.records[value_idx].marked {
+                    self.records[value_idx].marked = true;
+                    work.push(value_idx);
+                    promoted = true;
+                }
+            }
+            while let Some(idx) = work.pop() {
+                let obj = Obj(self.records[idx].addr);
+                for slot in ref_slots(obj.type_rid()) {
+                    let child = obj.field(slot) as *mut u64;
+                    if let Some(&child_idx) = self.by_addr.get(&(child as usize)) {
+                        if !self.records[child_idx].marked {
+                            self.records[child_idx].marked = true;
+                            work.push(child_idx);
+                        }
+                    }
+                }
+            }
+            if !promoted { break; }
+        }
+
         // Weak references observe the completed mark set but do not contribute
         // roots. Clear dead targets before sweep removes their addresses.
         for weak in &mut self.weak_refs {
@@ -567,6 +608,26 @@ impl Heap {
     pub fn weak_ref_get(&self, id: WeakRefId) -> Option<Obj> {
         let address = self.weak_refs.get(id.0 as usize)?.target?;
         self.by_addr.get(&address).map(|&index| Obj(self.records[index].addr))
+    }
+
+    pub fn weak_map_new(&mut self) -> WeakMapId {
+        let id = WeakMapId(self.weak_maps.len() as u32);
+        self.weak_maps.push(Ephemeron { key: None, value: None });
+        id
+    }
+
+    pub fn weak_map_set(&mut self, id: WeakMapId, key: Obj, value: Obj) -> bool {
+        let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else { return false; };
+        entry.key = Some(key.addr() as usize);
+        entry.value = Some(value.addr() as usize);
+        true
+    }
+
+    pub fn weak_map_get(&self, id: WeakMapId) -> Option<(Obj, Obj)> {
+        let entry = self.weak_maps.get(id.0 as usize)?;
+        let key = self.by_addr.get(&entry.key?)?;
+        let value = self.by_addr.get(&entry.value?)?;
+        Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
     }
 
     /// Number of objects' worth of chunks currently held (for diagnostics).
@@ -821,6 +882,23 @@ mod tests {
         let weak = heap.weak_ref_new(target);
         assert_eq!(unsafe { heap.collect(&[target], &|_| Vec::new()) }, 0);
         assert_eq!(heap.weak_ref_get(weak), Some(target));
+    }
+
+    #[test]
+    fn weak_map_promotes_value_only_when_key_is_live() {
+        let mut heap = Heap::new();
+        let weak_map = heap.weak_map_new();
+        let key = heap.alloc(1, 0);
+        let value = heap.alloc(2, 0);
+        assert!(heap.weak_map_set(weak_map, key, value));
+        assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 0);
+        assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
+
+        let key2 = heap.alloc(3, 0);
+        let value2 = heap.alloc(4, 0);
+        assert!(heap.weak_map_set(weak_map, key2, value2));
+        assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 3);
+        assert_eq!(heap.weak_map_get(weak_map), None);
     }
 
     #[test]
