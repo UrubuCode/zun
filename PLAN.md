@@ -377,7 +377,8 @@ The following runtime contracts are implemented and covered by tests:
   integration gate.
 - GC weak-reference slots with post-mark clearing; `WeakMap` ephemeron
   fixed-point marking is now implemented for direct object values; finalization
-  queues and source-level bindings remain separate follow-up gates.
+  queues are now exposed as a post-sweep token queue; source-level bindings and
+  callback scheduling remain separate follow-up gates.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

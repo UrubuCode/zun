@@ -114,10 +114,21 @@ struct WeakSlot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WeakMapId(u32);
 
+/// Opaque registration handle for the finalization queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FinalizationId(u32);
+
 #[derive(Debug, Clone, Copy)]
 struct Ephemeron {
     key: Option<usize>,
     value: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FinalizerEntry {
+    target: usize,
+    token: u64,
+    queued: bool,
 }
 
 /// Bookkeeping for one allocated object, enabling the sweep phase.
@@ -145,6 +156,9 @@ pub struct Heap {
     weak_refs: Vec<WeakSlot>,
     /// WeakMap entries promoted only when their keys are marked.
     weak_maps: Vec<Ephemeron>,
+    /// Finalizers are queued after sweep and never run during collection.
+    finalizers: Vec<FinalizerEntry>,
+    finalization_queue: Vec<u64>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
@@ -544,6 +558,12 @@ impl Heap {
                 freed += 1;
             }
         }
+        for entry in &mut self.finalizers {
+            if !entry.queued && self.by_addr.get(&entry.target).is_none() {
+                entry.queued = true;
+                self.finalization_queue.push(entry.token);
+            }
+        }
         freed
     }
 
@@ -628,6 +648,17 @@ impl Heap {
         let key = self.by_addr.get(&entry.key?)?;
         let value = self.by_addr.get(&entry.value?)?;
         Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
+    }
+
+    pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
+        let id = FinalizationId(self.finalizers.len() as u32);
+        self.finalizers.push(FinalizerEntry { target: target.addr() as usize, token, queued: false });
+        id
+    }
+
+    /// Drain tokens whose targets were reclaimed by the last collection.
+    pub fn finalization_drain(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.finalization_queue)
     }
 
     /// Number of objects' worth of chunks currently held (for diagnostics).
@@ -899,6 +930,17 @@ mod tests {
         assert!(heap.weak_map_set(weak_map, key2, value2));
         assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 3);
         assert_eq!(heap.weak_map_get(weak_map), None);
+    }
+
+    #[test]
+    fn finalization_queues_token_after_target_is_swept() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        heap.finalization_register(target, 99);
+        assert!(heap.finalization_drain().is_empty());
+        assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+        assert_eq!(heap.finalization_drain(), vec![99]);
+        assert!(heap.finalization_drain().is_empty());
     }
 
     #[test]
