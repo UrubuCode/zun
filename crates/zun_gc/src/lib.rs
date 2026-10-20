@@ -35,38 +35,13 @@ pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 mod collection;
 mod object;
 mod records;
+mod value_ops;
 mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
 use weak_state::{Ephemeron, FinalizerEntry, WeakSlot};
 use records::Record;
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(1469598103934665603, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(1099511628211)
-    })
-}
-
-fn any_same_value_zero(a: zun_core::Any, b: zun_core::Any, strings: &[Rc<str>]) -> bool {
-    if a.tag() != b.tag() {
-        return false;
-    }
-    match a.tag() {
-        zun_core::AnyTag::Float => {
-            let left = a.as_float().unwrap();
-            let right = b.as_float().unwrap();
-            left == right || (left.is_nan() && right.is_nan())
-        }
-        zun_core::AnyTag::String => {
-            strings.get(a.as_string().unwrap() as usize)
-                == strings.get(b.as_string().unwrap() as usize)
-        }
-        zun_core::AnyTag::Int => a.as_int() == b.as_int(),
-        zun_core::AnyTag::Bool => a.as_bool() == b.as_bool(),
-        zun_core::AnyTag::Object => a.as_object() == b.as_object(),
-        zun_core::AnyTag::Null => true,
-    }
-}
+use value_ops::{any_same_value_zero, hash_bytes};
 
 /// Slots per allocation chunk (objects are bump-allocated within a chunk).
 const CHUNK_SLOTS: usize = 64 * 1024;
