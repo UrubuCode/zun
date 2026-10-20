@@ -171,6 +171,20 @@ fn string_pad_start_uses_interpreter_fallback() {
 }
 
 #[test]
+fn string_pad_end_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { padEnd } from \"zun:string\";\n\
+         class String { extern padEnd(targetLength: u64, fill: string): string; }\n\
+         function main(): string { let value: string = \"zun\"; return value.padEnd(5, \"0\"); }",
+    )
+    .expect("compile String padEnd");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "zun00"));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\

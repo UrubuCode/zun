@@ -380,6 +380,12 @@ mod tests {
             dispatch(pad_id, &[NativeArg::Str("zun"), NativeArg::Int(5), NativeArg::Str("0")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "00zun"
         ));
+        let (pad_end_id, pad_end_fn) = resolve("zun:string", "padEnd").unwrap();
+        assert_eq!(pad_end_fn.params, &[NativeTy::Str, NativeTy::U64, NativeTy::Str]);
+        assert!(matches!(
+            dispatch(pad_end_id, &[NativeArg::Str("zun"), NativeArg::Int(5), NativeArg::Str("0")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "zun00"
+        ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),

@@ -974,6 +974,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_pad_end_primitive_method() {
+        let module = zun_compiler::compile(
+            "import { padEnd } from \"zun:string\";\n\
+             class String { extern padEnd(targetLength: u64, fill: string): string; }\n\
+             function main(): string { let value: string = \"zun\"; return value.padEnd(5, \"0\"); }",
+        )
+        .expect("compile String padEnd");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String padEnd");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zun00"));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
