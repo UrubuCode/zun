@@ -320,6 +320,19 @@ fn array_slice_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_concat_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { concat(other: Array): Array { let result = new Array(this.length + other.length); let index: u64 = 0; while (index < this.length) { result[index] = this[index]; index = index + 1; } let otherIndex: u64 = 0; while (otherIndex < other.length) { result[index + otherIndex] = other[otherIndex]; otherIndex = otherIndex + 1; } return result; } first(): any { return this[0]; } }\n\
+         function main(): number { let left = new Array(1); left[0] = 7.0; let right = new Array(1); right[0] = 9.0; let joined = left.concat(right); return joined[1] as number; }",
+    )
+    .expect("compile Array concat");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

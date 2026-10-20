@@ -69,6 +69,21 @@ class Array {
         return result;
     }
 
+    concat(other: Array): Array {
+        let result = new Array(this.length + other.length);
+        let index: u64 = 0;
+        while (index < this.length) {
+            result[index] = this[index];
+            index = index + 1;
+        }
+        let otherIndex: u64 = 0;
+        while (otherIndex < other.length) {
+            result[index + otherIndex] = other[otherIndex];
+            otherIndex = otherIndex + 1;
+        }
+        return result;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {

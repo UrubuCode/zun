@@ -1110,6 +1110,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array slice");
         assert!(matches!(result, Value::Float(7.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn executes_array_concat_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { concat(other: Array): Array { let result = new Array(this.length + other.length); let index: u64 = 0; while (index < this.length) { result[index] = this[index]; index = index + 1; } let otherIndex: u64 = 0; while (otherIndex < other.length) { result[index + otherIndex] = other[otherIndex]; otherIndex = otherIndex + 1; } return result; } first(): any { return this[0]; } }\n\
+             function main(): number { let left = new Array(1); left[0] = 7.0; let right = new Array(1); right[0] = 9.0; let joined = left.concat(right); return joined[1] as number; }",
+        )
+        .expect("compile Array concat");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array concat");
+        assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.
