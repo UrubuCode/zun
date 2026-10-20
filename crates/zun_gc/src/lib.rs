@@ -23,9 +23,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 mod native_roots;
+mod runtime_alloc;
 mod stack_maps;
 mod heap_context;
 pub use native_roots::{append_native_roots, NativeRootScope};
+pub use runtime_alloc::zun_gc_alloc;
 pub use stack_maps::{NativeStackMap, StackMapRegistry};
 pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
@@ -1421,22 +1423,6 @@ impl Heap {
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
     }
-}
-
-/// Allocate through a raw `Heap` pointer — the entry point native (JIT) code
-/// calls for `newobj`.
-///
-/// # Safety
-/// `heap` must be a valid pointer to a live [`Heap`]; the returned pointer is
-/// valid for that heap's lifetime.
-pub unsafe extern "C" fn zun_gc_alloc(
-    heap: *mut Heap,
-    type_rid: u32,
-    field_count: usize,
-) -> *mut u64 {
-    // SAFETY: the caller guarantees `heap` is a live Heap.
-    let heap = unsafe { &mut *heap };
-    heap.alloc(type_rid, field_count).addr()
 }
 
 /// The allocation entry point native (JIT) code calls for `newobj`, using the
