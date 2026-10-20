@@ -226,12 +226,17 @@ impl Interp<'_> {
                     stack.push(Value::Any(any));
                 }
                 Opcode::UnboxAny => {
-                    let Value::Any(any) = pop(&mut stack)? else {
-                        return Err(RunError::BadToken);
-                    };
-                    let value = zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
-                        .ok_or(RunError::BadToken)?;
-                    stack.push(value);
+                    let value = pop(&mut stack)?;
+                    if let Value::Any(any) = value {
+                        let value = zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
+                            .ok_or(RunError::BadToken)?;
+                        stack.push(value);
+                    } else {
+                        // Array slots retain the tagged runtime value directly;
+                        // an explicit numeric cast must accept that representation
+                        // as well as a heap-backed `Any` box.
+                        stack.push(value);
+                    }
                 }
                 Opcode::NewDynamic => {
                     let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
@@ -869,6 +874,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array push");
         assert!(matches!(result, Value::Int(1, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn executes_explicit_numeric_unbox_from_array_value() {
+        let module = zun_compiler::compile(
+            "function main(): number { let values = new Array(1); values[0] = 41.0; return values[0] as number; }",
+        )
+        .expect("compile array numeric cast");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array numeric cast");
+        assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
     }
 }
 
