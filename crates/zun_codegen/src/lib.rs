@@ -36,6 +36,30 @@ pub extern "C" fn zun_jit_array_length(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| heap.array_len(object).map(|len| len as i64).unwrap_or(-1))
 }
+
+/// Copy one dynamic array element into the stable two-word JIT carrier.
+///
+/// The out-parameter ABI is intentional: it keeps `tag` and `payload`
+/// independently addressable until Cranelift has a managed aggregate type and
+/// precise reference metadata for dynamic values. The helper does not allocate
+/// or collect, so the caller may safely keep the array reference live across
+/// the call.
+#[inline]
+pub unsafe extern "C" fn zun_jit_array_load_any(
+    address: i64,
+    index: i64,
+    out: *mut JitAnyAbi,
+) -> i32 {
+    if out.is_null() || index < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    let Some(value) = zun_gc::with_current_heap(|heap| heap.array_get(object, index as usize)) else {
+        return 0;
+    };
+    unsafe { out.write(JitAnyAbi::from_any(value)) };
+    1
+}
 #[inline]
 pub extern "C" fn zun_jit_date_is_valid(millis: i64) -> i32 {
     zun_core::DateValue::from_millis(millis).millis().is_some() as i32
@@ -365,6 +389,10 @@ impl Jit {
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
+        builder.symbol(
+            "zun_jit_array_load_any",
+            zun_jit_array_load_any as *const u8,
+        );
         builder.symbol("zun_jit_date_year", zun_jit_date_year as *const u8);
         builder.symbol("zun_jit_date_is_valid", zun_jit_date_is_valid as *const u8);
         builder.symbol("zun_jit_date_month", zun_jit_date_month as *const u8);

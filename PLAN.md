@@ -527,6 +527,9 @@ Consequences for the design:
 
 - `Any` has a stable two-word ABI contract (`tag`, `payload`) with validated
   reconstruction and layout tests in `zun_core`.
+- The JIT runtime now exposes a non-allocating, out-parameter helper for
+  copying an array element into that two-word carrier; this establishes the
+  ABI boundary without claiming managed-value lowering is complete.
 - The Cranelift carrier remains intentionally gated: `ArrayLoad` must preserve
   both words and register object/string payloads with precise GC metadata before
   it can leave Tier 0.
