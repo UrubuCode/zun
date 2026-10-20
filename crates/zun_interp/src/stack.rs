@@ -30,3 +30,17 @@ pub(crate) fn bin_float(
     stack.push(Value::Float(result, kind));
     Ok(())
 }
+
+pub(crate) fn bin_int(
+    stack: &mut Vec<Value>,
+    f: impl Fn(i64, i64) -> i64,
+) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    stack.push(Value::Int(
+        value::wrap_int(f(a.as_int(), b.as_int()), kind),
+        kind,
+    ));
+    Ok(())
+}
