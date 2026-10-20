@@ -701,7 +701,7 @@ interpreter or OSR changes; the benchmark source is
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
 consumer are implemented), true OSR frame replacement, compacting GC,
-async/generator lowering, complete typed FFI/ABI integration, production Node
+complete typed FFI/ABI integration, production Node
 N-API bindings, AOT/R2R support for the full runtime surface, and the deferred
 language surfaces listed in section 4.4.2. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
@@ -764,8 +764,10 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
-   safepoints, true OSR, compaction, generators, typed FFI/N-API,
-   AOT/R2R, and the remaining performance backlog. Module-hygiene splits are
+   safepoints, true OSR, compaction, typed FFI/N-API, AOT/R2R, and the
+   remaining performance backlog. Async and generator source lowering are now
+   complete in the Tier 0 state-machine path; broader JIT support remains an
+   optimization gate. Module-hygiene splits are
    maintained separately by the reviewer and are not part of this execution
    backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
