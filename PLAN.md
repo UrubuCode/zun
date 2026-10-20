@@ -443,7 +443,8 @@ deliberately limited unary callback contracts: `Function` returns `any`, while
 Their indirect calls use typed null tokens to defer the target RID to the
 handle. Captures,
 typed generic function signatures, and Cranelift lowering remain separate gates
-before the full `Array.reduce` surface and Cranelift execution are enabled.
+before capturing callbacks and Cranelift execution are enabled. The verifier
+and loaded-module resolver cover the unary and binary null-token forms.
 
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
