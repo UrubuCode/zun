@@ -578,16 +578,20 @@ impl Parser<'_> {
             match self.peek().kind {
                 // `ident(args)` — only a bare name is callable in phase 2.
                 TokenKind::LParen => {
-                    let Expr::Ident(callee) = expr else {
-                        break;
-                    };
                     self.bump();
                     let args = self.arguments();
                     let close = self.tokens[self.pos - 1].span;
-                    expr = Expr::Call {
-                        callee,
-                        args,
-                        span: callee.span.to(close),
+                    expr = match expr {
+                        Expr::Ident(callee) => Expr::Call {
+                            callee,
+                            args,
+                            span: callee.span.to(close),
+                        },
+                        callee => Expr::ComputedCall {
+                            span: callee.span().to(close),
+                            callee: Box::new(callee),
+                            args,
+                        },
                     };
                 }
                 // `object.field` or `object.method(args)`
@@ -1040,6 +1044,15 @@ mod tests {
             panic!("expected call");
         };
         assert!(matches!(args[0], Expr::Field { .. }));
+    }
+
+    #[test]
+    fn parses_computed_symbol_iterator_call() {
+        let program = parse_ok("function main(): any { let iterator = values[Symbol.iterator](); }");
+        assert!(matches!(
+            &program.functions[0].body.statements[0],
+            Stmt::Let { init: Expr::ComputedCall { .. }, .. }
+        ));
     }
 
     #[test]

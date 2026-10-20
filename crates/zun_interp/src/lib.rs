@@ -1731,6 +1731,17 @@ mod method_tests {
     }
 
     #[test]
+    fn invokes_array_symbol_iterator_from_source() {
+        let module = zun_compiler::compile(
+            "import { arrayIteratorNext } from \"zun:buffer\"; function main(): u64 { let values = new Array(1); values[0] = 7.0; let iterator = values[Symbol.iterator](); return arrayIteratorNext(iterator) as u64; }",
+        )
+        .expect("compile Symbol.iterator call");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Symbol.iterator call");
+        assert!(matches!(result, Value::Int(7, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn iterates_map_and_set_values_in_insertion_order() {
         let module = zun_compiler::compile(
             "function main(): any { let map = new Map(); map.set(1.0, 10.0); map.set(2.0, 20.0); let set = new Set(); set.add(3.0); set.add(4.0); for (let value of map) { let pair: Array = value as Array; print(pair[1]); } for (let value of set) { print(value); } return 42.0; }",

@@ -323,6 +323,15 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `callee(args)` where the callee is an arbitrary expression.
+    ComputedCall {
+        /// Function-valued expression being invoked.
+        callee: Box<Expr>,
+        /// Arguments in order.
+        args: Vec<Expr>,
+        /// Span of the whole call.
+        span: Span,
+    },
     /// `receiver.method(args)` — an instance method call.
     MethodCall {
         /// The object the method is called on.
@@ -406,6 +415,7 @@ impl Expr {
             | Expr::Binary { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Call { span, .. }
+            | Expr::ComputedCall { span, .. }
             | Expr::MethodCall { span, .. }
             | Expr::Cast { span, .. }
             | Expr::New { span, .. }

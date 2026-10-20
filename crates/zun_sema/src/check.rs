@@ -277,6 +277,12 @@ impl Checker<'_> {
                     self.collect_mutated_expr(arg, names);
                 }
             }
+            ast::Expr::ComputedCall { callee, args, .. } => {
+                self.collect_mutated_expr(callee, names);
+                for arg in args {
+                    self.collect_mutated_expr(arg, names);
+                }
+            }
             ast::Expr::MethodCall { receiver, args, .. } => {
                 self.collect_mutated_expr(receiver, names);
                 for arg in args {
@@ -577,6 +583,12 @@ impl Checker<'_> {
                 self.collect_capture_expr(cx, parameters, operand, uses)
             }
             ast::Expr::Call { args, .. } => {
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
+            }
+            ast::Expr::ComputedCall { callee, args, .. } => {
+                self.collect_capture_expr(cx, parameters, callee, uses);
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
@@ -2124,6 +2136,41 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Function(function) => self.check_closure_expr(cx, function, span),
+            ast::Expr::ComputedCall { callee, args, .. } => {
+                let is_well_known_iterator = matches!(callee.as_ref(), ast::Expr::Index {
+                    index,
+                    ..
+                } if matches!(index.as_ref(), ast::Expr::Field { object, field, .. }
+                    if matches!(object.as_ref(), ast::Expr::Ident(name) if self.text(name) == "Symbol")
+                        && self.text(field) == "iterator"));
+                if is_well_known_iterator && args.is_empty() {
+                    let ast::Expr::Index { object, .. } = callee.as_ref() else {
+                        unreachable!();
+                    };
+                    let object = self.check_expr(cx, object);
+                    let native_name = match object.ty {
+                        Ty::Array => "arrayIteratorNew",
+                        Ty::Map => "mapIteratorNew",
+                        Ty::Set => "setIteratorNew",
+                        Ty::Error => "arrayIteratorNew",
+                        other => {
+                            self.error(object.span, format!("type {other:?} has no Symbol.iterator"));
+                            return self.poison(span);
+                        }
+                    };
+                    let Some((id, _)) = zun_natives::resolve("zun:buffer", native_name) else {
+                        self.error(span, "missing Symbol.iterator intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
+                self.error(span, "computed calls are not supported for this callee");
+                self.poison(span)
+            }
         }
     }
 
