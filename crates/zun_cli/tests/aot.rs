@@ -34,3 +34,28 @@ fn build_aot_writes_fallback_module_manifest_and_object() {
     }
     let _ = std::fs::remove_dir(root);
 }
+
+#[test]
+fn build_aot_runs_a_floating_point_entry_point() {
+    let root = std::env::temp_dir().join(format!("zun-aot-float-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    std::fs::write(&source, "function main(): number { return 7.5; }\n").expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build", "--aot"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let executable = Command::new(source.with_extension("exe"))
+        .output()
+        .expect("run AOT executable");
+    assert!(executable.status.success());
+    assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "7.5");
+
+    for extension in ["ts", "zm", "zman", "o", "exe"] {
+        let _ = std::fs::remove_file(source.with_extension(extension));
+    }
+    let _ = std::fs::remove_dir(root);
+}
