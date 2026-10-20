@@ -2315,6 +2315,14 @@ impl Checker<'_> {
                 || matches!((a, b), (Ty::Float(x), Ty::Float(y)) if x == y)
         };
         match op {
+            Nullish => {
+                if lhs.ty == Ty::Any {
+                    rhs.ty
+                } else {
+                    self.error(span, "left operand of `??` must be nullable");
+                    Ty::Error
+                }
+            }
             And | Or => {
                 if lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean {
                     Ty::Boolean

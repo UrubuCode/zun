@@ -1403,6 +1403,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("null should execute");
         assert!(matches!(value, Value::Null));
     }
+
+    #[test]
+    fn nullish_coalescing_selects_the_fallback_value() {
+        let module = zun_compiler::compile(
+            "function main(): number { let value: any = null; return value ?? 42.0; }",
+        )
+        .expect("compile nullish coalescing");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run nullish coalescing");
+        assert!(matches!(value, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
@@ -3926,6 +3937,7 @@ fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
         (Value::Str(x), Value::Str(y)) => x == y,
         // Reference identity: two object refs are equal iff the same object.
         (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
+        (Value::Null, Value::Null) => true,
         _ => false,
     };
     stack.push(Value::Bool(equal == want_equal));

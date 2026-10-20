@@ -267,6 +267,8 @@ pub enum BinaryOp {
     And,
     /// `||`
     Or,
+    /// `??`
+    Nullish,
 }
 
 /// A unary operator.

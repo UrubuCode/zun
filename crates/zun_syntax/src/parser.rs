@@ -927,6 +927,7 @@ fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
         TokenKind::Gt => (BinaryOp::Gt, 2),
         TokenKind::GtEq => (BinaryOp::Ge, 2),
         TokenKind::OrOr => (BinaryOp::Or, 0),
+        TokenKind::Nullish => (BinaryOp::Nullish, 0),
         TokenKind::AndAnd => (BinaryOp::And, 1),
         TokenKind::Plus => (BinaryOp::Add, 3),
         TokenKind::Minus => (BinaryOp::Sub, 3),

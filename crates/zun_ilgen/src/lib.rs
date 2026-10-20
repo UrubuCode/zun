@@ -752,6 +752,19 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
             }
             ExprKind::Binary { op, lhs, rhs } => {
+                if *op == BinaryOp::Nullish {
+                    self.expr(lhs);
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    self.emit(Instruction::simple(Opcode::ConstNull));
+                    self.emit(Instruction::simple(Opcode::CmpEq));
+                    let use_rhs = self.emit_branch(Opcode::BranchTrue);
+                    let end = self.emit_branch(Opcode::Branch);
+                    self.patch_to_here(use_rhs);
+                    self.emit(Instruction::simple(Opcode::Pop));
+                    self.expr(rhs);
+                    self.patch_to_here(end);
+                    return;
+                }
                 if matches!(op, BinaryOp::And | BinaryOp::Or) {
                     self.expr(lhs);
                     let short = self.emit_branch(if *op == BinaryOp::And {
@@ -790,7 +803,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     BinaryOp::Le => Opcode::CmpLe,
                     BinaryOp::Gt => Opcode::CmpGt,
                     BinaryOp::Ge => Opcode::CmpGe,
-                    BinaryOp::And | BinaryOp::Or => unreachable!("logical operators lower through branches"),
+                    BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish => unreachable!("logical operators lower through branches"),
                 };
                 self.emit(Instruction::simple(opcode));
             }

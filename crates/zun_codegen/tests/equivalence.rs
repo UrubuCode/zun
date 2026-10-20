@@ -177,6 +177,17 @@ fn null_literal_uses_the_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn nullish_coalescing_uses_the_interpreter_fallback_boundary() {
+    let module = compile(
+        "function main(): number { let value: any = null; return value ?? 42.0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "nullish coalescing requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\
