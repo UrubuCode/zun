@@ -151,29 +151,6 @@ impl Heap {
         ))
     }
 
-    pub fn buffer_view_read_u16(
-        &self,
-        object: Obj,
-        view: zun_core::TypedArrayView,
-        index: usize,
-    ) -> Option<u16> {
-        view.read_u16(self.buffers.get(&(object.addr() as usize))?, index)
-    }
-
-    pub fn buffer_view_write_u16(
-        &mut self,
-        object: Obj,
-        view: zun_core::TypedArrayView,
-        index: usize,
-        value: u16,
-    ) -> Option<bool> {
-        Some(view.write_u16(
-            self.buffers.get_mut(&(object.addr() as usize))?,
-            index,
-            value,
-        ))
-    }
-
     pub fn buffer_view_read_f64(
         &self,
         object: Obj,
