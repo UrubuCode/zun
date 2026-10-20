@@ -915,6 +915,22 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Bool(result))
             }
+            "dynamicSetFunction" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let function = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_set_function(object, name.to_string(), function);
+                });
+                Ok(Value::Void)
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))

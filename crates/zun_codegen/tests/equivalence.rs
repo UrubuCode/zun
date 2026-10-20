@@ -360,6 +360,17 @@ fn proxy_has_and_delete_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn proxy_get_trap_preserves_interpreter_fallback_boundary() {
+    let module = compile(
+        "import { dynamicSetFunction, proxyGet } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "Proxy trap invocation requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Any(value) if value.as_float() == Some(99.0)));
+}
+
+#[test]
 fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): number { let map = new Map(); map.set(1.0, 10.0); let set = new Set(); set.add(2.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",

@@ -1269,7 +1269,27 @@ impl Checker<'_> {
                     };
                 }
 
-                if name == "dynamic_new" {
+                if name == "dynamicSetFunction" {
+                    if args.len() != 3 {
+                        self.error(span, "dynamicSetFunction expects an object, name, and function");
+                        return self.poison(span);
+                    }
+                    let Some((id, native)) = zun_natives::resolve("zun:collections", &name) else {
+                        return self.poison(span);
+                    };
+                    if args[0].ty != Ty::DynamicObject
+                        || args[1].ty != Ty::String
+                        || !matches!(args[2].ty, Ty::Function(_))
+                    {
+                        self.error(span, "dynamicSetFunction expects (dynamic, string, function)");
+                        return self.poison(span);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                } else if name == "dynamic_new" {
                     if !args.is_empty() {
                         self.error(span, "dynamic_new takes no arguments");
                     }

@@ -203,5 +203,11 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn { name: "proxyHas", params: &[Proxy, Str], ret: Bool, imp: unavailable },
         NativeFn { name: "proxyDelete", params: &[Proxy, Str], ret: Bool, imp: unavailable },
+        NativeFn {
+            name: "dynamicSetFunction",
+            params: &[DynamicObject, Str, Function],
+            ret: Void,
+            imp: unavailable,
+        },
     ],
 };

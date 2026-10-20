@@ -1976,6 +1976,17 @@ mod method_tests {
     }
 
     #[test]
+    fn proxy_get_invokes_a_named_handler_trap() {
+        let module = zun_compiler::compile(
+            "import { dynamicSetFunction } from \"zun:collections\"; import { proxyGet } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+        )
+        .expect("compile proxy trap");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy trap");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(99.0)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
