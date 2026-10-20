@@ -26,8 +26,8 @@ struct Inner<T> {
     rejection: Option<Box<dyn FnOnce(String) + Send + 'static>>,
 }
 
-/// A single-assignment future with one continuation, matching the runtime
-/// representation planned for Promise state machines.
+/// A single-assignment future with one success and one failure continuation,
+/// matching the runtime representation planned for Promise state machines.
 pub struct Promise<T> {
     state: Arc<AtomicU8>,
     inner: Arc<Mutex<Inner<T>>>,
@@ -119,6 +119,10 @@ impl<T> core::fmt::Debug for Promise<T> {
             .field(
                 "resolved",
                 &(self.state.load(Ordering::Acquire) == RESOLVED),
+            )
+            .field(
+                "rejected",
+                &(self.state.load(Ordering::Acquire) == REJECTED),
             )
             .finish_non_exhaustive()
     }
@@ -231,8 +235,8 @@ impl<T: Send + 'static> Promise<T> {
     /// Transform the resolved value into a new promise.
     ///
     /// The continuation remains single-assignment: the returned promise is
-    /// resolved exactly when this promise resolves, whether the callback is
-    /// registered before or after that resolution.
+    /// settled when this promise resolves or rejects, whether the callback is
+    /// registered before or after that settlement.
     pub fn map<U: Send + 'static>(
         &self,
         transform: impl FnOnce(T) -> U + Send + 'static,
