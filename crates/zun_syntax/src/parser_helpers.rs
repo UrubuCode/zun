@@ -189,6 +189,7 @@ impl Parser<'_> {
                     body,
                     is_arrow: true,
                     is_async: true,
+                    is_generator: false,
                 })
             }
             TokenKind::KwAwait => {
@@ -213,6 +214,7 @@ impl Parser<'_> {
                         body,
                         is_arrow: true,
                         is_async: false,
+                        is_generator: false,
                     });
                 }
                 Expr::Ident(name)
@@ -224,7 +226,7 @@ impl Parser<'_> {
                     self.expect(TokenKind::RParen, "`)` after arrow parameters");
                     self.expect(TokenKind::Arrow, "`=>` after arrow parameters");
                     let body = self.arrow_body();
-                    return Expr::Function(FunctionExpr { params, return_type: None, span: start.to(body.span), body, is_arrow: true, is_async: false });
+                    return Expr::Function(FunctionExpr { params, return_type: None, span: start.to(body.span), body, is_arrow: true, is_async: false, is_generator: false });
                 }
                 self.bump();
                 let inner = self.expression();
@@ -241,6 +243,7 @@ impl Parser<'_> {
 
     pub(crate) fn function_expression(&mut self, is_async: bool) -> Expr {
         let start = self.bump().span;
+        let is_generator = self.eat(TokenKind::Star);
         self.expect(TokenKind::LParen, "`(` after anonymous function");
         let params = self.parameters();
         self.expect(TokenKind::RParen, "`)`");
@@ -253,6 +256,7 @@ impl Parser<'_> {
             body,
             is_arrow: false,
             is_async,
+            is_generator,
         })
     }
 

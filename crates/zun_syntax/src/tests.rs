@@ -42,6 +42,14 @@
             Stmt::Return { value: Some(Expr::Yield { .. }), .. }
         ));
     }
+
+    #[test]
+    fn parses_generator_function_marker() {
+        let mut diagnostics = Vec::new();
+        let program = parse("function* main(): int { yield 1; return 0; }", &mut diagnostics);
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+        assert!(program.functions[0].is_generator);
+    }
     #[test]
     fn parses_anonymous_function_and_arrow_forms() {
         let src = "function main() { let a = x => x + 1; let b = (x: number, y) => { return x + y; }; let c = function(x) { return x; }; }";

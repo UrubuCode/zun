@@ -234,6 +234,7 @@ impl Parser<'_> {
             return_type,
             is_extern,
             is_async: false,
+            is_generator: false,
             body,
             span,
         }
@@ -241,6 +242,7 @@ impl Parser<'_> {
 
     fn function(&mut self, is_async: bool) -> Function {
         let start = self.bump().span; // `function`
+        let is_generator = self.eat(TokenKind::Star);
         let name = self.name("a function name");
 
         self.expect(TokenKind::LParen, "`(`");
@@ -275,6 +277,7 @@ impl Parser<'_> {
             return_type,
             is_extern: false,
             is_async,
+            is_generator,
             body,
             span,
         }

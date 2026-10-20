@@ -326,6 +326,9 @@ impl Checker<'_> {
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
         let name = sig.name.clone();
+        if f.is_generator {
+            self.error(f.name.span, "generator lowering is not implemented yet");
+        }
         if f.is_async {
             if return_ty != Ty::Promise {
                 self.error(
@@ -382,6 +385,7 @@ impl Checker<'_> {
                     locals: cx.locals,
                     return_ty,
                     is_async: f.is_async,
+                    is_generator: f.is_generator,
                     async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
                         state_count: 1 + count_awaits_in_block(&f.body) as u16,
                         await_count: count_awaits_in_block(&f.body) as u16,
@@ -472,6 +476,7 @@ impl Checker<'_> {
             locals: cx.locals,
             return_ty,
             is_async: f.is_async,
+            is_generator: f.is_generator,
             async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
                 state_count: 1 + count_awaits_in_block(&f.body) as u16,
                 await_count: count_awaits_in_block(&f.body) as u16,

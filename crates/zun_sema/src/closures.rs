@@ -15,6 +15,9 @@ impl Checker<'_> {
                 "async closures are parsed but source-level async lowering is not implemented yet",
             );
         }
+        if function.is_generator {
+            self.error(span, "generator closures are not implemented yet");
+        }
         let captures = self.analyze_closure_captures(outer, function);
         let mut saw_default = false;
         for parameter in &function.params {

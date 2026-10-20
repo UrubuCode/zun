@@ -68,6 +68,8 @@ pub struct Function {
     pub is_extern: bool,
     /// Whether this declaration uses the source-level `async` modifier.
     pub is_async: bool,
+    /// Whether this declaration uses generator syntax (`function*`).
+    pub is_generator: bool,
     /// The body block.
     pub body: Block,
     /// Span of the whole declaration.
@@ -88,6 +90,8 @@ pub struct FunctionExpr {
     pub is_arrow: bool,
     /// Whether this expression uses the source-level `async` modifier.
     pub is_async: bool,
+    /// Whether this expression uses generator syntax.
+    pub is_generator: bool,
     /// Span of the whole expression.
     pub span: Span,
 }
