@@ -815,7 +815,7 @@ impl Interp<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
-                    self.call_builtin(id, &mut stack)?;
+                    builtins::call_builtin(self, id, &mut stack)?;
                 }
                 Opcode::NewObj => {
                     // Safepoint: only the interpreter triggers GC, and only
@@ -1120,22 +1120,6 @@ impl Interp<'_> {
         // running program at this safepoint (no JIT frame is active here), so
         // only genuinely-unreachable objects are reclaimed.
         zun_gc::with_current_heap_mut(|h| unsafe { h.collect(&roots, &ref_fn) })
-    }
-
-    fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {
-        let id = id as u32;
-        // Pop the arguments, convert them to neutral native values, run the
-        // native body (in zun_natives), then convert the result back.
-        let args = pop_n(stack, zun_natives::param_count(id))?;
-        if let Some(name) = managed_collection_builtin(id).or_else(|| managed_buffer_builtin(id)) {
-            stack.push(self.call_managed_collection(name, &args)?);
-            return Ok(());
-        }
-        let native_args: Vec<zun_natives::NativeArg> = args.iter().map(to_native_arg).collect();
-        let result = zun_natives::dispatch(id, &native_args, self.output)
-            .map_err(|e| RunError::Native(e.0))?;
-        stack.push(from_native_value(result, id));
-        Ok(())
     }
 
 }

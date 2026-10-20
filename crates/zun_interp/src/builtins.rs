@@ -1,5 +1,27 @@
 //! Name resolution for native builtins implemented by managed runtime floors.
 
+use super::native::{from_native_value, to_native_arg};
+use super::stack::pop_n;
+use super::{Interp, RunError, Value};
+
+pub(super) fn call_builtin(
+    interp: &mut Interp<'_>,
+    id: i32,
+    stack: &mut Vec<Value>,
+) -> Result<(), RunError> {
+    let id = id as u32;
+    let args = pop_n(stack, zun_natives::param_count(id))?;
+    if let Some(name) = managed_collection_builtin(id).or_else(|| managed_buffer_builtin(id)) {
+        stack.push(interp.call_managed_collection(name, &args)?);
+        return Ok(());
+    }
+    let native_args: Vec<zun_natives::NativeArg> = args.iter().map(to_native_arg).collect();
+    let result = zun_natives::dispatch(id, &native_args, interp.output)
+        .map_err(|e| RunError::Native(e.0))?;
+    stack.push(from_native_value(result, id));
+    Ok(())
+}
+
 pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
     for name in [
         "bufferNew",
