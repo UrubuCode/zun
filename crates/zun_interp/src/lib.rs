@@ -1224,6 +1224,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_alpha_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\";\n\
+             class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isAlpha(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } }\n\
+             function main(): boolean { let value: string = \"ZunRuntime\"; return value.isAlpha(); }",
+        )
+        .expect("compile String isAlpha");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isAlpha");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
