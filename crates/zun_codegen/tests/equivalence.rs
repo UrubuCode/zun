@@ -294,6 +294,17 @@ fn weak_map_class_methods_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn finalization_registry_preserves_interpreter_fallback_boundary() {
+    let module = compile(
+        "function cleanup(value: any): void { } class Key {} function main(): boolean { let registry = new FinalizationRegistry(); let key = new Key(); let id = registry.register(key, cleanup); return registry.unregister(id); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "FinalizationRegistry requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): number { let map = new Map(); map.set(1.0, 10.0); let set = new Set(); set.add(2.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",
