@@ -81,6 +81,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "floor", params: &[F64], ret: F64, imp: floor },
         NativeFn { name: "ceil", params: &[F64], ret: F64, imp: ceil },
         NativeFn { name: "round", params: &[F64], ret: F64, imp: round },
+        NativeFn { name: "floorNumber", params: &[F64], ret: F64, imp: floor },
+        NativeFn { name: "ceilNumber", params: &[F64], ret: F64, imp: ceil },
+        NativeFn { name: "roundNumber", params: &[F64], ret: F64, imp: round },
         NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
     ],
 };
