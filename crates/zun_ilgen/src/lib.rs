@@ -20,7 +20,9 @@ use zun_metadata::{
     BlobIndex, FieldDef, MemberRef, MethodDef, ModuleRef, TableKind, Token, TypeDef,
 };
 use zun_module::{write_body_with_handlers, ExceptionHandler, HandlerKind, Module};
-use zun_sema::hir::{self, BinaryOp, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp};
+use zun_sema::hir::{
+    self, BinaryOp, CaptureMode, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp,
+};
 
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
 /// is not numeric.
@@ -99,7 +101,7 @@ pub fn lower(program: &hir::Program) -> Module {
     }
 
     for (index, f) in program.functions.iter().enumerate() {
-        let (code, handlers) = lower_function(f, &layout, &mut module);
+        let (code, handlers) = lower_function(f, &layout, &mut module, program.functions.len() as u32);
         let local_kinds: Vec<u8> = f.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
@@ -115,7 +117,12 @@ pub fn lower(program: &hir::Program) -> Module {
     }
     let closure_base = program.functions.len();
     for (index, closure) in program.closures.iter().enumerate() {
-        let (code, handlers) = lower_closure_function(closure, &layout, &mut module);
+        let (code, handlers) = lower_closure_function(
+            closure,
+            &layout,
+            &mut module,
+            program.functions.len() as u32,
+        );
         let mut local_kinds = Vec::with_capacity(closure.locals.len() + 1);
         local_kinds.push(jitkind_byte(Ty::DynamicObject));
         local_kinds.extend(closure.locals.iter().map(|t| jitkind_byte(*t)));
@@ -239,6 +246,7 @@ fn lower_function(
     f: &hir::Function,
     layout: &Layout,
     module: &mut Module,
+    closure_method_base: u32,
 ) -> (Vec<u8>, Vec<ExceptionHandler>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
@@ -248,6 +256,7 @@ fn lower_function(
         continue_targets: Vec::new(),
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
+        closure_method_base,
     };
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
@@ -264,6 +273,7 @@ fn lower_closure_function(
     f: &hir::ClosureFunction,
     layout: &Layout,
     module: &mut Module,
+    closure_method_base: u32,
 ) -> (Vec<u8>, Vec<ExceptionHandler>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
@@ -273,6 +283,7 @@ fn lower_closure_function(
         continue_targets: Vec::new(),
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
+        closure_method_base,
     };
     gen.stmts(&f.body);
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
@@ -296,11 +307,28 @@ struct FnLowerer<'a, 'b> {
     continue_targets: Vec<Vec<usize>>,
     handlers: Vec<ExceptionHandler>,
     finally_bodies: Vec<&'a [Stmt]>,
+    closure_method_base: u32,
 }
 
 impl<'a, 'b> FnLowerer<'a, 'b> {
     fn emit(&mut self, instr: Instruction) {
         encode(&instr, &mut self.code);
+    }
+
+    fn emit_dynamic_load(&mut self, name: &str) {
+        let property = self.module.strings.intern(name);
+        self.emit(Instruction::new(
+            Opcode::LoadDynamic,
+            Operand::StringRef(property.0),
+        ));
+    }
+
+    fn emit_dynamic_store(&mut self, name: &str) {
+        let property = self.module.strings.intern(name);
+        self.emit(Instruction::new(
+            Opcode::StoreDynamic,
+            Operand::StringRef(property.0),
+        ));
     }
 
     /// Push a numeric constant of the given type: a base `const.i32`/`const.i64`
@@ -548,11 +576,64 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::Token(Token::new(TableKind::MethodDef, *func + 1)),
                 ));
             }
-            ExprKind::Closure { .. } => {
-                unreachable!("closure HIR is not lowered until closure sema is enabled")
+            ExprKind::Closure { function, captures } => {
+                self.emit(Instruction::simple(Opcode::NewDynamic));
+                for capture in captures {
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    if capture.capture.mode == CaptureMode::ByCell {
+                        self.emit(Instruction::simple(Opcode::NewDynamic));
+                        self.emit(Instruction::simple(Opcode::Dup));
+                        self.expr(&capture.value);
+                        self.emit(Instruction::simple(Opcode::BoxAny));
+                        self.emit_dynamic_store("$value");
+                        self.emit(Instruction::simple(Opcode::Pop));
+                        self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
+                        self.emit(Instruction::simple(Opcode::Pop));
+                    } else {
+                        self.expr(&capture.value);
+                        self.emit(Instruction::simple(Opcode::BoxAny));
+                        self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
+                        self.emit(Instruction::simple(Opcode::Pop));
+                    }
+                }
+                let token = Token::new(
+                    TableKind::MethodDef,
+                    self.closure_method_base + *function + 1,
+                );
+                self.emit(Instruction::new(Opcode::MakeClosure, Operand::Token(token)));
             }
-            ExprKind::CaptureLoad { .. } | ExprKind::CaptureStore { .. } => {
-                unreachable!("capture accesses are not lowered until closure sema is enabled")
+            ExprKind::CaptureLoad {
+                environment_slot,
+                mode,
+                ..
+            } => {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
+                self.emit_dynamic_load(&capture_name(*environment_slot));
+                if *mode == CaptureMode::ByCell {
+                    self.emit(Instruction::simple(Opcode::UnboxAny));
+                    self.emit_dynamic_load("$value");
+                }
+                self.emit(Instruction::simple(Opcode::UnboxAny));
+            }
+            ExprKind::CaptureStore {
+                environment_slot,
+                mode,
+                value,
+                ..
+            } => {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
+                if *mode == CaptureMode::ByCell {
+                    self.emit_dynamic_load(&capture_name(*environment_slot));
+                    self.emit(Instruction::simple(Opcode::UnboxAny));
+                }
+                self.expr(value);
+                self.emit(Instruction::simple(Opcode::BoxAny));
+                if *mode == CaptureMode::ByCell {
+                    self.emit_dynamic_store("$value");
+                } else {
+                    self.emit_dynamic_store(&capture_name(*environment_slot));
+                }
+                self.emit(Instruction::simple(Opcode::UnboxAny));
             }
             ExprKind::Assign { slot, value } => {
                 self.expr(value);
@@ -764,6 +845,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::Error => unreachable!("ilgen runs only on error-free programs"),
         }
     }
+}
+
+fn capture_name(slot: u16) -> String {
+    format!("$capture{slot}")
 }
 
 #[cfg(test)]
