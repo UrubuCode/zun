@@ -18,3 +18,24 @@ pub(super) struct RootLink<'a> {
     pub(super) locals: &'a [Value],
     pub(super) parent: Option<&'a RootLink<'a>>,
 }
+
+/// Explicit interpreter activation record. Keeping the resumable pieces
+/// together is the first step toward async suspension; the synchronous loop
+/// still owns and advances one frame at a time for now.
+pub(super) struct ExecutionFrame {
+    pub(super) method_rid: u32,
+    pub(super) pc: usize,
+    pub(super) stack: Vec<Value>,
+    pub(super) locals: Vec<Value>,
+}
+
+impl ExecutionFrame {
+    pub(super) fn new(method_rid: u32, locals: Vec<Value>) -> Self {
+        Self {
+            method_rid,
+            pc: 0,
+            stack: Vec::new(),
+            locals,
+        }
+    }
+}

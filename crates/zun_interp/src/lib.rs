@@ -31,7 +31,7 @@ use stack::{
     bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
     Ordering,
 };
-use state::{Interp, RootLink};
+use state::{ExecutionFrame, Interp, RootLink};
 use runner::run_method_with;
 use std::rc::Rc;
 use value::Value;
@@ -115,15 +115,17 @@ impl Interp<'_> {
         locals.extend(args);
         locals.resize(body.local_count as usize, Value::Void);
 
-        let mut stack: Vec<Value> = Vec::new();
+        let mut frame = ExecutionFrame::new(method_rid, locals);
+        let mut stack = &mut frame.stack;
+        let locals = &mut frame.locals;
         let code = body.code;
-        let mut pc = 0usize;
+        let mut pc = &mut frame.pc;
 
-        while pc < code.len() {
+        while *pc < code.len() {
             let (instr, size) =
-                decode_one(&code[pc..]).map_err(|e| RunError::Malformed(e.to_string()))?;
-            let next = pc + size;
-            pc = next;
+                decode_one(&code[*pc..]).map_err(|e| RunError::Malformed(e.to_string()))?;
+            let next = *pc + size;
+            *pc = next;
 
             match instr.opcode {
                 Opcode::Nop => {}
@@ -358,33 +360,33 @@ impl Interp<'_> {
                 Opcode::CmpGe => compare(&mut stack, Ordering::Ge)?,
                 Opcode::Branch => {
                     let target = branch_target(next, &instr.operand);
-                    if target < pc {
+                    if target < *pc {
                         if let Some(hook) = self.hook {
                             hook.on_backedge(method_rid, target);
                         }
                     }
-                    pc = target;
+                    *pc = target;
                 }
                 Opcode::BranchTrue => {
                     if pop(&mut stack)?.as_bool() {
                         let target = branch_target(next, &instr.operand);
-                        if target < pc {
+                        if target < *pc {
                             if let Some(hook) = self.hook {
                                 hook.on_backedge(method_rid, target);
                             }
                         }
-                        pc = target;
+                        *pc = target;
                     }
                 }
                 Opcode::BranchFalse => {
                     if !pop(&mut stack)?.as_bool() {
                         let target = branch_target(next, &instr.operand);
-                        if target < pc {
+                        if target < *pc {
                             if let Some(hook) = self.hook {
                                 hook.on_backedge(method_rid, target);
                             }
                         }
-                        pc = target;
+                        *pc = target;
                     }
                 }
                 Opcode::Ret => {
@@ -392,7 +394,7 @@ impl Interp<'_> {
                 }
                 Opcode::Throw => {
                     let exception = pop(&mut stack)?;
-                    let throw_pc = pc - size;
+                    let throw_pc = *pc - size;
                     let handler = body
                         .handlers
                         .iter()
@@ -415,7 +417,7 @@ impl Interp<'_> {
                     if let Some(handler) = handler {
                         stack.clear();
                         stack.push(exception);
-                        pc = handler.handler_start as usize;
+                        *pc = handler.handler_start as usize;
                     } else {
                         return Err(RunError::Thrown(exception));
                     }
