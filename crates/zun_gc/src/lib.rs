@@ -87,6 +87,8 @@ pub struct Heap {
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
     dynamic_objects: std::collections::HashMap<usize, zun_core::DynamicObject>,
+    /// Contiguous array storage associated with array objects.
+    arrays: std::collections::HashMap<usize, zun_core::ArrayStorage>,
     /// Record index by object address, for tracing child references.
     by_addr: std::collections::HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
@@ -149,6 +151,29 @@ impl Heap {
         self.dynamic_objects
             .insert(object.addr() as usize, zun_core::DynamicObject::new());
         object
+    }
+
+    /// Allocate an array object with contiguous core-owned storage.
+    pub fn alloc_array(&mut self, length: usize) -> Obj {
+        let object = self.alloc(0, 0);
+        self.arrays
+            .insert(object.addr() as usize, zun_core::ArrayStorage::with_length(length));
+        object
+    }
+
+    /// Return the length of an array object.
+    pub fn array_len(&self, object: Obj) -> Option<usize> {
+        self.arrays.get(&(object.addr() as usize)).map(zun_core::ArrayStorage::len)
+    }
+
+    /// Read an array element with bounds checking.
+    pub fn array_get(&self, object: Obj, index: usize) -> Option<zun_core::Any> {
+        self.arrays.get(&(object.addr() as usize))?.get(index)
+    }
+
+    /// Write an array element with bounds checking.
+    pub fn array_set(&mut self, object: Obj, index: usize, value: zun_core::Any) -> Option<zun_core::Any> {
+        self.arrays.get_mut(&(object.addr() as usize))?.set(index, value)
     }
 
     /// Read a dynamic property from an object allocated by [`Self::alloc_dynamic`].
@@ -238,6 +263,16 @@ impl Heap {
                     }
                 }
             }
+            if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
+                for child in array.object_references() {
+                    if let Some(&cidx) = self.by_addr.get(&child) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
@@ -248,6 +283,7 @@ impl Heap {
                 r.alive = false;
                 self.by_addr.remove(&(r.addr as usize));
                 self.dynamic_objects.remove(&(r.addr as usize));
+                self.arrays.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }
@@ -541,6 +577,22 @@ mod tests {
         assert_eq!(freed, 1);
         assert_eq!(heap.live_count(), 2);
         assert!(heap.dynamic_get(dynamic, "child").is_some());
+        let _ = unreachable;
+    }
+
+    #[test]
+    fn array_storage_roundtrips_and_traces_object_elements() {
+        let mut heap = Heap::new();
+        let child = heap.alloc(7, 0);
+        let array = heap.alloc_array(1);
+        assert_eq!(heap.array_len(array), Some(1));
+        assert_eq!(heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)), Some(zun_core::Any::int(0)));
+        assert_eq!(heap.array_get(array, 0).and_then(zun_core::Any::as_object), Some(child.addr() as usize));
+        let unreachable = heap.alloc(8, 0);
+        let no_refs = |_: u32| Vec::<usize>::new();
+        let freed = unsafe { heap.collect(&[array], &no_refs) };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.live_count(), 2);
         let _ = unreachable;
     }
 
