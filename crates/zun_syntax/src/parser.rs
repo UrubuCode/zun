@@ -1119,11 +1119,10 @@ fn parse_template_parts(
             parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..start])));
         }
         let expression_start = start + 2;
-        let Some(end_relative) = inner[expression_start..].find('}') else {
+        let Some(end) = find_template_interpolation_end(inner, expression_start) else {
             diagnostics.push(Diagnostic::error("unterminated template interpolation").with_code("SYN0004").with_span(span));
             return parts;
         };
-        let end = expression_start + end_relative;
         let expression = inner[expression_start..end].trim();
         let mut expression_diagnostics = Vec::new();
         let Some(mut parsed) = parse_expression_fragment(expression, &mut expression_diagnostics) else {
@@ -1145,6 +1144,39 @@ fn parse_template_parts(
         parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..])));
     }
     parts
+}
+
+fn find_template_interpolation_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut index = start;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\\' {
+            index += 2;
+            continue;
+        }
+        if let Some(current) = quote {
+            if byte == current {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if matches!(byte, b'"' | b'\'') {
+            quote = Some(byte);
+        } else if byte == b'{' {
+            depth += 1;
+        } else if byte == b'}' {
+            if depth == 0 {
+                return Some(index);
+            }
+            depth -= 1;
+        }
+        index += 1;
+    }
+    None
 }
 
 fn decode_template_text(text: &str) -> String {
@@ -1277,6 +1309,16 @@ mod tests {
             panic!("expected template literal");
         };
         assert!(matches!(&parts[0], crate::ast::TemplatePart::Expr(expression) if matches!(expression.as_ref(), Expr::Binary { .. })));
+    }
+
+    #[test]
+    fn keeps_braces_inside_quoted_template_interpolations() {
+        let src = "function main() { return `${\"}\"}`; }";
+        let p = parse_ok(src);
+        let Stmt::Return { value: Some(Expr::Template { parts, .. }), .. } = &p.functions[0].body.statements[0] else {
+            panic!("expected template literal");
+        };
+        assert!(matches!(&parts[0], crate::ast::TemplatePart::Expr(expression) if matches!(expression.as_ref(), Expr::String { value, .. } if value == "}")));
     }
 
     #[test]
