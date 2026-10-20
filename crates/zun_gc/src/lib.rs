@@ -107,54 +107,6 @@ pub struct Heap {
 }
 
 impl Heap {
-    /// Allocate an object with `field_count` fields of type `type_rid`,
-    /// returning a pointer to it. Fields start zeroed. A freed block of the
-    /// same field count is reused before bump-allocating a new one.
-    pub fn alloc(&mut self, type_rid: u32, field_count: usize) -> Obj {
-        let identity_hash = self.allocate_identity_hash();
-        // Reuse a freed block of the exact size, if any.
-        if let Some(idx) = self.free.get_mut(&field_count).and_then(Vec::pop) {
-            let addr = self.records[idx].addr;
-            // SAFETY: the block is `field_count + 1` valid slots we own.
-            unsafe {
-                std::ptr::write_bytes(addr, 0, zun_core::OBJECT_HEADER_SLOTS + field_count);
-                *addr = type_rid as u64;
-                *addr.add(1) = identity_hash;
-            }
-            self.records[idx].alive = true;
-            self.records[idx].marked = false;
-            self.by_addr.insert(addr as usize, idx);
-            return Obj(addr);
-        }
-
-        let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
-        assert!(slots <= CHUNK_SLOTS, "object larger than a heap chunk");
-
-        if self.chunks.is_empty() || self.cursor + slots > CHUNK_SLOTS {
-            self.chunks.push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
-            self.cursor = 0;
-        }
-        let chunk = self.chunks.last_mut().expect("just pushed a chunk");
-        let base = &mut chunk[self.cursor] as *mut u64;
-        self.cursor += slots;
-
-        // SAFETY: `base` points at `slots` freshly zeroed slots inside a boxed
-        // chunk that will not move or free while `self` lives.
-        unsafe {
-            *base = type_rid as u64;
-            *base.add(1) = identity_hash;
-        }
-        let idx = self.records.len();
-        self.records.push(Record {
-            addr: base,
-            field_count,
-            alive: true,
-            marked: false,
-        });
-        self.by_addr.insert(base as usize, idx);
-        Obj(base)
-    }
-
     /// Allocate an object backed by a dynamic property bag.
     pub fn alloc_dynamic(&mut self) -> Obj {
         let object = self.alloc(0, 0);
