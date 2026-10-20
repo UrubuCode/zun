@@ -996,14 +996,19 @@ impl StackMapRegistry {
     pub fn replace(&mut self, maps: impl IntoIterator<Item = NativeStackMap>) {
         self.maps.clear();
         self.maps.extend(maps);
+        self.maps.sort_unstable_by_key(|map| map.pc);
     }
 
     /// Find the map covering `pc`, if one is registered.
     pub fn lookup(&self, pc: usize) -> Option<NativeStackMap> {
-        self.maps.iter().copied().find(|map| {
-            let end = map.pc.saturating_add(map.span as usize);
-            pc >= map.pc && pc < end
-        })
+        let index = match self.maps.binary_search_by_key(&pc, |map| map.pc) {
+            Ok(index) => index,
+            Err(0) => return None,
+            Err(index) => index - 1,
+        };
+        let map = self.maps[index];
+        let end = map.pc.saturating_add(map.span as usize);
+        (pc < end).then_some(map)
     }
 
     /// Number of registered safepoints.
@@ -1470,10 +1475,15 @@ mod tests {
     #[test]
     fn stack_map_lookup_matches_the_registered_span() {
         let mut registry = StackMapRegistry::new();
-        registry.replace([NativeStackMap { pc: 100, span: 16 }]);
+        registry.replace([
+            NativeStackMap { pc: 200, span: 8 },
+            NativeStackMap { pc: 100, span: 16 },
+        ]);
         assert_eq!(registry.lookup(100).unwrap().pc, 100);
         assert_eq!(registry.lookup(115).unwrap().pc, 100);
         assert!(registry.lookup(116).is_none());
         assert!(registry.lookup(99).is_none());
+        assert_eq!(registry.lookup(203).unwrap().pc, 200);
+        assert!(registry.lookup(208).is_none());
     }
 }
