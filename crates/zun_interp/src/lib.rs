@@ -1442,6 +1442,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_is_between_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { isBetween(low: number, high: number): boolean { if (this < low) { return false; } return this <= high; } } function main(): boolean { let value: number = 5.0; return value.isBetween(1.0, 10.0); }",
+        )
+        .expect("compile Number isBetween");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number isBetween");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_math_power_intrinsic() {
         let module = zun_compiler::compile(
             "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",

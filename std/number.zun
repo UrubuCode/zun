@@ -24,6 +24,11 @@ class Number {
         return this != 0.0;
     }
 
+    isBetween(low: number, high: number): boolean {
+        if (this < low) { return false; }
+        return this <= high;
+    }
+
     isNaN(): boolean {
         return this != this;
     }
