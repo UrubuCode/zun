@@ -387,10 +387,10 @@ impl Translator<'_> {
                     let inst = self.builder.ins().call(alloc, &[trid, nfields]);
                     let ptr = self.builder.inst_results(inst)[0];
                     // Store each field as a full i64 slot (same encoding the
-                    // interpreter uses), at offset (slot + 1) * 8.
+                    // interpreter uses), at the shared core layout offset.
                     for (i, (val, kind)) in args.into_iter().enumerate() {
                         let raw = crate::shim::pack_result(&mut self.builder, val, kind);
-                        let off = ((i + 1) * 8) as i32;
+                        let off = zun_core::field_offset(i) as i32;
                         self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
                     }
                     stack.push((ptr, JitKind::Object));
@@ -398,7 +398,7 @@ impl Translator<'_> {
                 Opcode::LoadField => {
                     let (kind, slot) = self.field_info(&instr.operand)?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
-                    let off = ((slot + 1) * 8) as i32;
+                    let off = zun_core::field_offset(slot) as i32;
                     let raw = self
                         .builder
                         .ins()
@@ -411,7 +411,7 @@ impl Translator<'_> {
                     let (val, _) = stack.pop().ok_or("stack underflow")?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
                     let raw = crate::shim::pack_result(&mut self.builder, val, kind);
-                    let off = ((slot + 1) * 8) as i32;
+                    let off = zun_core::field_offset(slot) as i32;
                     self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
                     stack.push((val, kind)); // stfld leaves the stored value
                 }

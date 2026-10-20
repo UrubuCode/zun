@@ -314,6 +314,21 @@ vincula os nomes com suas assinaturas e baixa chamadas para `call.builtin <id>`.
 Módulos de usuário (caminhos relativos) e o sistema de módulos de código Zun
 ficam para uma fase posterior (precisam de compilação multi-arquivo).
 
+### 4.4.1 Collections and identity prerequisites
+
+Strong `Map` and `Set` must use runtime-owned hash tables with insertion-order
+storage; they must not be linear scans over `Array`. Primitive keys use value
+hashing, while object keys use a stable identity hash. The shared object layout
+reserves a header slot for that hash, and the non-moving heap assigns a fresh
+hash when an allocation is created or a reclaimed block is reused. This keeps
+object-key hashing valid when a future compacting collector changes addresses.
+
+Weak collections are a separate GC phase: weak slots require post-mark
+clearing, `WeakMap` requires ephemeron fixed-point marking, and
+`FinalizationRegistry` requires a finalization queue. None of these APIs may be
+represented by a strong array wrapper that silently violates reachability
+semantics.
+
 ## 5. Implementation ledger (2026-10-20)
 
 The following runtime contracts are implemented and covered by tests:

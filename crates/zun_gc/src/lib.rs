@@ -2,7 +2,8 @@
 //!
 //! A non-moving object allocator shared, by design, between the interpreter and
 //! the JIT (PLAN.md §4.3, step 2). An object is a contiguous run of 8-byte
-//! slots: slot 0 holds the type RID, slots `1..=field_count` hold the fields.
+//! slots: slot 0 holds the type RID, slot 1 holds the identity hash, and slots
+//! `2..=field_count + 1` hold the fields.
 //! Field slots are **raw** — a number's bits, an integer, a boolean, a nested
 //! object pointer, or a string-table handle — interpreted by the field's static
 //! type. This is what lets native code load and store fields by offset.
@@ -26,7 +27,8 @@ const CHUNK_SLOTS: usize = 64 * 1024;
 /// The size of one object slot in bytes.
 pub use zun_core::SLOT_SIZE;
 
-/// A pointer to an allocated object: slot 0 is the type RID, the rest fields.
+/// A pointer to an allocated object: slot 0 is the type RID, slot 1 is the
+/// identity hash, and the remaining slots are fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Obj(*mut u64);
 
@@ -48,6 +50,12 @@ impl Obj {
     pub fn type_rid(self) -> u32 {
         // SAFETY: a valid Obj points at an allocated block whose slot 0 exists.
         unsafe { *self.0 as u32 }
+    }
+
+    /// The stable identity hash assigned by the owning heap.
+    pub fn identity_hash(self) -> u64 {
+        // SAFETY: a valid Obj points at an allocated block with an identity slot.
+        unsafe { *self.0.add(1) }
     }
 
     /// Read raw field `index` (0-based; slot `index + 1`).
@@ -93,6 +101,8 @@ pub struct Heap {
     by_addr: std::collections::HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
     free: std::collections::HashMap<usize, Vec<usize>>,
+    /// Monotonic identity hashes. Zero is reserved as the uninitialized value.
+    next_identity_hash: u64,
 }
 
 impl Heap {
@@ -105,6 +115,7 @@ impl Heap {
     /// returning a pointer to it. Fields start zeroed. A freed block of the
     /// same field count is reused before bump-allocating a new one.
     pub fn alloc(&mut self, type_rid: u32, field_count: usize) -> Obj {
+        let identity_hash = self.allocate_identity_hash();
         // Reuse a freed block of the exact size, if any.
         if let Some(idx) = self.free.get_mut(&field_count).and_then(Vec::pop) {
             let addr = self.records[idx].addr;
@@ -112,6 +123,7 @@ impl Heap {
             unsafe {
                 std::ptr::write_bytes(addr, 0, zun_core::OBJECT_HEADER_SLOTS + field_count);
                 *addr = type_rid as u64;
+                *addr.add(1) = identity_hash;
             }
             self.records[idx].alive = true;
             self.records[idx].marked = false;
@@ -133,6 +145,7 @@ impl Heap {
         // chunk that will not move or free while `self` lives.
         unsafe {
             *base = type_rid as u64;
+            *base.add(1) = identity_hash;
         }
         let idx = self.records.len();
         self.records.push(Record {
@@ -143,6 +156,15 @@ impl Heap {
         });
         self.by_addr.insert(base as usize, idx);
         Obj(base)
+    }
+
+    fn allocate_identity_hash(&mut self) -> u64 {
+        if self.next_identity_hash == 0 {
+            self.next_identity_hash = 1;
+        }
+        let hash = self.next_identity_hash;
+        self.next_identity_hash = self.next_identity_hash.checked_add(1).expect("identity hash exhausted");
+        hash
     }
 
     /// Allocate an object backed by a dynamic property bag.
@@ -523,6 +545,7 @@ mod tests {
         let mut heap = Heap::new();
         let o = heap.alloc(7, 3);
         assert_eq!(o.type_rid(), 7);
+        assert_ne!(o.identity_hash(), 0);
         assert_eq!(o.field(0), 0);
         assert_eq!(o.field(1), 0);
         assert_eq!(o.field(2), 0);
@@ -646,6 +669,7 @@ mod tests {
         let keep = heap.alloc(1, 2);
         let garbage = heap.alloc(1, 2);
         let garbage_addr = garbage.addr();
+        let garbage_hash = garbage.identity_hash();
         let no_refs = |_: u32| Vec::<usize>::new();
 
         let freed = unsafe { heap.collect(&[keep], &no_refs) };
@@ -653,6 +677,7 @@ mod tests {
         // A new allocation of the same size reuses the reclaimed block.
         let reused = heap.alloc(9, 2);
         assert_eq!(reused.addr(), garbage_addr);
+        assert_ne!(reused.identity_hash(), garbage_hash);
         assert_eq!(reused.type_rid(), 9);
         assert_eq!(reused.field(0), 0); // reused block was zeroed
     }

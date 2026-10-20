@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 pub const SLOT_SIZE: usize = 8;
 
 /// Number of slots reserved before an object's first field.
-pub const OBJECT_HEADER_SLOTS: usize = 1;
+pub const OBJECT_HEADER_SLOTS: usize = 2;
 
 /// Convert an object field slot to its byte offset in the frozen layout.
 pub const fn field_offset(slot: usize) -> usize {
@@ -325,8 +325,8 @@ mod tests {
 
     #[test]
     fn object_layout_offsets_are_stable() {
-        assert_eq!(field_offset(0), 8);
-        assert_eq!(field_offset(3), 32);
+        assert_eq!(field_offset(0), 16);
+        assert_eq!(field_offset(3), 40);
     }
 
     #[test]
