@@ -23,6 +23,10 @@ fn asm(instrs: &[Instruction]) -> Vec<u8> {
 fn resolver(opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
     match opcode {
         Opcode::Call | Opcode::CallVirt => Some((1, 1)),
+        Opcode::CallVirtRest => match operand {
+            Operand::TokenImm32(_, count) if *count >= 0 => Some((*count as u8, 1)),
+            _ => None,
+        },
         Opcode::CallIndirect => match operand {
             Operand::Token(token) if token.table() == Some(TableKind::MemberRef) => Some((3, 1)),
             _ => Some((2, 1)),
@@ -139,6 +143,35 @@ fn fixture_valid_rest_call_with_explicit_argument_count() {
 fn fixture_invalid_rest_call_with_negative_argument_count() {
     let code = asm(&[Instruction::new(
         Opcode::CallRest,
+        Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), -1),
+    )]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError {
+            kind: ErrorKind::UnknownCallArity,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn fixture_valid_virtual_rest_call_with_explicit_argument_count() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
+        Instruction::new(
+            Opcode::CallVirtRest,
+            Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), 2),
+        ),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    check(&code, RETURNS).expect("valid virtual rest call");
+}
+
+#[test]
+fn fixture_invalid_virtual_rest_call_with_negative_argument_count() {
+    let code = asm(&[Instruction::new(
+        Opcode::CallVirtRest,
         Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), -1),
     )]);
     assert!(matches!(

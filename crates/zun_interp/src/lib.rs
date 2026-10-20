@@ -941,6 +941,82 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::CallVirtRest => {
+                    let (token, argument_count) = operand_token_imm32(&instr.operand);
+                    if token.table() != Some(TableKind::MethodDef) || argument_count < 0 {
+                        return Err(RunError::BadToken);
+                    }
+                    let static_method = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(token.rid() as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let static_body = read_body(&self.module.code, static_method.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    let rest_index = static_body
+                        .param_count
+                        .checked_sub(1)
+                        .ok_or(RunError::BadToken)? as usize;
+                    let argument_count = argument_count as usize;
+                    if argument_count < rest_index {
+                        return Err(RunError::BadToken);
+                    }
+                    let values = pop_n(&mut stack, argument_count)?;
+                    let primitive_receiver = matches!(
+                        values.first(),
+                        Some(Value::Str(_) | Value::Float(_, _))
+                    ) || matches!(
+                        values.first(),
+                        Some(Value::Object(object))
+                            if zun_gc::with_current_heap(|heap| heap.array_len(*object).is_some())
+                    );
+                    let target = if primitive_receiver {
+                        token.rid()
+                    } else {
+                        let type_rid = values
+                            .first()
+                            .ok_or(RunError::BadToken)?
+                            .as_object()
+                            .type_rid();
+                        self.types
+                            .resolve_virtual(type_rid, token.rid())
+                            .ok_or(RunError::BadToken)?
+                    };
+                    let rest_values = &values[rest_index..];
+                    let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
+                        let array = heap.alloc_array(rest_values.len());
+                        for (index, value) in rest_values.iter().enumerate() {
+                            let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                            let _ = heap.array_set(array, index, any);
+                        }
+                        Ok(array)
+                    })?;
+                    let mut args = values[..rest_index].to_vec();
+                    args.push(Value::Object(rest_array));
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
+                    let result = match self.dispatch(target, args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    stack.push(result);
+                }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
                     stack.push(Value::Null);

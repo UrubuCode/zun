@@ -570,6 +570,13 @@ pub enum ExprKind {
         /// Arguments, with the receiver (`this`) first.
         args: Vec<Expr>,
     },
+    /// Virtually invoke a method whose trailing parameter is variadic.
+    MethodCallRest {
+        /// Statically resolved method index.
+        func: FuncIndex,
+        /// Arguments including the receiver.
+        args: Vec<Expr>,
+    },
     /// Allocate a class instance, initializing fields positionally.
     New {
         /// The class being instantiated.

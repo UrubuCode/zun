@@ -1129,7 +1129,11 @@ impl Checker<'_> {
                         .rev()
                         .take_while(|p| p.default_value.is_some())
                         .count(),
-                    rest_param: m.params.iter().position(|parameter| parameter.is_rest),
+                    rest_param: m
+                        .params
+                        .iter()
+                        .position(|parameter| parameter.is_rest)
+                        .map(|index| index + 1),
                 });
             }
         }
@@ -1145,9 +1149,6 @@ impl Checker<'_> {
     ) -> hir::Function {
         let mut saw_default = false;
         for (index, parameter) in f.params.iter().enumerate() {
-            if parameter.is_rest && this_class.is_some() {
-                self.error(parameter.name.span, "rest parameters are not supported on methods yet");
-            }
             if parameter.is_rest && index + 1 != f.params.len() {
                 self.error(parameter.name.span, "rest parameter must be last");
             }
@@ -1201,7 +1202,7 @@ impl Checker<'_> {
                         .params
                         .iter()
                         .position(|parameter| parameter.is_rest)
-                        .map(|index| index as u16),
+                        .map(|index| index as u16 + u16::from(this_class.is_some())),
                     defaults: (0..f.params.len()).map(|_| None).collect(),
                     locals: cx.locals,
                     return_ty,
@@ -1284,7 +1285,7 @@ impl Checker<'_> {
                 .params
                 .iter()
                 .position(|parameter| parameter.is_rest)
-                .map(|index| index as u16),
+                .map(|index| index as u16 + u16::from(this_class.is_some())),
             defaults,
             locals: cx.locals,
             return_ty,
@@ -2479,8 +2480,15 @@ impl Checker<'_> {
                     optional_count,
                     rest_param: self.signatures[func as usize].rest_param,
                 };
-                if call_args.len() < param_tys.len().saturating_sub(optional_count)
-                    || call_args.len() > param_tys.len()
+                let rest_index = sig.rest_param;
+                if rest_index.is_some() && call_args.len() < rest_index.unwrap() {
+                    self.error(
+                        span,
+                        format!("`{mname}` expects at least {} argument(s)", rest_index.unwrap() - 1),
+                    );
+                } else if rest_index.is_none()
+                    && (call_args.len() < param_tys.len().saturating_sub(optional_count)
+                        || call_args.len() > param_tys.len())
                 {
                     self.error(
                         span,
@@ -2492,8 +2500,15 @@ impl Checker<'_> {
                         ),
                     );
                 } else {
-                    self.pad_default_args(&mut call_args, &sig, span);
-                    for (arg, &expected) in call_args.iter_mut().zip(&param_tys).skip(1) {
+                    if rest_index.is_none() {
+                        self.pad_default_args(&mut call_args, &sig, span);
+                    }
+                    for (arg, &expected) in call_args
+                        .iter_mut()
+                        .zip(&param_tys)
+                        .skip(1)
+                        .take(rest_index.unwrap_or(param_tys.len()) - 1)
+                    {
                         coerce_numeric_literal(arg, expected);
                         if !expected.is_error()
                             && !arg.ty.is_error()
@@ -2507,9 +2522,10 @@ impl Checker<'_> {
                     }
                 }
                 hir::Expr {
-                    kind: hir::ExprKind::MethodCall {
-                        func,
-                        args: call_args,
+                    kind: if rest_index.is_some() {
+                        hir::ExprKind::MethodCallRest { func, args: call_args }
+                    } else {
+                        hir::ExprKind::MethodCall { func, args: call_args }
                     },
                     ty: return_ty,
                     span,
