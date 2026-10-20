@@ -995,6 +995,37 @@ impl ArrayStorage {
     }
 }
 
+/// State for the default `Array[Symbol.iterator]()` protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArrayIterator {
+    next_index: usize,
+}
+
+impl ArrayIterator {
+    /// Create an iterator positioned before the first array element.
+    pub fn new() -> Self {
+        Self { next_index: 0 }
+    }
+
+    /// Advance in insertion/index order, returning `None` at the end.
+    pub fn next(&mut self, array: &ArrayStorage) -> Option<Any> {
+        let value = array.get(self.next_index)?;
+        self.next_index += 1;
+        Some(value)
+    }
+
+    /// Whether the iterator has consumed the current array length.
+    pub fn is_done(&self, array: &ArrayStorage) -> bool {
+        self.next_index >= array.len()
+    }
+}
+
+impl Default for ArrayIterator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DynamicObject {
     /// Create an empty dynamic object.
     pub fn new() -> Self {
@@ -1186,6 +1217,20 @@ mod tests {
         assert!(array.insert(1, Any::int(13)));
         assert_eq!(array.remove(1).and_then(Any::as_int), Some(13));
         assert!(!array.insert(3, Any::int(14)));
+    }
+
+    #[test]
+    fn array_iterator_preserves_index_order_and_end_state() {
+        let mut array = ArrayStorage::with_length(3);
+        array.set(0, Any::int(10));
+        array.set(1, Any::int(20));
+        array.set(2, Any::int(30));
+        let mut iterator = ArrayIterator::new();
+        assert_eq!(iterator.next(&array).and_then(Any::as_int), Some(10));
+        assert_eq!(iterator.next(&array).and_then(Any::as_int), Some(20));
+        assert_eq!(iterator.next(&array).and_then(Any::as_int), Some(30));
+        assert!(iterator.is_done(&array));
+        assert_eq!(iterator.next(&array), None);
     }
 
     #[test]
