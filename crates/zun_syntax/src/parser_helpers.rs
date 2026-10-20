@@ -3,6 +3,92 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn call(&mut self) -> Expr {
+        let mut expr = self.primary();
+        loop {
+            match self.peek().kind {
+                TokenKind::LParen => {
+                    self.bump();
+                    let args = self.arguments();
+                    let close = self.tokens[self.pos - 1].span;
+                    expr = match expr {
+                        Expr::Ident(callee) => Expr::Call {
+                            callee,
+                            args,
+                            span: callee.span.to(close),
+                        },
+                        callee => Expr::ComputedCall {
+                            span: callee.span().to(close),
+                            callee: Box::new(callee),
+                            args,
+                        },
+                    };
+                }
+                TokenKind::Dot => {
+                    self.bump();
+                    let member = self.name("a field or method name");
+                    if self.at(TokenKind::LParen) {
+                        self.bump();
+                        let args = self.arguments();
+                        let close = self.tokens[self.pos - 1].span;
+                        let span = expr.span().to(close);
+                        expr = Expr::MethodCall {
+                            receiver: Box::new(expr),
+                            method: member,
+                            args,
+                            span,
+                        };
+                    } else {
+                        let span = expr.span().to(member.span);
+                        expr = Expr::Field {
+                            object: Box::new(expr),
+                            field: member,
+                            span,
+                        };
+                    }
+                }
+                TokenKind::QuestionDot => {
+                    self.bump();
+                    let field = self.name("an optional field or method name");
+                    if self.at(TokenKind::LParen) {
+                        self.bump();
+                        let args = self.arguments();
+                        let close = self.tokens[self.pos - 1].span;
+                        let span = expr.span().to(close);
+                        expr = Expr::OptionalMethodCall {
+                            object: Box::new(expr),
+                            method: field,
+                            args,
+                            span,
+                        };
+                    } else {
+                        let span = expr.span().to(field.span);
+                        expr = Expr::OptionalField {
+                            object: Box::new(expr),
+                            field,
+                            span,
+                        };
+                    }
+                }
+                TokenKind::LBracket => {
+                    self.bump();
+                    let index = self.expression();
+                    let close = self
+                        .expect(TokenKind::RBracket, "`]`")
+                        .map(|t| t.span)
+                        .unwrap_or(index.span());
+                    expr = Expr::Index {
+                        span: expr.span().to(close),
+                        object: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
+                _ => break,
+            }
+        }
+        expr
+    }
+
     pub(crate) fn arguments(&mut self) -> Vec<Expr> {
         let mut args = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
