@@ -290,8 +290,9 @@ e testados. O JIT já suporta `newobj`, `ldfld` e `stfld` para campos numéricos
 mantém equivalência com o interpretador. Resultados de `newobj` são marcados como
 referências gerenciadas nos mapas precisos do Cranelift e foram cobertos enquanto
 o objeto permanece vivo através de uma chamada JIT. `callvirt` ainda é executado no Tier 0;
-o próximo passo de execução de objetos no JIT é introduzir dispatch virtual por
-slot, preservando a resolução de tokens e a tabela de métodos como contrato.
+o JIT já possui dispatch virtual por slot para os métodos elegíveis sem override;
+dispatch dinâmico completo e chamadas virtuais com fallback continuam sendo
+fronteiras separadas, preservando a resolução de tokens e a tabela de métodos.
 
 Depois do dispatch virtual, permanece a integração operacional de raízes precisas:
 safepoints automáticos no interpretador/JIT e a captura de `(PC, SP)` nos pontos
@@ -460,8 +461,8 @@ The following runtime contracts are implemented and covered by tests:
   IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
 - Array instructions have verifier fixtures and an explicit Tier 0 fallback
   test. Read-only `ArrayLength` now lowers through a non-allocating Cranelift
-  helper; array allocation and indexed mutation remain Tier 0 pending precise
-  JIT roots and write barriers.
+  helper; array allocation and indexed mutation remain Tier 0 pending managed
+  JIT value lowering, precise safepoints, and write barriers.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
   tracing of managed keys and values. Source-level `Map` and `Set` classes
