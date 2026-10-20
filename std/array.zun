@@ -393,6 +393,38 @@ class Array {
         return result;
     }
 
+    difference(other: Array): Array {
+        let remaining: u64 = 0;
+        let left: u64 = 0;
+        while (left < this.length) {
+            let right: u64 = 0;
+            let found: boolean = false;
+            while (right < other.length) {
+                if (this[left] == other[right]) { found = true; break; }
+                right = right + 1;
+            }
+            if (!found) { remaining = remaining + 1; }
+            left = left + 1;
+        }
+        let result = new Array(remaining);
+        let output: u64 = 0;
+        left = 0;
+        while (left < this.length) {
+            let right: u64 = 0;
+            let found: boolean = false;
+            while (right < other.length) {
+                if (this[left] == other[right]) { found = true; break; }
+                right = right + 1;
+            }
+            if (!found) {
+                result[output] = this[left];
+                output = output + 1;
+            }
+            left = left + 1;
+        }
+        return result;
+    }
+
     count(value: any): u64 {
         let total: u64 = 0;
         let index: u64 = 0;
