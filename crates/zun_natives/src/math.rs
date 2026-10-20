@@ -38,6 +38,14 @@ fn max(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
     Ok(NativeValue::Float(left.max(right)))
 }
 
+fn receiver_value(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.get(1) {
+        Some(NativeArg::Float(value)) => Ok(NativeValue::Float(*value)),
+        Some(NativeArg::Int(value)) => Ok(NativeValue::Float(*value as f64)),
+        _ => Err(NativeError("receiverValue: expected a numeric value".to_string())),
+    }
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -46,5 +54,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "sqrt", params: &[F64], ret: F64, imp: sqrt },
         NativeFn { name: "min", params: &[F64, F64], ret: F64, imp: min },
         NativeFn { name: "max", params: &[F64, F64], ret: F64, imp: max },
+        NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
     ],
 };

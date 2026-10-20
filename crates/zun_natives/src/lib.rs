@@ -58,6 +58,8 @@ pub enum NativeTy {
     Str,
     /// `void` (return only).
     Void,
+    /// An opaque managed reference, used for an extern method receiver.
+    Opaque,
 }
 
 /// A neutral argument value passed to a native function.
@@ -300,6 +302,19 @@ mod tests {
         let mut sink = TestSink;
         let value = dispatch(id, &[NativeArg::Float(81.0)], &mut sink).unwrap();
         assert!(matches!(value, NativeValue::Float(value) if value == 9.0));
+    }
+
+    #[test]
+    fn extern_receiver_is_passed_as_the_first_native_argument() {
+        let (id, _) = resolve("zun:math", "receiverValue").unwrap();
+        let mut sink = TestSink;
+        let value = dispatch(
+            id,
+            &[NativeArg::Opaque, NativeArg::Float(7.5)],
+            &mut sink,
+        )
+        .unwrap();
+        assert!(matches!(value, NativeValue::Float(value) if value == 7.5));
     }
 
     struct TestSink;

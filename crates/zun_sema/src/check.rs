@@ -443,7 +443,15 @@ impl Checker<'_> {
                 return hir::Function { name, param_count: param_tys.len() as u16, locals: cx.locals, return_ty, body: Vec::new() };
             };
             let native_params: Vec<Ty> = intrinsic.params.iter().map(|&t| native_ty(t)).collect();
-            if native_params != param_tys {
+            let signature_matches = native_params.len() == param_tys.len()
+                && native_params
+                    .iter()
+                    .zip(&param_tys)
+                    .all(|(native, actual)| {
+                        *native == Ty::Any && matches!(actual, Ty::Instance(_))
+                            || *native == *actual
+                    });
+            if !signature_matches {
                 self.error(
                     f.name.span,
                     format!("extern method `{name}` signature does not match intrinsic `{}`", intrinsic.name),
@@ -1232,6 +1240,7 @@ fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::Bool => Ty::Boolean,
         N::Str => Ty::String,
         N::Void => Ty::Void,
+        N::Opaque => Ty::Any,
     }
 }
 
