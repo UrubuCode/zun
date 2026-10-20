@@ -1531,6 +1531,10 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
+                    (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
+                    (Ty::Promise, "resolve") => Some(("promiseResolve", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Promise, "reject") => Some(("promiseReject", Ty::Boolean, vec![Ty::String])),
                     (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
                         "u8ArrayGet",
                         Ty::Int(IntKind::U8),
@@ -1633,6 +1637,8 @@ impl Checker<'_> {
                         || native_name.ends_with("ArraySet")
                     {
                         "zun:buffer"
+                    } else if native_name.starts_with("promise") {
+                        "zun:promise"
                     } else {
                         "zun:collections"
                     };
@@ -1925,6 +1931,7 @@ impl Checker<'_> {
                     "Map" => Some(("mapNew", Ty::Map)),
                     "Set" => Some(("setNew", Ty::Set)),
                     "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
+                    "Promise" => Some(("promiseNew", Ty::Promise)),
                     _ => None,
                 };
                 if let Some((native_name, ty)) = managed_collection {
@@ -1932,7 +1939,12 @@ impl Checker<'_> {
                         self.error(span, format!("`{name}` expects no constructor arguments"));
                         return self.poison(span);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    let module = if name == "Promise" {
+                        "zun:promise"
+                    } else {
+                        "zun:collections"
+                    };
+                    let Some((id, _)) = zun_natives::resolve(module, native_name) else {
                         self.error(
                             span,
                             format!("missing collection intrinsic `{native_name}`"),
@@ -2092,6 +2104,10 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
+                    (Ty::Promise, "state") => ("promiseState", Ty::Int(IntKind::U8), vec![]),
+                    (Ty::Promise, "result") => ("promiseResult", Ty::Any, vec![]),
+                    (Ty::Promise, "resolve") => ("promiseResolve", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Promise, "reject") => ("promiseReject", Ty::Boolean, vec![Ty::String]),
                     (Ty::Error, _) => return self.poison(span),
                     (other, _) => {
                         self.error(
@@ -2108,7 +2124,12 @@ impl Checker<'_> {
                     );
                     return self.poison(span);
                 }
-                let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                let module = if native_name.starts_with("promise") {
+                    "zun:promise"
+                } else {
+                    "zun:collections"
+                };
+                let Some((id, _)) = zun_natives::resolve(module, native_name) else {
                     self.error(span, format!("missing collection intrinsic `{native_name}`"));
                     return self.poison(span);
                 };
