@@ -86,6 +86,32 @@ pub unsafe extern "C" fn zun_host_execute_f64(
     0
 }
 
+/// Execute a compiled module and return its boolean result through `out`.
+/// The status codes match [`zun_host_execute_i64`].
+#[no_mangle]
+pub unsafe extern "C" fn zun_host_execute_bool(
+    host: *mut ZunHost,
+    module_ptr: *const u8,
+    module_len: usize,
+    out: *mut bool,
+) -> i32 {
+    if host.is_null() || module_ptr.is_null() || out.is_null() {
+        return 1;
+    }
+    // SAFETY: caller supplies a valid immutable byte range for this call.
+    let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
+    let value = match zun_vm::execute(bytes) {
+        Ok(value) => value,
+        Err(_) => return 2,
+    };
+    let zun_interp::value::Value::Bool(value) = value else {
+        return 2;
+    };
+    // SAFETY: caller supplies writable storage for one bool.
+    unsafe { *out = value };
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +147,19 @@ mod tests {
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert_eq!(result, 7.5);
+    }
+
+    #[test]
+    fn host_executes_a_compiled_boolean_module() {
+        let module = zun_compiler::compile("function main(): boolean { return true; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = false;
+        let status = unsafe {
+            zun_host_execute_bool(host, bytes.as_ptr(), bytes.len(), &mut result)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, 0);
+        assert!(result);
     }
 }
