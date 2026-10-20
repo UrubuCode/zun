@@ -257,6 +257,40 @@ impl Interp<'_> {
                     });
                     stack.push(Value::Any(any));
                 }
+                Opcode::NewArray => {
+                    let length = pop(&mut stack)?.as_int();
+                    if length < 0 {
+                        return Err(RunError::Malformed("negative array length".into()));
+                    }
+                    let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length as usize));
+                    stack.push(Value::Object(array));
+                }
+                Opcode::LoadArray => {
+                    let index = pop(&mut stack)?.as_int();
+                    let array = pop(&mut stack)?.as_object();
+                    if index < 0 {
+                        return Err(RunError::Malformed("negative array index".into()));
+                    }
+                    let value = zun_gc::with_current_heap(|heap| {
+                        heap.array_get(array, index as usize)
+                            .and_then(|any| value::Value::unbox_any(any, heap))
+                    })
+                    .ok_or(RunError::BadToken)?;
+                    stack.push(value);
+                }
+                Opcode::StoreArray => {
+                    let value = pop(&mut stack)?;
+                    let index = pop(&mut stack)?.as_int();
+                    let array = pop(&mut stack)?.as_object();
+                    if index < 0 {
+                        return Err(RunError::Malformed("negative array index".into()));
+                    }
+                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.array_set(array, index as usize, any))
+                        .ok_or(RunError::BadToken)?;
+                    stack.push(value);
+                }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
                     let v = pop(&mut stack)?;
@@ -708,6 +742,44 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run extern method");
         assert!(matches!(result, Value::Float(value, _) if value == 7.5));
+    }
+
+    #[test]
+    fn executes_array_il_with_bounds_checked_storage() {
+        let mut module = zun_module::Module::new();
+        let mut code = Vec::new();
+        for instruction in [
+            Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+            Instruction::simple(Opcode::NewArray),
+            Instruction::simple(Opcode::Dup),
+            Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+            Instruction::new(Opcode::ConstI32, Operand::Imm32(41)),
+            Instruction::simple(Opcode::StoreArray),
+            Instruction::simple(Opcode::Pop),
+            Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+            Instruction::simple(Opcode::LoadArray),
+            Instruction::simple(Opcode::Ret),
+        ] {
+            encode(&instruction, &mut code);
+        }
+        let offset = write_body(
+            &mut module.code,
+            0,
+            0,
+            true,
+            zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(),
+            &[],
+            &code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("main"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: offset,
+        });
+        module.entry_point = Some(Token::new(TableKind::MethodDef, 1));
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array IL");
+        assert!(matches!(result, Value::Int(41, zun_il::NumKind::I64)));
     }
 }
 

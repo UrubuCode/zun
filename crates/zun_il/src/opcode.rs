@@ -238,6 +238,12 @@ define_opcodes! {
     LoadDynamic = 0x79, StringRef, "lddyn", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Store an Any value in a dynamic property, leaving it on the stack.
     StoreDynamic = 0x7A, StringRef, "stdyn", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Allocate a managed array with a length popped from the stack.
+    NewArray = 0x7B, None, "newarray", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Load an array element; stack order is array, index.
+    LoadArray = 0x7C, None, "ldelem", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Store an array element; stack order is array, index, value.
+    StoreArray = 0x7D, None, "stelem", StackEffect::Fixed { pops: 3, pushes: 1 };
 }
 
 #[cfg(test)]
