@@ -186,13 +186,18 @@ impl Checker<'_> {
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "any" => Ty::Any,
             "void" => Ty::Void,
-            other => match self.classes_by_name.get(other) {
-                Some(&index) => Ty::Instance(index),
-                None => {
-                    self.error(annotation.name.span, format!("unknown type `{other}`"));
-                    Ty::Error
+            other => {
+                if let Some(&func) = self.by_name.get(other) {
+                    return Ty::Function(func);
                 }
-            },
+                match self.classes_by_name.get(other) {
+                    Some(&index) => Ty::Instance(index),
+                    None => {
+                        self.error(annotation.name.span, format!("unknown type `{other}`"));
+                        Ty::Error
+                    }
+                }
+            }
         }
     }
 

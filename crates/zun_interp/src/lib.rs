@@ -816,6 +816,19 @@ mod method_tests {
     }
 
     #[test]
+    fn passes_named_function_reference_through_typed_parameter() {
+        let module = zun_compiler::compile(
+            "function add_one(value: number): number { return value + 1.0; }\n\
+             function apply(f: add_one, value: number): number { return f(value); }\n\
+             function main(): number { return apply(add_one, 41.0); }",
+        )
+        .expect("compile typed function parameter");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run typed function parameter");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_dynamic_property_il() {
         let mut module = zun_module::Module::new();
         let property = module.strings.intern("answer");
