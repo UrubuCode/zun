@@ -5,6 +5,7 @@
 //! future resolver a stable scope boundary for type and member identity.
 
 use std::path::Path;
+use std::collections::HashMap;
 use zun_module::{Module, ReadError};
 use zun_types::{TypeError, TypeSystem};
 
@@ -79,6 +80,50 @@ impl core::fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
+/// Registry of loaded module scopes, keyed by their manifest identity.
+#[derive(Debug, Default)]
+pub struct ModuleLoader {
+    modules: HashMap<String, ModuleScope>,
+}
+
+impl ModuleLoader {
+    /// Create an empty module loader.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load and register a module under `name`.
+    pub fn load_bytes(&mut self, name: impl Into<String>, bytes: &[u8]) -> Result<(), LoadError> {
+        let name = name.into();
+        let scope = ModuleScope::from_bytes(name.clone(), bytes)?;
+        self.modules.insert(name, scope);
+        Ok(())
+    }
+
+    /// Load and register a module using its path as identity.
+    pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<(), LoadError> {
+        let scope = ModuleScope::from_file(path)?;
+        let name = scope.name().to_owned();
+        self.modules.insert(name, scope);
+        Ok(())
+    }
+
+    /// Resolve a previously loaded module by exact identity.
+    pub fn get(&self, name: &str) -> Option<&ModuleScope> {
+        self.modules.get(name)
+    }
+
+    /// Number of registered modules.
+    pub fn len(&self) -> usize {
+        self.modules.len()
+    }
+
+    /// Whether no modules have been registered.
+    pub fn is_empty(&self) -> bool {
+        self.modules.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +133,15 @@ mod tests {
         let module = Module::new();
         let scope = ModuleScope::from_bytes("demo", &module.write()).expect("load");
         assert_eq!(scope.name(), "demo");
+    }
+
+    #[test]
+    fn registry_resolves_multiple_module_scopes() {
+        let bytes = Module::new().write();
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("core", &bytes).expect("load core");
+        loader.load_bytes("app", &bytes).expect("load app");
+        assert_eq!(loader.len(), 2);
+        assert_eq!(loader.get("app").unwrap().name(), "app");
     }
 }
