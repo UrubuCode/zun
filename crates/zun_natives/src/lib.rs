@@ -512,6 +512,14 @@ mod tests {
         assert!(matches!(dispatch(round_id, &[NativeArg::Float(1.6)], &mut sink).unwrap(), NativeValue::Float(v) if v == 2.0));
     }
 
+    #[test]
+    fn math_power_matches_numeric_expectations() {
+        let (id, _) = resolve("zun:math", "powNumber").expect("powNumber intrinsic");
+        let mut sink = TestSink;
+        let value = dispatch(id, &[NativeArg::Float(2.0), NativeArg::Float(3.0)], &mut sink).unwrap();
+        assert!(matches!(value, NativeValue::Float(value) if value == 8.0));
+    }
+
     struct TestSink;
 
     impl Sink for TestSink {

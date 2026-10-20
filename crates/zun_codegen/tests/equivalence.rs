@@ -839,6 +839,18 @@ fn number_sign_predicates_keep_interpreter_fallback() {
 }
 
 #[test]
+fn math_power_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
+    )
+    .expect("compile math power");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
+    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 8.0));
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

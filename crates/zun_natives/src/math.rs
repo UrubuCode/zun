@@ -67,6 +67,16 @@ fn round(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     unary_float(args, "round", f64::round)
 }
 
+fn pow(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let base = float_arg(args, "pow")?;
+    let exponent = match args.get(1) {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("pow: expected two numbers".to_string())),
+    };
+    Ok(NativeValue::Float(base.powf(exponent)))
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -85,5 +95,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "ceilNumber", params: &[F64], ret: F64, imp: ceil },
         NativeFn { name: "roundNumber", params: &[F64], ret: F64, imp: round },
         NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
+        NativeFn { name: "powNumber", params: &[F64, F64], ret: F64, imp: pow },
     ],
 };

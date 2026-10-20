@@ -1442,6 +1442,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_math_power_intrinsic() {
+        let module = zun_compiler::compile(
+            "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
+        )
+        .expect("compile math power");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run math power");
+        assert!(matches!(result, Value::Float(value, _) if value == 8.0));
+    }
+
+    #[test]
     fn executes_number_finiteness_source_methods() {
         let module = zun_compiler::compile(
             "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\
