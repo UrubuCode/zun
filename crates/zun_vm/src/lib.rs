@@ -16,7 +16,7 @@ use zun_module::Module;
 
 pub use ffi::{FfiError, NativeLibrary};
 pub use jit_hook::JitHook;
-pub use promise::{AsyncStateMachine, MicrotaskQueue, Poll, Promise, Scheduler};
+pub use promise::{AsyncStateMachine, MicrotaskQueue, Poll, Promise, PromiseState, Scheduler};
 pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
 
 /// Errors from loading or running a module.

@@ -8,6 +8,14 @@ const PENDING: u8 = 0;
 const RESOLVED: u8 = 1;
 const REJECTED: u8 = 2;
 
+/// Observable settlement state of a [`Promise`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromiseState {
+    Pending,
+    Resolved,
+    Rejected,
+}
+
 /// Result of advancing a stackless asynchronous state machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Poll<T> {
@@ -302,6 +310,15 @@ impl<T: Send + 'static> Promise<T> {
         self.state.load(Ordering::Acquire) == RESOLVED
     }
 
+    /// Return the current single-assignment settlement state.
+    pub fn state(&self) -> PromiseState {
+        match self.state.load(Ordering::Acquire) {
+            RESOLVED => PromiseState::Resolved,
+            REJECTED => PromiseState::Rejected,
+            _ => PromiseState::Pending,
+        }
+    }
+
     /// Whether the promise has been rejected.
     pub fn is_rejected(&self) -> bool {
         self.state.load(Ordering::Acquire) == REJECTED
@@ -589,6 +606,17 @@ mod tests {
         assert!(promise.is_rejected());
         assert_eq!(promise.error().as_deref(), Some("boom"));
         assert_eq!(seen.lock().unwrap().as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn promise_state_reports_pending_resolved_and_rejected() {
+        let promise = Promise::<u32>::new();
+        assert_eq!(promise.state(), PromiseState::Pending);
+        assert!(promise.resolve(1));
+        assert_eq!(promise.state(), PromiseState::Resolved);
+        let failed = Promise::<u32>::new();
+        assert!(failed.reject("boom"));
+        assert_eq!(failed.state(), PromiseState::Rejected);
     }
 
     #[test]
