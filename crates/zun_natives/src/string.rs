@@ -27,6 +27,33 @@ fn contains(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
     }
 }
 
+fn count(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("count: expected a string".to_string())),
+    };
+    let needle = match args.get(1) {
+        Some(NativeArg::Str(needle)) => needle,
+        _ => return Err(NativeError("count: expected a search string".to_string())),
+    };
+    let value_units: Vec<u16> = value.encode_utf16().collect();
+    let needle_units: Vec<u16> = needle.encode_utf16().collect();
+    if needle_units.is_empty() {
+        return Ok(NativeValue::Int(0));
+    }
+    let mut total = 0i64;
+    let mut start = 0usize;
+    while start + needle_units.len() <= value_units.len() {
+        if value_units[start..start + needle_units.len()] == needle_units {
+            total += 1;
+            start += needle_units.len();
+        } else {
+            start += 1;
+        }
+    }
+    Ok(NativeValue::Int(total))
+}
+
 fn index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -262,6 +289,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "length", params: &[Str], ret: U64, imp: length },
         NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
+        NativeFn { name: "count", params: &[Str, Str], ret: I32, imp: count },
         NativeFn { name: "includes", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "indexOf", params: &[Str, Str], ret: I32, imp: index_of },
         NativeFn { name: "lastIndexOf", params: &[Str, Str], ret: I32, imp: last_index_of },

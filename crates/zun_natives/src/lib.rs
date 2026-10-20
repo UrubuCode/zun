@@ -351,6 +351,12 @@ mod tests {
             dispatch(contains_id, &[NativeArg::Str("abc"), NativeArg::Str("bc")], &mut sink).unwrap(),
             NativeValue::Bool(true)
         ));
+        let (count_id, count_fn) = resolve("zun:string", "count").unwrap();
+        assert_eq!(count_fn.params, &[NativeTy::Str, NativeTy::Str]);
+        assert!(matches!(
+            dispatch(count_id, &[NativeArg::Str("aaaa"), NativeArg::Str("aa")], &mut sink).unwrap(),
+            NativeValue::Int(2)
+        ));
         let (includes_id, includes_fn) = resolve("zun:string", "includes").unwrap();
         assert_eq!(includes_fn.params, &[NativeTy::Str, NativeTy::Str]);
         assert!(matches!(

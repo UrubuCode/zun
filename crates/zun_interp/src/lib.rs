@@ -1102,6 +1102,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_count_native_method() {
+        let module = zun_compiler::compile(
+            "import { count } from \"zun:string\";\n\
+             class String { extern count(needle: string): int; }\n\
+             function main(): int { let value: string = \"aaaa\"; return value.count(\"aa\"); }",
+        )
+        .expect("compile String count");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String count");
+        assert!(matches!(result, Value::Int(value, _) if value == 2));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
