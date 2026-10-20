@@ -36,4 +36,14 @@ impl Heap {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
         Some(view.write_u8(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
     }
+
+    pub fn f64_array_get(&self, object: Obj, index: usize) -> Option<f64> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+        view.read_f64(self.buffers.get(&(buffer.addr() as usize))?, index)
+    }
+
+    pub fn f64_array_set(&mut self, object: Obj, index: usize, value: f64) -> Option<bool> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
+        Some(view.write_f64(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+    }
 }
