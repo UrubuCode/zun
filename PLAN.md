@@ -562,6 +562,11 @@ N-API bindings, AOT/R2R support for the full runtime surface, and the deferred
 language surfaces listed in section 4.4.2. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
 
+Behavior-preserving parser concern splits now cover helper extraction for
+function expressions, control-flow statements, expression precedence, calls,
+arguments, and member/index access; the parser test module and remaining
+primary-expression cases are still part of the hygiene backlog.
+
 ## 6. Execution backlog and rules (active goal — 2026-10-20)
 
 This is the standing goal the implementation agent executes, part by part, until
