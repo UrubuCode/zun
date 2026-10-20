@@ -2661,17 +2661,29 @@ fn object_alloc_and_field_access_in_jit() {
     // It uses newobj/ldfld/stfld with numeric fields, so it is JIT-eligible;
     // the result must match the interpreter.
     let src = "class Point { x: int; y: int; }\n\
+               function observe(p: Point): int { return p.x; }\n\
                function dist2(): int {\n\
                    let p: Point = new Point(3, 4);\n\
                    p.x = p.x + 1;\n\
-                   return p.x * p.x + p.y * p.y;\n\
+                   return observe(p) + p.y * p.y;\n\
                }\n\
                function main(): int { return dist2(); }";
     let module = compile(src);
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    // dist2 (rid 2) uses objects and must be JIT-eligible now.
-    assert!(jit.is_compiled(2), "object method should be eligible");
+    let dist2_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "dist2")
+        .map(|index| index as u32 + 1)
+        .expect("dist2 method");
+    assert!(jit.is_compiled(dist2_rid), "object method should be eligible");
+    let maps = jit.stack_maps(dist2_rid).expect("object method stack maps");
+    assert!(
+        maps.iter().any(|map| !map.reference_slots.is_empty()),
+        "object local must be represented in a precise JIT stack map"
+    );
 
     // The JIT needs a current heap for newobj; the VM sets one per run, so a
     // standalone call must register one too.

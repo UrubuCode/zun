@@ -717,6 +717,7 @@ impl Translator<'_> {
                     let nfields = self.builder.ins().iconst(types::I64, count as i64);
                     let inst = self.builder.ins().call(alloc, &[trid, nfields]);
                     let ptr = self.builder.inst_results(inst)[0];
+                    self.builder.declare_value_needs_stack_map(ptr);
                     // Store each field as a full i64 slot (same encoding the
                     // interpreter uses), at the shared core layout offset.
                     for (i, (val, kind)) in args.into_iter().enumerate() {
