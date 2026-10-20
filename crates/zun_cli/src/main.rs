@@ -19,7 +19,10 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, file] if cmd == "run" => dispatch(file, Action::Run),
-        [cmd, file] if cmd == "build" => dispatch(file, Action::Build),
+        [cmd, file] if cmd == "build" => dispatch(file, Action::Build { trim: false }),
+        [cmd, flag, file] if cmd == "build" && flag == "--trim" => {
+            dispatch(file, Action::Build { trim: true })
+        }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
         _ => {
             eprintln!("{USAGE}");
@@ -31,12 +34,13 @@ fn main() -> ExitCode {
 const USAGE: &str = "\
 usage: zun <command> <file.ts>
   run      compile and execute the program
-  build    compile to a .zm module next to the source
+  build    compile to a .zm module next to the source (use --trim to remove unreachable bodies)
   disasm   compile and print the ZIL disassembly";
 
+#[derive(Clone, Copy)]
 enum Action {
     Run,
-    Build,
+    Build { trim: bool },
     Disasm,
 }
 
@@ -58,6 +62,17 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
     };
 
+    let module = match action {
+        Action::Build { trim: true } => match zun_compiler::trim_module(&module) {
+            Ok(module) => module,
+            Err(error) => {
+                eprintln!("zun: cannot trim module: {error}");
+                return ExitCode::FAILURE;
+            }
+        },
+        _ => module,
+    };
+
     match action {
         Action::Run => match zun_vm::execute(&module.write()) {
             Ok(_) => ExitCode::SUCCESS,
@@ -66,7 +81,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Action::Build => {
+        Action::Build { .. } => {
             let out = out_path(path);
             let manifest_out = out.with_extension("zman");
             match std::fs::write(&out, module.write()) {
