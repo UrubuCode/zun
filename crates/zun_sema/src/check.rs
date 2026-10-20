@@ -2042,11 +2042,13 @@ impl Checker<'_> {
                         "finalizationRegistryNew",
                         Ty::FinalizationRegistry,
                     )),
+                    "Proxy" => Some(("proxyNew", Ty::Proxy)),
                     "Promise" => Some(("promiseNew", Ty::Promise)),
                     _ => None,
                 };
                 if let Some((native_name, ty)) = managed_collection {
-                    let valid_args = name == "RegExp" && args.len() == 1;
+                    let valid_args = (name == "RegExp" && args.len() == 1)
+                        || (name == "Proxy" && args.len() == 2);
                     if !args.is_empty() && !valid_args {
                         self.error(span, format!("`{name}` expects no constructor arguments"));
                         return self.poison(span);
@@ -2066,7 +2068,7 @@ impl Checker<'_> {
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
-                            args: if name == "RegExp" {
+                            args: if name == "RegExp" || name == "Proxy" {
                                 args.iter().map(|arg| self.check_expr(cx, arg)).collect()
                             } else {
                                 Vec::new()

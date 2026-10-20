@@ -183,5 +183,11 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: unavailable,
         },
+        NativeFn {
+            name: "proxyNew",
+            params: &[DynamicObject, DynamicObject],
+            ret: Proxy,
+            imp: unavailable,
+        },
     ],
 };

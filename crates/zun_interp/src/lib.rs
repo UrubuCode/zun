@@ -1932,6 +1932,17 @@ mod method_tests {
     }
 
     #[test]
+    fn constructs_proxy_with_managed_target_and_handler() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return true; }",
+        )
+        .expect("compile proxy construction");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy construction");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\

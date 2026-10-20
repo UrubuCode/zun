@@ -25,6 +25,7 @@ impl<'a> Checker<'a> {
             "WeakMap" | "weakmap" => Ty::WeakMap,
             "RegExp" | "regexp" => Ty::RegExp,
             "FinalizationRegistry" | "finalizationregistry" => Ty::FinalizationRegistry,
+            "Proxy" | "proxy" => Ty::Proxy,
             "Promise" | "promise" => Ty::Promise,
             "DataView" => Ty::BufferView(hir::BufferViewKind::DataView),
             "Uint8Array" => Ty::BufferView(hir::BufferViewKind::U8),

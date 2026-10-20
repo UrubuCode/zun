@@ -82,6 +82,8 @@ pub enum NativeTy {
     FinalizationRegistry,
     /// A dictionary-backed dynamic object.
     DynamicObject,
+    /// A managed target/handler proxy pair.
+    Proxy,
     /// A callable Zun function, including its closure environment.
     Function,
 }

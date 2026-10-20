@@ -95,6 +95,8 @@ pub enum Ty {
     RegExp,
     /// A GC-backed finalization callback registry.
     FinalizationRegistry,
+    /// A managed target/handler proxy pair.
+    Proxy,
     /// A managed asynchronous result object.
     Promise,
     /// A managed byte-buffer view with a fixed element representation.

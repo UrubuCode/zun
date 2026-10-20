@@ -26,6 +26,7 @@ pub(super) fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::RegExp => Ty::RegExp,
         N::FinalizationRegistry => Ty::FinalizationRegistry,
         N::DynamicObject => Ty::DynamicObject,
+        N::Proxy => Ty::Proxy,
         N::Function => Ty::Function(crate::hir::DYNAMIC_FUNCTION),
     }
 }

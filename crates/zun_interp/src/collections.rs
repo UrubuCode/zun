@@ -814,6 +814,14 @@ impl<'a> Interp<'a> {
                     heap.dynamic_delete(object, name)
                 })))
             }
+            "proxyNew" => {
+                let target = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let handler = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let proxy = zun_gc::with_current_heap_mut(|heap| heap.alloc_proxy(target, handler));
+                Ok(Value::Object(proxy))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))
