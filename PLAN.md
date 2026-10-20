@@ -416,6 +416,9 @@ The following runtime contracts are implemented and covered by tests:
 - O(1) field metadata lookup and per-type virtual tables;
 - behavior-preserving module splits for the interpreter native bridge and
   managed-builtin resolution;
+- behavior-preserving concern splits for core runtime contracts (dynamic values,
+  symbols, function handles, dates, buffers, arrays, collections, and stable
+  identifiers), semantic capture/mutation analysis, and interpreter GC roots;
 - mark-sweep GC with interpreter roots, native root scopes, and registered JIT
   stack-map metadata;
 - Promise/microtask scheduling and scalar external-library symbol calls;
