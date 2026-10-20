@@ -17,9 +17,9 @@ Dynamic override dispatch in the JIT is implemented through compact inherited
 virtual-slot tables. Precise interpreter roots, native/JIT stack-map metadata,
 Promise/microtask primitives (including settlement-preserving `finally`), `Any`/`DynamicObject`, scalar external-library
 calls, interpreted backedge observation, and conservative reachability-based
-trimming are also implemented. The remaining gates are source-level async
-state-machine lowering, complete typed FFI/ABI integration, N-API hosting,
-AOT/R2R object emission, true OSR frame replacement, and production-grade
+trimming are also implemented. The remaining gates are complete typed FFI/ABI
+integration, N-API hosting, AOT/R2R object emission, true OSR frame replacement,
+and production-grade
 trimming diagnostics and metadata removal.
 
 The JIT virtual-call path is covered by interpreter/JIT equivalence, including
