@@ -458,6 +458,11 @@ impl Checker<'_> {
         self.closures.push(hir::ClosureFunction {
             name: format!("<closure@{}>", span.start),
             param_count: function.params.len() as u16,
+            rest_param: function
+                .params
+                .iter()
+                .position(|parameter| parameter.is_rest)
+                .map(|index| index as u16),
             defaults,
             locals: inner.locals,
             return_ty,
@@ -1172,6 +1177,11 @@ impl Checker<'_> {
                 return hir::Function {
                     name,
                     param_count: param_tys.len() as u16,
+                    rest_param: f
+                        .params
+                        .iter()
+                        .position(|parameter| parameter.is_rest)
+                        .map(|index| index as u16),
                     defaults: (0..f.params.len()).map(|_| None).collect(),
                     locals: cx.locals,
                     return_ty,
@@ -1250,6 +1260,11 @@ impl Checker<'_> {
         hir::Function {
             name,
             param_count: param_tys.len() as u16,
+            rest_param: f
+                .params
+                .iter()
+                .position(|parameter| parameter.is_rest)
+                .map(|index| index as u16),
             defaults,
             locals: cx.locals,
             return_ty,
