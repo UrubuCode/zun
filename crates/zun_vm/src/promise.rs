@@ -234,6 +234,10 @@ impl<T: Send + 'static> Promise<T> {
         self.then(move |value| {
             target.resolve(transform(value));
         });
+        let target = mapped.clone_handle();
+        self.catch(move |error| {
+            target.reject(error);
+        });
         mapped
     }
 
@@ -310,6 +314,27 @@ impl<T> PromiseHandle<T> {
             }
         };
         continuation.expect("continuation disappeared")(value);
+    }
+
+    fn reject(&self, error: String)
+    where
+        T: Send + 'static,
+    {
+        if self
+            .state
+            .compare_exchange(PENDING, REJECTED, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let rejection = {
+            let mut inner = self.inner.lock().expect("promise mutex poisoned");
+            inner.error = Some(error.clone());
+            inner.rejection.take()
+        };
+        if let Some(rejection) = rejection {
+            rejection(error);
+        }
     }
 }
 
@@ -497,6 +522,15 @@ mod tests {
         assert!(promise.is_rejected());
         assert_eq!(promise.error().as_deref(), Some("boom"));
         assert_eq!(seen.lock().unwrap().as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn map_propagates_rejection_without_running_transform() {
+        let promise = Promise::<u32>::new();
+        let mapped = promise.map(|_| panic!("transform must not run"));
+        assert!(promise.reject("boom"));
+        assert!(mapped.is_rejected());
+        assert_eq!(mapped.error().as_deref(), Some("boom"));
     }
 
     #[test]
