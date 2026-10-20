@@ -179,9 +179,10 @@ contrato observável no código e um teste que o exercite.
 - **Entregue parcialmente:** resolução de exports e `MemberRef` entre escopos
   carregados. Imports de módulos de usuário são validados no build, mas ainda
   não são baixados para uma chamada executável no VM.
-- **Ainda aberto:** execução multi-módulo, dispatch virtual dinâmico no JIT,
-  safepoints e stack maps precisos, async/Promise, `Any`/`DynamicObject`, FFI,
-  `zun_napi`, AOT/R2R, OSR e trimming.
+- **Ainda aberto:** lowering de `async/await` no compilador, ABI/FFI tipado
+  integrado à IL, bindings Node N-API, AOT/R2R completo para métodos fora do
+  subconjunto escalar, substituição de frames por OSR e trimming completo de
+  metadata/diagnósticos.
 
 ## 4.1 Modos de distribuição (decisão: suportar os três)
 
@@ -340,8 +341,9 @@ figures are machine-specific and should be re-run after interpreter or OSR
 changes; the benchmark source is `crates/zun_codegen/examples/bench.rs`.
 
 The remaining completion gates are full async state-machine lowering, complete
-typed FFI/ABI integration, N-API hosting, AOT/R2R object emission, true OSR
-frame replacement, and reachability-based trimming. Each gate requires a
+typed FFI/ABI integration, Node N-API bindings, AOT/R2R support for the full
+runtime surface, true OSR frame replacement, and production-grade trimming
+diagnostics/metadata removal. Each gate requires a
 runtime test and an interpreter/JIT equivalence test where JIT execution is
 applicable.
 
