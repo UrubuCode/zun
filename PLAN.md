@@ -450,7 +450,8 @@ The following runtime contracts are implemented and covered by tests:
   compiler/IL declarations for external symbols remain a separate gate.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
-  and microtask-scheduled success/failure continuations. Source-level
+  typed `Pending`/`Resolved`/`Rejected` state inspection, and
+  microtask-scheduled success/failure continuations. Source-level
   `async`/`await` lowering remains a separate pending gate.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
