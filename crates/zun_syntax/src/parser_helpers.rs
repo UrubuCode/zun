@@ -3,6 +3,45 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn try_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let body = self.block();
+        let mut catches = Vec::new();
+        while self.eat(TokenKind::KwCatch) {
+            self.expect(TokenKind::LParen, "`(` after catch");
+            let binding = self.name("a catch binding");
+            self.expect(TokenKind::Colon, "`:` after catch binding");
+            let ty = TypeAnnotation {
+                name: self.name("a catch type"),
+            };
+            self.expect(TokenKind::RParen, "`)` after catch binding");
+            let catch_body = self.block();
+            catches.push(CatchClause {
+                binding,
+                ty,
+                body: catch_body,
+            });
+        }
+        let finally = if self.eat(TokenKind::KwFinally) {
+            Some(self.block())
+        } else {
+            None
+        };
+        if catches.is_empty() && finally.is_none() {
+            self.error_at(self.peek().span, "try requires catch or finally");
+        }
+        let end = finally.as_ref().map_or_else(
+            || catches.last().map_or(body.span, |c| c.body.span),
+            |b| b.span,
+        );
+        Stmt::Try {
+            body,
+            catches,
+            finally,
+            span: start.to(end),
+        }
+    }
+
     pub(crate) fn return_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         let value = if self.at(TokenKind::Semi) {
