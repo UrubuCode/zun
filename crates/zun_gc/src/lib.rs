@@ -173,6 +173,8 @@ pub struct Heap {
     buffers: HashMap<usize, zun_core::ByteBuffer>,
     /// DataView descriptors associated with managed view objects.
     data_views: HashMap<usize, zun_core::DataView>,
+    /// Typed-array descriptors associated with managed view objects.
+    typed_views: HashMap<usize, (Obj, zun_core::TypedArrayView)>,
     /// Date values associated with Date objects.
     dates: HashMap<usize, zun_core::DateValue>,
     /// Error values associated with Error objects.
@@ -321,6 +323,25 @@ impl Heap {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
         let view = *self.data_views.get(&(object.addr() as usize))?;
         Some(view.set_f64(self.buffers.get_mut(&(buffer.addr() as usize))?, relative, value, little_endian))
+    }
+
+    /// Allocate a managed `Uint32Array` view over an existing buffer.
+    pub fn alloc_u32_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
+        let view = zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U32)?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
+
+    pub fn u32_array_get(&self, object: Obj, index: usize) -> Option<u32> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+        view.read_u32(self.buffers.get(&(buffer.addr() as usize))?, index)
+    }
+
+    pub fn u32_array_set(&mut self, object: Obj, index: usize, value: u32) -> Option<bool> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
+        Some(view.write_u32(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
     }
 
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
@@ -1118,6 +1139,7 @@ impl Heap {
                 self.arrays.remove(&(r.addr as usize));
                 self.buffers.remove(&(r.addr as usize));
                 self.data_views.remove(&(r.addr as usize));
+                self.typed_views.remove(&(r.addr as usize));
                 self.dates.remove(&(r.addr as usize));
                 self.errors.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));

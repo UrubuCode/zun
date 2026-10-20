@@ -1031,6 +1031,25 @@ impl Interp<'_> {
                 let little_endian = match args.get(3).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.data_view_set_f64(view, relative, value, little_endian)).ok_or(RunError::BadToken)?))
             }
+            "u32ArrayNew" => {
+                let buffer = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let number = |value: &Value| match value { Value::Int(value, _) => Ok(*value as usize), _ => Err(RunError::BadToken) };
+                let offset = number(args.get(1).ok_or(RunError::BadToken)?)?;
+                let length = number(args.get(2).ok_or(RunError::BadToken)?)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_u32_array(buffer, offset, length)).ok_or(RunError::BadToken)?;
+                Ok(Value::Object(array))
+            }
+            "u32ArrayGet" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.u32_array_get(array, index)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U32))
+            }
+            "u32ArraySet" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u32, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.u32_array_set(array, index, value)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1148,7 +1167,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1663,6 +1682,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run extended DataView intrinsics");
         assert!(matches!(result, Value::Float(2.5, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn accesses_gc_backed_u32_typed_arrays_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, u32ArrayNew, u32ArraySet, u32ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(16); let values = u32ArrayNew(buffer, 0, 16); u32ArraySet(values, 2, 16909060); return u32ArrayGet(values, 2) as u64; }",
+        )
+        .expect("compile typed-array intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run typed-array intrinsics");
+        assert!(matches!(result, Value::Int(16909060, zun_il::NumKind::U64)));
     }
 
     #[test]
