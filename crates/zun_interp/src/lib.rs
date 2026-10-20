@@ -31,7 +31,7 @@ use stack::{
     bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
     Ordering,
 };
-use state::{ExecutionFrame, Interp, RootLink};
+use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
 use runner::run_method_with;
 use std::rc::Rc;
 use value::Value;
@@ -493,9 +493,9 @@ impl Interp<'_> {
                         locals: &locals,
                         parent,
                     };
-                    let result = match self.dispatch(callee_rid, args, Some(&link)) {
-                        Ok(value) => value,
-                        Err(RunError::Thrown(exception)) => {
+                    let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
+                        ExecutionOutcome::Complete(value) => value,
+                        ExecutionOutcome::Thrown(exception) => {
                             if self.route_exception(
                                 &body,
                                 &mut stack,
@@ -507,7 +507,12 @@ impl Interp<'_> {
                             }
                             return Err(RunError::Thrown(exception));
                         }
-                        Err(error) => return Err(error),
+                        ExecutionOutcome::Fault(error) => return Err(error),
+                        ExecutionOutcome::Suspended(_) => {
+                            return Err(RunError::Malformed(
+                                "suspended execution crossed synchronous call boundary".into(),
+                            ));
+                        }
                     };
                     stack.push(result);
                 }

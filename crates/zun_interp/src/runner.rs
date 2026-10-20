@@ -1,5 +1,6 @@
 use super::gc_policy::GC_INTERVAL;
 use super::{CallHook, Interp, Output, RunError, Value};
+use super::state::ExecutionOutcome;
 use zun_module::Module;
 
 pub(super) fn run_method_with(
@@ -26,6 +27,15 @@ pub(super) fn run_method_with(
 }
 
 impl Interp<'_> {
+    pub(super) fn dispatch_outcome(
+        &mut self,
+        method_rid: u32,
+        args: Vec<Value>,
+        parent: Option<&super::RootLink>,
+    ) -> ExecutionOutcome {
+        ExecutionOutcome::from_result(self.dispatch(method_rid, args, parent))
+    }
+
     /// Route a call to the JIT hook when it handles the method, otherwise
     /// continue with the Tier 0 interpreter.
     pub(super) fn dispatch(
