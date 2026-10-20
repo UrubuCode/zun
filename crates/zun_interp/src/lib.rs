@@ -8,6 +8,7 @@
 
 mod builtins;
 mod native;
+mod unwind;
 pub mod value;
 
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
@@ -1195,6 +1196,17 @@ impl Interp<'_> {
         Ok(self.module.strings.get(zun_metadata::StringIndex(index)))
     }
 
+    fn route_exception(
+        &self,
+        body: &zun_module::MethodBody<'_>,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
+        throw_pc: usize,
+        exception: &Value,
+    ) -> bool {
+        unwind::route_exception(&self.types, body, stack, pc, throw_pc, exception)
+    }
+
     /// Execute a call: route it to the JIT hook when it handles the method,
     /// otherwise interpret it.
     fn dispatch(
@@ -1209,39 +1221,6 @@ impl Interp<'_> {
             }
         }
         self.call(method_rid, args, parent)
-    }
-
-    fn route_exception(
-        &self,
-        body: &zun_module::MethodBody<'_>,
-        stack: &mut Vec<Value>,
-        pc: &mut usize,
-        throw_pc: usize,
-        exception: &Value,
-    ) -> bool {
-        let handler = body
-            .handlers
-            .iter()
-            .filter(|handler| {
-                handler.try_start as usize <= throw_pc && throw_pc < handler.try_end as usize
-            })
-            .filter(|handler| match handler.kind {
-                zun_module::HandlerKind::Finally => true,
-                zun_module::HandlerKind::Catch => match (handler.catch_type, &exception) {
-                    (Some(token), Value::Object(object)) => {
-                        self.types.is_assignable(object.type_rid(), token.rid())
-                    }
-                    _ => false,
-                },
-            })
-            .min_by_key(|handler| handler.try_end - handler.try_start);
-        let Some(handler) = handler else {
-            return false;
-        };
-        stack.clear();
-        stack.push(exception.clone());
-        *pc = handler.handler_start as usize;
-        true
     }
 
     /// Run a mark-sweep collection with precise roots: the object references in
