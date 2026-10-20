@@ -346,6 +346,28 @@ impl DateValue {
         Some((hour, minute, second, millisecond))
     }
 
+    pub fn iso_datetime(self) -> Option<String> {
+        let (year, month, day) = self.utc_date()?;
+        let (hour, minute, second, millisecond) = self.utc_time()?;
+        Some(format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}Z"))
+    }
+
+    pub fn parse_iso_datetime(value: &str) -> Option<Self> {
+        let (date, time) = value.strip_suffix('Z')?.split_once('T')?;
+        let date = Self::parse_iso_date(date)?;
+        let mut fields = time.split([':', '.']);
+        let hour: i64 = fields.next()?.parse().ok()?;
+        let minute: i64 = fields.next()?.parse().ok()?;
+        let second: i64 = fields.next()?.parse().ok()?;
+        let millisecond: i64 = fields.next()?.parse().ok()?;
+        if fields.next().is_some() || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 || millisecond < 0 || millisecond > 999 {
+            return None;
+        }
+        let day = date.millis()?;
+        let time = hour * 3_600_000 + minute * 60_000 + second * 1_000 + millisecond;
+        Some(Self::from_millis(day.checked_add(time)?))
+    }
+
     pub fn parse_iso_date(value: &str) -> Option<Self> {
         let mut parts = value.split('-');
         let year: i32 = parts.next()?.parse().ok()?;
@@ -806,6 +828,9 @@ mod tests {
         assert_eq!(DateValue::from_millis(1_700_000_000_000).utc_date(), Some((2023, 11, 14)));
         assert_eq!(DateValue::from_millis(3_723_004).utc_time(), Some((1, 2, 3, 4)));
         assert_eq!(DateValue::from_millis(-1).utc_time(), Some((23, 59, 59, 999)));
+        assert_eq!(DateValue::from_millis(3_723_004).iso_datetime().as_deref(), Some("1970-01-01T01:02:03.004Z"));
+        assert_eq!(DateValue::parse_iso_datetime("1970-01-01T01:02:03.004Z").and_then(DateValue::iso_datetime).as_deref(), Some("1970-01-01T01:02:03.004Z"));
+        assert!(DateValue::parse_iso_datetime("1970-01-01T24:00:00.000Z").is_none());
         assert_eq!(DateValue::from_millis(0).iso_date().as_deref(), Some("1970-01-01"));
         assert_eq!(DateValue::parse_iso_date("2023-11-14").and_then(DateValue::iso_date).as_deref(), Some("2023-11-14"));
         assert!(DateValue::parse_iso_date("2023-02-29").is_none());
