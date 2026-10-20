@@ -90,6 +90,26 @@ pub struct ModuleLoader {
     modules: HashMap<String, ModuleScope>,
 }
 
+/// The kind of member resolved from a MemberRef.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberKind {
+    /// A method definition.
+    Method,
+    /// A field definition.
+    Field,
+}
+
+/// A member token together with the scope that owns it.
+#[derive(Debug)]
+pub struct ResolvedMember<'a> {
+    /// The loaded module that owns the definition.
+    pub scope: &'a ModuleScope,
+    /// The destination definition token.
+    pub token: Token,
+    /// Whether the token points to a method or field.
+    pub kind: MemberKind,
+}
+
 impl ModuleLoader {
     /// Create an empty module loader.
     pub fn new() -> Self {
@@ -135,6 +155,75 @@ impl ModuleLoader {
         let name = requester.module.strings.get(module_ref.name);
         self.get(name)
             .ok_or_else(|| LoadError::UnresolvedModule(name.to_string()))
+    }
+
+    /// Resolve a MemberRef to a definition in the local or referenced scope.
+    pub fn resolve_member_ref<'a>(
+        &'a self,
+        requester: &'a ModuleScope,
+        token: Token,
+    ) -> Result<ResolvedMember<'a>, LoadError> {
+        if token.table() != Some(TableKind::MemberRef) {
+            return Err(LoadError::UnresolvedModule(format!("invalid member token 0x{:08x}", token.to_raw())));
+        }
+        let member = requester
+            .module
+            .tables
+            .member_refs
+            .get(token.rid() as usize - 1)
+            .ok_or_else(|| LoadError::UnresolvedModule(format!("member RID {}", token.rid())))?;
+
+        let target = match member.parent.table() {
+            Some(TableKind::TypeDef) => requester,
+            Some(TableKind::TypeRef) => {
+                let type_ref = requester
+                    .module
+                    .tables
+                    .type_refs
+                    .get(member.parent.rid() as usize - 1)
+                    .ok_or_else(|| LoadError::UnresolvedModule("invalid type reference".into()))?;
+                self.resolve_module_ref(requester, type_ref.scope)?
+            }
+            _ => return Err(LoadError::UnresolvedModule("member parent is not a type".into())),
+        };
+        let type_name = match member.parent.table() {
+            Some(TableKind::TypeDef) => requester.module.strings.get(
+                requester.module.tables.type_defs[member.parent.rid() as usize - 1].name,
+            ),
+            Some(TableKind::TypeRef) => {
+                let type_ref = &requester.module.tables.type_refs[member.parent.rid() as usize - 1];
+                requester.module.strings.get(type_ref.name)
+            }
+            _ => unreachable!(),
+        };
+        let ty = target
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .find(|ty| target.module.strings.get(ty.name) == type_name)
+            .ok_or_else(|| LoadError::UnresolvedModule(type_name.to_string()))?;
+        let member_name = requester.module.strings.get(member.name);
+        let method = (ty.method_start..ty.method_end).find(|rid| {
+            target.module.strings.get(target.module.tables.method_defs[*rid as usize - 1].name)
+                == member_name
+        });
+        if let Some(rid) = method {
+            return Ok(ResolvedMember {
+                scope: target,
+                token: Token::new(TableKind::MethodDef, rid),
+                kind: MemberKind::Method,
+            });
+        }
+        let field = (ty.field_start..ty.field_end).find(|rid| {
+            target.module.strings.get(target.module.tables.field_defs[*rid as usize - 1].name)
+                == member_name
+        });
+        field.map(|rid| ResolvedMember {
+            scope: target,
+            token: Token::new(TableKind::FieldDef, rid),
+            kind: MemberKind::Field,
+        }).ok_or_else(|| LoadError::UnresolvedModule(member_name.to_string()))
     }
 
     /// Number of registered modules.
