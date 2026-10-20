@@ -337,6 +337,15 @@ impl DateValue {
         Some(format!("{year:04}-{month:02}-{day:02}"))
     }
 
+    pub fn utc_time(self) -> Option<(u32, u32, u32, u32)> {
+        let millis = self.millis()?.rem_euclid(86_400_000);
+        let hour = (millis / 3_600_000) as u32;
+        let minute = ((millis % 3_600_000) / 60_000) as u32;
+        let second = ((millis % 60_000) / 1_000) as u32;
+        let millisecond = (millis % 1_000) as u32;
+        Some((hour, minute, second, millisecond))
+    }
+
     pub fn parse_iso_date(value: &str) -> Option<Self> {
         let mut parts = value.split('-');
         let year: i32 = parts.next()?.parse().ok()?;
@@ -795,6 +804,8 @@ mod tests {
         assert_eq!(date.compare(DateValue::from_millis(1_700_000_000_124)), Some(std::cmp::Ordering::Less));
         assert_eq!(DateValue::from_millis(0).utc_date(), Some((1970, 1, 1)));
         assert_eq!(DateValue::from_millis(1_700_000_000_000).utc_date(), Some((2023, 11, 14)));
+        assert_eq!(DateValue::from_millis(3_723_004).utc_time(), Some((1, 2, 3, 4)));
+        assert_eq!(DateValue::from_millis(-1).utc_time(), Some((23, 59, 59, 999)));
         assert_eq!(DateValue::from_millis(0).iso_date().as_deref(), Some("1970-01-01"));
         assert_eq!(DateValue::parse_iso_date("2023-11-14").and_then(DateValue::iso_date).as_deref(), Some("2023-11-14"));
         assert!(DateValue::parse_iso_date("2023-02-29").is_none());
