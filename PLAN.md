@@ -593,12 +593,11 @@ The following runtime contracts are implemented and covered by tests:
   correct fallback; Cranelift compilation of methods containing `await` is an
   explicit eligibility boundary. Broader Cranelift support for async and
   generator state machines remains a separate optimization gate.
-- Generator preparation now has an explicit frontend/HIR boundary: `yield` and
-  `function*` are represented, yield/state counts and conservatively hoisted
-  locals are planned, the VM exposes a persistent `GeneratorStateMachine`, and
-  `yield` has a verified IL stack effect. Source emission and runtime iterator
-  objects remain gated until `next()` lowering and interpreter resumption are
-  connected.
+- Generator lowering now preserves `yield` through HIR and verified IL,
+  accepts `function*` declarations, and resumes Tier 0 frames through the
+  persistent interpreter session. The session exposes yielded values and final
+  completion; a managed generator iterator object and source-level `next()`
+  binding remain a separate integration gate.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
@@ -788,8 +787,9 @@ an optimization gate.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
    safepoints, true OSR, compaction, typed FFI/N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
-   the Tier 0 state-machine path; generator source lowering and iterator
-   resumption remain pending. Broader JIT support remains an optimization
+   the Tier 0 state-machine path; generator source lowering and frame
+   resumption are implemented, while managed iterator-object/`next()`
+   integration remains pending. Broader JIT support remains an optimization
    gate. Module-hygiene splits are
    maintained separately by the reviewer and are not part of this execution
    backlog.
