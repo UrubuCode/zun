@@ -206,6 +206,23 @@ impl Heap {
         freed
     }
 
+    /// Collect using the roots registered by active native frames in addition
+    /// to the explicitly supplied interpreter roots.
+    ///
+    /// # Safety
+    /// The same root validity requirements as [`Heap::collect`] apply.
+    pub unsafe fn collect_with_native_roots(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        let mut all_roots = roots.to_vec();
+        append_native_roots(&mut all_roots);
+        // SAFETY: the caller guarantees the explicit roots and registered
+        // native roots are valid for this heap.
+        unsafe { self.collect(&all_roots, ref_slots) }
+    }
+
     /// Intern a string, returning its handle for storing in a field slot.
     pub fn intern_string(&mut self, s: Rc<str>) -> u32 {
         let handle = self.strings.len() as u32;
@@ -520,5 +537,16 @@ mod tests {
         let mut roots = Vec::new();
         append_native_roots(&mut roots);
         assert_eq!(roots, registered);
+    }
+
+    #[test]
+    fn collection_keeps_native_roots_alive() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let registered = [object];
+        let _scope = unsafe { NativeRootScope::enter(&registered) };
+        let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
+        assert_eq!(freed, 0);
+        assert_eq!(heap.live_count(), 1);
     }
 }
