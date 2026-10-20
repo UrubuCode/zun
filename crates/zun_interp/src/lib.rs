@@ -516,6 +516,28 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
     }
 }
 
+#[cfg(test)]
+mod method_tests {
+    use super::*;
+
+    #[test]
+    fn runs_non_entry_method_with_arguments() {
+        let module = zun_compiler::compile(
+            "function add_one(value: int): int { return value + 1; } function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let result = run_method(
+            &module,
+            1,
+            vec![Value::Int(41, zun_il::NumKind::I32)],
+            &mut output,
+        )
+        .expect("run method");
+        assert!(matches!(result, Value::Int(42, zun_il::NumKind::I32)));
+    }
+}
+
 /// Add the object references found in a frame's stack and locals to `roots`.
 fn collect_frame_roots(stack: &[Value], locals: &[Value], roots: &mut Vec<zun_gc::Obj>) {
     for v in stack.iter().chain(locals.iter()) {

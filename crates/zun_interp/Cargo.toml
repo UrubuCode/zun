@@ -14,5 +14,8 @@ zun_gc = { path = "../zun_gc" }
 zun_natives = { path = "../zun_natives" }
 zun_types = { path = "../zun_types" }
 
+[dev-dependencies]
+zun_compiler = { path = "../zun_compiler" }
+
 [lints]
 workspace = true
