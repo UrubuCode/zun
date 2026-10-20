@@ -4,7 +4,7 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[path = "views.rs"]
 mod views;
@@ -12,11 +12,13 @@ mod ordered_map;
 mod collection_iterators;
 mod arrays;
 mod byte_buffer;
+mod dynamic_object;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
 pub use arrays::{ArrayIterator, ArrayStorage};
 pub use byte_buffer::ByteBuffer;
+pub use dynamic_object::DynamicObject;
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -256,19 +258,6 @@ impl Any {
     }
 }
 
-/// A dictionary-backed object for opt-in dynamic property access.
-///
-/// Property storage is deliberately kept out of the static object layout:
-/// typed Zun classes continue to use fixed field slots, while dynamic values
-/// pay for name lookup only when they opt into this representation. A
-/// `BTreeMap` keeps iteration deterministic for serialization and tests.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DynamicObject {
-    properties: BTreeMap<String, Any>,
-    symbol_properties: BTreeMap<SymbolId, Any>,
-    symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
-}
-
 /// Millisecond-precision date value. Invalid dates carry no usable timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DateValue {
@@ -442,84 +431,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
         (153 * (month + if month > 2 { -3 } else { 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Some(era * 146_097 + day_of_era - 719_468)
-}
-
-impl DynamicObject {
-    /// Create an empty dynamic object.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Read a property without removing it.
-    pub fn get(&self, name: &str) -> Option<Any> {
-        self.properties.get(name).copied()
-    }
-
-    /// Insert or replace a property and return its previous value, if any.
-    pub fn set(&mut self, name: impl Into<String>, value: Any) -> Option<Any> {
-        self.properties.insert(name.into(), value)
-    }
-
-    /// Read a property keyed by a runtime symbol.
-    pub fn get_symbol(&self, symbol: SymbolId) -> Option<Any> {
-        self.symbol_properties.get(&symbol).copied()
-    }
-
-    /// Insert or replace a symbol-keyed property.
-    pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
-        self.symbol_properties.insert(symbol, value)
-    }
-
-    /// Read a callable property keyed by a runtime symbol.
-    pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
-        self.symbol_functions.get(&symbol).copied()
-    }
-
-    /// Insert or replace a callable symbol-keyed property.
-    pub fn set_symbol_function(
-        &mut self,
-        symbol: SymbolId,
-        function: FunctionHandle,
-    ) -> Option<FunctionHandle> {
-        self.symbol_functions.insert(symbol, function)
-    }
-
-    /// Remove a property and return its value, if present.
-    pub fn remove(&mut self, name: &str) -> Option<Any> {
-        self.properties.remove(name)
-    }
-
-    /// Whether the object contains a property with this name.
-    pub fn contains(&self, name: &str) -> bool {
-        self.properties.contains_key(name)
-    }
-
-    /// Number of stored properties.
-    pub fn len(&self) -> usize {
-        self.properties.len()
-    }
-
-    /// Whether the object has no properties.
-    pub fn is_empty(&self) -> bool {
-        self.properties.is_empty()
-    }
-
-    /// Return the addresses stored in object-tagged properties.
-    pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
-        self.properties
-            .values()
-            .filter_map(|value| value.as_object())
-            .chain(
-                self.symbol_properties
-                    .values()
-                    .filter_map(|value| value.as_object()),
-            )
-            .chain(
-                self.symbol_functions
-                    .values()
-                    .filter_map(|value| value.environment()),
-            )
-    }
 }
 
 /// Stable identifier for a runtime intrinsic.
