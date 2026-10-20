@@ -1566,6 +1566,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_quote_source_method() {
+        let module = zun_compiler::compile(
+            "class String { quote(): string { return \"\\\"\" + this + \"\\\"\"; } } function main(): string { let value: string = \"zun\"; return value.quote(); }",
+        )
+        .expect("compile String quote");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String quote");
+        assert!(matches!(result, Value::Str(value) if value == "\"zun\"".into()));
+    }
+
+    #[test]
     fn executes_string_compare_native_method() {
         let module = zun_compiler::compile(
             "import { compare } from \"zun:string\";\n\

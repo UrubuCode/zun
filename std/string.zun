@@ -113,6 +113,10 @@ class String {
         return this.endsWith(suffix);
     }
 
+    quote(): string {
+        return "\"" + this + "\"";
+    }
+
     isWhitespace(): boolean {
         if (this.isEmpty()) { return false; }
         return this.trim().isEmpty();
