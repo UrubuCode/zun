@@ -41,10 +41,26 @@ impl Interp<'_> {
 
     /// Resume a previously suspended frame from its saved program counter.
     /// The scheduler owns the decision about when the awaited Promise settled.
-    pub(super) fn resume_suspended(&mut self, frame: ExecutionFrame) -> ExecutionOutcome {
-        let method_rid = frame.method_rid;
-        self.resume_frame = Some(frame);
-        self.dispatch_outcome(method_rid, Vec::new(), None)
+    pub(super) fn resume_suspended(&mut self, mut frame: ExecutionFrame) -> ExecutionOutcome {
+        loop {
+            let caller = frame.parent.take();
+            let method_rid = frame.method_rid;
+            self.resume_frame = Some(frame);
+            match self.dispatch_outcome(method_rid, Vec::new(), None) {
+                ExecutionOutcome::Complete(value) => {
+                    let Some(mut caller) = caller else {
+                        return ExecutionOutcome::Complete(value);
+                    };
+                    caller.stack.push(value);
+                    frame = *caller;
+                }
+                ExecutionOutcome::Suspended(mut suspended) => {
+                    suspended.parent = caller;
+                    return ExecutionOutcome::Suspended(suspended);
+                }
+                other => return other,
+            }
+        }
     }
 
     pub(super) fn dispatch_outcome(
