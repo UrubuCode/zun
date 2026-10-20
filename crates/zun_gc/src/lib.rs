@@ -178,6 +178,8 @@ pub struct Heap {
     array_iterators: HashMap<usize, (Obj, zun_core::ArrayIterator)>,
     /// Set iterator state associated with managed iterator objects.
     set_iterators: HashMap<usize, (Obj, zun_core::SetIterator)>,
+    /// Map iterator state associated with managed iterator objects.
+    map_iterators: HashMap<usize, (Obj, zun_core::MapIterator)>,
     /// Date values associated with Date objects.
     dates: HashMap<usize, zun_core::DateValue>,
     /// Error values associated with Error objects.
@@ -431,6 +433,24 @@ impl Heap {
         let (set, state) = self.set_iterators.get_mut(&(iterator.addr() as usize))?;
         let storage = self.sets.get(&(set.addr() as usize))?;
         state.next(storage)
+    }
+
+    pub fn alloc_map_iterator(&mut self, map: Obj) -> Option<Obj> {
+        self.map_len(map)?;
+        let iterator = self.alloc(0, 1);
+        iterator.set_field(0, map.addr() as u64);
+        self.map_iterators.insert(iterator.addr() as usize, (map, zun_core::MapIterator::new()));
+        Some(iterator)
+    }
+
+    pub fn map_iterator_next(&mut self, iterator: Obj) -> Option<Obj> {
+        let (map, state) = self.map_iterators.get_mut(&(iterator.addr() as usize))?;
+        let storage = self.maps.get(&(map.addr() as usize))?;
+        let (key, value) = state.next(storage)?;
+        let pair = self.alloc_array(2);
+        self.array_set(pair, 0, key);
+        self.array_set(pair, 1, value);
+        Some(pair)
     }
 
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
@@ -1236,6 +1256,7 @@ impl Heap {
                 self.typed_views.remove(&(r.addr as usize));
                 self.array_iterators.remove(&(r.addr as usize));
                 self.set_iterators.remove(&(r.addr as usize));
+                self.map_iterators.remove(&(r.addr as usize));
                 self.dates.remove(&(r.addr as usize));
                 self.errors.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));

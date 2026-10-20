@@ -1129,6 +1129,17 @@ impl Interp<'_> {
                     .map(Value::Any)
                     .unwrap_or(Value::Void))
             }
+            "mapIteratorNew" => {
+                let map = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(map)).ok_or(RunError::BadToken)?;
+                Ok(Value::Object(iterator))
+            }
+            "mapIteratorNext" => {
+                let iterator = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(zun_gc::with_current_heap_mut(|heap| heap.map_iterator_next(iterator))
+                    .map(Value::Object)
+                    .unwrap_or(Value::Void))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1246,7 +1257,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet", "f64ArrayNew", "f64ArrayGet", "f64ArraySet", "u16ArrayNew", "u16ArrayGet", "u16ArraySet", "arrayIteratorNew", "arrayIteratorNext", "setIteratorNew", "setIteratorNext"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet", "f64ArrayNew", "f64ArrayGet", "f64ArraySet", "u16ArrayNew", "u16ArrayGet", "u16ArraySet", "arrayIteratorNew", "arrayIteratorNext", "setIteratorNew", "setIteratorNext", "mapIteratorNew", "mapIteratorNext"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1829,6 +1840,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run set iterator intrinsics");
         assert!(matches!(result, Value::Void));
         assert_eq!(output.lines, vec!["[any:Float]", "[any:Float]"]);
+    }
+
+    #[test]
+    fn exposes_map_iterator_entry_pairs_to_source() {
+        let module = zun_compiler::compile(
+            "import { mapIteratorNew, mapIteratorNext } from \"zun:buffer\"; function main(): any { let values = new Map(); values.set(7.0, 70.0); values.set(9.0, 90.0); let iterator = mapIteratorNew(values); print(mapIteratorNext(iterator)); return mapIteratorNext(iterator); }",
+        )
+        .expect("compile map iterator intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run map iterator intrinsics");
+        assert!(matches!(result, Value::Object(_)));
+        assert_eq!(output.lines, vec!["[any:Object]"]);
     }
 
     #[test]

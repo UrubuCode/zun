@@ -39,5 +39,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "arrayIteratorNext", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "setIteratorNew", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "setIteratorNext", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "mapIteratorNew", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "mapIteratorNext", params: &[Opaque], ret: Opaque, imp: unavailable },
     ],
 };
