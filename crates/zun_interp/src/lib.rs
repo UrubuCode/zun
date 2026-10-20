@@ -663,6 +663,17 @@ mod method_tests {
         let result = run(&module, &mut output).expect("dynamic property IL");
         assert!(matches!(result, Value::Int(41, zun_il::NumKind::I64)));
     }
+
+    #[test]
+    fn executes_dynamic_property_source() {
+        let module = zun_compiler::compile(
+            "function main(): any { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); return dynamic_get(object, \"answer\"); }",
+        )
+        .expect("compile dynamic source");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run dynamic source");
+        assert!(matches!(result, Value::Any(any) if any.as_float() == Some(41.0)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.

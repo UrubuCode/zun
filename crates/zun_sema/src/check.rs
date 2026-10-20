@@ -181,6 +181,7 @@ impl Checker<'_> {
             "u64" => Ty::Int(IntKind::U64),
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
+            "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "any" => Ty::Any,
             "void" => Ty::Void,
             other => match self.classes_by_name.get(other) {
@@ -685,6 +686,87 @@ impl Checker<'_> {
                             args,
                         },
                         ty: Ty::Void,
+                        span,
+                    };
+                }
+
+                if name == "dynamic_new" {
+                    if !args.is_empty() {
+                        self.error(span, "dynamic_new takes no arguments");
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicNew,
+                        ty: Ty::DynamicObject,
+                        span,
+                    };
+                }
+
+                if name == "box_any" {
+                    if args.len() != 1 {
+                        self.error(span, "box_any takes exactly one argument");
+                        return self.poison(span);
+                    }
+                    let value = args.pop().unwrap();
+                    return hir::Expr {
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(value),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
+
+                let dynamic_property = |checker: &mut Checker<'_>, args: &mut Vec<hir::Expr>, span: Span| {
+                    if args.len() != 2 || args[0].ty != Ty::DynamicObject || args[1].ty != Ty::String {
+                        checker.error(span, "dynamic property access expects (dynamic, string)");
+                        return None;
+                    }
+                    let name = match &args[1].kind {
+                        hir::ExprKind::String(name) => name.clone(),
+                        _ => {
+                            checker.error(args[1].span, "dynamic property name must be a string literal");
+                            return None;
+                        }
+                    };
+                    Some((args.remove(0), name))
+                };
+
+                if name == "dynamic_get" {
+                    let Some((object, property)) = dynamic_property(self, &mut args, span) else {
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicGet {
+                            object: Box::new(object),
+                            name: property,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
+
+                if name == "dynamic_set" {
+                    if args.len() != 3 || args[0].ty != Ty::DynamicObject || args[1].ty != Ty::String || args[2].ty != Ty::Any {
+                        self.error(span, "dynamic property assignment expects (dynamic, string, any)");
+                        return self.poison(span);
+                    }
+                    let property = match &args[1].kind {
+                        hir::ExprKind::String(name) => name.clone(),
+                        _ => {
+                            self.error(args[1].span, "dynamic property name must be a string literal");
+                            return self.poison(span);
+                        }
+                    };
+                    let object = args.remove(0);
+                    args.remove(0);
+                    let value = args.remove(0);
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicSet {
+                            object: Box::new(object),
+                            name: property,
+                            value: Box::new(value),
+                        },
+                        ty: Ty::Any,
                         span,
                     };
                 }
@@ -1447,6 +1529,19 @@ mod tests {
     fn any_does_not_implicitly_enable_arithmetic() {
         let msg = first_error("function f(value: any) { let result = value + 1; }");
         assert!(msg.contains("cannot add"), "{msg}");
+    }
+
+    #[test]
+    fn dynamic_property_builtins_are_type_checked() {
+        let hir = check_ok(
+            "function main(): any {\n\
+                let object = dynamic_new();\n\
+                dynamic_set(object, \"answer\", box_any(41));\n\
+                return dynamic_get(object, \"answer\");\n\
+             }",
+        );
+        assert_eq!(hir.functions[0].return_ty, Ty::Any);
+        assert_eq!(hir.functions[0].locals, vec![Ty::DynamicObject]);
     }
 
     #[test]

@@ -83,6 +83,8 @@ pub enum Ty {
     String,
     /// `boolean`.
     Boolean,
+    /// A dictionary-backed dynamic object.
+    DynamicObject,
     /// A dynamically tagged value.
     Any,
     /// `void` — only valid as a return type.
@@ -264,6 +266,29 @@ pub enum ExprKind {
         id: u32,
         /// Arguments in order.
         args: Vec<Expr>,
+    },
+    /// Allocate a dynamic object.
+    DynamicNew,
+    /// Read a named property from a dynamic object.
+    DynamicGet {
+        /// The object expression.
+        object: Box<Expr>,
+        /// The property name.
+        name: String,
+    },
+    /// Write an Any value to a named dynamic property.
+    DynamicSet {
+        /// The object expression.
+        object: Box<Expr>,
+        /// The property name.
+        name: String,
+        /// The dynamic value.
+        value: Box<Expr>,
+    },
+    /// Explicitly box a statically typed value as Any.
+    BoxAny {
+        /// The value to box.
+        value: Box<Expr>,
     },
     /// Call a function exported by another source module.
     ExternalCall {

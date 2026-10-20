@@ -444,6 +444,28 @@ impl FnLowerer<'_> {
                     Operand::Imm32(*id as i32),
                 ));
             }
+            ExprKind::DynamicNew => {
+                self.emit(Instruction::simple(Opcode::NewDynamic));
+            }
+            ExprKind::DynamicGet { object, name } => {
+                self.expr(object);
+                let property = self.module.strings.intern(name);
+                self.emit(Instruction::new(Opcode::LoadDynamic, Operand::StringRef(property.0)));
+            }
+            ExprKind::DynamicSet {
+                object,
+                name,
+                value,
+            } => {
+                self.expr(object);
+                self.expr(value);
+                let property = self.module.strings.intern(name);
+                self.emit(Instruction::new(Opcode::StoreDynamic, Operand::StringRef(property.0)));
+            }
+            ExprKind::BoxAny { value } => {
+                self.expr(value);
+                self.emit(Instruction::simple(Opcode::BoxAny));
+            }
             ExprKind::ExternalCall {
                 module,
                 name,
