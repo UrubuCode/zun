@@ -190,6 +190,16 @@ impl ArrayStorage {
         self.elements.pop()
     }
 
+    /// Resize the array, filling new slots with the zero numeric sentinel.
+    pub fn resize(&mut self, new_length: usize) {
+        self.elements.resize(new_length, Any::int(0));
+    }
+
+    /// Iterate over elements without exposing the backing vector.
+    pub fn iter(&self) -> impl Iterator<Item = Any> + '_ {
+        self.elements.iter().copied()
+    }
+
     /// Return object references stored in the array for precise GC tracing.
     pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
         self.elements.iter().filter_map(|value| value.as_object())
@@ -351,5 +361,10 @@ mod tests {
         assert_eq!(array.set(2, Any::int(9)), None);
         assert_eq!(array.push(Any::int(11)), 2);
         assert_eq!(array.pop().and_then(Any::as_int), Some(11));
+        array.resize(4);
+        assert_eq!(array.len(), 4);
+        assert_eq!(array.iter().count(), 4);
+        array.resize(1);
+        assert_eq!(array.len(), 1);
     }
 }
