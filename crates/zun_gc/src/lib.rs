@@ -1000,7 +1000,10 @@ impl StackMapRegistry {
 
     /// Find the map covering `pc`, if one is registered.
     pub fn lookup(&self, pc: usize) -> Option<NativeStackMap> {
-        self.maps.iter().copied().find(|map| map.pc == pc)
+        self.maps.iter().copied().find(|map| {
+            let end = map.pc.saturating_add(map.span as usize);
+            pc >= map.pc && pc < end
+        })
     }
 
     /// Number of registered safepoints.
@@ -1462,5 +1465,15 @@ mod tests {
         let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
         assert_eq!(freed, 0);
         assert_eq!(heap.live_count(), 1);
+    }
+
+    #[test]
+    fn stack_map_lookup_matches_the_registered_span() {
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 100, span: 16 }]);
+        assert_eq!(registry.lookup(100).unwrap().pc, 100);
+        assert_eq!(registry.lookup(115).unwrap().pc, 100);
+        assert!(registry.lookup(116).is_none());
+        assert!(registry.lookup(99).is_none());
     }
 }
