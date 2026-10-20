@@ -60,6 +60,40 @@ pub struct TypeSystem {
     method_slots: Vec<Option<usize>>,
 }
 
+/// Immutable load-time binding for the types supplied by `zun:core`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreTypes {
+    type_rids: [Option<u32>; 6],
+}
+
+impl CoreTypes {
+    /// Bind the conventional core type names once while loading the core module.
+    /// Runtime lookups thereafter use the positional [`zun_core::CoreTypeId`].
+    pub fn from_module(module: &Module, types: &TypeSystem) -> Self {
+        let mut type_rids = [None; 6];
+        for (index, type_def) in module.tables.type_defs.iter().enumerate() {
+            let id = match module.strings.get(type_def.name) {
+                "Object" => zun_core::CoreTypeId::Object,
+                "String" => zun_core::CoreTypeId::String,
+                "Number" => zun_core::CoreTypeId::Number,
+                "Boolean" => zun_core::CoreTypeId::Boolean,
+                "Array" => zun_core::CoreTypeId::Array,
+                "Function" => zun_core::CoreTypeId::Function,
+                _ => continue,
+            };
+            if types.get(index as u32 + 1).is_some() {
+                type_rids[id.get() as usize] = Some(index as u32 + 1);
+            }
+        }
+        Self { type_rids }
+    }
+
+    /// Return the local TypeDef RID bound to a core type.
+    pub fn get(&self, id: zun_core::CoreTypeId) -> Option<u32> {
+        self.type_rids[id.get() as usize]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

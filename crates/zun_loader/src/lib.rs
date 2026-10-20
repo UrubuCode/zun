@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use zun_metadata::{TableKind, Token};
 use zun_module::{Module, ReadError};
-use zun_types::{TypeError, TypeSystem};
+use zun_types::{CoreTypes, TypeError, TypeSystem};
 
 /// A loaded module together with its loader-visible identity.
 #[derive(Debug)]
@@ -16,6 +16,7 @@ pub struct ModuleScope {
     name: String,
     module: Module,
     types: TypeSystem,
+    core_types: Option<CoreTypes>,
     exports: HashMap<String, Export>,
 }
 
@@ -31,8 +32,14 @@ pub enum Export {
 impl ModuleScope {
     /// Load a module from serialized `.zm` bytes.
     pub fn from_bytes(name: impl Into<String>, bytes: &[u8]) -> Result<Self, LoadError> {
+        let name = name.into();
         let module = Module::read(bytes).map_err(LoadError::Format)?;
         let types = TypeSystem::from_module(&module).map_err(LoadError::Types)?;
+        let core_types = if name == "zun:core" {
+            Some(CoreTypes::from_module(&module, &types))
+        } else {
+            None
+        };
         let mut exports = HashMap::new();
         for (rid, method) in module.tables.method_defs.iter().enumerate() {
             let method_rid = rid as u32 + 1;
@@ -68,9 +75,10 @@ impl ModuleScope {
             }
         }
         Ok(Self {
-            name: name.into(),
+            name,
             module,
             types,
+            core_types,
             exports,
         })
     }
@@ -95,6 +103,11 @@ impl ModuleScope {
     /// Access the reified runtime types built for this module.
     pub fn types(&self) -> &TypeSystem {
         &self.types
+    }
+
+    /// Access the immutable core-type bindings, when this is `zun:core`.
+    pub fn core_types(&self) -> Option<&CoreTypes> {
+        self.core_types.as_ref()
     }
 
     /// Resolve an exported definition by its source-level name in O(1).

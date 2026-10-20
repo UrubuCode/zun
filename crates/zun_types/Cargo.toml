@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Reified runtime type descriptors and object layouts for Zun."
 
 [dependencies]
+zun_core = { path = "../zun_core" }
 zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }

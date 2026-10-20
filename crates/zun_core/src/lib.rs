@@ -204,6 +204,44 @@ impl IntrinsicId {
     }
 }
 
+/// Stable positional identity for the runtime's built-in types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum CoreTypeId {
+    /// Root object type.
+    Object = 0,
+    /// Text/string type.
+    String = 1,
+    /// JavaScript-compatible numeric type.
+    Number = 2,
+    /// Boolean type.
+    Boolean = 3,
+    /// Array type.
+    Array = 4,
+    /// Function type.
+    Function = 5,
+}
+
+impl CoreTypeId {
+    /// Convert a stable numeric id into a core type id.
+    pub const fn new(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Object),
+            1 => Some(Self::String),
+            2 => Some(Self::Number),
+            3 => Some(Self::Boolean),
+            4 => Some(Self::Array),
+            5 => Some(Self::Function),
+            _ => None,
+        }
+    }
+
+    /// Return the positional id used by the runtime contract.
+    pub const fn get(self) -> u8 {
+        self as u8
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +255,14 @@ mod tests {
     #[test]
     fn intrinsic_ids_are_positional() {
         assert_eq!(IntrinsicId::new(7).get(), 7);
+    }
+
+    #[test]
+    fn core_type_ids_are_stable() {
+        assert_eq!(CoreTypeId::Object.get(), 0);
+        assert_eq!(CoreTypeId::Function.get(), 5);
+        assert_eq!(CoreTypeId::new(2), Some(CoreTypeId::Number));
+        assert_eq!(CoreTypeId::new(6), None);
     }
 
     #[test]
