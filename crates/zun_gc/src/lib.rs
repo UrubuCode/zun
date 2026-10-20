@@ -9,10 +9,11 @@
 //! type. This is what lets native code load and store fields by offset.
 //!
 //! Non-moving: once allocated, an object's address never changes, so a pointer
-//! handed to native code stays valid. There is no collection yet — memory is
-//! reclaimed only when the [`Heap`] is dropped ("allocate first, collect
-//! later"). A later phase adds mark-sweep over this same layout, using the
-//! type RID to find each object's reference slots.
+//! handed to native code remains stable. Mark-sweep reclaims unreachable
+//! objects using the type RID to find reference slots; interpreter roots,
+//! native root scopes, and stopped JIT frames described by stack maps are
+//! supported. Compaction remains a later phase because moving objects would
+//! require rewriting all managed references and native stack-map locations.
 //!
 //! # Safety
 //! Object pointers are valid only while the owning [`Heap`] is alive. The
