@@ -373,8 +373,9 @@ mirroring the way weak collections forced dedicated GC work.
   interpreter.*
 - Iteration protocol (`for...of`, `Symbol.iterator`) and, later, generators
   (`function*`). Generators lower to a state machine, reusing the async
-  state-machine substrate. *Status: a `SymbolRegistry` exists; `for...of` and
-  generators are still pending (generators belong to Phase 4).*
+  state-machine substrate. *Status: `SymbolRegistry`, `for...of` for Array,
+  Map, and Set, and source-level iterator calls are implemented in Tier 0;
+  generators belong to Phase 4 and remain pending.*
 
 **Group 2 — syntactic / medium features (no deep runtime change):** spread/rest
 (`...`), array and object destructuring, default and rest parameters, optional
@@ -382,11 +383,11 @@ chaining `?.` and nullish coalescing `??`, template literals, `switch`,
 `do/while` and C-style `for(;;)`, labelled `break`/`continue`, ternary and
 short-circuit `&&`/`||` value semantics, getters/setters, `static`
 fields/methods, and private `#fields`. *Status: `switch`, `do/while`, C-style
-`for(;;)`, short-circuit `&&`/`||`, and ternary conditional expressions are
-implemented; explicit `null`, nullish coalescing `??`, dynamic-property
-optional chaining, and trailing default parameters are also implemented; the remaining features are
-pending and must be added only with complete parser, sema, and lowering
-paths.*
+`for(;;)`, labelled control flow, short-circuit `&&`/`||`, ternary conditional
+expressions, explicit `null`, nullish coalescing `??`, optional property and
+method chaining, trailing default parameters, spread/rest, destructuring, and
+template literals are implemented with complete parser, sema, and lowering
+paths. Getters/setters, `static` members, and private `#fields` remain pending.*
 
 **Group 3 — TypeScript type-level (erased at runtime):** generics, interfaces,
 enums, union types with narrowing, and optional properties. These are handled by
@@ -413,6 +414,8 @@ The following runtime contracts are implemented and covered by tests:
 
 - compact virtual-slot dispatch in both the interpreter and Cranelift JIT;
 - O(1) field metadata lookup and per-type virtual tables;
+- behavior-preserving module splits for the interpreter native bridge and
+  managed-builtin resolution;
 - mark-sweep GC with interpreter roots, native root scopes, and registered JIT
   stack-map metadata;
 - Promise/microtask scheduling and scalar external-library symbol calls;
@@ -461,6 +464,8 @@ The following runtime contracts are implemented and covered by tests:
   dynamic/collection children; finalization
   queues are now exposed as a post-sweep token queue; source-level `WeakMap`
   bindings are available while callback scheduling remains a separate gate.
+- adaptive interpreter GC intervals that increase when a collection reclaims
+  nothing, with weak-collection stress coverage at repeated safepoints;
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
   intrinsic substrate for `ArrayBuffer` and typed-array views. Little-endian
   `u16`, `u32`, and `f64` view operations are covered; source-level view
@@ -545,13 +550,12 @@ dispatch. These figures are machine-specific and should be re-run after
 interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
-The remaining completion gates are capturing callbacks and the
-complete String/Number/Array TypeScript core library, full async state-machine
-lowering, complete typed FFI/ABI integration, production Node N-API bindings,
-AOT/R2R support for the full runtime surface, true OSR frame replacement, and
-production-grade trimming diagnostics/metadata removal. Each gate requires a
-runtime test and an interpreter/JIT equivalence test where JIT execution is
-applicable.
+The remaining completion gates are JIT lowering for managed heap values,
+precise JIT-frame stack maps, true OSR frame replacement, compacting GC,
+async/generator lowering, complete typed FFI/ABI integration, production Node
+N-API bindings, AOT/R2R support for the full runtime surface, and the deferred
+language surfaces listed in section 4.4.2. Each gate requires a runtime test
+and an interpreter/JIT equivalence test where JIT execution is applicable.
 
 ## 6. Execution backlog and rules (active goal — 2026-10-20)
 
@@ -575,7 +579,7 @@ Rules (every slice):
 
 Ordered backlog:
 
-1. **Closures** (arrow / anonymous functions): HIR synthetic function with an
+1. **Closures — complete in Tier 0** (arrow / anonymous functions): HIR synthetic function with an
    explicit environment parameter; sema free-variable analysis with
    capture-by-binding (a captured variable that is mutated becomes a boxed heap
    cell shared with the enclosing scope); ilgen lowering to `mkclosure` with GC
@@ -600,16 +604,57 @@ an optimization gate.
    after block reuse, key-aware managed lookup, and repeated-cycle stress
    coverage are implemented. FinalizationRegistry-specific behavior remains
    pending because no source-level FinalizationRegistry exists yet.
-5. **Group 2 syntax** (section 4.4.2), by utility: `switch`, `do/while`,
-   C-style `for(;;)`, short-circuit `&&`/`||`, and ternary conditional
-   expressions, nullish coalescing `??`, dynamic-property optional chaining,
-   and trailing default parameters are implemented; spread/rest,
-   destructuring, optional method chaining, template literals, and the
-   remaining syntax are pending.
-6. Keep this section and the section 5 ledger up to date as items land.
+5. **Group 2 syntax** (section 4.4.2) is implemented through template
+   literals, including spread/rest, destructuring, default parameters,
+   optional property/method chaining, nullish coalescing, `switch`, loops,
+   short-circuit operators, ternary expressions, and labelled loop control.
+   Getters/setters, `static` members, and private `#fields` remain pending.
+6. **Remaining architecture**: continue module-hygiene splits, then managed
+   Cranelift values, precise JIT stack maps, true OSR, compaction, async and
+   generators, typed FFI/N-API, AOT/R2R, and the performance backlog.
+7. Keep this section and the section 5 ledger up to date as items land.
 
 Stop condition: stop only on a real environment blocker, a design decision not
 covered by the plan, or completion of the whole backlog.
+
+## 7. Performance backlog (measured 2026-10-20)
+
+Optimizations found by benchmarking. These are **not** correctness or complexity
+defects — they are constant-factor / engine costs to improve after the section 6
+backlog. Both measured on this date.
+
+### 7.1 `OrderedMap` insert constant (Map/Set floor)
+
+Direct benchmark of `zun_core::OrderedMap` (the floor under `Map`/`Set`), insert
+then probe, at N=200k and N=1M (5x apart):
+
+| N | insert | probe |
+|---|---|---|
+| 200,000 | 417 ns/op | 33 ns/op |
+| 1,000,000 | 428 ns/op (x1.03) | 40 ns/op (x1.22) |
+
+Complexity is confirmed **O(1)** (per-op is flat across a 5x N; it is not an O(n)
+scan). Lookups are fast (~35 ns). Inserts are O(1) but carry a large constant
+(~420 ns, ~12x the lookup), because the table uses separate chaining with a
+heap-allocated `Vec<usize>` per bucket (pointer chasing + per-bucket
+allocations) and a 16-byte `Any` per entry slot. **Fix:** move to open
+addressing (a single contiguous bucket array, Robin Hood / Swiss-table style)
+to cut the insert constant and improve cache behavior; keep insertion-order
+semantics and SameValueZero. Lower priority than the section 6 backlog.
+
+### 7.2 Tier 0 interpreter GC is O(n^2) over a run
+
+A Map/Set benchmark run *through compiled Zun code* (interpreter) did not finish
+in 420s for N=500k, while the data structure itself handles 1M in well under a
+second. The cost is the **interpreter garbage collector**, not the collection:
+mark-sweep fires every `GC_INTERVAL` (256) allocations and scans the whole live
+set each time, so a program that keeps O(n) objects live pays roughly
+O(n^2 / 256) in GC over the run. For large live sets this dominates everything.
+**Fix directions:** a generational / incremental collector, or at minimum an
+adaptive GC interval that scales with live-set size (so collections stay
+proportional to garbage, not to total live objects); revisit the deferred
+JIT-frame stack maps so hot code can leave Tier 0. This is the real performance
+ceiling for large programs today, independent of any individual data structure.
 
 ## 5. Riscos e pontos de atenção
 
