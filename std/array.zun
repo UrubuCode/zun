@@ -32,6 +32,19 @@ class Array {
     return false;
     }
 
+    indexOf(value: any): int {
+        let index: u64 = 0;
+        while (index < this.length) {
+            if (this[index] == value) { return index as int; }
+            index = index + 1;
+        }
+        return -1;
+    }
+
+    isEmpty(): boolean {
+        return this.length == 0;
+    }
+
     sum(): number {
     let total: number = 0.0;
     let index: u64 = 0;

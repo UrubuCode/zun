@@ -934,6 +934,21 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array source method");
         assert!(matches!(result, Value::Bool(true)));
     }
+
+    #[test]
+    fn executes_array_index_of_and_is_empty_methods() {
+        let module = zun_compiler::compile(
+            "class Array {\n\
+                 indexOf(value: any): int { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return index as int; } index = index + 1; } return -1; }\n\
+                 isEmpty(): boolean { return this.length == 0; }\n\
+             }\n\
+             function main(): int { let values = new Array(1); values[0] = 41; if (values.isEmpty()) { return -2; } return values.indexOf(values[0]); }",
+        )
+        .expect("compile Array search methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array search methods");
+        assert!(matches!(result, Value::Int(0, zun_il::NumKind::I32)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.

@@ -130,6 +130,22 @@ fn array_source_methods_keep_interpreter_fallback() {
 }
 
 #[test]
+fn array_search_methods_keep_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array {\n\
+             indexOf(value: any): int { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return index as int; } index = index + 1; } return -1; }\n\
+             isEmpty(): boolean { return this.length == 0; }\n\
+         }\n\
+         function main(): int { let values = new Array(1); values[0] = 41; if (values.isEmpty()) { return -2; } return values.indexOf(values[0]); }",
+    )
+    .expect("compile Array search methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(0, zun_il::NumKind::I32)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",
