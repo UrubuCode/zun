@@ -60,6 +60,10 @@ pub enum TokenKind {
     LBrace,
     /// `}`
     RBrace,
+    /// `[`
+    LBracket,
+    /// `]`
+    RBracket,
     /// `,`
     Comma,
     /// `;`
@@ -187,6 +191,8 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     b')' => TokenKind::RParen,
                     b'{' => TokenKind::LBrace,
                     b'}' => TokenKind::RBrace,
+                    b'[' => TokenKind::LBracket,
+                    b']' => TokenKind::RBracket,
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semi,
                     b':' => TokenKind::Colon,

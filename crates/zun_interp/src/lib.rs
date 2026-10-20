@@ -792,6 +792,17 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run array constructor");
         assert!(matches!(result, Value::Object(_)));
     }
+
+    #[test]
+    fn executes_source_array_index_read() {
+        let module = zun_compiler::compile(
+            "function main(): any { let values = new Array(1); return values[0]; }",
+        )
+        .expect("compile array index");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array index");
+        assert!(matches!(result, Value::Int(0, zun_il::NumKind::I64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.

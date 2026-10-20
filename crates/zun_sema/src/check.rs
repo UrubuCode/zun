@@ -1095,6 +1095,22 @@ impl Checker<'_> {
                     }
                 }
             }
+            ast::Expr::Index { object, index, .. } => {
+                let object = self.check_expr(cx, object);
+                let mut index = self.check_expr(cx, index);
+                coerce_numeric_literal(&mut index, Ty::INT);
+                if object.ty != Ty::Array && !object.ty.is_error() {
+                    self.error(object.span, "indexing requires an Array");
+                }
+                if !index.ty.is_int() && !index.ty.is_error() {
+                    self.error(index.span, "array index must be an integer");
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::ArrayGet { object: Box::new(object), index: Box::new(index) },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
             ast::Expr::FieldAssign {
                 object,
                 field,

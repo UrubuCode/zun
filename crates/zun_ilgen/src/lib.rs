@@ -531,6 +531,11 @@ impl FnLowerer<'_> {
                 let token = self.layout.field_tokens[*class as usize][*field_slot as usize];
                 self.emit(Instruction::new(Opcode::StoreField, Operand::Token(token)));
             }
+            ExprKind::ArrayGet { object, index } => {
+                self.expr(object);
+                self.expr(index);
+                self.emit(Instruction::simple(Opcode::LoadArray));
+            }
             ExprKind::Convert { value } => {
                 self.expr(value);
                 self.emit_conv_to(e.ty);

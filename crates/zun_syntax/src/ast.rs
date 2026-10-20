@@ -304,6 +304,15 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `object[index]` — read an array element.
+    Index {
+        /// The array expression.
+        object: Box<Expr>,
+        /// The numeric index expression.
+        index: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -322,7 +331,8 @@ impl Expr {
             | Expr::Cast { span, .. }
             | Expr::New { span, .. }
             | Expr::Field { span, .. }
-            | Expr::FieldAssign { span, .. } => *span,
+            | Expr::FieldAssign { span, .. }
+            | Expr::Index { span, .. } => *span,
             Expr::Ident(name) => name.span,
         }
     }

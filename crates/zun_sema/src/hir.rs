@@ -341,6 +341,13 @@ pub enum ExprKind {
         /// The stored value.
         value: Box<Expr>,
     },
+    /// Read an element from a managed array.
+    ArrayGet {
+        /// The array expression.
+        object: Box<Expr>,
+        /// The numeric index expression.
+        index: Box<Expr>,
+    },
     /// A numeric conversion (`as`). The target type is the expression's `ty`.
     Convert {
         /// The value being converted.

@@ -479,6 +479,16 @@ impl Parser<'_> {
                         };
                     }
                 }
+                TokenKind::LBracket => {
+                    self.bump();
+                    let index = self.expression();
+                    let close = self.expect(TokenKind::RBracket, "`]`").map(|t| t.span).unwrap_or(index.span());
+                    expr = Expr::Index {
+                        span: expr.span().to(close),
+                        object: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
                 _ => break,
             }
         }
