@@ -32,6 +32,7 @@ pub use stack_maps::{NativeStackMap, StackMapRegistry};
 pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
 mod collection;
+mod object;
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
     bytes.iter().fold(1469598103934665603, |hash, byte| {
@@ -65,51 +66,7 @@ const CHUNK_SLOTS: usize = 64 * 1024;
 
 /// The size of one object slot in bytes.
 pub use zun_core::SLOT_SIZE;
-
-/// A pointer to an allocated object: slot 0 is the type RID, slot 1 is the
-/// identity hash, and the remaining slots are fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Obj(*mut u64);
-
-impl Obj {
-    /// The raw address, for handing to native (JIT) code.
-    pub fn addr(self) -> *mut u64 {
-        self.0
-    }
-
-    /// Rebuild an `Obj` from a raw address (e.g. one returned to native code).
-    ///
-    /// # Safety
-    /// `addr` must be an object pointer the live [`Heap`] produced.
-    pub unsafe fn from_addr(addr: *mut u64) -> Obj {
-        Obj(addr)
-    }
-
-    /// The object's type RID (slot 0).
-    pub fn type_rid(self) -> u32 {
-        // SAFETY: a valid Obj points at an allocated block whose slot 0 exists.
-        unsafe { *self.0 as u32 }
-    }
-
-    /// The stable identity hash assigned by the owning heap.
-    pub fn identity_hash(self) -> u64 {
-        // SAFETY: a valid Obj points at an allocated block with an identity slot.
-        unsafe { *self.0.add(1) }
-    }
-
-    /// Read raw field `index` (0-based; slot `index + 1`).
-    pub fn field(self, index: usize) -> u64 {
-        // SAFETY: callers index within the object's field count (the verifier
-        // and layout guarantee this for generated code).
-        unsafe { *self.0.add(zun_core::OBJECT_HEADER_SLOTS + index) }
-    }
-
-    /// Write raw field `index`.
-    pub fn set_field(self, index: usize, value: u64) {
-        // SAFETY: see `field`.
-        unsafe { *self.0.add(zun_core::OBJECT_HEADER_SLOTS + index) = value }
-    }
-}
+pub use object::Obj;
 
 /// Handle into the heap's weak-reference table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
