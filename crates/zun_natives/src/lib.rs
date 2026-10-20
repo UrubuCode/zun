@@ -520,6 +520,15 @@ mod tests {
         assert!(matches!(value, NativeValue::Float(value) if value == 8.0));
     }
 
+    #[test]
+    fn math_trigonometry_matches_numeric_expectations() {
+        let mut sink = TestSink;
+        let (sin_id, _) = resolve("zun:math", "sinNumber").unwrap();
+        let (cos_id, _) = resolve("zun:math", "cosNumber").unwrap();
+        assert!(matches!(dispatch(sin_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
+        assert!(matches!(dispatch(cos_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0));
+    }
+
     struct TestSink;
 
     impl Sink for TestSink {

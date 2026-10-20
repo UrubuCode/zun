@@ -77,6 +77,14 @@ fn pow(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
     Ok(NativeValue::Float(base.powf(exponent)))
 }
 
+fn sin(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "sin", f64::sin)
+}
+
+fn cos(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "cos", f64::cos)
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -96,5 +104,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "roundNumber", params: &[F64], ret: F64, imp: round },
         NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
         NativeFn { name: "powNumber", params: &[F64, F64], ret: F64, imp: pow },
+        NativeFn { name: "sinNumber", params: &[F64], ret: F64, imp: sin },
+        NativeFn { name: "cosNumber", params: &[F64], ret: F64, imp: cos },
     ],
 };

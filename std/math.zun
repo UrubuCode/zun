@@ -3,6 +3,7 @@
 
 import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from "zun:math";
 import { powNumber } from "zun:math";
+import { sinNumber, cosNumber } from "zun:math";
 
 
 function mathAbs(value: number): number {
@@ -42,5 +43,13 @@ function mathRound(value: number): number {
 
 function mathPow(base: number, exponent: number): number {
     return powNumber(base, exponent);
+}
+
+function mathSin(value: number): number {
+    return sinNumber(value);
+}
+
+function mathCos(value: number): number {
+    return cosNumber(value);
 }
 

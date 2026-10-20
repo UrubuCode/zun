@@ -1453,6 +1453,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_math_trigonometry_intrinsics() {
+        let module = zun_compiler::compile(
+            "import { sinNumber, cosNumber } from \"zun:math\"; function main(): number { return sinNumber(0.0) + cosNumber(0.0); }",
+        )
+        .expect("compile math trigonometry");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run math trigonometry");
+        assert!(matches!(result, Value::Float(value, _) if value == 1.0));
+    }
+
+    #[test]
     fn executes_number_finiteness_source_methods() {
         let module = zun_compiler::compile(
             "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\
