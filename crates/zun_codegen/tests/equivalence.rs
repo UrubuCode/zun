@@ -456,6 +456,19 @@ fn array_flat_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_includes_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { contains(value: any): boolean { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return true; } index = index + 1; } return false; } includes(value: any): boolean { return this.contains(value); } }\n\
+         function main(): boolean { let values = new Array(1); values[0] = 41; return values.includes(values[0]); }",
+    )
+    .expect("compile Array includes");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

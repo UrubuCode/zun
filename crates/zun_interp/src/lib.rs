@@ -1236,6 +1236,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array flat");
         assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn executes_array_includes_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { contains(value: any): boolean { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return true; } index = index + 1; } return false; } includes(value: any): boolean { return this.contains(value); } }\n\
+             function main(): boolean { let values = new Array(1); values[0] = 41; return values.includes(values[0]); }",
+        )
+        .expect("compile Array includes");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array includes");
+        assert!(matches!(result, Value::Bool(true)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.

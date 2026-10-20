@@ -127,6 +127,10 @@ class Array {
     return false;
     }
 
+    includes(value: any): boolean {
+        return this.contains(value);
+    }
+
     indexOf(value: any): int {
         let index: u64 = 0;
         while (index < this.length) {
