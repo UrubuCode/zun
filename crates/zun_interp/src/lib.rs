@@ -1456,6 +1456,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_quoted_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
+        )
+        .expect("compile String isQuoted");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isQuoted");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_compare_native_method() {
         let module = zun_compiler::compile(
             "import { compare } from \"zun:string\";\n\

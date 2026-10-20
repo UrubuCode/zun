@@ -94,6 +94,15 @@ class String {
         return true;
     }
 
+    isQuoted(): boolean {
+        if (this.length() < 2) { return false; }
+        let first: u32 = this.charCodeAt(0);
+        let last: u32 = this.charCodeAt(this.length() - 1);
+        if (first == 34) { return last == 34; }
+        if (first == 39) { return last == 39; }
+        return false;
+    }
+
     isWhitespace(): boolean {
         if (this.isEmpty()) { return false; }
         return this.trim().isEmpty();
