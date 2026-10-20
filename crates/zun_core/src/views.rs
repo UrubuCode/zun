@@ -260,4 +260,18 @@ impl TypedArrayView {
                 .checked_mul(2)
                 .is_some_and(|offset| self.view.write_u16(buffer, offset, value))
     }
+
+    pub fn read_u32(self, buffer: &ByteBuffer, index: usize) -> Option<u32> {
+        if self.element != TypedElement::U32 {
+            return None;
+        }
+        self.view.read_u32(buffer, index.checked_mul(4)?)
+    }
+
+    pub fn write_u32(self, buffer: &mut ByteBuffer, index: usize, value: u32) -> bool {
+        self.element == TypedElement::U32
+            && index
+                .checked_mul(4)
+                .is_some_and(|offset| self.view.write_u32(buffer, offset, value))
+    }
 }
