@@ -510,6 +510,22 @@ impl ModuleLoader {
             .ok_or_else(|| LoadError::UnresolvedModule(member_name.to_string()))
     }
 
+    /// Resolve a member reference and require that it names a callable method.
+    pub fn resolve_method_ref<'a>(
+        &'a self,
+        requester: &'a ModuleScope,
+        token: Token,
+    ) -> Result<(&'a ModuleScope, Token), LoadError> {
+        let resolved = self.resolve_member_ref(requester, token)?;
+        if resolved.kind != MemberKind::Method {
+            return Err(LoadError::UnresolvedModule(format!(
+                "member token 0x{:08x} is not a method",
+                token.to_raw()
+            )));
+        }
+        Ok((resolved.scope, resolved.token))
+    }
+
     /// Number of registered modules.
     pub fn len(&self) -> usize {
         self.modules.len()
@@ -636,6 +652,11 @@ mod tests {
         assert_eq!(resolved.scope.name(), "core");
         assert_eq!(resolved.kind, MemberKind::Method);
         assert_eq!(resolved.token.rid(), 1);
+        let (scope, token) = loader
+            .resolve_method_ref(loader.get("app").unwrap(), member_ref)
+            .expect("method ref");
+        assert_eq!(scope.name(), "core");
+        assert_eq!(token.rid(), 1);
     }
 
     #[test]
