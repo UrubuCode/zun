@@ -3,6 +3,10 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn expression(&mut self) -> Expr {
+        self.assignment()
+    }
+
     pub(crate) fn try_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         let body = self.block();

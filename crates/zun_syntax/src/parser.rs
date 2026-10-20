@@ -514,10 +514,6 @@ impl Parser<'_> {
 
     // --- expressions (precedence climbing) ---
 
-    fn expression(&mut self) -> Expr {
-        self.assignment()
-    }
-
     fn assignment(&mut self) -> Expr {
         let lhs = self.conditional();
         if self.at(TokenKind::Eq) {
