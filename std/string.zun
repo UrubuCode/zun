@@ -132,6 +132,22 @@ class String {
         return true;
     }
 
+    isPunctuation(): boolean {
+        if (this.isEmpty()) { return false; }
+        let index: u64 = 0;
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            let punctuation: boolean = false;
+            if (code >= 33) { if (code <= 47) { punctuation = true; } }
+            if (code >= 58) { if (code <= 64) { punctuation = true; } }
+            if (code >= 91) { if (code <= 96) { punctuation = true; } }
+            if (code >= 123) { if (code <= 126) { punctuation = true; } }
+            if (!punctuation) { return false; }
+            index = index + 1;
+        }
+        return true;
+    }
+
     isSignedInteger(): boolean {
         if (this.isEmpty()) { return false; }
         let start: u64 = 0;
