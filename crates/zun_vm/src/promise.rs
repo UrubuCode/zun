@@ -9,12 +9,14 @@ const RESOLVED: u8 = 1;
 const REJECTED: u8 = 2;
 
 /// Result of advancing a stackless asynchronous state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Poll<T> {
     /// The machine suspended and must be resumed later.
     Pending,
     /// The machine completed with a value.
     Ready(T),
+    /// The machine completed with an exception-like failure.
+    Failed(String),
 }
 
 struct Inner<T> {
@@ -42,6 +44,7 @@ pub struct AsyncStateMachine<T, F> {
     completion: Promise<T>,
     completed: bool,
     result: Option<T>,
+    failure: Option<String>,
 }
 
 impl<T, F> core::fmt::Debug for AsyncStateMachine<T, F> {
@@ -62,17 +65,16 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
             completion: Promise::new(),
             completed: false,
             result: None,
+            failure: None,
         }
     }
 
     /// Advance the machine once.
     pub fn poll(&mut self) -> Poll<T> {
         if self.completed {
-            return Poll::Ready(
-                self.result
-                    .as_ref()
-                    .expect("completed machine has a result")
-                    .clone(),
+            return self.failure.as_ref().map_or_else(
+                || Poll::Ready(self.result.as_ref().expect("completed machine has a result").clone()),
+                |error| Poll::Failed(error.clone()),
             );
         }
         match (self.poller)(&mut self.state) {
@@ -82,6 +84,12 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
                 self.completion.resolve(value.clone());
                 self.result = Some(value.clone());
                 Poll::Ready(value)
+            }
+            Poll::Failed(error) => {
+                self.completed = true;
+                self.completion.reject(error.clone());
+                self.failure = Some(error.clone());
+                Poll::Failed(error)
             }
         }
     }
@@ -531,6 +539,16 @@ mod tests {
         assert!(promise.reject("boom"));
         assert!(mapped.is_rejected());
         assert_eq!(mapped.error().as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn state_machine_failure_rejects_completion_promise() {
+        let mut machine = AsyncStateMachine::new(|_| Poll::<u32>::Failed("boom".into()));
+        assert_eq!(machine.poll(), Poll::Failed("boom".into()));
+        assert!(machine.is_completed());
+        assert!(machine.promise().is_rejected());
+        assert_eq!(machine.promise().error().as_deref(), Some("boom"));
+        assert_eq!(machine.poll(), Poll::Failed("boom".into()));
     }
 
     #[test]
