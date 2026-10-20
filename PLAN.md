@@ -403,8 +403,11 @@ The following runtime contracts are implemented and covered by tests:
   A `zun:date` native surface now exposes deterministic UTC year, month, day,
   hour, minute, second, millisecond, weekday, and ISO-date/datetime operations
   over millisecond timestamps, with a
-  source-level `Date` class for the interpreter path; JIT lowering remains a
-  separate gate for these new intrinsics.
+  source-level `Date` class for the interpreter path. The source surface now
+  includes timestamp factories, mutation/value aliases, comparisons,
+  ECMAScript UTC aliases, ISO formatting, and ISO date/datetime parsing with
+  invalid-input rejection. JIT lowering remains a separate gate for the native
+  date intrinsics.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
