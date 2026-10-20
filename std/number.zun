@@ -1,6 +1,6 @@
 // Numeric conversion helpers implemented in Zun source.
 
-import { parseFloat, toFixed, toString, isFinite, isNaN, isNegativeZero } from "zun:number";
+import { parseFloat, toFixed, toString, isFinite, isNaN, isNegativeZero, isSafeInteger } from "zun:number";
 
 class Number {
     abs(): number {
@@ -73,9 +73,7 @@ class Number {
     }
 
     isSafeInteger(): boolean {
-        if (!this.isInteger()) { return false; }
-        if (this < -9007199254740991.0) { return false; }
-        return this <= 9007199254740991.0;
+        return isSafeInteger(this);
     }
 
     isEven(): boolean {

@@ -1590,6 +1590,13 @@ fn number_negative_zero_predicate_is_jit_equivalent() {
 }
 
 #[test]
+fn number_safe_integer_intrinsic_is_jit_equivalent() {
+    assert_equivalent(
+        "import { isSafeInteger } from \"zun:number\"; function main(): boolean { return isSafeInteger(9007199254740991.0); }",
+    );
+}
+
+#[test]
 fn math_power_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
