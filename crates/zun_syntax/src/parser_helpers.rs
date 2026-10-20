@@ -3,6 +3,72 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn primary(&mut self) -> Expr {
+        let t = self.peek();
+        match t.kind {
+            TokenKind::Number => {
+                self.bump();
+                let value = self.text(t).parse::<f64>().unwrap_or_else(|_| f64::NAN);
+                Expr::Number { value, span: t.span }
+            }
+            TokenKind::String => {
+                self.bump();
+                Expr::String { value: decode_string(self.text(t)), span: t.span }
+            }
+            TokenKind::Template => {
+                self.bump();
+                let raw = self.text(t).to_string();
+                Expr::Template { parts: parse_template_parts(&raw, t.span, &mut self.diagnostics), span: t.span }
+            }
+            TokenKind::KwTrue => { self.bump(); Expr::Bool { value: true, span: t.span } }
+            TokenKind::KwFalse => { self.bump(); Expr::Bool { value: false, span: t.span } }
+            TokenKind::KwNull => { self.bump(); Expr::Null { span: t.span } }
+            TokenKind::KwNew => {
+                let start = self.bump().span;
+                let class = self.name("a class name");
+                self.expect(TokenKind::LParen, "`(`");
+                let args = self.arguments();
+                let close = self.tokens[self.pos - 1].span;
+                Expr::New { class, args, span: start.to(close) }
+            }
+            TokenKind::KwFunction => self.function_expression(),
+            TokenKind::Ident => {
+                self.bump();
+                let name = Name { span: t.span };
+                if self.eat(TokenKind::Arrow) {
+                    let body = self.arrow_body();
+                    return Expr::Function(FunctionExpr {
+                        params: vec![Param { name, ty: None, default_value: None, is_rest: false }],
+                        return_type: None,
+                        span: t.span.to(body.span),
+                        body,
+                        is_arrow: true,
+                    });
+                }
+                Expr::Ident(name)
+            }
+            TokenKind::LParen => {
+                if self.parenthesized_arrow_start() {
+                    let start = self.bump().span;
+                    let params = self.parameters();
+                    self.expect(TokenKind::RParen, "`)` after arrow parameters");
+                    self.expect(TokenKind::Arrow, "`=>` after arrow parameters");
+                    let body = self.arrow_body();
+                    return Expr::Function(FunctionExpr { params, return_type: None, span: start.to(body.span), body, is_arrow: true });
+                }
+                self.bump();
+                let inner = self.expression();
+                self.expect(TokenKind::RParen, "`)`");
+                inner
+            }
+            _ => {
+                self.error_at(t.span, "expected an expression");
+                self.bump();
+                Expr::Null { span: t.span }
+            }
+        }
+    }
+
     pub(crate) fn function_expression(&mut self) -> Expr {
         let start = self.bump().span;
         self.expect(TokenKind::LParen, "`(` after anonymous function");
