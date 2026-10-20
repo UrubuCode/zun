@@ -577,6 +577,26 @@ pub enum ExprKind {
         /// Arguments including the receiver.
         args: Vec<Expr>,
     },
+    /// Virtually invoke a zero-fixed-parameter rest method with an Array.
+    MethodCallRestArray {
+        /// Statically resolved method index.
+        func: FuncIndex,
+        /// Receiver expression.
+        receiver: Box<Expr>,
+        /// Array expression containing rest arguments.
+        args: Box<Expr>,
+    },
+    /// Virtually invoke a rest method with fixed arguments and an Array.
+    MethodCallRestArrayFixed {
+        /// Statically resolved method index.
+        func: FuncIndex,
+        /// Receiver expression.
+        receiver: Box<Expr>,
+        /// Fixed arguments before the spread.
+        fixed_args: Vec<Expr>,
+        /// Array expression containing rest arguments.
+        args: Box<Expr>,
+    },
     /// Allocate a class instance, initializing fields positionally.
     New {
         /// The class being instantiated.

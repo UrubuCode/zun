@@ -27,6 +27,11 @@ fn resolver(opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
             Operand::TokenImm32(_, count) if *count >= 0 => Some((*count as u8, 1)),
             _ => None,
         },
+        Opcode::CallVirtRestArray => Some((2, 1)),
+        Opcode::CallVirtRestArrayFixed => match operand {
+            Operand::TokenImm32(_, count) if *count >= 0 => Some((*count as u8 + 2, 1)),
+            _ => None,
+        },
         Opcode::CallIndirect => match operand {
             Operand::Token(token) if token.table() == Some(TableKind::MemberRef) => Some((3, 1)),
             _ => Some((2, 1)),
@@ -180,6 +185,29 @@ fn fixture_invalid_virtual_rest_call_with_negative_argument_count() {
             kind: ErrorKind::UnknownCallArity,
             ..
         })
+    ));
+}
+
+#[test]
+fn fixture_valid_virtual_rest_array_calls() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
+        Instruction::new(Opcode::CallVirtRestArray, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    check(&code, RETURNS).expect("valid virtual rest array call");
+}
+
+#[test]
+fn fixture_invalid_virtual_rest_array_fixed_call_with_negative_count() {
+    let code = asm(&[Instruction::new(
+        Opcode::CallVirtRestArrayFixed,
+        Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), -1),
+    )]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError { kind: ErrorKind::UnknownCallArity, .. })
     ));
 }
 

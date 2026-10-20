@@ -1077,6 +1077,24 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::TokenImm32(token, args.len() as i32),
                 ));
             }
+            ExprKind::MethodCallRestArray { func, receiver, args } => {
+                self.expr(receiver);
+                self.expr(args);
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(Opcode::CallVirtRestArray, Operand::Token(token)));
+            }
+            ExprKind::MethodCallRestArrayFixed { func, receiver, fixed_args, args } => {
+                self.expr(receiver);
+                for fixed in fixed_args {
+                    self.expr(fixed);
+                }
+                self.expr(args);
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(
+                    Opcode::CallVirtRestArrayFixed,
+                    Operand::TokenImm32(token, fixed_args.len() as i32),
+                ));
+            }
             ExprKind::New { class, args } => {
                 for a in args {
                     self.expr(a);

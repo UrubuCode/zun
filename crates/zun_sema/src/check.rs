@@ -2459,6 +2459,53 @@ impl Checker<'_> {
                     self.error(method.span, format!("no method `{mname}` on this type"));
                     return self.poison(span);
                 };
+                if let Some(ast::Expr::Spread { expr, .. }) = args.last() {
+                    let rest_index = self.signatures[func as usize].rest_param;
+                    let fixed_count = args.len().saturating_sub(1);
+                    if rest_index == Some(fixed_count + 1) {
+                        let mut fixed_args = Vec::with_capacity(fixed_count);
+                        for argument in &args[..fixed_count] {
+                            fixed_args.push(self.check_expr(cx, argument));
+                        }
+                        let array = self.check_expr(cx, expr);
+                        if array.ty != Ty::Array && !array.ty.is_error() {
+                            self.error(array.span, "spread method call requires an Array value");
+                            return self.poison(span);
+                        }
+                        let params = self.signatures[func as usize].params.clone();
+                        for (argument, &expected) in fixed_args.iter_mut().zip(params.iter().skip(1)) {
+                            coerce_numeric_literal(argument, expected);
+                            if !expected.is_error()
+                                && !argument.ty.is_error()
+                                && !self.is_assignable(argument.ty, expected)
+                            {
+                                self.error(
+                                    argument.span,
+                                    format!("argument type {:?} does not match {expected:?}", argument.ty),
+                                );
+                            }
+                        }
+                        let return_ty = self.signatures[func as usize].return_ty;
+                        return hir::Expr {
+                            kind: if fixed_args.is_empty() {
+                                hir::ExprKind::MethodCallRestArray {
+                                    func,
+                                    receiver: Box::new(receiver),
+                                    args: Box::new(array),
+                                }
+                            } else {
+                                hir::ExprKind::MethodCallRestArrayFixed {
+                                    func,
+                                    receiver: Box::new(receiver),
+                                    fixed_args,
+                                    args: Box::new(array),
+                                }
+                            },
+                            ty: return_ty,
+                            span,
+                        };
+                    }
+                }
                 let (param_tys, return_ty, optional_count, signature_name) = {
                     let sig = &self.signatures[func as usize];
                     (

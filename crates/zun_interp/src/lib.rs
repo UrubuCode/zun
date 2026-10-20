@@ -1017,6 +1017,57 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::CallVirtRestArray | Opcode::CallVirtRestArrayFixed => {
+                    let (token, fixed_count) = if instr.opcode == Opcode::CallVirtRestArray {
+                        (operand_token(&instr.operand), 0)
+                    } else {
+                        let (token, count) = operand_token_imm32(&instr.operand);
+                        if count < 0 {
+                            return Err(RunError::BadToken);
+                        }
+                        (token, count as usize)
+                    };
+                    if token.table() != Some(TableKind::MethodDef) {
+                        return Err(RunError::BadToken);
+                    }
+                    let static_method = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(token.rid() as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let static_body = read_body(&self.module.code, static_method.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    if static_body.param_count != fixed_count as u16 + 2 {
+                        return Err(RunError::BadToken);
+                    }
+                    let mut values = pop_n(&mut stack, fixed_count + 2)?;
+                    let rest_array = values.pop().ok_or(RunError::BadToken)?.as_object();
+                    let receiver = values.first().ok_or(RunError::BadToken)?;
+                    let primitive_receiver = matches!(receiver, Value::Str(_) | Value::Float(_, _))
+                        || matches!(receiver, Value::Object(object)
+                            if zun_gc::with_current_heap(|heap| heap.array_len(*object).is_some()));
+                    let target = if primitive_receiver {
+                        token.rid()
+                    } else {
+                        self.types
+                            .resolve_virtual(receiver.as_object().type_rid(), token.rid())
+                            .ok_or(RunError::BadToken)?
+                    };
+                    values.push(Value::Object(rest_array));
+                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let result = match self.dispatch(target, values, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    stack.push(result);
+                }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
                     stack.push(Value::Null);

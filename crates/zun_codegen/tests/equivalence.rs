@@ -114,6 +114,17 @@ fn virtual_rest_methods_match_interpreter_and_jit_fallback() {
 }
 
 #[test]
+fn virtual_rest_methods_accept_array_spread() {
+    let module = compile(
+        "class Counter { count(first: int, ...rest: Array): int { return first + (rest[0] as int); } } function main(): int { let counter = new Counter(); let values: Array = new Array(2); values[0] = 1; values[1] = 2; return counter.count(7, ...values); }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(8, _)));
+}
+
+#[test]
 fn weak_map_class_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "class Key {} function main(): int { let key = new Key(); let value = new Key(); let weak = new WeakMap(); weak.set(key, value); if (weak.has(key)) { let fetched: any = weak.get(key); if (weak.delete(key)) { if (!weak.has(key)) { return 1; } } } return 0; }",
