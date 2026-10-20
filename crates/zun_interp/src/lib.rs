@@ -947,6 +947,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_none_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { none(value: any): boolean { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return false; } index = index + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 1.0; values[1] = 2.0; values[2] = 3.0; let needle: any = values[0]; return values.none(needle); }",
+        )
+        .expect("compile Array none");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array none");
+        assert!(matches!(result, Value::Bool(false)));
+    }
+
+    #[test]
     fn executes_array_swap_source_method() {
         let module = zun_compiler::compile(
             "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\
