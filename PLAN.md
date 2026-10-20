@@ -784,9 +784,10 @@ an optimization gate.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
    safepoints, true OSR, compaction, typed FFI/N-API, AOT/R2R, and the
-   remaining performance backlog. Async and generator source lowering are now
-   complete in the Tier 0 state-machine path; broader JIT support remains an
-   optimization gate. Module-hygiene splits are
+   remaining performance backlog. Async/await source lowering is complete in
+   the Tier 0 state-machine path; generator source lowering and iterator
+   resumption remain pending. Broader JIT support remains an optimization
+   gate. Module-hygiene splits are
    maintained separately by the reviewer and are not part of this execution
    backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
