@@ -488,4 +488,18 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(&result, b"zun");
     }
+
+    #[test]
+    fn host_string_execution_rejects_null_output_with_nonzero_capacity() {
+        let module = zun_compiler::compile("function main(): string { return \"zun\"; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut written = 0;
+        let status = unsafe {
+            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), std::ptr::null_mut(), 1, &mut written)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, 1);
+        assert_eq!(written, 0);
+    }
 }
