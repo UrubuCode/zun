@@ -14,7 +14,7 @@ use zun_interp::{run_with, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
 pub use jit_hook::JitHook;
-pub use promise::{MicrotaskQueue, Promise};
+pub use promise::{MicrotaskQueue, Promise, Scheduler};
 pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
 
 /// Errors from loading or running a module.

@@ -139,6 +139,43 @@ impl MicrotaskQueue {
     }
 }
 
+/// Single-threaded VM scheduler backed by the microtask queue.
+#[derive(Debug, Default)]
+pub struct Scheduler {
+    microtasks: MicrotaskQueue,
+}
+
+impl Scheduler {
+    /// Create an idle scheduler.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enqueue a microtask.
+    pub fn schedule(&mut self, task: impl FnOnce() + Send + 'static) {
+        self.microtasks.schedule(task);
+    }
+
+    /// Run at most `budget` tasks, returning how many were executed.
+    pub fn run(&mut self, budget: usize) -> usize {
+        let mut ran = 0;
+        while ran < budget && self.microtasks.run_one() {
+            ran += 1;
+        }
+        ran
+    }
+
+    /// Drain all pending microtasks.
+    pub fn run_until_idle(&mut self) {
+        self.microtasks.run_all();
+    }
+
+    /// Number of pending microtasks.
+    pub fn pending(&self) -> usize {
+        self.microtasks.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +213,16 @@ mod tests {
         queue.run_all();
         assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn scheduler_respects_budget_and_drains_later() {
+        let mut scheduler = Scheduler::new();
+        scheduler.schedule(|| {});
+        scheduler.schedule(|| {});
+        assert_eq!(scheduler.run(1), 1);
+        assert_eq!(scheduler.pending(), 1);
+        scheduler.run_until_idle();
+        assert_eq!(scheduler.pending(), 0);
     }
 }
