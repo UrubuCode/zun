@@ -1,7 +1,8 @@
-// Managed error hierarchy. Construction and throwing remain compiler/runtime
-// integration work; these classes establish the stable standard-library types.
+// Managed error hierarchy. Construction is positional, while throwing and
+// stack capture remain compiler/runtime integration work.
 
 class Error {
+    name: string;
     message: string;
 }
 

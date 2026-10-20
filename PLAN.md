@@ -412,7 +412,9 @@ verifier support, interpreter dispatch, and equivalent JIT lowering.
 
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
-constructor lowering remain runtime/compiler gates. The heap now also stores
+constructor lowering remain runtime/compiler gates. The source hierarchy now
+has positional `name` and `message` fields that work through inherited class
+layouts. The heap also stores
 managed `ErrorValue` name/message pairs with mutation and sweep cleanup,
 providing the runtime backing for those source-level error objects.
 
