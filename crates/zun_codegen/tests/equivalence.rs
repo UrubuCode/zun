@@ -251,6 +251,17 @@ fn default_parameter_uses_the_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn rest_parameter_uses_the_interpreter_fallback_boundary() {
+    let module = compile(
+        "function count(...values: Array): u64 { return values.length; } function main(): u64 { return count(1, 2, 3); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "rest calls require Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Int(3, _)));
+}
+
+#[test]
 fn method_default_parameter_uses_the_interpreter_fallback_boundary() {
     let module = compile(
         "class Box { value(factor: number = 3.0): number { return factor; } } function main(): number { let box_value = new Box(); return box_value.value(); }",

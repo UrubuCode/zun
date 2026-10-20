@@ -473,6 +473,13 @@ pub enum ExprKind {
         /// Arguments in order.
         args: Vec<Expr>,
     },
+    /// Call a function with an explicit argument count for its trailing rest parameter.
+    CallRest {
+        /// Index into [`Program::functions`].
+        func: FuncIndex,
+        /// Arguments in source order; the callee packs the trailing values.
+        args: Vec<Expr>,
+    },
     /// Invoke a function-valued expression indirectly.
     IndirectCall {
         /// Function value expression.

@@ -891,6 +891,16 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let token = Token::new(TableKind::MethodDef, *func + 1);
                 self.emit(Instruction::new(Opcode::Call, Operand::Token(token)));
             }
+            ExprKind::CallRest { func, args } => {
+                for arg in args {
+                    self.expr(arg);
+                }
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(
+                    Opcode::CallRest,
+                    Operand::TokenImm32(token, args.len() as i32),
+                ));
+            }
             ExprKind::IndirectCall { callee, args, func } => {
                 self.expr(callee);
                 for a in args {

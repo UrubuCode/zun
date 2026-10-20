@@ -105,6 +105,7 @@ struct Signature {
     params: Vec<Ty>,
     return_ty: Ty,
     optional_count: usize,
+    rest_param: Option<usize>,
 }
 
 /// A collected class: its base and its own (not inherited) fields.
@@ -1064,6 +1065,7 @@ impl Checker<'_> {
                     .rev()
                     .take_while(|p| p.default_value.is_some())
                     .count(),
+                rest_param: f.params.iter().position(|parameter| parameter.is_rest),
             });
         }
 
@@ -1113,6 +1115,7 @@ impl Checker<'_> {
                         .rev()
                         .take_while(|p| p.default_value.is_some())
                         .count(),
+                    rest_param: m.params.iter().position(|parameter| parameter.is_rest),
                 });
             }
         }
@@ -1127,9 +1130,12 @@ impl Checker<'_> {
         this_class: Option<u32>,
     ) -> hir::Function {
         let mut saw_default = false;
-        for parameter in &f.params {
-            if parameter.is_rest {
-                self.error(parameter.name.span, "rest parameters are not lowered yet");
+        for (index, parameter) in f.params.iter().enumerate() {
+            if parameter.is_rest && this_class.is_some() {
+                self.error(parameter.name.span, "rest parameters are not supported on methods yet");
+            }
+            if parameter.is_rest && index + 1 != f.params.len() {
+                self.error(parameter.name.span, "rest parameter must be last");
             }
             if parameter.default_value.is_some() {
                 saw_default = true;
@@ -1767,6 +1773,7 @@ impl Checker<'_> {
                                 params: param_tys.clone(),
                                 return_ty,
                                 optional_count,
+                                rest_param: self.signatures[func as usize].rest_param,
                             };
                             if args.len() < param_tys.len().saturating_sub(optional_count)
                                 || args.len() > param_tys.len()
@@ -2028,8 +2035,34 @@ impl Checker<'_> {
                     params: param_tys.clone(),
                     return_ty,
                     optional_count,
+                    rest_param: self.signatures[func as usize].rest_param,
                 };
-                if args.len() < param_tys.len().saturating_sub(optional_count)
+                let rest_index = sig.rest_param;
+                if let Some(rest_index) = rest_index {
+                    if args.len() < rest_index {
+                        self.error(
+                            span,
+                            format!(
+                                "`{name}` expects at least {} argument(s), found {}",
+                                rest_index,
+                                args.len()
+                            ),
+                        );
+                    } else {
+                        for (arg, &expected) in args.iter_mut().take(rest_index).zip(&param_tys) {
+                            coerce_numeric_literal(arg, expected);
+                            if !expected.is_error()
+                                && !arg.ty.is_error()
+                                && !self.is_assignable(arg.ty, expected)
+                            {
+                                self.error(
+                                    arg.span,
+                                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                                );
+                            }
+                        }
+                    }
+                } else if args.len() < param_tys.len().saturating_sub(optional_count)
                     || args.len() > param_tys.len()
                 {
                     self.error(
@@ -2057,7 +2090,11 @@ impl Checker<'_> {
                     }
                 }
                 hir::Expr {
-                    kind: hir::ExprKind::Call { func, args },
+                    kind: if rest_index.is_some() {
+                        hir::ExprKind::CallRest { func, args }
+                    } else {
+                        hir::ExprKind::Call { func, args }
+                    },
                     ty: return_ty,
                     span,
                 }
@@ -2297,6 +2334,7 @@ impl Checker<'_> {
                     params: param_tys.clone(),
                     return_ty,
                     optional_count,
+                    rest_param: self.signatures[func as usize].rest_param,
                 };
                 if call_args.len() < param_tys.len().saturating_sub(optional_count)
                     || call_args.len() > param_tys.len()
@@ -3052,7 +3090,7 @@ mod tests {
 
     #[test]
     fn rest_parameters_remain_gated_until_variadic_lowering_exists() {
-        assert!(first_error("function collect(...values: any) { return values; }")
+        assert!(first_error("function main() { let collect = function(...values: any) { return values; }; }")
             .contains("rest parameters are not lowered yet"));
     }
 

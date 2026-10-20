@@ -602,6 +602,60 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::CallRest => {
+                    let (token, argument_count) = operand_token_imm32(&instr.operand);
+                    if token.table() != Some(TableKind::MethodDef) || argument_count < 0 {
+                        return Err(RunError::BadToken);
+                    }
+                    let callee_rid = token.rid();
+                    let callee = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(callee_rid as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let callee_body = read_body(&self.module.code, callee.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    let rest_index = callee_body.param_count.checked_sub(1).ok_or(RunError::BadToken)?;
+                    let argument_count = argument_count as usize;
+                    if argument_count < rest_index as usize {
+                        return Err(RunError::BadToken);
+                    }
+                    let values = pop_n(&mut stack, argument_count)?;
+                    let rest_values = &values[rest_index as usize..];
+                    let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
+                        let array = heap.alloc_array(rest_values.len());
+                        for (index, value) in rest_values.iter().enumerate() {
+                            let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                            let _ = heap.array_set(array, index, any);
+                        }
+                        Ok(array)
+                    })?;
+                    let mut args = values[..rest_index as usize].to_vec();
+                    args.push(Value::Object(rest_array));
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
+                    let result = match self.dispatch(callee_rid, args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    stack.push(result);
+                }
                 Opcode::CallIndirect => {
                     let token = operand_token(&instr.operand);
                     if !matches!(
@@ -687,9 +741,6 @@ impl Interp<'_> {
                         Err(error) => return Err(error),
                     };
                     stack.push(result);
-                }
-                Opcode::CallRest => {
-                    return Err(RunError::BadToken);
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
@@ -1865,6 +1916,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let value = run(&module, &mut output).expect("run default parameter");
         assert!(matches!(value, Value::Float(2.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn rest_parameter_materializes_extra_arguments_as_an_array() {
+        let module = zun_compiler::compile(
+            "function count(...values: Array): u64 { return values.length; } function main(): u64 { return count(1, 2, 3); }",
+        )
+        .expect("compile rest parameter");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run rest parameter");
+        assert!(matches!(value, Value::Int(3, zun_il::NumKind::U64)));
     }
 
     #[test]
@@ -4451,5 +4513,11 @@ fn operand_token(o: &Operand) -> zun_metadata::Token {
     match o {
         Operand::Token(t) => *t,
         _ => zun_metadata::Token::from_raw(0),
+    }
+}
+fn operand_token_imm32(o: &Operand) -> (zun_metadata::Token, i32) {
+    match o {
+        Operand::TokenImm32(token, value) => (*token, *value),
+        _ => (zun_metadata::Token::from_raw(0), -1),
     }
 }
