@@ -239,6 +239,12 @@ Estado: passos 1–4 feitos; o algoritmo do passo 5 está pronto e testado, e s�
 integração de raízes precisas (safepoints + stack maps) permanece — é o maior
 risco de memória e é feita isolada, com sua própria suíte.
 
+O benchmark de Tier 0 também cobre agora loops de leitura/escrita de campos e
+dispatch virtual. Os lookups de metadata desses caminhos são pré-resolvidos na
+carga do módulo para indexação O(1); o próximo trabalho de performance é medir
+e reduzir o custo de execução dos próprios objetos no JIT, sem misturar isso com
+OSR ou a integração de stack maps.
+
 ## 4.4 Biblioteca padrão, intrinsics e FFI (design)
 
 A stdlib do Zun tem dois tipos de módulo, mais um mecanismo externo futuro —

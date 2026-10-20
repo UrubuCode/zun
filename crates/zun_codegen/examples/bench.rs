@@ -21,6 +21,18 @@ fn compile(src: &str) -> zun_module::Module {
     zun_ilgen::lower(&hir)
 }
 
+fn interp_ns_per_iteration(src: &str, iterations: usize) -> f64 {
+    let module = compile(src);
+    let mut out = CaptureOutput::default();
+    std::hint::black_box(zun_interp::run(&module, &mut out).unwrap());
+    let t = Instant::now();
+    for _ in 0..3 {
+        let mut out = CaptureOutput::default();
+        std::hint::black_box(zun_interp::run(&module, &mut out).unwrap());
+    }
+    t.elapsed().as_nanos() as f64 / (3.0 * iterations as f64)
+}
+
 fn main() {
     // `work` does N iterations of a small integer expression; `main` returns it.
     let src = format!(
@@ -78,5 +90,30 @@ fn main() {
     println!(
         "per iteration there are ~4 int ops (mul, add, sub, cmp) + a store + loop,\n\
          so divide by ~4 for a rough per-op figure."
+    );
+
+    // These workloads stay in Tier 0 because object operations are not yet
+    // JIT-eligible. They specifically exercise the interpreter metadata
+    // lookups optimized by the runtime benchmark branch.
+    let field_src = format!(
+        "class Counter {{ n: int; }}\n\
+         function main(): int {{ let c = new Counter(0); let i: int = 0;\n\
+         while (i < {N}) {{ c.n = c.n + 1; i = i + 1; }} return c.n; }}"
+    );
+    let virtual_src = format!(
+        "class Base {{ tick(): int {{ return 1; }} }}\n\
+         class Derived extends Base {{ tick(): int {{ return 1; }} }}\n\
+         function run(b: Base): int {{ let acc: int = 0; let i: int = 0;\n\
+         while (i < {N}) {{ acc = acc + b.tick(); i = i + 1; }} return acc; }}\n\
+         function main(): int {{ return run(new Derived()); }}"
+    );
+    println!();
+    println!(
+        "field load/store loop (Tier 0): {:8.3} ns/iteration",
+        interp_ns_per_iteration(&field_src, N as usize)
+    );
+    println!(
+        "virtual dispatch loop (Tier 0):  {:8.3} ns/iteration",
+        interp_ns_per_iteration(&virtual_src, N as usize)
     );
 }
