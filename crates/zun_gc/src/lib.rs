@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 mod native_roots;
+mod handles;
 mod runtime_alloc;
 mod stack_maps;
 mod heap_context;
@@ -33,6 +34,8 @@ pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
 mod collection;
 mod object;
+
+pub use handles::{FinalizationId, WeakMapId, WeakRefId};
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
     bytes.iter().fold(1469598103934665603, |hash, byte| {
@@ -68,28 +71,10 @@ const CHUNK_SLOTS: usize = 64 * 1024;
 pub use zun_core::SLOT_SIZE;
 pub use object::Obj;
 
-/// Handle into the heap's weak-reference table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WeakRefId(u32);
-
-impl WeakRefId {
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct WeakSlot {
     target: Option<usize>,
 }
-
-/// Handle into the heap's ephemeron table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WeakMapId(u32);
-
-/// Opaque registration handle for the finalization queue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FinalizationId(u32);
 
 #[derive(Debug, Clone, Default)]
 struct Ephemeron {
