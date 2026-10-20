@@ -176,4 +176,12 @@ mod tests {
         .expect_err("missing export should diagnose");
         assert!(error.iter().any(|d| d.message.contains("missing")));
     }
+
+    #[test]
+    fn standard_library_source_is_compilable_by_zun() {
+        let source =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/math.zun"))
+                .expect("std/math.zun");
+        compile(&source).expect("standard library module should compile");
+    }
 }

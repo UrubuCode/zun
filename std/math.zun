@@ -1,0 +1,13 @@
+// Numeric helpers implemented in Zun source.
+// Runtime-backed operations remain in the `zun:*` intrinsic modules.
+
+function mathAbs(value: number): number {
+    if (value < 0.0) { return -value; }
+    return value;
+}
+
+function mathClamp(value: number, low: number, high: number): number {
+    if (value < low) { return low; }
+    if (value > high) { return high; }
+    return value;
+}
