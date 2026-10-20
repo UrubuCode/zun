@@ -310,6 +310,22 @@ impl TypedArrayView {
     pub fn len(self) -> usize { self.view.len() / self.element.size() }
     pub fn element(self) -> TypedElement { self.element }
 
+    pub fn read_u8(self, buffer: &ByteBuffer, index: usize) -> Option<u8> {
+        (self.element == TypedElement::U8).then(|| buffer.get(self.view.offset + index)).flatten()
+    }
+
+    pub fn write_u8(self, buffer: &mut ByteBuffer, index: usize, value: u8) -> bool {
+        self.element == TypedElement::U8 && index < self.len() && buffer.set(self.view.offset + index, value)
+    }
+
+    pub fn read_u16(self, buffer: &ByteBuffer, index: usize) -> Option<u16> {
+        (self.element == TypedElement::U16).then(|| buffer.read_u16(self.view.offset + index.checked_mul(2)?)).flatten()
+    }
+
+    pub fn write_u16(self, buffer: &mut ByteBuffer, index: usize, value: u16) -> bool {
+        self.element == TypedElement::U16 && index.checked_mul(2).is_some_and(|offset| self.view.write_u16(buffer, offset, value))
+    }
+
     pub fn read_u32(self, buffer: &ByteBuffer, index: usize) -> Option<u32> {
         if self.element != TypedElement::U32 { return None; }
         self.view.read_u32(buffer, index.checked_mul(4)?)
@@ -317,6 +333,18 @@ impl TypedArrayView {
 
     pub fn write_u32(self, buffer: &mut ByteBuffer, index: usize, value: u32) -> bool {
         self.element == TypedElement::U32 && index.checked_mul(4).is_some_and(|offset| self.view.write_u32(buffer, offset, value))
+    }
+
+    pub fn read_f64(self, buffer: &ByteBuffer, index: usize) -> Option<f64> {
+        if self.element != TypedElement::F64 { return None; }
+        let offset = index.checked_mul(8)?;
+        (offset.checked_add(8)? <= self.view.len()).then(|| buffer.read_f64(self.view.offset() + offset)).flatten()
+    }
+
+    pub fn write_f64(self, buffer: &mut ByteBuffer, index: usize, value: f64) -> bool {
+        if self.element != TypedElement::F64 { return false; }
+        let Some(offset) = index.checked_mul(8) else { return false; };
+        offset.checked_add(8).is_some_and(|end| end <= self.view.len() && buffer.write_f64(self.view.offset() + offset, value))
     }
 }
 
@@ -327,6 +355,15 @@ impl ByteView {
 
     pub fn offset(self) -> usize { self.offset }
     pub fn len(self) -> usize { self.length }
+
+    pub fn read_u16(self, buffer: &ByteBuffer, relative: usize) -> Option<u16> {
+        let end = relative.checked_add(2)?;
+        (end <= self.length).then(|| buffer.read_u16(self.offset + relative)).flatten()
+    }
+
+    pub fn write_u16(self, buffer: &mut ByteBuffer, relative: usize, value: u16) -> bool {
+        relative.checked_add(2).is_some_and(|end| end <= self.length && buffer.write_u16(self.offset + relative, value))
+    }
 
     pub fn read_u32(self, buffer: &ByteBuffer, relative: usize) -> Option<u32> {
         let end = relative.checked_add(4)?;
@@ -669,6 +706,15 @@ mod tests {
         assert!(!array.write_u32(&mut typed, 2, 1));
         assert!(TypedArrayView::new(typed.len(), 1, 4, TypedElement::U32).is_none());
         assert!(TypedArrayView::new(typed.len(), 0, 6, TypedElement::U32).is_none());
+        let bytes = TypedArrayView::new(typed.len(), 0, 4, TypedElement::U8).unwrap();
+        assert!(bytes.write_u8(&mut typed, 0, 0x7f));
+        assert_eq!(bytes.read_u8(&typed, 0), Some(0x7f));
+        let shorts = TypedArrayView::new(typed.len(), 0, 4, TypedElement::U16).unwrap();
+        assert!(shorts.write_u16(&mut typed, 1, 0xbeef));
+        assert_eq!(shorts.read_u16(&typed, 1), Some(0xbeef));
+        let floats = TypedArrayView::new(typed.len(), 8, 8, TypedElement::F64).unwrap();
+        assert!(floats.write_f64(&mut typed, 0, 1.25));
+        assert_eq!(floats.read_f64(&typed, 0), Some(1.25));
     }
 
     #[test]

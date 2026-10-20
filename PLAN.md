@@ -384,7 +384,8 @@ The following runtime contracts are implemented and covered by tests:
   `u16`, `u32`, and `f64` view operations are covered; source-level view
   classes remain the next integration gate. `ByteView` now enforces bounded
   shared windows without copying the underlying storage, and `TypedArrayView`
-  enforces element alignment and indexed `u32` access over those windows.
+  enforces element alignment and indexed `u8`, `u16`, `u32`, and `f64` access
+  over those windows.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
