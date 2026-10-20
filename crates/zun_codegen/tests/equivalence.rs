@@ -117,6 +117,24 @@ fn date_surface_exposes_time_components_and_string_form() {
 }
 
 #[test]
+fn date_surface_updates_and_returns_timestamp_values() {
+    let module = compile(
+        "class Date { millis: i64; setMillis(value: i64): Date { this.millis = value; return this; } valueOf(): i64 { return this.millis; } }\n\
+         function main(): int { let value: Date = new Date(0); let same: Date = value.setMillis(42); if (same.valueOf() == 42) { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    let interp_result = interp_entry(&module);
+    assert!(matches!((jit_result, interp_result),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\

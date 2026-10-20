@@ -5,6 +5,13 @@ import { year, month, day, hour, minute, second, millisecond, weekday, isoDate, 
 class Date {
     millis: i64;
 
+    setMillis(value: i64): Date {
+        this.millis = value;
+        return this;
+    }
+
+    valueOf(): i64 { return this.millis; }
+
     utcYear(): i32 { return year(this.millis); }
     utcMonth(): i32 { return month(this.millis); }
     utcDay(): i32 { return day(this.millis); }
