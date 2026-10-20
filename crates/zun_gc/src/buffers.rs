@@ -12,4 +12,20 @@ impl Heap {
     pub fn buffer_set(&mut self, object: Obj, index: usize, value: u8) -> Option<bool> {
         Some(self.buffers.get_mut(&(object.addr() as usize))?.set(index, value))
     }
+
+    pub fn buffer_read_u32(&self, object: Obj, offset: usize) -> Option<u32> {
+        self.buffers.get(&(object.addr() as usize))?.read_u32(offset)
+    }
+
+    pub fn buffer_write_u32(&mut self, object: Obj, offset: usize, value: u32) -> Option<bool> {
+        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_u32(offset, value))
+    }
+
+    pub fn buffer_read_f64(&self, object: Obj, offset: usize) -> Option<f64> {
+        self.buffers.get(&(object.addr() as usize))?.read_f64(offset)
+    }
+
+    pub fn buffer_write_f64(&mut self, object: Obj, offset: usize, value: f64) -> Option<bool> {
+        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_f64(offset, value))
+    }
 }
