@@ -8,8 +8,8 @@ that exports:
 - `runF64(arrayBuffer)`
 - `runBool(arrayBuffer)`
 
-Each function accepts the bytes of a compiled `.zm` module and executes its
-entry point.
+Each function accepts an `ArrayBuffer` or Node `Buffer` containing the bytes of
+a compiled `.zm` module and executes its entry point.
 
 On platforms that require an import library, provide the Node N-API library at
 build time:

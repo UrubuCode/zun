@@ -48,6 +48,12 @@ mod node_api {
             data: *mut *mut c_void,
             byte_length: *mut usize,
         ) -> NapiStatus;
+        fn napi_get_buffer_info(
+            env: NapiEnv,
+            value: NapiValue,
+            data: *mut *mut c_void,
+            byte_length: *mut usize,
+        ) -> NapiStatus;
         fn napi_create_int64(env: NapiEnv, value: i64, result: *mut NapiValue) -> NapiStatus;
         fn napi_create_double(env: NapiEnv, value: f64, result: *mut NapiValue) -> NapiStatus;
         fn napi_get_boolean(env: NapiEnv, value: bool, result: *mut NapiValue) -> NapiStatus;
@@ -72,9 +78,13 @@ mod node_api {
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        if unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) } != NAPI_OK
-            || data.is_null()
-        {
+        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = if status == NAPI_OK {
+            status
+        } else {
+            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+        };
+        if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
         }
         // SAFETY: N-API provides a live ArrayBuffer for the duration of this
@@ -101,7 +111,13 @@ mod node_api {
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        if unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) } != NAPI_OK || data.is_null() {
+        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = if status == NAPI_OK {
+            status
+        } else {
+            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+        };
+        if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
         }
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
@@ -127,7 +143,13 @@ mod node_api {
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
-        if unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) } != NAPI_OK || data.is_null() {
+        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = if status == NAPI_OK {
+            status
+        } else {
+            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+        };
+        if status != NAPI_OK || data.is_null() {
             return core::ptr::null_mut();
         }
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
