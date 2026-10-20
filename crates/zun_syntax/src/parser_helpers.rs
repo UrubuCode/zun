@@ -3,6 +3,30 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn parameters(&mut self) -> Vec<Param> {
+        let mut params = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let is_rest = self.eat(TokenKind::Ellipsis);
+            let name = self.name("a parameter name");
+            let ty = self.optional_type_annotation();
+            let default_value = if self.eat(TokenKind::Eq) {
+                Some(Box::new(self.expression()))
+            } else {
+                None
+            };
+            params.push(Param {
+                name,
+                ty,
+                default_value,
+                is_rest,
+            });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        params
+    }
+
     pub(crate) fn name(&mut self, what: &str) -> Name {
         match self.expect(TokenKind::Ident, what) {
             Some(t) => Name { span: t.span },

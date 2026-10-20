@@ -291,30 +291,6 @@ impl Parser<'_> {
         })
     }
 
-    fn parameters(&mut self) -> Vec<Param> {
-        let mut params = Vec::new();
-        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
-            let is_rest = self.eat(TokenKind::Ellipsis);
-            let name = self.name("a parameter name");
-            let ty = self.optional_type_annotation();
-            let default_value = if self.eat(TokenKind::Eq) {
-                Some(Box::new(self.expression()))
-            } else {
-                None
-            };
-            params.push(Param {
-                name,
-                ty,
-                default_value,
-                is_rest,
-            });
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-        }
-        params
-    }
-
     fn block(&mut self) -> Block {
         let open = self.peek().span;
         self.expect(TokenKind::LBrace, "`{`");
