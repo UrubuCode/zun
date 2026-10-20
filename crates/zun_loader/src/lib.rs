@@ -93,6 +93,38 @@ pub struct ModuleLoader {
     modules: HashMap<String, ModuleScope>,
 }
 
+/// The flattened dependency manifest consumed by the loader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleManifest {
+    /// Identity of the module whose entry point should run.
+    pub entry: String,
+    /// Module identities in deterministic load order.
+    pub dependencies: Vec<String>,
+}
+
+impl ModuleManifest {
+    /// Construct a manifest for an entry module and its dependencies.
+    pub fn new(entry: impl Into<String>, dependencies: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            entry: entry.into(),
+            dependencies: dependencies.into_iter().collect(),
+        }
+    }
+
+    /// Validate that every manifest identity is present in a loader.
+    pub fn validate(&self, loader: &ModuleLoader) -> Result<(), LoadError> {
+        if loader.get(&self.entry).is_none() {
+            return Err(LoadError::UnresolvedModule(self.entry.clone()));
+        }
+        for dependency in &self.dependencies {
+            if loader.get(dependency).is_none() {
+                return Err(LoadError::UnresolvedModule(dependency.clone()));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The kind of member resolved from a MemberRef.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberKind {
@@ -277,5 +309,17 @@ mod tests {
             loader.load_bytes("core", &bytes),
             Err(LoadError::DuplicateModule(name)) if name == "core"
         ));
+    }
+
+    #[test]
+    fn manifest_validates_entry_and_dependencies() {
+        let bytes = Module::new().write();
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("core", &bytes).expect("core");
+        loader.load_bytes("app", &bytes).expect("app");
+        let manifest = ModuleManifest::new("app", vec!["core".into()]);
+        assert!(manifest.validate(&loader).is_ok());
+        let missing = ModuleManifest::new("app", vec!["missing".into()]);
+        assert!(missing.validate(&loader).is_err());
     }
 }
