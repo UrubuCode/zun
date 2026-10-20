@@ -1475,6 +1475,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_math_tangent_and_atan2_intrinsics() {
+        let module = zun_compiler::compile(
+            "import { tanNumber, atan2Number } from \"zun:math\"; function main(): number { return tanNumber(0.0) + atan2Number(0.0, 1.0); }",
+        )
+        .expect("compile math tangent and atan2");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run math tangent and atan2");
+        assert!(matches!(result, Value::Float(value, _) if value == 0.0));
+    }
+
+    #[test]
     fn executes_number_finiteness_source_methods() {
         let module = zun_compiler::compile(
             "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\

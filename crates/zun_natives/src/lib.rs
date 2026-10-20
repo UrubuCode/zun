@@ -538,6 +538,15 @@ mod tests {
         assert!(matches!(dispatch(log_id, &[NativeArg::Float(1.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
     }
 
+    #[test]
+    fn math_tangent_and_atan2_match_numeric_expectations() {
+        let mut sink = TestSink;
+        let (tan_id, _) = resolve("zun:math", "tanNumber").unwrap();
+        let (atan2_id, _) = resolve("zun:math", "atan2Number").unwrap();
+        assert!(matches!(dispatch(tan_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
+        assert!(matches!(dispatch(atan2_id, &[NativeArg::Float(1.0), NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if (value - std::f64::consts::FRAC_PI_2).abs() < 1e-12));
+    }
+
     struct TestSink;
 
     impl Sink for TestSink {

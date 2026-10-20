@@ -93,6 +93,20 @@ fn log(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
     unary_float(args, "log", f64::ln)
 }
 
+fn tan(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "tan", f64::tan)
+}
+
+fn atan2(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let y = float_arg(args, "atan2")?;
+    let x = match args.get(1) {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("atan2: expected two numbers".to_string())),
+    };
+    Ok(NativeValue::Float(y.atan2(x)))
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -116,5 +130,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "cosNumber", params: &[F64], ret: F64, imp: cos },
         NativeFn { name: "expNumber", params: &[F64], ret: F64, imp: exp },
         NativeFn { name: "logNumber", params: &[F64], ret: F64, imp: log },
+        NativeFn { name: "tanNumber", params: &[F64], ret: F64, imp: tan },
+        NativeFn { name: "atan2Number", params: &[F64, F64], ret: F64, imp: atan2 },
     ],
 };
