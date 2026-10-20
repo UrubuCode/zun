@@ -22,6 +22,17 @@ pub struct ResumableSession<'a> {
     pending: Option<ExecutionFrame>,
 }
 
+impl core::fmt::Debug for ResumableSession<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ResumableSession")
+            .field("method_rid", &self.method_rid)
+            .field("has_arguments", &self.args.is_some())
+            .field("suspended", &self.pending.is_some())
+            .finish()
+    }
+}
+
 impl<'a> ResumableSession<'a> {
     pub fn new(
         module: &'a Module,
