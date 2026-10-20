@@ -24,7 +24,7 @@ use std::rc::Rc;
 const CHUNK_SLOTS: usize = 64 * 1024;
 
 /// The size of one object slot in bytes.
-pub const SLOT_SIZE: usize = 8;
+pub use zun_core::SLOT_SIZE;
 
 /// A pointer to an allocated object: slot 0 is the type RID, the rest fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,13 +54,13 @@ impl Obj {
     pub fn field(self, index: usize) -> u64 {
         // SAFETY: callers index within the object's field count (the verifier
         // and layout guarantee this for generated code).
-        unsafe { *self.0.add(index + 1) }
+        unsafe { *self.0.add(zun_core::OBJECT_HEADER_SLOTS + index) }
     }
 
     /// Write raw field `index`.
     pub fn set_field(self, index: usize, value: u64) {
         // SAFETY: see `field`.
-        unsafe { *self.0.add(index + 1) = value }
+        unsafe { *self.0.add(zun_core::OBJECT_HEADER_SLOTS + index) = value }
     }
 }
 
@@ -106,7 +106,7 @@ impl Heap {
             let addr = self.records[idx].addr;
             // SAFETY: the block is `field_count + 1` valid slots we own.
             unsafe {
-                std::ptr::write_bytes(addr, 0, field_count + 1);
+                std::ptr::write_bytes(addr, 0, zun_core::OBJECT_HEADER_SLOTS + field_count);
                 *addr = type_rid as u64;
             }
             self.records[idx].alive = true;
@@ -114,7 +114,7 @@ impl Heap {
             return Obj(addr);
         }
 
-        let slots = field_count + 1; // + the type-RID header slot
+        let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
         assert!(slots <= CHUNK_SLOTS, "object larger than a heap chunk");
 
         if self.chunks.is_empty() || self.cursor + slots > CHUNK_SLOTS {
@@ -157,7 +157,11 @@ impl Heap {
     /// object reference absent from `roots` — otherwise it could be freed while
     /// still in use. (Collecting with precise roots from both engines is the
     /// remaining integration; see PLAN.md Â§4.3.)
-    pub unsafe fn collect(&mut self, roots: &[Obj], ref_slots: &dyn Fn(u32) -> Vec<usize>) -> usize {
+    pub unsafe fn collect(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
         for r in &mut self.records {
             r.marked = false;
         }
@@ -226,7 +230,11 @@ impl Heap {
 /// # Safety
 /// `heap` must be a valid pointer to a live [`Heap`]; the returned pointer is
 /// valid for that heap's lifetime.
-pub unsafe extern "C" fn zun_gc_alloc(heap: *mut Heap, type_rid: u32, field_count: usize) -> *mut u64 {
+pub unsafe extern "C" fn zun_gc_alloc(
+    heap: *mut Heap,
+    type_rid: u32,
+    field_count: usize,
+) -> *mut u64 {
     // SAFETY: the caller guarantees `heap` is a live Heap.
     let heap = unsafe { &mut *heap };
     heap.alloc(type_rid, field_count).addr()
@@ -325,7 +333,10 @@ mod tests {
         }
         assert_eq!(first.field(0), 0xDEAD_BEEF);
         assert_eq!(first.type_rid(), 1);
-        assert!(heap.chunk_count() > 1, "should have spanned multiple chunks");
+        assert!(
+            heap.chunk_count() > 1,
+            "should have spanned multiple chunks"
+        );
         assert_eq!(last.field(0), 199_999);
     }
 

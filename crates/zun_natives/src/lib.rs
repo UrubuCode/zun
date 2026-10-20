@@ -162,6 +162,12 @@ pub static MODULES: &[Module] = &[io::MODULE, fs::MODULE, env::MODULE, time::MOD
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
 pub const PRINT: u32 = 0;
 
+/// Convert a registry position to the stable core-library identifier used by
+/// runtime call sites.
+pub const fn intrinsic_id(id: u32) -> zun_core::IntrinsicId {
+    zun_core::IntrinsicId::new(id)
+}
+
 /// The global id of module index `m`'s local function `i`.
 fn global_id(m: usize, i: usize) -> u32 {
     let base: usize = MODULES[..m].iter().map(|md| md.functions.len()).sum();
@@ -232,6 +238,7 @@ mod tests {
     fn print_is_id_zero_and_resolves() {
         // io's first function is `print`, so PRINT == 0.
         assert_eq!(by_id(PRINT).unwrap().name, "print");
+        assert_eq!(intrinsic_id(PRINT).get(), 0);
         let (id, f) = resolve("zun:fs", "readText").unwrap();
         assert_eq!(f.name, "readText");
         // Ids are positional and round-trip through by_id.

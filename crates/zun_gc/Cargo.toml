@@ -8,3 +8,6 @@ description = "The Zun runtime heap: a non-moving object allocator shared by the
 
 [lints]
 workspace = true
+
+[dependencies]
+zun_core = { path = "../zun_core" }

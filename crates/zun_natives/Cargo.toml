@@ -8,3 +8,6 @@ description = "Native (runtime-implemented) modules: zun:fs, zun:io, zun:env, zu
 
 [lints]
 workspace = true
+
+[dependencies]
+zun_core = { path = "../zun_core" }

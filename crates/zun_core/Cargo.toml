@@ -1,0 +1,10 @@
+[package]
+name = "zun_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Frozen runtime contracts and intrinsic identifiers for the Zun core library."
+
+[lints]
+workspace = true
