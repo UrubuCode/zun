@@ -30,7 +30,9 @@ mod stack_maps;
 pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 pub use native_roots::{append_native_roots, NativeRootScope};
 pub use runtime_alloc::{zun_gc_alloc, zun_rt_alloc};
-pub use stack_maps::{NativeStackMap, StackMapRegistry};
+pub use stack_maps::{
+    with_active_stack_map_registry, ActiveStackMapScope, NativeStackMap, StackMapRegistry,
+};
 
 mod allocation;
 mod collection;
@@ -869,6 +871,29 @@ mod tests {
         assert!(registry.lookup(99).is_none());
         assert_eq!(registry.lookup(203).unwrap().pc, 200);
         assert!(registry.lookup(208).is_none());
+    }
+
+    #[test]
+    fn active_stack_map_scopes_restore_the_previous_registry() {
+        let outer = StackMapRegistry::new();
+        let inner = StackMapRegistry::new();
+        let outer_scope = unsafe { ActiveStackMapScope::enter(&outer) };
+        assert!(with_active_stack_map_registry(|registry| {
+            registry.is_some_and(|registry| std::ptr::eq(registry, &outer))
+        }));
+
+        let inner_scope = unsafe { ActiveStackMapScope::enter(&inner) };
+        assert!(with_active_stack_map_registry(|registry| {
+            registry.is_some_and(|registry| std::ptr::eq(registry, &inner))
+        }));
+
+        drop(outer_scope);
+        assert!(with_active_stack_map_registry(|registry| {
+            registry.is_some_and(|registry| std::ptr::eq(registry, &inner))
+        }));
+
+        drop(inner_scope);
+        assert!(with_active_stack_map_registry(|registry| registry.is_none()));
     }
 
     #[test]

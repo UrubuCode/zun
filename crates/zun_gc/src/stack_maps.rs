@@ -1,5 +1,11 @@
 //! Native/JIT stack-map contracts at the GC boundary.
 
+use std::cell::RefCell;
+
+thread_local! {
+    static ACTIVE_REGISTRIES: RefCell<Vec<*const StackMapRegistry>> = const { RefCell::new(Vec::new()) };
+}
+
 /// A native safepoint description published by a code generator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeStackMap {
@@ -13,6 +19,46 @@ pub struct NativeStackMap {
 #[derive(Debug, Default)]
 pub struct StackMapRegistry {
     maps: Vec<NativeStackMap>,
+}
+
+/// Guard that publishes one JIT registry while its native entry point runs.
+#[derive(Debug)]
+pub struct ActiveStackMapScope {
+    registry: *const StackMapRegistry,
+}
+
+impl ActiveStackMapScope {
+    /// Register `registry` for the duration of a native call.
+    ///
+    /// # Safety
+    /// `registry` must remain alive and unchanged until the returned guard is
+    /// dropped.
+    pub unsafe fn enter(registry: &StackMapRegistry) -> Self {
+        let registry = registry as *const StackMapRegistry;
+        ACTIVE_REGISTRIES.with(|active| active.borrow_mut().push(registry));
+        Self { registry }
+    }
+}
+
+impl Drop for ActiveStackMapScope {
+    fn drop(&mut self) {
+        ACTIVE_REGISTRIES.with(|active| {
+            let mut active = active.borrow_mut();
+            if let Some(index) = active.iter().rposition(|&registry| registry == self.registry) {
+                active.remove(index);
+            }
+        });
+    }
+}
+
+/// Execute `f` with the innermost active JIT stack-map registry, if any.
+pub fn with_active_stack_map_registry<R>(f: impl FnOnce(Option<&StackMapRegistry>) -> R) -> R {
+    ACTIVE_REGISTRIES.with(|active| {
+        let registry = active.borrow().last().copied();
+        // SAFETY: every pointer is protected by an active scope whose caller
+        // guarantees the registry outlives this callback.
+        f(registry.map(|registry| unsafe { &*registry }))
+    })
 }
 
 impl StackMapRegistry {

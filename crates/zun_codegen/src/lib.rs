@@ -744,6 +744,9 @@ impl Jit {
         // hook also registers its Value-level roots; this scope protects direct
         // callers of the public packed entry point as well.
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _stack_maps = unsafe {
+            zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry)
+        };
         let id = *self
             .shim_ids
             .get(&method_rid)
