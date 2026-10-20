@@ -22,9 +22,7 @@ mod state;
 mod unwind;
 pub mod value;
 
-use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use gc_policy::next_gc_interval;
-use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
 use operands::{
     branch_target, operand_f64, operand_i32, operand_i64, operand_local, operand_strref,
