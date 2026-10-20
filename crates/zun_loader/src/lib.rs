@@ -35,16 +35,37 @@ impl ModuleScope {
         let types = TypeSystem::from_module(&module).map_err(LoadError::Types)?;
         let mut exports = HashMap::new();
         for (rid, method) in module.tables.method_defs.iter().enumerate() {
-            exports.insert(
-                module.strings.get(method.name).to_owned(),
-                Export::Method(Token::new(TableKind::MethodDef, rid as u32 + 1)),
-            );
+            let method_rid = rid as u32 + 1;
+            let is_type_method = module
+                .tables
+                .type_defs
+                .iter()
+                .any(|ty| (ty.method_start..ty.method_end).contains(&method_rid));
+            if is_type_method {
+                continue;
+            }
+            let name = module.strings.get(method.name).to_owned();
+            if exports
+                .insert(
+                    name.clone(),
+                    Export::Method(Token::new(TableKind::MethodDef, method_rid)),
+                )
+                .is_some()
+            {
+                return Err(LoadError::DuplicateExport(name));
+            }
         }
         for (rid, ty) in module.tables.type_defs.iter().enumerate() {
-            exports.insert(
-                module.strings.get(ty.name).to_owned(),
-                Export::Type(Token::new(TableKind::TypeDef, rid as u32 + 1)),
-            );
+            let name = module.strings.get(ty.name).to_owned();
+            if exports
+                .insert(
+                    name.clone(),
+                    Export::Type(Token::new(TableKind::TypeDef, rid as u32 + 1)),
+                )
+                .is_some()
+            {
+                return Err(LoadError::DuplicateExport(name));
+            }
         }
         Ok(Self {
             name: name.into(),
@@ -102,6 +123,8 @@ pub enum LoadError {
     DuplicateModule(String),
     /// A manifest contains an invalid dependency ordering or duplicate.
     InvalidManifest(String),
+    /// Two definitions in one module expose the same source-level name.
+    DuplicateExport(String),
 }
 
 impl core::fmt::Display for LoadError {
@@ -113,6 +136,7 @@ impl core::fmt::Display for LoadError {
             Self::UnresolvedModule(name) => write!(f, "unresolved module reference: {name}"),
             Self::DuplicateModule(name) => write!(f, "duplicate module identity: {name}"),
             Self::InvalidManifest(detail) => write!(f, "invalid module manifest: {detail}"),
+            Self::DuplicateExport(name) => write!(f, "duplicate module export: {name}"),
         }
     }
 }
@@ -429,6 +453,23 @@ mod tests {
         assert_eq!(scope.name(), "app");
         assert!(matches!(export, Export::Method(_)));
         assert!(loader.resolve_export("app", "missing").is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_export_names() {
+        let mut module = Module::new();
+        let name = module.strings.intern("main");
+        for _ in 0..2 {
+            module.tables.add_method_def(zun_metadata::MethodDef {
+                name,
+                signature: zun_metadata::BlobIndex(0),
+                body_offset: u32::MAX,
+            });
+        }
+        assert!(matches!(
+            ModuleScope::from_bytes("app", &module.write()),
+            Err(LoadError::DuplicateExport(export)) if export == "main"
+        ));
     }
 
     #[test]
