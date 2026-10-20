@@ -327,6 +327,8 @@ The following runtime contracts are implemented and covered by tests:
 - interpreted backedge observation as the first OSR integration boundary.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
   `.zm` module retained as the fallback for ineligible methods.
+- A minimal `zun_napi` C ABI host boundary that executes compiled integer
+  modules without exposing compiler or AST types.
 
 The remaining completion gates are full async state-machine lowering, complete
 typed FFI/ABI integration, N-API hosting, AOT/R2R object emission, true OSR
