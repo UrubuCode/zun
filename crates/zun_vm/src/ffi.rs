@@ -93,6 +93,30 @@ impl NativeLibrary {
         Ok(unsafe { symbol(arg) })
     }
 
+    /// Call a C symbol with two `i64` arguments and an `i64` result.
+    ///
+    /// # Safety
+    /// The symbol must use the C ABI and have the exact signature
+    /// `extern "C" fn(i64, i64) -> i64`.
+    pub unsafe fn call_i64_2(&self, name: &[u8], first: i64, second: i64) -> Result<i64, FfiError> {
+        // SAFETY: the caller guarantees the symbol ABI described above.
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i64, i64) -> i64>(name) }?;
+        // SAFETY: the resolved function has the declared ABI and signature.
+        Ok(unsafe { symbol(first, second) })
+    }
+
+    /// Call a C symbol with no arguments and an `f64` result.
+    ///
+    /// # Safety
+    /// The symbol must use the C ABI and have the exact signature
+    /// `extern "C" fn() -> f64`.
+    pub unsafe fn call_f64_0(&self, name: &[u8]) -> Result<f64, FfiError> {
+        // SAFETY: the caller guarantees the symbol ABI described above.
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn() -> f64>(name) }?;
+        // SAFETY: the resolved function has the declared ABI and signature.
+        Ok(unsafe { symbol() })
+    }
+
     /// Call a C symbol with one `f64` argument and an `f64` result.
     ///
     /// # Safety
@@ -124,5 +148,15 @@ mod tests {
         let result = unsafe { library.call_i64_1(b"zun_missing_symbol", 1) };
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("failed to resolve"));
+    }
+
+    #[test]
+    fn every_scalar_signature_reports_missing_symbols_consistently() {
+        let path = std::env::current_exe().expect("test executable path");
+        let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
+        let result = unsafe { library.call_i64_2(b"zun_missing_symbol", 1, 2) };
+        assert!(result.is_err());
+        let result = unsafe { library.call_f64_0(b"zun_missing_symbol") };
+        assert!(result.is_err());
     }
 }
