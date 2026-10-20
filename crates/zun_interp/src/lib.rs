@@ -922,6 +922,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_source_methods_with_primitive_receiver() {
+        let module = zun_compiler::compile(
+            "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\
+             function main(): string { let value: string = \"zun\"; return value.withSeparator(\":\", \"vm\"); }",
+        )
+        .expect("compile String source methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String source methods");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zun:vm"));
+    }
+
+    #[test]
     fn executes_array_source_methods_with_array_receiver_binding() {
         let module = zun_compiler::compile(
             "class Array {\n\

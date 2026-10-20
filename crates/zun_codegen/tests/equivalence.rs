@@ -115,6 +115,19 @@ fn number_primitive_methods_use_static_class_binding() {
 }
 
 #[test]
+fn string_source_methods_use_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\
+         function main(): string { let value: string = \"zun\"; return value.withSeparator(\":\", \"vm\"); }",
+    )
+    .expect("compile String source methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String method calls must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "zun:vm"));
+}
+
+#[test]
 fn array_source_methods_keep_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array {\n\

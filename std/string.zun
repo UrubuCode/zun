@@ -3,6 +3,14 @@
 import { length, contains, charCodeAt, startsWith, endsWith, trim, repeat } from "zun:string";
 
 class String {
+    concat(other: string): string {
+        return this + other;
+    }
+
+    withSeparator(separator: string, other: string): string {
+        return this + separator + other;
+    }
+
     extern length(): u64;
     extern contains(needle: string): boolean;
     extern charCodeAt(index: u64): u32;
