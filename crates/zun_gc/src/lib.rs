@@ -116,37 +116,6 @@ pub struct Heap {
 }
 
 impl Heap {
-    pub fn data_view_get_u16(
-        &self,
-        object: Obj,
-        relative: usize,
-        little_endian: bool,
-    ) -> Option<u16> {
-        let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        self.data_views.get(&(object.addr() as usize))?.get_u16(
-            self.buffers.get(&(buffer.addr() as usize))?,
-            relative,
-            little_endian,
-        )
-    }
-
-    pub fn data_view_set_u16(
-        &mut self,
-        object: Obj,
-        relative: usize,
-        value: u16,
-        little_endian: bool,
-    ) -> Option<bool> {
-        let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        let view = *self.data_views.get(&(object.addr() as usize))?;
-        Some(view.set_u16(
-            self.buffers.get_mut(&(buffer.addr() as usize))?,
-            relative,
-            value,
-            little_endian,
-        ))
-    }
-
     pub fn data_view_get_f64(
         &self,
         object: Obj,
