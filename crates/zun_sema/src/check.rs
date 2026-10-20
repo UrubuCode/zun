@@ -31,6 +31,8 @@ mod module_resolution;
 mod native_types;
 #[path = "numeric_literals.rs"]
 mod numeric_literals;
+#[path = "function_context.rs"]
+mod function_context;
 #[path = "poison.rs"]
 mod poison;
 #[path = "type_expect.rs"]
@@ -183,22 +185,6 @@ struct CaptureUse {
     slots: Vec<hir::LocalSlot>,
     mutated: HashSet<hir::LocalSlot>,
     inherited: Vec<hir::Capture>,
-}
-
-impl FunctionCx {
-    fn declare(&mut self, name: &str, ty: Ty) -> hir::LocalSlot {
-        let slot = self.locals.len() as hir::LocalSlot;
-        self.locals.push(ty);
-        self.scopes
-            .last_mut()
-            .expect("a scope is always open")
-            .insert(name.to_string(), slot);
-        slot
-    }
-
-    fn lookup(&self, name: &str) -> Option<hir::LocalSlot> {
-        self.scopes.iter().rev().find_map(|s| s.get(name).copied())
-    }
 }
 
 impl Checker<'_> {
