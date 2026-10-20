@@ -820,11 +820,17 @@ mod tests {
             roots.clear();
             append_native_roots(&mut roots);
             assert_eq!(roots, vec![outer_object, inner_object]);
+            let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
+            assert_eq!(freed, 0);
+            assert_eq!(heap.live_count(), 2);
         }
 
         roots.clear();
         append_native_roots(&mut roots);
         assert_eq!(roots, outer);
+        let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.live_count(), 1);
         drop(outer_scope);
         roots.clear();
         append_native_roots(&mut roots);
