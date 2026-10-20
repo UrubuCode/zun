@@ -40,7 +40,9 @@ impl std::error::Error for VmError {}
 
 /// Load a `.zm` module from its bytes and verify every method body.
 pub fn load(bytes: &[u8]) -> Result<Module, VmError> {
-    let module = Module::read(bytes).map_err(VmError::Load)?;
+    let module = zun_loader::ModuleScope::from_bytes("<memory>", bytes)
+        .map_err(VmError::Load)?
+        .into_module();
     verify_module(&module).map_err(VmError::Verify)?;
     Ok(module)
 }

@@ -1,0 +1,13 @@
+[package]
+name = "zun_loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Loadable module scopes for Zun .zm binaries."
+
+[dependencies]
+zun_module = { path = "../zun_module" }
+
+[lints]
+workspace = true
