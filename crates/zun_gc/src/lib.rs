@@ -85,6 +85,8 @@ pub struct Heap {
     strings: Vec<Rc<str>>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
+    /// Dynamic property bags associated with dynamic objects.
+    dynamic_objects: std::collections::HashMap<usize, zun_core::DynamicObject>,
     /// Record index by object address, for tracing child references.
     by_addr: std::collections::HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
@@ -141,6 +143,40 @@ impl Heap {
         Obj(base)
     }
 
+    /// Allocate an object backed by a dynamic property bag.
+    pub fn alloc_dynamic(&mut self) -> Obj {
+        let object = self.alloc(0, 0);
+        self.dynamic_objects
+            .insert(object.addr() as usize, zun_core::DynamicObject::new());
+        object
+    }
+
+    /// Read a dynamic property from an object allocated by [`Self::alloc_dynamic`].
+    pub fn dynamic_get(&self, object: Obj, name: &str) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get(name))
+    }
+
+    /// Insert or replace a dynamic property.
+    pub fn dynamic_set(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set(name, value)
+    }
+
+    /// Remove a dynamic property.
+    pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .remove(name)
+    }
+
     /// Number of currently live objects (for diagnostics and tests).
     pub fn live_count(&self) -> usize {
         self.records.iter().filter(|r| r.alive).count()
@@ -190,6 +226,18 @@ impl Heap {
                     }
                 }
             }
+            if let Some(properties) = self.dynamic_objects.get(&(obj.addr() as usize)) {
+                // Dynamic properties can hold object-tagged Any values.
+                let dynamic_children: Vec<usize> = properties.object_references().collect();
+                for child in dynamic_children {
+                    if let Some(&cidx) = self.by_addr.get(&child) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
@@ -199,6 +247,7 @@ impl Heap {
             if r.alive && !r.marked {
                 r.alive = false;
                 self.by_addr.remove(&(r.addr as usize));
+                self.dynamic_objects.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }
@@ -461,6 +510,38 @@ mod tests {
         let recovered = unsafe { Obj::from_addr(outer.field(0) as *mut u64) };
         assert_eq!(recovered.field(0), 99);
         assert_eq!(recovered.type_rid(), 5);
+    }
+
+    #[test]
+    fn dynamic_properties_roundtrip_through_the_heap() {
+        let mut heap = Heap::new();
+        let object = heap.alloc_dynamic();
+        assert_eq!(object.type_rid(), 0);
+        assert_eq!(heap.dynamic_set(object, "answer", zun_core::Any::int(42)), None);
+        assert_eq!(
+            heap.dynamic_get(object, "answer").and_then(zun_core::Any::as_int),
+            Some(42)
+        );
+        assert_eq!(
+            heap.dynamic_remove(object, "answer").and_then(zun_core::Any::as_int),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn dynamic_object_references_are_traced_by_collection() {
+        let mut heap = Heap::new();
+        let child = heap.alloc(7, 0);
+        let dynamic = heap.alloc_dynamic();
+        heap.dynamic_set(dynamic, "child", zun_core::Any::object(child.addr() as usize));
+        let unreachable = heap.alloc(8, 0);
+        let no_refs = |_: u32| Vec::<usize>::new();
+
+        let freed = unsafe { heap.collect(&[dynamic], &no_refs) };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.live_count(), 2);
+        assert!(heap.dynamic_get(dynamic, "child").is_some());
+        let _ = unreachable;
     }
 
     #[test]

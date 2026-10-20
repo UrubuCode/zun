@@ -178,6 +178,13 @@ impl DynamicObject {
     pub fn is_empty(&self) -> bool {
         self.properties.is_empty()
     }
+
+    /// Return the addresses stored in object-tagged properties.
+    pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
+        self.properties
+            .values()
+            .filter_map(|value| value.as_object())
+    }
 }
 
 /// Stable identifier for a runtime intrinsic.
