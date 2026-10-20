@@ -2,6 +2,7 @@
 // Runtime-backed operations remain in the `zun:*` intrinsic modules.
 
 import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from "zun:math";
+import { cbrtNumber } from "zun:math";
 import { powNumber } from "zun:math";
 import { sinNumber, cosNumber } from "zun:math";
 import { expNumber, logNumber } from "zun:math";
@@ -25,6 +26,10 @@ function mathClamp(value: number, low: number, high: number): number {
 
 function mathSqrt(value: number): number {
     return sqrtNumber(value);
+}
+
+function mathCbrt(value: number): number {
+    return cbrtNumber(value);
 }
 
 function mathMin(left: number, right: number): number {

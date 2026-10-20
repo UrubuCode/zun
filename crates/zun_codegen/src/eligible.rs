@@ -66,7 +66,7 @@ fn date_builtin(instr: &zun_il::Instruction) -> bool {
 fn math_builtin(instr: &zun_il::Instruction) -> bool {
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some(
-        "abs" | "sqrt" | "min" | "max" | "sqrtNumber" | "minNumber" | "maxNumber"
+        "abs" | "sqrt" | "cbrtNumber" | "min" | "max" | "sqrtNumber" | "minNumber" | "maxNumber"
         | "floor" | "ceil" | "round" | "truncNumber" | "floorNumber" | "ceilNumber" | "roundNumber"
         | "powNumber" | "sinNumber" | "cosNumber" | "expNumber" | "logNumber" | "log10Number" | "log2Number"
         | "tanNumber" | "atan2Number" | "hypotNumber" | "signNumber" | "isFinite" | "isNaN"

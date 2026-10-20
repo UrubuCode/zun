@@ -18,6 +18,10 @@ fn sqrt(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
     Ok(NativeValue::Float(float_arg(args, "sqrt")?.sqrt()))
 }
 
+fn cbrt(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Float(float_arg(args, "cbrt")?.cbrt()))
+}
+
 fn sign(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = float_arg(args, "sign")?;
     let result = if value.is_nan() || value == 0.0 { value } else if value.is_sign_positive() { 1.0 } else { -1.0 };
@@ -144,6 +148,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "min", params: &[F64, F64], ret: F64, imp: min },
         NativeFn { name: "max", params: &[F64, F64], ret: F64, imp: max },
         NativeFn { name: "sqrtNumber", params: &[F64], ret: F64, imp: sqrt },
+        NativeFn { name: "cbrtNumber", params: &[F64], ret: F64, imp: cbrt },
         NativeFn { name: "signNumber", params: &[F64], ret: F64, imp: sign },
         NativeFn { name: "minNumber", params: &[F64, F64], ret: F64, imp: min },
         NativeFn { name: "maxNumber", params: &[F64, F64], ret: F64, imp: max },

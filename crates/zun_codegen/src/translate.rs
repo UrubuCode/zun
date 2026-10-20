@@ -385,6 +385,7 @@ impl Translator<'_> {
                         Some("abs") => ("zun_jit_math_abs", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("signNumber") => ("zun_jit_math_sign", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("sqrt" | "sqrtNumber") => ("zun_jit_math_sqrt", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("cbrtNumber") => ("zun_jit_math_cbrt", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("floor" | "floorNumber") => ("zun_jit_math_floor", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("ceil" | "ceilNumber") => ("zun_jit_math_ceil", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("round" | "roundNumber") => ("zun_jit_math_round", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
