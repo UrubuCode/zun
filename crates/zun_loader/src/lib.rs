@@ -7,6 +7,7 @@
 use std::path::Path;
 use std::collections::HashMap;
 use zun_module::{Module, ReadError};
+use zun_metadata::{TableKind, Token};
 use zun_types::{TypeError, TypeSystem};
 
 /// A loaded module together with its loader-visible identity.
@@ -66,6 +67,8 @@ pub enum LoadError {
     Format(ReadError),
     /// The metadata cannot be materialized as runtime types.
     Types(TypeError),
+    /// A module reference token is invalid or unresolved.
+    UnresolvedModule(String),
 }
 
 impl core::fmt::Display for LoadError {
@@ -74,6 +77,7 @@ impl core::fmt::Display for LoadError {
             Self::Io(error) => write!(f, "module I/O failed: {error}"),
             Self::Format(error) => write!(f, "invalid module: {error}"),
             Self::Types(error) => write!(f, "invalid type metadata: {error}"),
+            Self::UnresolvedModule(name) => write!(f, "unresolved module reference: {name}"),
         }
     }
 }
@@ -111,6 +115,26 @@ impl ModuleLoader {
     /// Resolve a previously loaded module by exact identity.
     pub fn get(&self, name: &str) -> Option<&ModuleScope> {
         self.modules.get(name)
+    }
+
+    /// Resolve a ModuleRef token using the requesting module's string heap.
+    pub fn resolve_module_ref<'a>(
+        &'a self,
+        requester: &ModuleScope,
+        token: Token,
+    ) -> Result<&'a ModuleScope, LoadError> {
+        if token.table() != Some(TableKind::ModuleRef) {
+            return Err(LoadError::UnresolvedModule(format!("invalid token 0x{:08x}", token.to_raw())));
+        }
+        let module_ref = requester
+            .module
+            .tables
+            .module_refs
+            .get(token.rid() as usize - 1)
+            .ok_or_else(|| LoadError::UnresolvedModule(format!("RID {}", token.rid())))?;
+        let name = requester.module.strings.get(module_ref.name);
+        self.get(name)
+            .ok_or_else(|| LoadError::UnresolvedModule(name.to_string()))
     }
 
     /// Number of registered modules.
