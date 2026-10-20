@@ -521,13 +521,28 @@ impl Interp<'_> {
                         if args.iter().any(|arg| matches!(arg, Value::Object(_))) {
                             return Err(RunError::BadToken);
                         }
-                        let result = run_method_loaded(
+                        let result = match run_method_loaded(
                             resolved.scope,
                             loader,
                             resolved.token.rid(),
                             args,
                             self.output,
-                        )?;
+                        ) {
+                            Ok(value) => value,
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(
+                                    &body,
+                                    &mut stack,
+                                    &mut pc,
+                                    next - size,
+                                    &exception,
+                                ) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        };
                         stack.push(result);
                         continue;
                     }
@@ -552,7 +567,22 @@ impl Interp<'_> {
                         locals: &locals,
                         parent,
                     };
-                    let result = self.dispatch(callee_rid, args, Some(&link))?;
+                    let result = match self.dispatch(callee_rid, args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
                     stack.push(result);
                 }
                 Opcode::CallIndirect => {
@@ -623,7 +653,22 @@ impl Interp<'_> {
                         locals: &locals,
                         parent,
                     };
-                    let result = self.dispatch(handle.method_rid(), args, Some(&link))?;
+                    let result = match self.dispatch(handle.method_rid(), args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
                     stack.push(result);
                 }
                 Opcode::CallBuiltin => {
@@ -720,7 +765,22 @@ impl Interp<'_> {
                         locals: &locals,
                         parent,
                     };
-                    let result = self.dispatch(target, args, Some(&link))?;
+                    let result = match self.dispatch(target, args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
                     stack.push(result);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
@@ -777,6 +837,39 @@ impl Interp<'_> {
             }
         }
         self.call(method_rid, args, parent)
+    }
+
+    fn route_exception(
+        &self,
+        body: &zun_module::MethodBody<'_>,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
+        throw_pc: usize,
+        exception: &Value,
+    ) -> bool {
+        let handler = body
+            .handlers
+            .iter()
+            .filter(|handler| {
+                handler.try_start as usize <= throw_pc && throw_pc < handler.try_end as usize
+            })
+            .filter(|handler| match handler.kind {
+                zun_module::HandlerKind::Finally => true,
+                zun_module::HandlerKind::Catch => match (handler.catch_type, &exception) {
+                    (Some(token), Value::Object(object)) => {
+                        self.types.is_assignable(object.type_rid(), token.rid())
+                    }
+                    _ => false,
+                },
+            })
+            .min_by_key(|handler| handler.try_end - handler.try_start);
+        let Some(handler) = handler else {
+            return false;
+        };
+        stack.clear();
+        stack.push(exception.clone());
+        *pc = handler.handler_start as usize;
+        true
     }
 
     /// Run a mark-sweep collection with precise roots: the object references in
@@ -903,6 +996,17 @@ mod method_tests {
         let result = run(&module, &mut output);
         assert!(matches!(result, Err(RunError::Thrown(_))));
         assert_eq!(output.lines, vec!["2"]);
+    }
+
+    #[test]
+    fn catches_an_exception_from_a_called_method() {
+        let module = zun_compiler::compile(
+            "class Error {} function fail(): int { throw new Error(); } function main(): int { try { return fail(); } catch (error: Error) { return 7; } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("caller should catch child throw");
+        assert_eq!(value.as_int(), 7);
     }
 
     #[test]
