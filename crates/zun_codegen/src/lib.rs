@@ -105,6 +105,7 @@ pub struct Jit {
     sigs: HashMap<u32, Sig>,
     ctx: cranelift_codegen::Context,
     fb_ctx: FunctionBuilderContext,
+    types: zun_types::TypeSystem,
 }
 
 impl core::fmt::Debug for Jit {
@@ -136,6 +137,8 @@ impl Jit {
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);
+        let types = zun_types::TypeSystem::from_module(zm)
+            .map_err(|e| JitError::Module(e.to_string()))?;
 
         // Declare every eligible function and shim up front (signatures only) so
         // calls can reference any of them; bodies are defined later, eagerly by
@@ -150,6 +153,7 @@ impl Jit {
             sigs: HashMap::new(),
             ctx: cranelift_codegen::Context::new(),
             fb_ctx: FunctionBuilderContext::new(),
+            types,
         };
 
         for &rid in &eligible {
@@ -245,6 +249,7 @@ impl Jit {
             &mut self.ctx,
             &mut self.fb_ctx,
             &self.func_ids,
+            &self.types,
             &body,
         )
         .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;

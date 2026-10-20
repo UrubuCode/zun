@@ -18,6 +18,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{FuncId, Module as ClifModule};
 use zun_il::{decode_all, JitKind, NumKind, Opcode, Operand};
 use zun_module::{read_body, MethodBody, Module as ZmModule};
+use zun_types::TypeSystem;
 
 /// The Cranelift type for a JIT value kind.
 pub fn clif_ty(kind: JitKind) -> Type {
@@ -55,6 +56,7 @@ pub fn translate_body(
     ctx: &mut Context,
     fb_ctx: &mut FunctionBuilderContext,
     func_ids: &HashMap<u32, FuncId>,
+    types: &TypeSystem,
     body: &MethodBody<'_>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
@@ -105,6 +107,7 @@ pub fn translate_body(
         local_kinds,
         blocks,
         func_ids,
+        types,
         module,
         zm,
     };
@@ -165,6 +168,7 @@ struct Translator<'a> {
     func_ids: &'a HashMap<u32, FuncId>,
     module: &'a mut dyn ClifModule,
     zm: &'a ZmModule,
+    types: &'a TypeSystem,
 }
 
 impl Translator<'_> {
@@ -541,22 +545,8 @@ impl Translator<'_> {
             Operand::Token(t) => t.rid(),
             _ => return Err("field operand".into()),
         };
-        let fd = self
-            .zm
-            .tables
-            .field_defs
-            .get(rid as usize - 1)
-            .ok_or("bad field token")?;
-        let kind = JitKind::from_byte(fd.kind);
-        // Slot = position within the owning type's field range.
-        let owner = self
-            .zm
-            .tables
-            .type_defs
-            .iter()
-            .find(|t| rid >= t.field_start && rid < t.field_end)
-            .ok_or("field has no owning type")?;
-        Ok((kind, (rid - owner.field_start) as usize))
+        let field = self.types.get_field(rid).ok_or("bad field token")?;
+        Ok((JitKind::from_byte(field.kind), field.slot))
     }
 }
 

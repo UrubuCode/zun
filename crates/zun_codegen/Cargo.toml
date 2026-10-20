@@ -11,6 +11,7 @@ zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
 zun_gc = { path = "../zun_gc" }
+zun_types = { path = "../zun_types" }
 cranelift-codegen = { workspace = true }
 cranelift-frontend = { workspace = true }
 cranelift-jit = { workspace = true }
@@ -23,6 +24,7 @@ zun_sema = { path = "../zun_sema" }
 zun_ilgen = { path = "../zun_ilgen" }
 zun_interp = { path = "../zun_interp" }
 zun_gc = { path = "../zun_gc" }
+zun_types = { path = "../zun_types" }
 
 [lints]
 workspace = true
