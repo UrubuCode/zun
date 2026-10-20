@@ -2653,3 +2653,14 @@ fn template_literals_match_interpreter_and_jit_fallback() {
     assert!(!jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "hello Zun!"));
 }
+
+#[test]
+fn template_literals_convert_numbers_through_the_native_floor() {
+    let module = compile(
+        "function main(): string { let value: number = 12.5; return `value=${value}`; }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "value=12.5"));
+}

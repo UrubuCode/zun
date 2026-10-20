@@ -1621,10 +1621,23 @@ impl Checker<'_> {
                         },
                         ast::TemplatePart::Expr(expression) => {
                             let value = self.check_expr(cx, expression);
-                            if value.ty != Ty::String && !value.ty.is_error() {
-                                self.error(value.span, "template interpolation must have type string");
+                            if value.ty == Ty::F64 {
+                                if let Some((id, _)) = zun_natives::resolve("zun:number", "toString") {
+                                    hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                                        ty: Ty::String,
+                                        span,
+                                    }
+                                } else {
+                                    self.error(span, "number template conversion is unavailable");
+                                    self.poison(span)
+                                }
+                            } else {
+                                if value.ty != Ty::String && !value.ty.is_error() {
+                                    self.error(value.span, "template interpolation must have type string or number");
+                                }
+                                value
                             }
-                            value
                         }
                     };
                     result = hir::Expr {
