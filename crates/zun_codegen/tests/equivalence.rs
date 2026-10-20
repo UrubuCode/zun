@@ -497,6 +497,19 @@ fn array_average_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_min_and_max_keep_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { min(): number { if (this.length == 0) { return 0.0; } let result: number = this[0] as number; let index: u64 = 1; while (index < this.length) { let value: number = this[index] as number; if (value < result) { result = value; } index = index + 1; } return result; } max(): number { if (this.length == 0) { return 0.0; } let result: number = this[0] as number; let index: u64 = 1; while (index < this.length) { let value: number = this[index] as number; if (value > result) { result = value; } index = index + 1; } return result; } }\n\
+         function main(): number { let values = new Array(3); values[0] = 9.0; values[1] = 2.0; values[2] = 7.0; return values.min() + values.max(); }",
+    )
+    .expect("compile Array min and max");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 11.0));
+}
+
+#[test]
 fn array_search_methods_keep_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array {\n\

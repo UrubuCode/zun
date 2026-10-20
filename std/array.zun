@@ -174,4 +174,28 @@ class Array {
         if (this.length == 0) { return 0.0; }
         return this.sum() / (this.length as number);
     }
+
+    min(): number {
+        if (this.length == 0) { return 0.0; }
+        let result: number = this[0] as number;
+        let index: u64 = 1;
+        while (index < this.length) {
+            let value: number = this[index] as number;
+            if (value < result) { result = value; }
+            index = index + 1;
+        }
+        return result;
+    }
+
+    max(): number {
+        if (this.length == 0) { return 0.0; }
+        let result: number = this[0] as number;
+        let index: u64 = 1;
+        while (index < this.length) {
+            let value: number = this[index] as number;
+            if (value > result) { result = value; }
+            index = index + 1;
+        }
+        return result;
+    }
 }

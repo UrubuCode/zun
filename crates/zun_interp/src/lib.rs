@@ -888,6 +888,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_min_and_max_source_methods() {
+        let module = zun_compiler::compile(
+            "class Array { min(): number { if (this.length == 0) { return 0.0; } let result: number = this[0] as number; let index: u64 = 1; while (index < this.length) { let value: number = this[index] as number; if (value < result) { result = value; } index = index + 1; } return result; } max(): number { if (this.length == 0) { return 0.0; } let result: number = this[0] as number; let index: u64 = 1; while (index < this.length) { let value: number = this[index] as number; if (value > result) { result = value; } index = index + 1; } return result; } }\n\
+             function main(): number { let values = new Array(3); values[0] = 9.0; values[1] = 2.0; values[2] = 7.0; return values.min() + values.max(); }",
+        )
+        .expect("compile Array min and max");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array min and max");
+        assert!(matches!(result, Value::Float(value, _) if value == 11.0));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",
