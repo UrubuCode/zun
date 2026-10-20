@@ -308,6 +308,19 @@ class Array {
         return true;
     }
 
+    isUnique(): boolean {
+        let outer: u64 = 0;
+        while (outer < this.length) {
+            let inner: u64 = outer + 1;
+            while (inner < this.length) {
+                if (this[outer] == this[inner]) { return false; }
+                inner = inner + 1;
+            }
+            outer = outer + 1;
+        }
+        return true;
+    }
+
     sum(): number {
     let total: number = 0.0;
     let index: u64 = 0;

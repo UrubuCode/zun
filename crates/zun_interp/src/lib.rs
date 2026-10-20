@@ -1060,6 +1060,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_is_unique_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { isUnique(): boolean { let outer: u64 = 0; while (outer < this.length) { let inner: u64 = outer + 1; while (inner < this.length) { if (this[outer] == this[inner]) { return false; } inner = inner + 1; } outer = outer + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 1.0; values[1] = 2.0; values[2] = 3.0; return values.isUnique(); }",
+        )
+        .expect("compile Array isUnique");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array isUnique");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\
