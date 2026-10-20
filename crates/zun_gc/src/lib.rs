@@ -151,29 +151,6 @@ impl Heap {
         ))
     }
 
-    pub fn buffer_view_read_u8(
-        &self,
-        object: Obj,
-        view: zun_core::TypedArrayView,
-        index: usize,
-    ) -> Option<u8> {
-        view.read_u8(self.buffers.get(&(object.addr() as usize))?, index)
-    }
-
-    pub fn buffer_view_write_u8(
-        &mut self,
-        object: Obj,
-        view: zun_core::TypedArrayView,
-        index: usize,
-        value: u8,
-    ) -> Option<bool> {
-        Some(view.write_u8(
-            self.buffers.get_mut(&(object.addr() as usize))?,
-            index,
-            value,
-        ))
-    }
-
     pub fn buffer_view_read_u16(
         &self,
         object: Obj,
