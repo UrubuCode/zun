@@ -1742,6 +1742,17 @@ mod method_tests {
     }
 
     #[test]
+    fn invokes_map_and_set_symbol_iterators_from_source() {
+        let module = zun_compiler::compile(
+            "import { mapIteratorNext, setIteratorNext } from \"zun:buffer\"; function main(): u64 { let map = new Map(); map.set(1.0, 10.0); let map_iterator = map[Symbol.iterator](); let pair: Array = mapIteratorNext(map_iterator) as Array; let set = new Set(); set.add(32.0); let set_iterator = set[Symbol.iterator](); let value = setIteratorNext(set_iterator); return pair[1] as u64 + value as u64; }",
+        )
+        .expect("compile collection Symbol.iterator calls");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run collection Symbol.iterator calls");
+        assert!(matches!(result, Value::Int(42, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn iterates_map_and_set_values_in_insertion_order() {
         let module = zun_compiler::compile(
             "function main(): any { let map = new Map(); map.set(1.0, 10.0); map.set(2.0, 20.0); let set = new Set(); set.add(3.0); set.add(4.0); for (let value of map) { let pair: Array = value as Array; print(pair[1]); } for (let value of set) { print(value); } return 42.0; }",
