@@ -295,6 +295,17 @@ fn array_destructuring_uses_the_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn object_destructuring_uses_the_interpreter_fallback_boundary() {
+    let module = compile(
+        "function main(): number { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); let {answer} = object; return answer as number; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "object destructuring requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Float(41.0, _)));
+}
+
+#[test]
 fn method_default_parameter_uses_the_interpreter_fallback_boundary() {
     let module = compile(
         "class Box { value(factor: number = 3.0): number { return factor; } } function main(): number { let box_value = new Box(); return box_value.value(); }",

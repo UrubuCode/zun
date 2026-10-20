@@ -226,6 +226,7 @@ impl Checker<'_> {
             match statement {
                 ast::Stmt::Let { init, .. }
                 | ast::Stmt::ArrayDestructure { init, .. }
+                | ast::Stmt::ObjectDestructure { init, .. }
                 | ast::Stmt::Expr(init) => {
                     self.collect_mutated_expr(init, names)
                 }
@@ -589,6 +590,7 @@ impl Checker<'_> {
         match statement {
             ast::Stmt::Let { init, .. }
             | ast::Stmt::ArrayDestructure { init, .. }
+            | ast::Stmt::ObjectDestructure { init, .. }
             | ast::Stmt::Expr(init) => {
                 self.collect_capture_expr(cx, parameters, init, uses)
             }
@@ -1308,6 +1310,27 @@ impl Checker<'_> {
                     })
                     .collect();
                 hir::Stmt::ArrayDestructure { slots, init }
+            }
+            ast::Stmt::ObjectDestructure { names, init, .. } => {
+                let init = self.check_expr(cx, init);
+                if init.ty != Ty::Any
+                    && init.ty != Ty::DynamicObject
+                    && !init.ty.is_error()
+                {
+                    self.error(
+                        init.span,
+                        "object destructuring requires a dynamic object initializer",
+                    );
+                }
+                let bindings = names
+                    .iter()
+                    .map(|name| {
+                        let text = self.text(name).to_string();
+                        let slot = cx.declare(&text, Ty::Any);
+                        (slot, text)
+                    })
+                    .collect();
+                hir::Stmt::ObjectDestructure { bindings, init }
             }
             ast::Stmt::Let { name, ty, init, .. } => {
                 let mut init = self.check_expr(cx, init);

@@ -306,6 +306,13 @@ pub enum Stmt {
         /// Source array expression.
         init: Expr,
     },
+    /// Initialize locals from dynamic properties by matching their names.
+    ObjectDestructure {
+        /// Destination local slots and property names in order.
+        bindings: Vec<(LocalSlot, String)>,
+        /// Source dynamic object expression.
+        init: Expr,
+    },
     /// Initialize a local whose storage is a shared closure cell.
     BoxedLet {
         /// Destination local slot containing the cell object.

@@ -2049,6 +2049,17 @@ mod method_tests {
     }
 
     #[test]
+    fn object_destructuring_reads_dynamic_properties() {
+        let module = zun_compiler::compile(
+            "function main(): number { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); let {answer} = object; return answer as number; }",
+        )
+        .expect("compile object destructuring");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run object destructuring");
+        assert!(matches!(value, Value::Float(41.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn method_default_parameter_preserves_the_receiver() {
         let module = zun_compiler::compile(
             "class Box { value(factor: number = 3.0): number { return factor; } } function main(): number { let box_value = new Box(); return box_value.value(); }",

@@ -381,6 +381,25 @@ impl Parser<'_> {
                 span: start.to(end),
             };
         }
+        if self.eat(TokenKind::LBrace) {
+            let mut names = Vec::new();
+            while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+                names.push(self.name("an object destructuring binding"));
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBrace, "`}` after object destructuring pattern");
+            self.expect(TokenKind::Eq, "`=` after object destructuring pattern");
+            let init = self.expression();
+            let end = self.peek().span;
+            self.expect(TokenKind::Semi, "`;`");
+            return Stmt::ObjectDestructure {
+                names,
+                init,
+                span: start.to(end),
+            };
+        }
         let name = self.name("a variable name");
         let ty = self.optional_type_annotation();
         self.expect(TokenKind::Eq, "`=` (phase 1 requires an initializer)");
@@ -1159,6 +1178,15 @@ mod tests {
         assert!(matches!(
             p.functions[0].body.statements[0],
             Stmt::ArrayDestructure { ref names, .. } if names.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parses_object_destructuring_declaration() {
+        let p = parse_ok("function main() { let {answer, other} = object; }");
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::ObjectDestructure { ref names, .. } if names.len() == 2
         ));
     }
 

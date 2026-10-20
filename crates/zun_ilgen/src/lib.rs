@@ -454,6 +454,19 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
                 self.emit(Instruction::simple(Opcode::Pop));
             }
+            Stmt::ObjectDestructure { bindings, init } => {
+                self.expr(init);
+                for (slot, name) in bindings {
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    let property = self.module.strings.intern(name);
+                    self.emit(Instruction::new(
+                        Opcode::LoadDynamic,
+                        Operand::StringRef(property.0),
+                    ));
+                    self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
+                }
+                self.emit(Instruction::simple(Opcode::Pop));
+            }
             Stmt::BoxedLet { slot, init } => {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
                 self.emit(Instruction::simple(Opcode::Dup));

@@ -159,6 +159,15 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
+    /// `let {a, b} = object;` dynamic-property destructuring.
+    ObjectDestructure {
+        /// Declared binding names; each name is also the property key.
+        names: Vec<Name>,
+        /// The source object expression.
+        init: Expr,
+        /// Span of the whole statement.
+        span: Span,
+    },
     /// `expr;`
     Expr(Expr),
     /// `if (cond) { then } else { otherwise }`
