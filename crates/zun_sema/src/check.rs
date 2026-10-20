@@ -399,9 +399,15 @@ impl Checker<'_> {
                 .unwrap_or(Ty::Void)
         };
         let function_index = self.closures.len() as u32;
+        let defaults = function
+            .params
+            .iter()
+            .map(|parameter| parameter.default_value.as_deref().map(|value| self.check_expr(&mut inner, value)))
+            .collect();
         self.closures.push(hir::ClosureFunction {
             name: format!("<closure@{}>", span.start),
             param_count: function.params.len() as u16,
+            defaults,
             locals: inner.locals,
             return_ty,
             captures: captures.clone(),
@@ -1038,6 +1044,7 @@ impl Checker<'_> {
                 return hir::Function {
                     name,
                     param_count: param_tys.len() as u16,
+                    defaults: (0..f.params.len()).map(|_| None).collect(),
                     locals: cx.locals,
                     return_ty,
                     body: Vec::new(),
@@ -1090,9 +1097,15 @@ impl Checker<'_> {
             self.rewrite_boxed_lets(&mut body, &cx.boxed);
             body
         };
+        let defaults = f
+            .params
+            .iter()
+            .map(|parameter| parameter.default_value.as_deref().map(|value| self.check_expr(&mut cx, value)))
+            .collect();
         hir::Function {
             name,
             param_count: param_tys.len() as u16,
+            defaults,
             locals: cx.locals,
             return_ty,
             body,

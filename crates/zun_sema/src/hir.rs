@@ -233,6 +233,8 @@ pub struct ClosureFunction {
     pub name: String,
     /// Number of user-visible parameters; the environment is lowered first.
     pub param_count: u16,
+    /// Default expressions aligned with the user-visible parameters.
+    pub defaults: Vec<Option<Expr>>,
     /// Types of parameters and locals in the synthetic body.
     pub locals: Vec<Ty>,
     /// Checked return type.
@@ -273,6 +275,8 @@ pub struct Function {
     pub name: String,
     /// Number of parameters; they occupy local slots `0..param_count`.
     pub param_count: u16,
+    /// Default expressions aligned with the declared parameters.
+    pub defaults: Vec<Option<Expr>>,
     /// Types of all local slots, parameters first.
     pub locals: Vec<Ty>,
     /// Declared return type.
