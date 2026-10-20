@@ -213,6 +213,19 @@ fn date_surface_json_representation_matches_iso() {
 }
 
 #[test]
+fn date_surface_exposes_utc_weekday_alias() {
+    let module = compile(
+        "import { weekday } from \"zun:date\";\n\
+         class Date { millis: i64; utcWeekday(): i32 { return weekday(this.millis); } getUTCWeekday(): i32 { return this.utcWeekday(); } }\n\
+         function main(): int { let value: Date = new Date(0); if (value.getUTCWeekday() == 4) { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "Date native weekday calls remain interpreter-only");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\
