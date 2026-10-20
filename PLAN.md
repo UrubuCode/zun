@@ -29,8 +29,8 @@ at collection safepoints; virtual dispatch itself is no longer Tier 0-only.
 Language surface since then: exceptions (`throw`/`try`/`catch`/`finally`, with
 interpreter unwind, rethrow routing to outer handlers in the same frame, and an
 explicit Tier 0 fallback for methods with handler regions in the JIT) are
-complete; anonymous and arrow functions are lexed and parsed, with the closure
-HIR/sema/ilgen refactor as the next slice. The ordered remaining backlog and the
+complete; anonymous and arrow functions include closure HIR/sema/ilgen,
+binding captures, mutable-cell boxing, and GC tracing. The ordered remaining backlog and the
 rules that govern it are the active execution goal in section 6 (mirrored by
 `GOAL.md`).
 
