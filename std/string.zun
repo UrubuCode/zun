@@ -149,6 +149,29 @@ class String {
         return true;
     }
 
+    isSignedDecimal(): boolean {
+        if (this.isEmpty()) { return false; }
+        let index: u64 = 0;
+        let digits: u64 = 0;
+        let dots: u64 = 0;
+        let first: u32 = this.charCodeAt(0);
+        if (first == 43) { index = 1; }
+        if (first == 45) { index = 1; }
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            if (code == 46) {
+                dots = dots + 1;
+                if (dots > 1) { return false; }
+            } else {
+                if (code < 48) { return false; }
+                if (code > 57) { return false; }
+                digits = digits + 1;
+            }
+            index = index + 1;
+        }
+        return digits > 0;
+    }
+
     isLowerCase(): boolean {
         if (this.isEmpty()) { return false; }
         let index: u64 = 0;
