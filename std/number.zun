@@ -28,6 +28,16 @@ class Number {
         return (this as int) as number == this;
     }
 
+    isEven(): boolean {
+        if (!this.isInteger()) { return false; }
+        return (this as int) % 2 == 0;
+    }
+
+    isOdd(): boolean {
+        if (!this.isInteger()) { return false; }
+        return (this as int) % 2 != 0;
+    }
+
     sign(): number {
         if (this < 0.0) { return -1.0; }
         if (this > 0.0) { return 1.0; }

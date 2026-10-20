@@ -378,6 +378,19 @@ fn number_is_integer_uses_interpreter_fallback() {
 }
 
 #[test]
+fn number_parity_methods_use_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { isInteger(): boolean { return (this as int) as number == this; } isEven(): boolean { if (!this.isInteger()) { return false; } return (this as int) % 2 == 0; } isOdd(): boolean { if (!this.isInteger()) { return false; } return (this as int) % 2 != 0; } }\n\
+         function main(): boolean { let value: number = 42.0; if (!value.isEven()) { return false; } return !value.isOdd(); }",
+    )
+    .expect("compile Number parity methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn number_to_string_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { toString } from \"zun:number\";\n\

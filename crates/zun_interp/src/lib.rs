@@ -1260,6 +1260,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_parity_source_methods() {
+        let module = zun_compiler::compile(
+            "class Number { isInteger(): boolean { return (this as int) as number == this; } isEven(): boolean { if (!this.isInteger()) { return false; } return (this as int) % 2 == 0; } isOdd(): boolean { if (!this.isInteger()) { return false; } return (this as int) % 2 != 0; } }\n\
+             function main(): boolean { let value: number = 42.0; if (!value.isEven()) { return false; } return !value.isOdd(); }",
+        )
+        .expect("compile Number parity methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number parity methods");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
             "import { toString } from \"zun:number\";\n\
