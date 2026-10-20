@@ -477,20 +477,37 @@ impl Interp<'_> {
                     if token.table() != Some(TableKind::MethodDef) {
                         return Err(RunError::BadToken);
                     }
-                    let signature = self
-                        .module
-                        .tables
-                        .method_defs
-                        .get(token.rid() as usize - 1)
-                        .ok_or(RunError::BadToken)?;
-                    let body = read_body(&self.module.code, signature.body_offset)
-                        .map_err(|e| RunError::Malformed(e.to_string()))?;
-                    let args = pop_n(&mut stack, body.param_count as usize)?;
+                    let dynamic = token.rid() == 0;
+                    let expected_params = if dynamic {
+                        1
+                    } else {
+                        let signature = self
+                            .module
+                            .tables
+                            .method_defs
+                            .get(token.rid() as usize - 1)
+                            .ok_or(RunError::BadToken)?;
+                        read_body(&self.module.code, signature.body_offset)
+                            .map_err(|e| RunError::Malformed(e.to_string()))?
+                            .param_count as usize
+                    };
+                    let args = pop_n(&mut stack, expected_params)?;
                     let function = pop(&mut stack)?;
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
-                    if handle.environment().is_some() || handle.method_rid() != token.rid() {
+                    if handle.environment().is_some() || (!dynamic && handle.method_rid() != token.rid()) {
+                        return Err(RunError::BadToken);
+                    }
+                    let target = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(handle.method_rid() as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let target_body = read_body(&self.module.code, target.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    if dynamic && target_body.param_count != 1 {
                         return Err(RunError::BadToken);
                     }
                     let link = RootLink {
@@ -838,6 +855,19 @@ mod method_tests {
         .expect("compile forward function type");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run forward function type");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn invokes_generic_function_callback() {
+        let module = zun_compiler::compile(
+            "function add_one(value: number): number { return value + 1.0; }\n\
+             function apply(f: Function, value: number): any { return f(value); }\n\
+             function main(): any { return apply(add_one, 41.0); }",
+        )
+        .expect("compile generic function callback");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run generic function callback");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 

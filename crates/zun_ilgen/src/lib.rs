@@ -467,7 +467,11 @@ impl FnLowerer<'_> {
                 for a in args {
                     self.expr(a);
                 }
-                let token = Token::new(TableKind::MethodDef, *func + 1);
+                let token = if *func == hir::DYNAMIC_FUNCTION {
+                    Token::null(TableKind::MethodDef)
+                } else {
+                    Token::new(TableKind::MethodDef, *func + 1)
+                };
                 self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
             }
             ExprKind::CallBuiltin { id, args } => {

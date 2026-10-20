@@ -185,6 +185,7 @@ impl Checker<'_> {
             "Array" | "array" => Ty::Array,
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "any" => Ty::Any,
+            "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
             "void" => Ty::Void,
             other => {
                 if let Some(&func) = self.by_name.get(other) {
@@ -342,6 +343,7 @@ impl Checker<'_> {
     fn is_assignable(&self, from: Ty, to: Ty) -> bool {
         match (from, to) {
             (Ty::Instance(d), Ty::Instance(b)) => self.is_subclass(d, b),
+            (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_FUNCTION => true,
             (a, b) => a == b,
         }
     }
@@ -757,20 +759,28 @@ impl Checker<'_> {
                 if let Some(slot) = cx.lookup(&name) {
                     let function_ty = cx.locals[slot as usize];
                     if let Ty::Function(func) = function_ty {
-                        let (param_tys, return_ty) = {
-                            let sig = &self.signatures[func as usize];
-                            (sig.params.clone(), sig.return_ty)
-                        };
-                        if args.len() != param_tys.len() {
-                            self.error(span, format!("function value expects {} argument(s), found {}", param_tys.len(), args.len()));
+                        let return_ty = if func == hir::DYNAMIC_FUNCTION {
+                            if args.len() != 1 {
+                                self.error(span, format!("generic Function callback expects exactly one argument, found {}", args.len()));
+                            }
+                            Ty::Any
                         } else {
-                            for (arg, &expected) in args.iter_mut().zip(&param_tys) {
-                                coerce_numeric_literal(arg, expected);
-                                if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
-                                    self.error(arg.span, format!("argument type {:?} does not match {expected:?}", arg.ty));
+                            let (param_tys, return_ty) = {
+                                let sig = &self.signatures[func as usize];
+                                (sig.params.clone(), sig.return_ty)
+                            };
+                            if args.len() != param_tys.len() {
+                                self.error(span, format!("function value expects {} argument(s), found {}", param_tys.len(), args.len()));
+                            } else {
+                                for (arg, &expected) in args.iter_mut().zip(&param_tys) {
+                                    coerce_numeric_literal(arg, expected);
+                                    if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
+                                        self.error(arg.span, format!("argument type {:?} does not match {expected:?}", arg.ty));
+                                    }
                                 }
                             }
-                        }
+                            return_ty
+                        };
                         let callee_expr = hir::Expr {
                             kind: hir::ExprKind::Local(slot),
                             ty: function_ty,

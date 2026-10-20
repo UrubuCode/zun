@@ -123,10 +123,17 @@ impl Ty {
     pub fn is_float(self) -> bool {
         matches!(self, Ty::Float(_))
     }
+
+    /// Whether this is the generic unary callback type.
+    pub fn is_dynamic_function(self) -> bool {
+        self == Ty::Function(DYNAMIC_FUNCTION)
+    }
 }
 
 /// Index of a function within the checked program.
 pub type FuncIndex = u32;
+/// Sentinel function index for the generic unary `Function` callback type.
+pub const DYNAMIC_FUNCTION: FuncIndex = u32::MAX;
 /// A local variable slot within one function (params occupy the first slots).
 pub type LocalSlot = u16;
 
