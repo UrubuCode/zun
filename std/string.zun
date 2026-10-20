@@ -132,6 +132,23 @@ class String {
         return true;
     }
 
+    isSignedInteger(): boolean {
+        if (this.isEmpty()) { return false; }
+        let start: u64 = 0;
+        let first: u32 = this.charCodeAt(0);
+        if (first == 43) { start = 1; }
+        if (first == 45) { start = 1; }
+        if (start == this.length()) { return false; }
+        let index: u64 = start;
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            if (code < 48) { return false; }
+            if (code > 57) { return false; }
+            index = index + 1;
+        }
+        return true;
+    }
+
     isLowerCase(): boolean {
         if (this.isEmpty()) { return false; }
         let index: u64 = 0;
