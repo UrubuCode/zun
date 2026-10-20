@@ -332,6 +332,8 @@ The following runtime contracts are implemented and covered by tests:
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
   `runI64`, `runF64`, and `runBool` ArrayBuffer-backed JavaScript functions.
+  Linking the shared library requires the host's N-API import library through
+  `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, and Promise integration.
 
