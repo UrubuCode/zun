@@ -143,6 +143,80 @@ pub struct DynamicObject {
     properties: BTreeMap<String, Any>,
 }
 
+/// An insertion-ordered hash table used by the runtime-backed Map/Set types.
+///
+/// Hashing and SameValueZero equality are supplied by the runtime because
+/// object keys need the GC-owned identity hash. Entries remain in insertion
+/// order independently of bucket layout.
+#[derive(Debug, Clone)]
+pub struct OrderedMap {
+    entries: Vec<(Any, Any, u64)>,
+    buckets: Vec<Vec<usize>>,
+}
+
+impl Default for OrderedMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OrderedMap {
+    pub fn new() -> Self {
+        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8] }
+    }
+
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    pub fn get(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
+        let bucket = &self.buckets[(hash as usize) % self.buckets.len()];
+        bucket.iter().find_map(|&index| {
+            let (key, value, _) = self.entries[index];
+            equal(key).then_some(value)
+        })
+    }
+
+    pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
+        let bucket_index = (hash as usize) % self.buckets.len();
+        if let Some(&index) = self.buckets[bucket_index].iter().find(|&&index| equal(self.entries[index].0)) {
+            return Some(std::mem::replace(&mut self.entries[index].1, value));
+        }
+        let index = self.entries.len();
+        self.entries.push((key, value, hash));
+        self.buckets[bucket_index].push(index);
+        if self.entries.len() * 4 > self.buckets.len() * 3 {
+            self.rehash();
+        }
+        None
+    }
+
+    pub fn remove(&mut self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<(Any, Any)> {
+        let bucket_index = (hash as usize) % self.buckets.len();
+        let position = self.buckets[bucket_index].iter().position(|&index| equal(self.entries[index].0))?;
+        let removed_index = self.buckets[bucket_index].remove(position);
+        let removed = self.entries.remove(removed_index);
+        for bucket in &mut self.buckets {
+            for index in bucket {
+                if *index > removed_index { *index -= 1; }
+            }
+        }
+        Some((removed.0, removed.1))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Any, Any)> + '_ {
+        self.entries.iter().map(|(key, value, _)| (*key, *value))
+    }
+
+    fn rehash(&mut self) {
+        let mut buckets = vec![Vec::new(); self.buckets.len() * 2];
+        for (index, (_, _, hash)) in self.entries.iter().enumerate() {
+            let bucket = (*hash as usize) % buckets.len();
+            buckets[bucket].push(index);
+        }
+        self.buckets = buckets;
+    }
+}
+
 /// Contiguous storage contract for a managed array.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArrayStorage {
@@ -383,5 +457,19 @@ mod tests {
         assert!(array.insert(1, Any::int(13)));
         assert_eq!(array.remove(1).and_then(Any::as_int), Some(13));
         assert!(!array.insert(3, Any::int(14)));
+    }
+
+    #[test]
+    fn ordered_map_preserves_insertion_order_and_updates_in_place() {
+        let mut map = OrderedMap::new();
+        let key = |candidate: Any, wanted: i64| candidate.as_int() == Some(wanted);
+        assert_eq!(map.insert(Any::int(2), Any::int(20), 2, |k| key(k, 2)), None);
+        assert_eq!(map.insert(Any::int(1), Any::int(10), 1, |k| key(k, 1)), None);
+        assert_eq!(map.insert(Any::int(2), Any::int(22), 2, |k| key(k, 2)).and_then(Any::as_int), Some(20));
+        assert_eq!(map.get(2, |k| key(k, 2)).and_then(Any::as_int), Some(22));
+        let values: Vec<i64> = map.iter().filter_map(|(_, value)| value.as_int()).collect();
+        assert_eq!(values, vec![22, 10]);
+        assert_eq!(map.remove(1, |k| key(k, 1)).map(|(_, value)| value.as_int()), Some(Some(10)));
+        assert_eq!(map.len(), 1);
     }
 }
