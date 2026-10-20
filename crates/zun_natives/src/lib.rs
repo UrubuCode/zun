@@ -19,6 +19,8 @@ mod fs;
 mod io;
 mod time;
 
+use std::sync::OnceLock;
+
 /// A parameter or return type in a native signature.
 ///
 /// Native modules are machine-facing (not JS-flavored), so signatures use the
@@ -138,7 +140,9 @@ pub struct NativeFn {
 
 impl core::fmt::Debug for NativeFn {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("NativeFn").field("name", &self.name).finish()
+        f.debug_struct("NativeFn")
+            .field("name", &self.name)
+            .finish()
     }
 }
 
@@ -164,16 +168,22 @@ fn global_id(m: usize, i: usize) -> u32 {
     (base + i) as u32
 }
 
+/// Flattened dispatch registry, built once and then indexed directly by id.
+/// The order is exactly the historical module/function order, so ids remain
+/// stable when functions are appended.
+fn registry() -> &'static [&'static NativeFn] {
+    static REGISTRY: OnceLock<Vec<&'static NativeFn>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        MODULES
+            .iter()
+            .flat_map(|module| module.functions.iter())
+            .collect()
+    })
+}
+
 /// Look up a function by dispatch id (its registry position).
 pub fn by_id(id: u32) -> Option<&'static NativeFn> {
-    let mut n = id as usize;
-    for m in MODULES {
-        if n < m.functions.len() {
-            return Some(&m.functions[n]);
-        }
-        n -= m.functions.len();
-    }
-    None
+    registry().get(id as usize).copied()
 }
 
 /// Resolve `module::name` to its id and signature (for `import` checking).

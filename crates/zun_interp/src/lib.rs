@@ -8,11 +8,11 @@
 
 pub mod value;
 
+use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
 use zun_metadata::TableKind;
 use zun_module::{read_body, Module};
-use std::rc::Rc;
 
 /// Sink for program output: the native modules' [`Sink`](zun_natives::Sink),
 /// re-exported so callers keep using `Output`.
@@ -93,11 +93,13 @@ pub fn run_with(
     // the interpreter and any JIT code allocate into the same one.
     let mut heap = zun_gc::Heap::new();
     let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+    let caches = LookupCaches::build(module)?;
     Interp {
         module,
         output,
         hook,
         allocs: 0,
+        caches,
     }
     .call(rid, Vec::new(), None)
 }
@@ -111,6 +113,68 @@ struct Interp<'a> {
     hook: Option<&'a dyn CallHook>,
     /// Object allocations since the last collection (GC trigger counter).
     allocs: u32,
+    caches: LookupCaches,
+}
+
+/// Metadata resolved once when a module starts running. The interpreter's
+/// hot field and virtual-call paths only perform indexed lookups into these
+/// tables.
+struct LookupCaches {
+    /// Field RID -> (object slot, value kind).
+    fields: Vec<Option<(usize, u8)>>,
+    /// Runtime type RID -> static method RID -> most-derived method RID.
+    virtual_targets: Vec<Vec<u32>>,
+}
+
+impl LookupCaches {
+    fn build(module: &Module) -> Result<Self, RunError> {
+        let mut fields = vec![None; module.tables.field_defs.len() + 1];
+        for ty in &module.tables.type_defs {
+            for rid in ty.field_start..ty.field_end {
+                let field = module
+                    .tables
+                    .field_defs
+                    .get(rid as usize - 1)
+                    .ok_or(RunError::BadToken)?;
+                fields[rid as usize] = Some(((rid - ty.field_start) as usize, field.kind));
+            }
+        }
+
+        let mut virtual_targets =
+            vec![vec![0; module.tables.method_defs.len() + 1]; module.tables.type_defs.len() + 1];
+        for type_rid in 1..=module.tables.type_defs.len() as u32 {
+            for method_rid in 1..=module.tables.method_defs.len() as u32 {
+                let name = module
+                    .tables
+                    .method_defs
+                    .get(method_rid as usize - 1)
+                    .ok_or(RunError::BadToken)?
+                    .name;
+                let mut current = type_rid;
+                loop {
+                    let ty = module
+                        .tables
+                        .type_defs
+                        .get(current as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let target = (ty.method_start..ty.method_end)
+                        .find(|rid| module.tables.method_defs[*rid as usize - 1].name == name);
+                    if let Some(target) = target {
+                        virtual_targets[type_rid as usize][method_rid as usize] = target;
+                        break;
+                    }
+                    if ty.base.is_null() {
+                        break;
+                    }
+                    current = ty.base.rid();
+                }
+            }
+        }
+        Ok(Self {
+            fields,
+            virtual_targets,
+        })
+    }
 }
 
 /// A link in the chain of suspended caller frames, used to find precise GC
@@ -153,19 +217,24 @@ impl Interp<'_> {
         let mut pc = 0usize;
 
         while pc < code.len() {
-            let (instr, size) = decode_one(&code[pc..])
-                .map_err(|e| RunError::Malformed(e.to_string()))?;
+            let (instr, size) =
+                decode_one(&code[pc..]).map_err(|e| RunError::Malformed(e.to_string()))?;
             let next = pc + size;
             pc = next;
 
             match instr.opcode {
                 Opcode::Nop => {}
-                Opcode::ConstF64 => {
-                    stack.push(Value::Float(operand_f64(&instr.operand), zun_il::NumKind::F64))
-                }
+                Opcode::ConstF64 => stack.push(Value::Float(
+                    operand_f64(&instr.operand),
+                    zun_il::NumKind::F64,
+                )),
                 Opcode::ConstStr => {
                     let idx = operand_strref(&instr.operand);
-                    let s: Rc<str> = self.module.strings.get(zun_metadata::StringIndex(idx)).into();
+                    let s: Rc<str> = self
+                        .module
+                        .strings
+                        .get(zun_metadata::StringIndex(idx))
+                        .into();
                     stack.push(Value::Str(s));
                 }
                 Opcode::ConstTrue => stack.push(Value::Bool(true)),
@@ -191,12 +260,14 @@ impl Interp<'_> {
                 // comes from the operands (which sema guarantees match) and the
                 // value wraps to that width. A future typed-stack JIT will
                 // specialize these by stack type (PLAN.md §4.2).
-                Opcode::ConstI32 => {
-                    stack.push(Value::Int(operand_i32(&instr.operand) as i64, zun_il::NumKind::I32))
-                }
-                Opcode::ConstI64 => {
-                    stack.push(Value::Int(operand_i64(&instr.operand), zun_il::NumKind::I64))
-                }
+                Opcode::ConstI32 => stack.push(Value::Int(
+                    operand_i32(&instr.operand) as i64,
+                    zun_il::NumKind::I32,
+                )),
+                Opcode::ConstI64 => stack.push(Value::Int(
+                    operand_i64(&instr.operand),
+                    zun_il::NumKind::I64,
+                )),
                 Opcode::AddI32 => bin_int(&mut stack, |a, b| a.wrapping_add(b))?,
                 Opcode::SubI32 => bin_int(&mut stack, |a, b| a.wrapping_sub(b))?,
                 Opcode::MulI32 => bin_int(&mut stack, |a, b| a.wrapping_mul(b))?,
@@ -258,7 +329,11 @@ impl Interp<'_> {
                     let callee_body = read_body(&self.module.code, callee.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, callee_body.param_count as usize)?;
-                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
                     let result = self.dispatch(callee_rid, args, Some(&link))?;
                     stack.push(result);
                 }
@@ -294,19 +369,30 @@ impl Interp<'_> {
                 }
                 Opcode::LoadField => {
                     let token = operand_token(&instr.operand);
-                    let slot = self.field_slot(token)?;
-                    let kind = self.field_kind_at(token.rid())?;
+                    let (slot, kind) = self
+                        .caches
+                        .fields
+                        .get(token.rid() as usize)
+                        .and_then(|entry| *entry)
+                        .ok_or(RunError::BadToken)?;
                     let obj = pop(&mut stack)?.as_object();
-                    let v = zun_gc::with_current_heap(|h| value::decode_field(kind, obj.field(slot), h));
+                    let v = zun_gc::with_current_heap(|h| {
+                        value::decode_field(kind, obj.field(slot), h)
+                    });
                     stack.push(v);
                 }
                 Opcode::StoreField => {
                     let token = operand_token(&instr.operand);
-                    let slot = self.field_slot(token)?;
-                    let kind = self.field_kind_at(token.rid())?;
+                    let (slot, kind) = self
+                        .caches
+                        .fields
+                        .get(token.rid() as usize)
+                        .and_then(|entry| *entry)
+                        .ok_or(RunError::BadToken)?;
                     let value = pop(&mut stack)?;
                     let obj = pop(&mut stack)?.as_object();
-                    let raw = zun_gc::with_current_heap_mut(|h| value::encode_field(kind, &value, h));
+                    let raw =
+                        zun_gc::with_current_heap_mut(|h| value::encode_field(kind, &value, h));
                     obj.set_field(slot, raw);
                     stack.push(value);
                 }
@@ -322,14 +408,23 @@ impl Interp<'_> {
                         .method_defs
                         .get(token.rid() as usize - 1)
                         .ok_or(RunError::BadToken)?;
-                    let name = self.module.strings.get(static_method.name).to_string();
                     let static_body = read_body(&self.module.code, static_method.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, static_body.param_count as usize)?;
                     // Dispatch on the receiver's runtime class.
                     let type_rid = args[0].as_object().type_rid();
-                    let target = self.resolve_virtual(type_rid, &name)?;
-                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let target = *self
+                        .caches
+                        .virtual_targets
+                        .get(type_rid as usize)
+                        .and_then(|targets| targets.get(token.rid() as usize))
+                        .filter(|target| **target != 0)
+                        .ok_or(RunError::BadToken)?;
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
                     let result = self.dispatch(target, args, Some(&link))?;
                     stack.push(result);
                 }
@@ -368,20 +463,6 @@ impl Interp<'_> {
             .ok_or(RunError::BadToken)
     }
 
-    /// For a FieldDef token, return its zero-based slot within the class that
-    /// owns it (the class whose field range contains this field's RID).
-    fn field_slot(&self, field_token: zun_metadata::Token) -> Result<usize, RunError> {
-        let field_rid = field_token.rid();
-        let owner = self
-            .module
-            .tables
-            .type_defs
-            .iter()
-            .find(|t| field_rid >= t.field_start && field_rid < t.field_end)
-            .ok_or(RunError::BadToken)?;
-        Ok((field_rid - owner.field_start) as usize)
-    }
-
     /// Execute a call: route it to the JIT hook when it handles the method,
     /// otherwise interpret it.
     fn dispatch(
@@ -417,30 +498,6 @@ impl Interp<'_> {
         zun_gc::with_current_heap_mut(|h| unsafe {
             h.collect(&roots, &ref_fn);
         });
-    }
-
-    /// Resolve a virtual call: find the most-derived method named `name`
-    /// starting at the runtime class `type_rid` and walking up to its bases.
-    /// Returns the target method's RID.
-    fn resolve_virtual(&self, mut type_rid: u32, name: &str) -> Result<u32, RunError> {
-        loop {
-            let ty = self
-                .module
-                .tables
-                .type_defs
-                .get(type_rid as usize - 1)
-                .ok_or(RunError::BadToken)?;
-            for rid in ty.method_start..ty.method_end {
-                let m = &self.module.tables.method_defs[rid as usize - 1];
-                if self.module.strings.get(m.name) == name {
-                    return Ok(rid);
-                }
-            }
-            if ty.base.is_null() {
-                return Err(RunError::BadToken);
-            }
-            type_rid = ty.base.rid();
-        }
     }
 
     fn call_builtin(&mut self, id: i32, stack: &mut Vec<Value>) -> Result<(), RunError> {
@@ -557,7 +614,10 @@ fn bin_int(stack: &mut Vec<Value>, f: impl Fn(i64, i64) -> i64) -> Result<(), Ru
     let b = pop(stack)?;
     let a = pop(stack)?;
     let kind = a.int_kind();
-    stack.push(Value::Int(value::wrap_int(f(a.as_int(), b.as_int()), kind), kind));
+    stack.push(Value::Int(
+        value::wrap_int(f(a.as_int(), b.as_int()), kind),
+        kind,
+    ));
     Ok(())
 }
 
@@ -573,7 +633,11 @@ fn bin_int_signed_aware(stack: &mut Vec<Value>, is_div: bool) -> Result<(), RunE
         return Err(RunError::Malformed("integer division by zero".into()));
     }
     let r = if signed {
-        if is_div { x.wrapping_div(y) } else { x.wrapping_rem(y) }
+        if is_div {
+            x.wrapping_div(y)
+        } else {
+            x.wrapping_rem(y)
+        }
     } else {
         let (ux, uy) = (x as u64, y as u64);
         let ur = if is_div { ux / uy } else { ux % uy };
@@ -643,7 +707,11 @@ fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunError> {
             }
         }
         (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
-        _ => return Err(RunError::Malformed("comparison of mismatched numeric kinds".into())),
+        _ => {
+            return Err(RunError::Malformed(
+                "comparison of mismatched numeric kinds".into(),
+            ))
+        }
     };
     stack.push(Value::Bool(result));
     Ok(())
