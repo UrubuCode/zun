@@ -1851,6 +1851,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_camel_case_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
+        )
+        .expect("compile String isCamelCase");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isCamelCase");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_to_string_source_method() {
         let module = zun_compiler::compile(
             "class String { toString(): string { return this; } }\n\
