@@ -103,6 +103,11 @@ class String {
         return false;
     }
 
+    unquote(): string {
+        if (!this.isQuoted()) { return this; }
+        return this.substring(1, this.length() - 1);
+    }
+
     isWhitespace(): boolean {
         if (this.isEmpty()) { return false; }
         return this.trim().isEmpty();

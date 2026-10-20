@@ -1467,6 +1467,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_unquote_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt, substring } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
+        )
+        .expect("compile String unquote");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String unquote");
+        assert!(matches!(result, Value::Str(value) if value == "zun".into()));
+    }
+
+    #[test]
     fn executes_string_compare_native_method() {
         let module = zun_compiler::compile(
             "import { compare } from \"zun:string\";\n\
