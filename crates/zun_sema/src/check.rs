@@ -347,6 +347,14 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let captures = self.analyze_closure_captures(outer, function);
+        let mut saw_default = false;
+        for parameter in &function.params {
+            if parameter.default_value.is_some() {
+                saw_default = true;
+            } else if saw_default {
+                self.error(parameter.name.span, "a required parameter cannot follow a default parameter");
+            }
+        }
         for capture in &captures {
             if capture.mode == hir::CaptureMode::ByCell {
                 outer.boxed.insert(capture.outer_slot);
@@ -395,7 +403,20 @@ impl Checker<'_> {
         let defaults = function
             .params
             .iter()
-            .map(|parameter| parameter.default_value.as_deref().map(|value| self.check_expr(&mut inner, value)))
+            .enumerate()
+            .map(|(index, parameter)| {
+                parameter.default_value.as_deref().map(|value| {
+                    let mut checked = self.check_expr(&mut inner, value);
+                    let expected = inner.locals[index + 1];
+                    coerce_numeric_literal(&mut checked, expected);
+                    if !checked.ty.is_error()
+                        && !self.is_assignable(checked.ty, expected)
+                    {
+                        self.error(checked.span, format!("default expression type {:?} does not match {expected:?}", checked.ty));
+                    }
+                    checked
+                })
+            })
             .collect();
         self.closures.push(hir::ClosureFunction {
             name: format!("<closure@{}>", span.start),
@@ -1020,6 +1041,14 @@ impl Checker<'_> {
         f: &ast::Function,
         this_class: Option<u32>,
     ) -> hir::Function {
+        let mut saw_default = false;
+        for parameter in &f.params {
+            if parameter.default_value.is_some() {
+                saw_default = true;
+            } else if saw_default {
+                self.error(parameter.name.span, "a required parameter cannot follow a default parameter");
+            }
+        }
         let sig = &self.signatures[index];
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
@@ -1113,7 +1142,20 @@ impl Checker<'_> {
         let defaults = f
             .params
             .iter()
-            .map(|parameter| parameter.default_value.as_deref().map(|value| self.check_expr(&mut cx, value)))
+            .enumerate()
+            .map(|(index, parameter)| {
+                parameter.default_value.as_deref().map(|value| {
+                    let mut checked = self.check_expr(&mut cx, value);
+                    let expected = param_tys[index + usize::from(this_class.is_some())];
+                    coerce_numeric_literal(&mut checked, expected);
+                    if !checked.ty.is_error()
+                        && !self.is_assignable(checked.ty, expected)
+                    {
+                        self.error(checked.span, format!("default expression type {:?} does not match {expected:?}", checked.ty));
+                    }
+                    checked
+                })
+            })
             .collect();
         hir::Function {
             name,
@@ -2661,6 +2703,18 @@ mod tests {
     #[test]
     fn wrong_return_type_diagnoses() {
         assert!(first_error("function f(): number { return \"s\"; }").contains("does not match"));
+    }
+
+    #[test]
+    fn default_parameter_type_is_checked() {
+        let msg = first_error("function f(value: number = \"bad\"): number { return value; }");
+        assert!(msg.contains("default expression type"), "{msg}");
+    }
+
+    #[test]
+    fn required_parameter_cannot_follow_default_parameter() {
+        let msg = first_error("function f(first: number = 1.0, second: number): number { return second; }");
+        assert!(msg.contains("follow a default parameter"), "{msg}");
     }
 
     #[test]
