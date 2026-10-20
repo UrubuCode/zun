@@ -2684,6 +2684,14 @@ fn object_alloc_and_field_access_in_jit() {
         maps.iter().any(|map| !map.reference_slots.is_empty()),
         "object local must be represented in a precise JIT stack map"
     );
+    let map = maps
+        .iter()
+        .find(|map| map.pc != 0)
+        .expect("finalized stack-map PC");
+    assert_eq!(
+        jit.stack_map_registry().lookup(map.pc).map(|entry| entry.pc),
+        Some(map.pc)
+    );
 
     // The JIT needs a current heap for newobj; the VM sets one per run, so a
     // standalone call must register one too.
