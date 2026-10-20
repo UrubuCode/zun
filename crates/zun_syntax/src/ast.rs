@@ -88,6 +88,15 @@ pub struct FunctionExpr {
     pub span: Span,
 }
 
+/// One segment of a template literal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemplatePart {
+    /// Literal text between interpolation markers.
+    Text(String),
+    /// An interpolated expression.
+    Expr(Box<Expr>),
+}
+
 /// A parameter: `name: type`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -321,6 +330,13 @@ pub enum Expr {
         /// Source location including quotes.
         span: Span,
     },
+    /// A backtick template literal.
+    Template {
+        /// Literal and interpolated segments in source order.
+        parts: Vec<TemplatePart>,
+        /// Source location including backticks.
+        span: Span,
+    },
     /// `true` / `false`.
     Bool {
         /// The literal value.
@@ -485,6 +501,7 @@ impl Expr {
         match self {
             Expr::Number { span, .. }
             | Expr::String { span, .. }
+            | Expr::Template { span, .. }
             | Expr::Bool { span, .. }
             | Expr::Null { span }
             | Expr::Assign { span, .. }

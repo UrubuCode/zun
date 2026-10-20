@@ -2642,3 +2642,14 @@ fn nested_exception_control_flow_keeps_interpreter_result_under_jit_fallback() {
     assert!(!jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Int(42, _)));
 }
+
+#[test]
+fn template_literals_match_interpreter_and_jit_fallback() {
+    let module = compile(
+        "function main(): string { let name: string = \"Zun\"; return `hello ${name}!`; }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "hello Zun!"));
+}

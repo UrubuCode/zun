@@ -14,6 +14,8 @@ pub enum TokenKind {
     Number,
     /// A double-quoted string literal.
     String,
+    /// A backtick template literal.
+    Template,
     /// An identifier.
     Ident,
 
@@ -209,6 +211,23 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     diagnostics.push(
                         Diagnostic::error("unterminated string literal")
                             .with_code("SYN0001")
+                            .with_span(Span::new(start as u32, pos as u32)),
+                    );
+                    TokenKind::Error
+                }
+            }
+            b'`' => {
+                pos += 1;
+                while pos < bytes.len() && bytes[pos] != b'`' {
+                    pos += if bytes[pos] == b'\\' { 2 } else { 1 };
+                }
+                if bytes.get(pos) == Some(&b'`') {
+                    pos += 1;
+                    TokenKind::Template
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error("unterminated template literal")
+                            .with_code("SYN0003")
                             .with_span(Span::new(start as u32, pos as u32)),
                     );
                     TokenKind::Error

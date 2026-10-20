@@ -365,6 +365,7 @@ impl Checker<'_> {
             | ast::Expr::Ident(_)
             | ast::Expr::Number { .. }
             | ast::Expr::String { .. }
+            | ast::Expr::Template { .. }
             | ast::Expr::Bool { .. }
             | ast::Expr::Null { .. } => {}
             ast::Expr::Spread { expr, .. } => self.collect_mutated_expr(expr, names),
@@ -789,6 +790,13 @@ impl Checker<'_> {
                     .collect();
                 for statement in &function.body.statements {
                     self.collect_capture_stmt(cx, &nested_parameters, statement, uses);
+                }
+            }
+            ast::Expr::Template { parts, .. } => {
+                for part in parts {
+                    if let ast::TemplatePart::Expr(expression) = part {
+                        self.collect_capture_expr(cx, parameters, expression, uses);
+                    }
                 }
             }
             ast::Expr::Number { .. }
@@ -1598,6 +1606,39 @@ impl Checker<'_> {
                 ty: Ty::String,
                 span,
             },
+            ast::Expr::Template { parts, .. } => {
+                let mut result = hir::Expr {
+                    kind: hir::ExprKind::String(String::new()),
+                    ty: Ty::String,
+                    span,
+                };
+                for part in parts {
+                    let next = match part {
+                        ast::TemplatePart::Text(text) => hir::Expr {
+                            kind: hir::ExprKind::String(text.clone()),
+                            ty: Ty::String,
+                            span,
+                        },
+                        ast::TemplatePart::Expr(expression) => {
+                            let value = self.check_expr(cx, expression);
+                            if value.ty != Ty::String && !value.ty.is_error() {
+                                self.error(value.span, "template interpolation must have type string");
+                            }
+                            value
+                        }
+                    };
+                    result = hir::Expr {
+                        kind: hir::ExprKind::Binary {
+                            op: ast::BinaryOp::Add,
+                            lhs: Box::new(result),
+                            rhs: Box::new(next),
+                        },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+                result
+            }
             ast::Expr::Bool { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Boolean(*value),
                 ty: Ty::Boolean,

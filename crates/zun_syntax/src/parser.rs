@@ -939,6 +939,14 @@ impl Parser<'_> {
                     span: t.span,
                 }
             }
+            TokenKind::Template => {
+                self.bump();
+                let raw = self.text(t).to_string();
+                Expr::Template {
+                    parts: parse_template_parts(&raw, t.span, &mut self.diagnostics),
+                    span: t.span,
+                }
+            }
             TokenKind::KwTrue => {
                 self.bump();
                 Expr::Bool {
@@ -1097,6 +1105,51 @@ fn decode_string(raw: &str) -> String {
     out
 }
 
+fn parse_template_parts(
+    raw: &str,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<crate::ast::TemplatePart> {
+    let inner = &raw[1..raw.len() - 1];
+    let mut parts = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = inner[cursor..].find("${") {
+        let start = cursor + relative;
+        if start > cursor {
+            parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..start])));
+        }
+        let expression_start = start + 2;
+        let Some(end_relative) = inner[expression_start..].find('}') else {
+            diagnostics.push(Diagnostic::error("unterminated template interpolation").with_code("SYN0004").with_span(span));
+            return parts;
+        };
+        let end = expression_start + end_relative;
+        let expression = inner[expression_start..end].trim();
+        let bytes = expression.as_bytes();
+        let valid = !bytes.is_empty()
+            && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_' || bytes[0] == b'$')
+            && bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$');
+        if valid {
+            let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
+            let start = span.start + offset as u32;
+            parts.push(crate::ast::TemplatePart::Expr(Box::new(crate::ast::Expr::Ident(crate::ast::Name {
+                span: Span::new(start, start + expression.len() as u32),
+            }))));
+        } else {
+            diagnostics.push(Diagnostic::error("template interpolation currently requires an identifier").with_code("SYN0005").with_span(span));
+        }
+        cursor = end + 1;
+    }
+    if cursor < inner.len() {
+        parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..])));
+    }
+    parts
+}
+
+fn decode_template_text(text: &str) -> String {
+    decode_string(&format!("\"{text}\""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1155,6 +1208,19 @@ mod tests {
             panic!("expected anonymous function");
         };
         assert!(!third.is_arrow);
+    }
+
+    #[test]
+    fn parses_template_literal_segments() {
+        let src = "function main() { let name: string = \"Zun\"; return `hello ${name}!`; }";
+        let p = parse_ok(src);
+        let Stmt::Return { value: Some(Expr::Template { parts, .. }), .. } = &p.functions[0].body.statements[1] else {
+            panic!("expected template literal");
+        };
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], crate::ast::TemplatePart::Text("hello ".into()));
+        assert!(matches!(parts[1], crate::ast::TemplatePart::Expr(_)));
+        assert_eq!(parts[2], crate::ast::TemplatePart::Text("!".into()));
     }
 
     #[test]
