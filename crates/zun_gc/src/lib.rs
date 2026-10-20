@@ -24,8 +24,10 @@ use std::rc::Rc;
 
 mod native_roots;
 mod stack_maps;
+mod heap_context;
 pub use native_roots::{append_native_roots, NativeRootScope};
 pub use stack_maps::{NativeStackMap, StackMapRegistry};
+pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
 mod collection;
 
@@ -1435,52 +1437,6 @@ pub unsafe extern "C" fn zun_gc_alloc(
     // SAFETY: the caller guarantees `heap` is a live Heap.
     let heap = unsafe { &mut *heap };
     heap.alloc(type_rid, field_count).addr()
-}
-
-// --- current-heap registration (the runtime context shared with the JIT) ---
-
-thread_local! {
-    /// The heap native code allocates into for the duration of a run. The VM
-    /// sets it before executing and clears it after, so interpreter and JIT
-    /// share one heap. Raw pointer because the heap is owned on the stack.
-    static CURRENT_HEAP: std::cell::Cell<*mut Heap> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-/// A guard that registers `heap` as the current heap and clears it on drop.
-#[derive(Debug)]
-pub struct HeapScope {
-    prev: *mut Heap,
-}
-
-impl HeapScope {
-    /// Register `heap` as the current heap for this thread.
-    ///
-    /// # Safety
-    /// `heap` must stay valid and not move until this guard is dropped.
-    pub unsafe fn enter(heap: *mut Heap) -> HeapScope {
-        let prev = CURRENT_HEAP.with(|c| c.replace(heap));
-        HeapScope { prev }
-    }
-}
-
-impl Drop for HeapScope {
-    fn drop(&mut self) {
-        CURRENT_HEAP.with(|c| c.set(self.prev));
-    }
-}
-
-/// Run `f` with a mutable borrow of the current heap. Panics if none is set.
-pub fn with_current_heap_mut<R>(f: impl FnOnce(&mut Heap) -> R) -> R {
-    let ptr = CURRENT_HEAP.with(|c| c.get());
-    assert!(!ptr.is_null(), "no current heap registered");
-    // SAFETY: the HeapScope guard keeps `ptr` valid while set, and the runtime
-    // is single-threaded, so no aliasing borrow is live across this call.
-    f(unsafe { &mut *ptr })
-}
-
-/// Run `f` with a shared borrow of the current heap. Panics if none is set.
-pub fn with_current_heap<R>(f: impl FnOnce(&Heap) -> R) -> R {
-    with_current_heap_mut(|h| f(h))
 }
 
 /// The allocation entry point native (JIT) code calls for `newobj`, using the
