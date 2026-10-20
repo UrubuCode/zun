@@ -6,6 +6,7 @@
 //! behind the same entry points, without changing this surface.
 
 mod jit_hook;
+mod promise;
 mod verify_module;
 
 use zun_interp::value::Value;
@@ -13,6 +14,7 @@ use zun_interp::{run_with, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
 pub use jit_hook::JitHook;
+pub use promise::{MicrotaskQueue, Promise};
 pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
 
 /// Errors from loading or running a module.
