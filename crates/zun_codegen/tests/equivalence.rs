@@ -1103,6 +1103,18 @@ fn number_is_approximately_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn number_lerp_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { lerp(target: number, amount: number): number { return this + (target - this) * amount; } } function main(): number { let value: number = 10.0; return value.lerp(20.0, 0.25); }",
+    )
+    .expect("compile Number lerp");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 12.5));
+}
+
+#[test]
 fn math_power_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",

@@ -1716,6 +1716,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_lerp_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { lerp(target: number, amount: number): number { return this + (target - this) * amount; } } function main(): number { let value: number = 10.0; return value.lerp(20.0, 0.25); }",
+        )
+        .expect("compile Number lerp");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number lerp");
+        assert!(matches!(result, Value::Float(12.5, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_string_source_methods_with_primitive_receiver() {
         let module = zun_compiler::compile(
             "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\

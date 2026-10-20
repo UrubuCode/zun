@@ -87,6 +87,10 @@ class Number {
         return other;
     }
 
+    lerp(target: number, amount: number): number {
+        return this + (target - this) * amount;
+    }
+
     extern toFixed(digits: int): string;
     extern toString(): string;
 }
