@@ -215,6 +215,20 @@ impl Interp<'_> {
                 }
                 Opcode::ConstTrue => stack.push(Value::Bool(true)),
                 Opcode::ConstFalse => stack.push(Value::Bool(false)),
+                Opcode::BoxAny => {
+                    let value = pop(&mut stack)?;
+                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    stack.push(Value::Any(any));
+                }
+                Opcode::UnboxAny => {
+                    let Value::Any(any) = pop(&mut stack)? else {
+                        return Err(RunError::BadToken);
+                    };
+                    let value = zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
+                        .ok_or(RunError::BadToken)?;
+                    stack.push(value);
+                }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
                     let v = pop(&mut stack)?;
@@ -521,6 +535,7 @@ fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
         Value::Bool(b) => zun_natives::NativeArg::Bool(*b),
         Value::Str(s) => zun_natives::NativeArg::Str(s),
         Value::Object(_) => zun_natives::NativeArg::Opaque,
+        Value::Any(_) => zun_natives::NativeArg::Opaque,
         Value::Void => zun_natives::NativeArg::Void,
     }
 }

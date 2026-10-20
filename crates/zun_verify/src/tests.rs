@@ -55,6 +55,33 @@ fn fixture_valid_straight_line() {
 }
 
 #[test]
+fn fixture_valid_any_box_and_unbox() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),
+        Instruction::simple(Opcode::BoxAny),
+        Instruction::simple(Opcode::UnboxAny),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_any_box_underflow() {
+    let code = asm(&[
+        Instruction::simple(Opcode::BoxAny),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn fixture_valid_return_value_leaves_one() {
     let code = asm(&[
         Instruction::new(Opcode::ConstF64, Operand::Float64(42.0)),

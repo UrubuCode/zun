@@ -10,6 +10,8 @@ use std::rc::Rc;
 /// A runtime value.
 #[derive(Debug, Clone)]
 pub enum Value {
+    /// An explicitly dynamic tagged value.
+    Any(zun_core::Any),
     /// An integer, stored in an i64 with its exact kind (width + signedness).
     Int(i64, zun_il::NumKind),
     /// A float, stored in an f64 with its kind (`F32` values are kept rounded
@@ -36,6 +38,7 @@ impl Value {
             Value::Object(object) => Some(zun_core::Any::object(object.addr() as usize)),
             Value::Str(value) => Some(zun_core::Any::string(heap.intern_string(value.clone()))),
             Value::Void => None,
+            Value::Any(value) => Some(*value),
         }
     }
 
@@ -114,6 +117,7 @@ impl Value {
             Value::Str(s) => s.to_string(),
             Value::Object(_) => "[object]".to_string(),
             Value::Void => "undefined".to_string(),
+            Value::Any(_) => "[any]".to_string(),
         }
     }
 

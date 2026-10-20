@@ -228,6 +228,10 @@ define_opcodes! {
     /// Call a runtime builtin by id. Phase-1 scaffolding: builtins move to
     /// `zun_core` MemberRefs once the std exists.
     CallBuiltin = 0x75, Imm32, "call.builtin", StackEffect::Call;
+    /// Box a typed value into the dynamic Any representation.
+    BoxAny = 0x76, None, "box.any", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Unbox an Any value, rejecting a mismatched dynamic tag at runtime.
+    UnboxAny = 0x77, None, "unbox.any", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]
