@@ -1616,6 +1616,35 @@ mod tests {
     }
 
     #[test]
+    fn weak_map_ephemerons_survive_repeated_collections_only_for_live_keys() {
+        let mut heap = Heap::new();
+        let mut handles = Vec::new();
+        let mut live_keys = Vec::new();
+        for index in 0..64u32 {
+            let weak_map = heap.weak_map_new();
+            let key = heap.alloc(index + 1, 0);
+            let value = heap.alloc(index + 100, 0);
+            assert!(heap.weak_map_set(weak_map, key, value));
+            if index % 2 == 0 {
+                live_keys.push(key);
+            }
+            handles.push((weak_map, key, value));
+        }
+
+        let no_refs = |_: u32| Vec::<usize>::new();
+        for _ in 0..4 {
+            unsafe { heap.collect(&live_keys, &no_refs) };
+        }
+        for (index, (weak_map, key, value)) in handles.into_iter().enumerate() {
+            if index % 2 == 0 {
+                assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
+            } else {
+                assert_eq!(heap.weak_map_get(weak_map), None);
+            }
+        }
+    }
+
+    #[test]
     fn finalization_queues_token_after_target_is_swept() {
         let mut heap = Heap::new();
         let target = heap.alloc(1, 0);
