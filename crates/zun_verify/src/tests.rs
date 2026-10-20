@@ -467,3 +467,101 @@ fn fixture_invalid_unknown_call_arity() {
         ErrorKind::UnknownCallArity
     );
 }
+
+#[test]
+fn fixture_valid_handler_region_accepts_error_type() {
+    let mut section = Vec::new();
+    let body_offset = zun_module::write_body_with_handlers(
+        &mut section,
+        0,
+        0,
+        false,
+        0,
+        &[],
+        &asm(&[
+            Instruction::simple(Opcode::NewDynamic),
+            Instruction::simple(Opcode::Throw),
+            Instruction::simple(Opcode::Ret),
+        ]),
+        &[zun_module::ExceptionHandler {
+            try_start: 0,
+            try_end: 2,
+            handler_start: 2,
+            handler_end: 3,
+            kind: zun_module::HandlerKind::Catch,
+            catch_type: Some(Token::new(TableKind::TypeDef, 1)),
+        }],
+    );
+    let body = zun_module::read_body(&section, body_offset).unwrap();
+    assert_eq!(verify_body(&body, VOID, &resolver, &|_| true), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_handler_crossing_is_rejected() {
+    let mut section = Vec::new();
+    let body_offset = zun_module::write_body_with_handlers(
+        &mut section,
+        0,
+        0,
+        false,
+        0,
+        &[],
+        &[0x63, 0x63, 0x63, 0x63, 0x63, 0x63],
+        &[
+            zun_module::ExceptionHandler {
+                try_start: 0,
+                try_end: 3,
+                handler_start: 3,
+                handler_end: 4,
+                kind: zun_module::HandlerKind::Finally,
+                catch_type: None,
+            },
+            zun_module::ExceptionHandler {
+                try_start: 2,
+                try_end: 5,
+                handler_start: 5,
+                handler_end: 6,
+                kind: zun_module::HandlerKind::Finally,
+                catch_type: None,
+            },
+        ],
+    );
+    let body = zun_module::read_body(&section, body_offset).unwrap();
+    assert!(matches!(
+        verify_body(&body, VOID, &resolver, &|_| true),
+        Err(VerifyError {
+            kind: ErrorKind::InvalidHandlerRegion,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn fixture_invalid_catch_type_is_rejected() {
+    let mut section = Vec::new();
+    let body_offset = zun_module::write_body_with_handlers(
+        &mut section,
+        0,
+        0,
+        false,
+        0,
+        &[],
+        &[0x63, 0x63],
+        &[zun_module::ExceptionHandler {
+            try_start: 0,
+            try_end: 1,
+            handler_start: 1,
+            handler_end: 2,
+            kind: zun_module::HandlerKind::Catch,
+            catch_type: Some(Token::new(TableKind::TypeDef, 9)),
+        }],
+    );
+    let body = zun_module::read_body(&section, body_offset).unwrap();
+    assert!(matches!(
+        verify_body(&body, VOID, &resolver, &|_| false),
+        Err(VerifyError {
+            kind: ErrorKind::InvalidCatchType,
+            ..
+        })
+    ));
+}

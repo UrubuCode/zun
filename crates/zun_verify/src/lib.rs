@@ -70,6 +70,83 @@ pub enum ErrorKind {
     },
     /// Control reached the end of the code without a terminator.
     FallsOffEnd,
+    /// A handler region is malformed or crosses another region.
+    InvalidHandlerRegion,
+    /// A catch token is not an `Error` type or one of its derived types.
+    InvalidCatchType,
+}
+
+/// Verify a framed method body, including its exception regions.
+///
+/// `is_error_type` is supplied by the metadata/type system because the
+/// verifier deliberately does not own class inheritance information.
+pub fn verify_body(
+    body: &zun_module::MethodBody<'_>,
+    info: MethodInfo,
+    resolve: &CallResolver<'_>,
+    is_error_type: &dyn Fn(zun_metadata::Token) -> bool,
+) -> Result<(), VerifyError> {
+    verify(body.code, info, resolve)?;
+    let mut boundaries = std::collections::BTreeSet::new();
+    let mut pos = 0usize;
+    while pos < body.code.len() {
+        boundaries.insert(pos);
+        let (_, size) = decode_one(&body.code[pos..]).map_err(|_| VerifyError {
+            offset: pos,
+            kind: ErrorKind::BadEncoding,
+        })?;
+        pos += size;
+    }
+    boundaries.insert(body.code.len());
+
+    for (index, handler) in body.handlers.iter().enumerate() {
+        let valid_bounds = boundaries.contains(&(handler.try_start as usize))
+            && boundaries.contains(&(handler.try_end as usize))
+            && boundaries.contains(&(handler.handler_start as usize))
+            && boundaries.contains(&(handler.handler_end as usize));
+        if !valid_bounds
+            || handler.try_start >= handler.try_end
+            || handler.handler_start >= handler.handler_end
+            || handler.try_end as usize > body.code.len()
+            || handler.handler_end as usize > body.code.len()
+        {
+            return Err(VerifyError {
+                offset: handler.try_start as usize,
+                kind: ErrorKind::InvalidHandlerRegion,
+            });
+        }
+        if let Some(token) = handler.catch_type {
+            if !is_error_type(token) {
+                return Err(VerifyError {
+                    offset: handler.handler_start as usize,
+                    kind: ErrorKind::InvalidCatchType,
+                });
+            }
+        }
+        for other in body.handlers.iter().skip(index + 1) {
+            let crosses = |a_start: u32, a_end: u32, b_start: u32, b_end: u32| {
+                (a_start < b_start && b_start < a_end && a_end < b_end)
+                    || (b_start < a_start && a_start < b_end && b_end < a_end)
+            };
+            if crosses(
+                handler.try_start,
+                handler.try_end,
+                other.try_start,
+                other.try_end,
+            ) || crosses(
+                handler.handler_start,
+                handler.handler_end,
+                other.handler_start,
+                other.handler_end,
+            ) {
+                return Err(VerifyError {
+                    offset: other.try_start as usize,
+                    kind: ErrorKind::InvalidHandlerRegion,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Resolves a call instruction's arity: `(args_popped, results_pushed)`.

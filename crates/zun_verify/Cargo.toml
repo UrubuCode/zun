@@ -9,6 +9,7 @@ description = "ZIL verifier: structural and stack-consistency checks over a meth
 [dependencies]
 zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
+zun_module = { path = "../zun_module" }
 
 [lints]
 workspace = true
