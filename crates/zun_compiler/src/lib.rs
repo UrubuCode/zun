@@ -6,7 +6,62 @@
 
 use std::collections::{HashMap, HashSet};
 use zun_common::{Diagnostic, Severity};
-use zun_module::Module;
+use zun_il::{decode_all, Opcode, Operand};
+use zun_module::{read_body, Module};
+
+/// Compute the conservative set of method RIDs reachable from a module entry.
+///
+/// This is the analysis boundary for future trimming/AOT. Direct calls follow
+/// their method token; virtual calls retain every method with the same name,
+/// because an override may be selected by a runtime receiver type. MemberRef
+/// calls remain conservative and retain the complete local method set until
+/// cross-module resolution supplies a narrower graph.
+pub fn reachable_methods(module: &Module) -> Result<HashSet<u32>, String> {
+    let Some(entry) = module.entry_point else {
+        return Ok(HashSet::new());
+    };
+    let mut reachable = HashSet::new();
+    let mut worklist = vec![entry.rid()];
+    while let Some(rid) = worklist.pop() {
+        if !reachable.insert(rid) {
+            continue;
+        }
+        let method = module
+            .tables
+            .method_defs
+            .get(rid as usize - 1)
+            .ok_or_else(|| format!("method RID {rid} is out of range"))?;
+        if method.body_offset == u32::MAX {
+            continue;
+        }
+        let body = read_body(&module.code, method.body_offset).map_err(|e| e.to_string())?;
+        for instruction in decode_all(body.code).map_err(|e| e.to_string())? {
+            let Operand::Token(token) = instruction.operand else {
+                continue;
+            };
+            match instruction.opcode {
+                Opcode::Call if token.table() == Some(zun_metadata::TableKind::MethodDef) => {
+                    worklist.push(token.rid());
+                }
+                Opcode::CallVirt if token.table() == Some(zun_metadata::TableKind::MethodDef) => {
+                    let name = module.tables.method_defs[token.rid() as usize - 1].name;
+                    for (index, candidate) in module.tables.method_defs.iter().enumerate() {
+                        if candidate.name == name {
+                            worklist.push(index as u32 + 1);
+                        }
+                    }
+                }
+                Opcode::Call if token.table() == Some(zun_metadata::TableKind::MemberRef) => {
+                    // Cross-module resolution is performed by the loader; keep
+                    // local methods conservative until that graph is available.
+                    reachable.extend(1..=module.tables.method_defs.len() as u32);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(reachable)
+}
 
 /// Compile source text with the standard prelude into a `.zm` module.
 pub fn compile(source: &str) -> Result<Module, Vec<Diagnostic>> {
@@ -251,6 +306,20 @@ mod tests {
         let module = compile("function main(): int { return 7; }").expect("compile");
         assert!(module.entry_point.is_some());
         assert!(!module.code.is_empty());
+    }
+
+    #[test]
+    fn reachability_excludes_unused_methods() {
+        let module = compile(
+            "function used(): int { return 7; }\n\
+             function unused(): int { return 9; }\n\
+             function main(): int { return used(); }",
+        )
+        .expect("compile");
+        let reachable = reachable_methods(&module).expect("analyze reachability");
+        assert!(reachable.contains(&1));
+        assert!(reachable.contains(&3));
+        assert!(!reachable.contains(&2));
     }
 
     #[test]

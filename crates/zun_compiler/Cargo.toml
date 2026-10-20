@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+zun_il = { path = "../zun_il" }
+zun_metadata = { path = "../zun_metadata" }
 zun_common = { path = "../zun_common" }
 zun_module = { path = "../zun_module" }
 zun_prelude = { path = "../zun_prelude" }
