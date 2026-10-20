@@ -29,6 +29,17 @@ class Array {
         return value;
     }
 
+    removeAt(index: u64): any {
+        let removed: any = this[index];
+        let cursor: u64 = index;
+        while (cursor + 1 < this.length) {
+            this[cursor] = this[cursor + 1];
+            cursor = cursor + 1;
+        }
+        this.pop();
+        return removed;
+    }
+
     swap(first: u64, second: u64): Array {
         let temporary: any = this[first];
         this[first] = this[second];
