@@ -97,13 +97,20 @@ pub fn translate_body(
         .collect();
     let mut vars = Vec::with_capacity(local_kinds.len());
     for &k in &local_kinds {
-        vars.push(builder.declare_var(clif_ty(k)));
+        let var = builder.declare_var(clif_ty(k));
+        if k == JitKind::Object {
+            builder.declare_var_needs_stack_map(var);
+        }
+        vars.push(var);
     }
 
     builder.switch_to_block(entry);
     let entry_params: Vec<Value> = builder.block_params(entry).to_vec();
     for (i, &p) in entry_params.iter().enumerate() {
         builder.def_var(vars[i], p);
+        if local_kinds[i] == JitKind::Object {
+            builder.declare_value_needs_stack_map(p);
+        }
     }
     // Zero-initialize non-parameter locals to a typed zero.
     for i in body.param_count as usize..local_kinds.len() {
