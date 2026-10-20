@@ -42,6 +42,11 @@ class Number {
         return (this - other).abs();
     }
 
+    inverseLerp(low: number, high: number): number {
+        if (low == high) { return 0.0; }
+        return (this - low) / (high - low);
+    }
+
     isApproximately(other: number, epsilon: number): boolean {
         let difference: number = this - other;
         if (difference < 0.0) { difference = -difference; }

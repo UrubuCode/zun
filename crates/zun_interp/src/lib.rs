@@ -1783,6 +1783,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_inverse_lerp_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { inverseLerp(low: number, high: number): number { if (low == high) { return 0.0; } return (this - low) / (high - low); } } function main(): number { let value: number = 25.0; return value.inverseLerp(0.0, 100.0); }",
+        )
+        .expect("compile Number inverseLerp");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number inverseLerp");
+        assert!(matches!(result, Value::Float(0.25, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_number_is_approximately_source_method() {
         let module = zun_compiler::compile(
             "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",
