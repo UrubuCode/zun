@@ -39,6 +39,7 @@ mod records;
 mod value_ops;
 mod weak;
 mod strings;
+mod diagnostics;
 mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
@@ -906,26 +907,6 @@ impl Heap {
             .remove(name)
     }
 
-    /// Number of currently live objects (for diagnostics and tests).
-    pub fn live_count(&self) -> usize {
-        self.records.iter().filter(|r| r.alive).count()
-    }
-
-    /// Mark-sweep collection. `roots` are the object references currently live
-    /// on the stacks; `ref_slots(type_rid)` gives the field-slot indices of an
-    /// object's reference fields (so the collector can trace the graph).
-    /// Returns how many objects were reclaimed.
-    ///
-    /// # Safety
-    /// Every root and every traced reference must be a valid object in this
-    /// heap. In particular, no live stack slot (interpreter or JIT) may hold an
-    /// object reference absent from `roots` — otherwise it could be freed while
-    /// still in use. (Collecting with precise roots from both engines is the
-    /// remaining integration; see PLAN.md Â§4.3.)
-    /// Number of objects' worth of chunks currently held (for diagnostics).
-    pub fn chunk_count(&self) -> usize {
-        self.chunks.len()
-    }
 }
 
 #[cfg(test)]
