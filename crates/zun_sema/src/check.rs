@@ -374,6 +374,7 @@ impl Checker<'_> {
                     defaults: (0..f.params.len()).map(|_| None).collect(),
                     locals: cx.locals,
                     return_ty,
+                    is_async: f.is_async,
                     body: Vec::new(),
                 };
             };
@@ -457,6 +458,7 @@ impl Checker<'_> {
             defaults,
             locals: cx.locals,
             return_ty,
+            is_async: f.is_async,
             body,
         }
     }

@@ -285,6 +285,10 @@ pub struct Function {
     pub locals: Vec<Ty>,
     /// Declared return type.
     pub return_ty: Ty,
+    /// Whether this function is intended to lower to a stackless async state
+    /// machine. The lowering pass remains gated until await suspension is
+    /// represented in IL.
+    pub is_async: bool,
     /// The body statements.
     pub body: Vec<Stmt>,
 }
