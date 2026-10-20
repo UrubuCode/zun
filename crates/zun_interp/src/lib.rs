@@ -1071,6 +1071,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_transpose_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { transpose(): Array { if (this.length == 0) { return new Array(0); } let first: Array = this[0] as Array; let rows: u64 = this.length; let columns: u64 = first.length; let result = new Array(columns); let column: u64 = 0; while (column < columns) { let rowResult = new Array(rows); let row: u64 = 0; while (row < rows) { let source: Array = this[row] as Array; rowResult[row] = source[column]; row = row + 1; } result[column] = rowResult; column = column + 1; } return result; } } function main(): number { let matrix = new Array(2); let first = new Array(2); first[0] = 1.0; first[1] = 2.0; let second = new Array(2); second[0] = 3.0; second[1] = 4.0; matrix[0] = first; matrix[1] = second; let result = matrix.transpose(); let column = result[1] as Array; return column[0] as number; }",
+        )
+        .expect("compile Array transpose");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array transpose");
+        assert!(matches!(result, Value::Float(value, _) if value == 2.0));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\

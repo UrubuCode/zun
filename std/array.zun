@@ -225,6 +225,27 @@ class Array {
         return result;
     }
 
+    transpose(): Array {
+        if (this.length == 0) { return new Array(0); }
+        let first: Array = this[0] as Array;
+        let rows: u64 = this.length;
+        let columns: u64 = first.length;
+        let result = new Array(columns);
+        let column: u64 = 0;
+        while (column < columns) {
+            let rowResult = new Array(rows);
+            let row: u64 = 0;
+            while (row < rows) {
+                let source: Array = this[row] as Array;
+                rowResult[row] = source[column];
+                row = row + 1;
+            }
+            result[column] = rowResult;
+            column = column + 1;
+        }
+        return result;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {
