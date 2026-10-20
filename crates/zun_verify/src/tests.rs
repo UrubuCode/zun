@@ -67,6 +67,16 @@ fn fixture_valid_any_box_and_unbox() {
 }
 
 #[test]
+fn fixture_valid_load_function() {
+    let code = asm(&[
+        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
 fn fixture_valid_array_operations() {
     let code = asm(&[
         Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),

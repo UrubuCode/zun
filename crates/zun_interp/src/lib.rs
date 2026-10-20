@@ -219,6 +219,17 @@ impl Interp<'_> {
                 }
                 Opcode::ConstTrue => stack.push(Value::Bool(true)),
                 Opcode::ConstFalse => stack.push(Value::Bool(false)),
+                Opcode::LoadFunction => {
+                    let token = match instr.operand {
+                        Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MethodDef) => token,
+                        _ => return Err(RunError::BadToken),
+                    };
+                    let rid = token.rid();
+                    if self.module.tables.method_defs.get(rid as usize - 1).is_none() {
+                        return Err(RunError::BadToken);
+                    }
+                    stack.push(Value::Function(zun_core::FunctionHandle::new(rid, None)));
+                }
                 Opcode::BoxAny => {
                     let value = pop(&mut stack)?;
                     let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
