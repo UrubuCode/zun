@@ -1,0 +1,7 @@
+// Thin source wrapper over the runtime-owned ordered hash table.
+import { setNew, setAdd, setHas, setSize } from "zun:collections";
+
+function createSet(): any { return setNew(); }
+function addSetValue(set: any, value: any): boolean { return setAdd(set, value); }
+function hasSetValue(set: any, value: any): boolean { return setHas(set, value); }
+function setLength(set: any): u64 { return setSize(set); }

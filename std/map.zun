@@ -1,0 +1,8 @@
+// Thin source wrapper over the runtime-owned ordered hash table.
+import { mapNew, mapSet, mapGet, mapHas, mapSize } from "zun:collections";
+
+function createMap(): any { return mapNew(); }
+function setMapValue(map: any, key: any, value: any): void { mapSet(map, key, value); }
+function getMapValue(map: any, key: any): any { return mapGet(map, key); }
+function hasMapValue(map: any, key: any): boolean { return mapHas(map, key); }
+function mapLength(map: any): u64 { return mapSize(map); }
