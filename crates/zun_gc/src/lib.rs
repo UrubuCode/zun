@@ -897,6 +897,28 @@ mod tests {
     }
 
     #[test]
+    fn active_stack_map_collection_consumes_the_thread_registry() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut frame = [0u64; 2];
+        frame[1] = object.addr() as u64;
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 100, span: 4, reference_slots: vec![8] }]);
+        let _scope = unsafe { ActiveStackMapScope::enter(&registry) };
+
+        let freed = unsafe {
+            heap.collect_with_active_native_frame(
+                &[],
+                101,
+                frame.as_ptr() as *const u8,
+                &|_| Vec::new(),
+            )
+        };
+        assert_eq!(freed, 0);
+        assert_eq!(heap.live_count(), 1);
+    }
+
+    #[test]
     fn stack_map_reads_reference_slots_from_a_stopped_frame() {
         let mut heap = Heap::new();
         let object = heap.alloc(1, 0);

@@ -280,4 +280,25 @@ impl Heap {
         unsafe { self.collect(&all_roots, ref_slots) }
     }
 
+    /// Collect using the innermost stack-map registry active on this thread.
+    ///
+    /// # Safety
+    /// `pc` and `sp` must identify the same stopped native frame, and an
+    /// [`ActiveStackMapScope`](super::ActiveStackMapScope) for that frame's
+    /// registry must remain active for the duration of this call.
+    pub unsafe fn collect_with_active_native_frame(
+        &mut self,
+        roots: &[Obj],
+        pc: usize,
+        sp: *const u8,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        super::with_active_stack_map_registry(|registry| {
+            let Some(registry) = registry else {
+                return unsafe { self.collect_with_native_roots(roots, ref_slots) };
+            };
+            unsafe { self.collect_with_native_frame(roots, registry, pc, sp, ref_slots) }
+        })
+    }
+
 }
