@@ -484,6 +484,19 @@ fn array_clear_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_average_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { sum(): number { let total: number = 0.0; let index: u64 = 0; while (index < this.length) { total = total + (this[index] as number); index = index + 1; } return total; } average(): number { if (this.length == 0) { return 0.0; } return this.sum() / (this.length as number); } }\n\
+         function main(): number { let values = new Array(2); values[0] = 2.0; values[1] = 6.0; return values.average(); }",
+    )
+    .expect("compile Array average");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 4.0));
+}
+
+#[test]
 fn array_search_methods_keep_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array {\n\

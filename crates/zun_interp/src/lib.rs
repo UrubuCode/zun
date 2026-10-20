@@ -876,6 +876,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_average_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { sum(): number { let total: number = 0.0; let index: u64 = 0; while (index < this.length) { total = total + (this[index] as number); index = index + 1; } return total; } average(): number { if (this.length == 0) { return 0.0; } return this.sum() / (this.length as number); } }\n\
+             function main(): number { let values = new Array(2); values[0] = 2.0; values[1] = 6.0; return values.average(); }",
+        )
+        .expect("compile Array average");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array average");
+        assert!(matches!(result, Value::Float(value, _) if value == 4.0));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",
