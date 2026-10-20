@@ -277,6 +277,12 @@ define_opcodes! {
     CallVirtRestArrayFixed = 0x8B, TokenImm32, "callvirt.rest.array.fixed", StackEffect::Call;
     /// Invoke a function value with an explicit argument count for its rest parameter.
     CallIndirectRest = 0x8C, TokenImm32, "call.indirect.rest", StackEffect::Call;
+    /// Suspend on a managed Promise and produce its settled result.
+    ///
+    /// This opcode is reserved for async state-machine lowering. The parser
+    /// and semantic checker must not emit it until continuation metadata and
+    /// interpreter resumption are available.
+    Await = 0x8D, None, "await", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]

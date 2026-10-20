@@ -1108,6 +1108,11 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::Await => {
+                    return Err(RunError::Malformed(
+                        "await requires async state-machine lowering".into(),
+                    ));
+                }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
                     stack.push(Value::Null);
