@@ -3,6 +3,25 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn name(&mut self, what: &str) -> Name {
+        match self.expect(TokenKind::Ident, what) {
+            Some(t) => Name { span: t.span },
+            None => Name {
+                span: Span::empty_at(self.peek().span.start),
+            },
+        }
+    }
+
+    pub(crate) fn optional_type_annotation(&mut self) -> Option<TypeAnnotation> {
+        if self.eat(TokenKind::Colon) {
+            Some(TypeAnnotation {
+                name: self.name("a type name"),
+            })
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn arrow_body(&mut self) -> Block {
         if self.at(TokenKind::LBrace) {
             return self.block();

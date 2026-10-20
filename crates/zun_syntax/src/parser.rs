@@ -315,25 +315,6 @@ impl Parser<'_> {
         params
     }
 
-    fn name(&mut self, what: &str) -> Name {
-        match self.expect(TokenKind::Ident, what) {
-            Some(t) => Name { span: t.span },
-            None => Name {
-                span: Span::empty_at(self.peek().span.start),
-            },
-        }
-    }
-
-    fn optional_type_annotation(&mut self) -> Option<TypeAnnotation> {
-        if self.eat(TokenKind::Colon) {
-            Some(TypeAnnotation {
-                name: self.name("a type name"),
-            })
-        } else {
-            None
-        }
-    }
-
     fn block(&mut self) -> Block {
         let open = self.peek().span;
         self.expect(TokenKind::LBrace, "`{`");
