@@ -68,6 +68,7 @@
             .expect("async plan");
         assert_eq!(plan.await_count, 2);
         assert_eq!(plan.state_count, 3);
+        assert_eq!(plan.hoisted_locals, vec![0, 1]);
     }
 
     #[test]
