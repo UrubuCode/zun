@@ -24,6 +24,7 @@ mod math;
 mod number;
 mod string;
 mod time;
+mod promise;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -73,6 +74,8 @@ pub enum NativeTy {
     Set,
     /// A managed WeakMap reference.
     WeakMap,
+    /// A managed Promise object.
+    Promise,
 }
 
 /// A neutral argument value passed to a native function.
@@ -190,6 +193,7 @@ pub static MODULES: &[Module] = &[
     date::MODULE,
     collections::MODULE,
     buffer::MODULE,
+    promise::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

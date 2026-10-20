@@ -51,6 +51,10 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "weakMapGet",
         "weakMapHas",
         "weakMapDelete",
+        "promiseNew",
+        "promiseResolve",
+        "promiseReject",
+        "promiseState",
     ] {
         if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id)
         {

@@ -733,6 +733,44 @@ impl<'a> Interp<'a> {
                     heap.weak_map_delete_object(map_object, key)
                 })))
             }
+            "promiseNew" => {
+                let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                Ok(Value::Object(promise))
+            }
+            "promiseResolve" => {
+                let promise = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let value = any(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(promise, value))
+                        .ok_or(RunError::BadToken)?,
+                ))
+            }
+            "promiseReject" => {
+                let promise = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let error = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(error) => error.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| heap.promise_reject(promise, error))
+                        .ok_or(RunError::BadToken)?,
+                ))
+            }
+            "promiseState" => {
+                let promise = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let state = zun_gc::with_current_heap(|heap| heap.promise_state(promise))
+                    .ok_or(RunError::BadToken)?;
+                let state = match state {
+                    zun_core::ManagedPromiseState::Pending => 0,
+                    zun_core::ManagedPromiseState::Resolved => 1,
+                    zun_core::ManagedPromiseState::Rejected => 2,
+                };
+                Ok(Value::Int(state, zun_il::NumKind::U8))
+            }
             _ => Err(RunError::BadToken),
         }
     }
