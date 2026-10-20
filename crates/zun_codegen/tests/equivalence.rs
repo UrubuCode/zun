@@ -125,6 +125,17 @@ fn set_entries_are_exposed_as_instance_methods() {
 }
 
 #[test]
+fn parenthesized_function_values_use_indirect_call_equivalence() {
+    let module = compile(
+        "function add(value: int): int { return value + 1; } function main(): int { let callback = add; return (callback)(7); }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(8, _)));
+}
+
+#[test]
 fn virtual_rest_methods_match_interpreter_and_jit_fallback() {
     let module = compile(
         "class Counter { count(first: int, ...rest: Array): int { return first + (rest[0] as int); } } function main(): int { let counter = new Counter(); return counter.count(7, 1, 2); }",

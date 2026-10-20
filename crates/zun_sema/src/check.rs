@@ -3033,6 +3033,75 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                let callee = self.check_expr(cx, callee);
+                if let Ty::Function(func) = callee.ty {
+                    if func == hir::DYNAMIC_FUNCTION
+                        || func == hir::DYNAMIC_PREDICATE
+                        || func == hir::DYNAMIC_REDUCER
+                    {
+                        self.error(span, "computed calls require a statically typed function value");
+                        return self.poison(span);
+                    }
+                    let mut args: Vec<hir::Expr> =
+                        args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+                    let (param_tys, optional_count, rest_param, return_ty, signature_name) = {
+                        let signature = &self.signatures[func as usize];
+                        (
+                            signature.params.clone(),
+                            signature.optional_count,
+                            signature.rest_param,
+                            signature.return_ty,
+                            signature.name.clone(),
+                        )
+                    };
+                    if rest_param.is_some() {
+                        self.error(span, "computed calls to rest functions are not supported yet");
+                        return self.poison(span);
+                    }
+                    if args.len() < param_tys.len().saturating_sub(optional_count)
+                        || args.len() > param_tys.len()
+                    {
+                        self.error(
+                            span,
+                            format!(
+                                "function value expects {} to {} argument(s), found {}",
+                                param_tys.len().saturating_sub(optional_count),
+                                param_tys.len(),
+                                args.len()
+                            ),
+                        );
+                    } else {
+                        let signature = Signature {
+                            name: signature_name,
+                            params: param_tys.clone(),
+                            return_ty,
+                            optional_count,
+                            rest_param,
+                        };
+                        self.pad_default_args(&mut args, &signature, span);
+                        for (arg, &expected) in args.iter_mut().zip(&param_tys) {
+                            coerce_numeric_literal(arg, expected);
+                            if !expected.is_error()
+                                && !arg.ty.is_error()
+                                && !self.is_assignable(arg.ty, expected)
+                            {
+                                self.error(
+                                    arg.span,
+                                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                                );
+                            }
+                        }
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::IndirectCall {
+                            callee: Box::new(callee),
+                            args,
+                            func,
+                        },
+                        ty: return_ty,
+                        span,
+                    };
+                }
                 self.error(span, "computed calls are not supported for this callee");
                 self.poison(span)
             }
