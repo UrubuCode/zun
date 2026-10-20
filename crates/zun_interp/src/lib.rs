@@ -1353,6 +1353,18 @@ mod method_tests {
     }
 
     #[test]
+    fn iterates_an_array_with_for_of() {
+        let module = zun_compiler::compile(
+            "function main(): any { let values = new Array(2); values[0] = 1.0; values[1] = 2.0; for (let value of values) { print(value); } return 42.0; }",
+        )
+        .expect("compile array for-of");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array for-of");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(output.lines, vec!["1", "2"]);
+    }
+
+    #[test]
     fn executes_dynamic_property_il() {
         let mut module = zun_module::Module::new();
         let property = module.strings.intern("answer");

@@ -459,6 +459,35 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.patch_to_here(patch);
                 }
             }
+            Stmt::ForOf { iterable, iterable_slot, index, binding, body } => {
+                self.expr(iterable);
+                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*iterable_slot)));
+                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(0)));
+                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*index)));
+                let loop_start = self.code.len();
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*index)));
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*iterable_slot)));
+                self.emit(Instruction::simple(Opcode::ArrayLength));
+                self.emit(Instruction::simple(Opcode::CmpLt));
+                let to_exit = self.emit_branch(Opcode::BranchFalse);
+                self.break_patches.push(Vec::new());
+                self.continue_targets.push(vec![loop_start]);
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*iterable_slot)));
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*index)));
+                self.emit(Instruction::simple(Opcode::LoadArray));
+                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*binding)));
+                self.stmts(body);
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*index)));
+                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(1)));
+                self.emit(Instruction::simple(Opcode::AddI32));
+                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*index)));
+                self.emit_branch_back(Opcode::Branch, loop_start);
+                self.patch_to_here(to_exit);
+                self.continue_targets.pop();
+                for patch in self.break_patches.pop().unwrap_or_default() {
+                    self.patch_to_here(patch);
+                }
+            }
             Stmt::Break => {
                 let patch = self.emit_branch(Opcode::Branch);
                 if let Some(patches) = self.break_patches.last_mut() {

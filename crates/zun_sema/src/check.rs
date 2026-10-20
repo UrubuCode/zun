@@ -1087,13 +1087,18 @@ impl Checker<'_> {
                 cx.loop_depth -= 1;
                 hir::Stmt::While { cond, body }
             }
-            ast::Stmt::ForOf { span, .. } => {
-                self.error(*span, "for-of iteration is not implemented yet");
-                hir::Stmt::Expr(hir::Expr {
-                    kind: hir::ExprKind::Number(0.0),
-                    ty: Ty::F64,
-                    span: *span,
-                })
+            ast::Stmt::ForOf { name, iterable, body, span: _ } => {
+                let iterable_expr = self.check_expr(cx, iterable);
+                if iterable_expr.ty != Ty::Array && !iterable_expr.ty.is_error() {
+                    self.error(iterable_expr.span, "for-of currently requires an Array iterable");
+                }
+                let iterable_slot = cx.declare("__for_of_iterable", Ty::Array);
+                let index_slot = cx.declare("__for_of_index", Ty::Int(IntKind::I32));
+                cx.scopes.push(Scope::new());
+                let binding = cx.declare(self.text(name), Ty::Any);
+                let body = self.check_block(cx, body);
+                cx.scopes.pop();
+                hir::Stmt::ForOf { iterable: iterable_expr, iterable_slot, index: index_slot, binding, body }
             }
             ast::Stmt::Break { span } => {
                 if cx.loop_depth == 0 {

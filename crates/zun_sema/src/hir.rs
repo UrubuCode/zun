@@ -293,6 +293,14 @@ pub enum Stmt {
         /// The loop body.
         body: Vec<Stmt>,
     },
+    /// Iterate an array by index while preserving the source-level for-of shape.
+    ForOf {
+        iterable: Expr,
+        iterable_slot: LocalSlot,
+        index: LocalSlot,
+        binding: LocalSlot,
+        body: Vec<Stmt>,
+    },
     /// Exit the innermost enclosing loop.
     Break,
     /// Continue with the next iteration of the innermost enclosing loop.
