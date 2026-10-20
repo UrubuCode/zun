@@ -316,6 +316,17 @@ fn reflect_dynamic_keys_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn proxy_construction_preserves_interpreter_fallback_boundary() {
+    let module = compile(
+        "function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return true; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "Proxy requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): number { let map = new Map(); map.set(1.0, 10.0); let set = new Set(); set.add(2.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",
