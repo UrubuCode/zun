@@ -383,9 +383,10 @@ chaining `?.` and nullish coalescing `??`, template literals, `switch`,
 short-circuit `&&`/`||` value semantics, getters/setters, `static`
 fields/methods, and private `#fields`. *Status: `switch`, `do/while`, C-style
 `for(;;)`, short-circuit `&&`/`||`, and ternary conditional expressions are
-implemented; explicit `null` and nullish coalescing `??` are also implemented;
-the remaining features are pending and must be added only with complete parser,
-sema, and lowering paths.*
+implemented; explicit `null`, nullish coalescing `??`, and the dynamic-property
+form of optional chaining are also implemented; the remaining features are
+pending and must be added only with complete parser, sema, and lowering
+paths.*
 
 **Group 3 — TypeScript type-level (erased at runtime):** generics, interfaces,
 enums, union types with narrowing, and optional properties. These are handled by
@@ -601,9 +602,10 @@ an optimization gate.
    pending because no source-level FinalizationRegistry exists yet.
 5. **Group 2 syntax** (section 4.4.2), by utility: `switch`, `do/while`,
    C-style `for(;;)`, short-circuit `&&`/`||`, and ternary conditional
-   expressions and nullish coalescing `??` are implemented; spread/rest,
-   destructuring, default parameters, optional chaining `?.`, template
-   literals, and the remaining syntax are pending.
+   expressions, nullish coalescing `??`, and dynamic-property optional
+   chaining are implemented; spread/rest, destructuring, default parameters,
+   optional method chaining, template literals, and the remaining syntax are
+   pending.
 6. Keep this section and the section 5 ledger up to date as items land.
 
 Stop condition: stop only on a real environment blocker, a design decision not
