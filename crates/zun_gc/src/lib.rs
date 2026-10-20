@@ -97,6 +97,19 @@ impl Obj {
     }
 }
 
+/// Handle into the heap's weak-reference table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WeakRefId(u32);
+
+impl WeakRefId {
+    pub const fn get(self) -> u32 { self.0 }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WeakSlot {
+    target: Option<usize>,
+}
+
 /// Bookkeeping for one allocated object, enabling the sweep phase.
 #[derive(Debug)]
 struct Record {
@@ -118,6 +131,8 @@ pub struct Heap {
     strings: Vec<Rc<str>>,
     /// Symbols belong to this heap/isolate and never share identity globally.
     symbols: zun_core::SymbolRegistry,
+    /// Weak references are cleared after marking and never keep targets alive.
+    weak_refs: Vec<WeakSlot>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
@@ -463,6 +478,16 @@ impl Heap {
             }
         }
 
+        // Weak references observe the completed mark set but do not contribute
+        // roots. Clear dead targets before sweep removes their addresses.
+        for weak in &mut self.weak_refs {
+            if let Some(address) = weak.target {
+                if self.by_addr.get(&address).is_none_or(|&idx| !self.records[idx].marked) {
+                    weak.target = None;
+                }
+            }
+        }
+
         // Sweep: reclaim live-but-unmarked objects into the free list.
         let mut freed = 0;
         for idx in 0..self.records.len() {
@@ -531,6 +556,17 @@ impl Heap {
 
     pub fn symbol_count(&self) -> usize {
         self.symbols.len()
+    }
+
+    pub fn weak_ref_new(&mut self, target: Obj) -> WeakRefId {
+        let id = WeakRefId(self.weak_refs.len() as u32);
+        self.weak_refs.push(WeakSlot { target: Some(target.addr() as usize) });
+        id
+    }
+
+    pub fn weak_ref_get(&self, id: WeakRefId) -> Option<Obj> {
+        let address = self.weak_refs.get(id.0 as usize)?.target?;
+        self.by_addr.get(&address).map(|&index| Obj(self.records[index].addr))
     }
 
     /// Number of objects' worth of chunks currently held (for diagnostics).
@@ -765,6 +801,26 @@ mod tests {
         assert_eq!(second.symbol_count(), 1);
         let unique = first.symbol_create(Some("iterator"));
         assert_ne!(unique, first_symbol);
+    }
+
+    #[test]
+    fn weak_reference_does_not_keep_target_alive() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let weak = heap.weak_ref_new(target);
+        assert_eq!(heap.weak_ref_get(weak), Some(target));
+        let freed = unsafe { heap.collect(&[], &|_| Vec::new()) };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.weak_ref_get(weak), None);
+    }
+
+    #[test]
+    fn weak_reference_observes_a_live_root() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let weak = heap.weak_ref_new(target);
+        assert_eq!(unsafe { heap.collect(&[target], &|_| Vec::new()) }, 0);
+        assert_eq!(heap.weak_ref_get(weak), Some(target));
     }
 
     #[test]
