@@ -383,6 +383,7 @@ impl Translator<'_> {
                         Some("weekday") => ("zun_jit_date_weekday", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
                         Some("dayOfYear") => ("zun_jit_date_day_of_year", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
                         Some("abs") => ("zun_jit_math_abs", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("signNumber") => ("zun_jit_math_sign", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("sqrt" | "sqrtNumber") => ("zun_jit_math_sqrt", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("floor" | "floorNumber") => ("zun_jit_math_floor", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("ceil" | "ceilNumber") => ("zun_jit_math_ceil", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),

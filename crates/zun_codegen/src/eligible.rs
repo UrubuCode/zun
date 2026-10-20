@@ -69,7 +69,7 @@ fn math_builtin(instr: &zun_il::Instruction) -> bool {
         "abs" | "sqrt" | "min" | "max" | "sqrtNumber" | "minNumber" | "maxNumber"
         | "floor" | "ceil" | "round" | "floorNumber" | "ceilNumber" | "roundNumber"
         | "powNumber" | "sinNumber" | "cosNumber" | "expNumber" | "logNumber"
-        | "tanNumber" | "atan2Number" | "hypotNumber" | "isFinite" | "isNaN"
+        | "tanNumber" | "atan2Number" | "hypotNumber" | "signNumber" | "isFinite" | "isNaN"
         | "isNegativeZero" | "isSafeInteger"
     ))
 }

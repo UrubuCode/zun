@@ -1674,6 +1674,13 @@ fn math_scalar_aliases_are_jit_equivalent() {
 }
 
 #[test]
+fn math_sign_preserves_zero_sign_in_jit() {
+    assert_equivalent(
+        "import { signNumber } from \"zun:math\"; function main(): number { return signNumber(-0.0); }",
+    );
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

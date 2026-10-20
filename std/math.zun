@@ -7,6 +7,7 @@ import { sinNumber, cosNumber } from "zun:math";
 import { expNumber, logNumber } from "zun:math";
 import { tanNumber, atan2Number } from "zun:math";
 import { hypotNumber } from "zun:math";
+import { signNumber } from "zun:math";
 
 
 function mathAbs(value: number): number {
@@ -74,5 +75,9 @@ function mathAtan2(y: number, x: number): number {
 
 function mathHypot(left: number, right: number): number {
     return hypotNumber(left, right);
+}
+
+function mathSign(value: number): number {
+    return signNumber(value);
 }
 

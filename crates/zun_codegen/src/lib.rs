@@ -39,6 +39,9 @@ pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateV
 
 #[inline] pub extern "C" fn zun_jit_math_abs(value: f64) -> f64 { value.abs() }
 #[inline] pub extern "C" fn zun_jit_math_sqrt(value: f64) -> f64 { value.sqrt() }
+#[inline] pub extern "C" fn zun_jit_math_sign(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 { value } else if value.is_sign_positive() { 1.0 } else { -1.0 }
+}
 #[inline] pub extern "C" fn zun_jit_math_floor(value: f64) -> f64 { value.floor() }
 #[inline] pub extern "C" fn zun_jit_math_ceil(value: f64) -> f64 { value.ceil() }
 #[inline] pub extern "C" fn zun_jit_math_round(value: f64) -> f64 { value.round() }
@@ -204,6 +207,7 @@ impl Jit {
         builder.symbol("zun_jit_date_day_of_year", zun_jit_date_day_of_year as *const u8);
         builder.symbol("zun_jit_math_abs", zun_jit_math_abs as *const u8);
         builder.symbol("zun_jit_math_sqrt", zun_jit_math_sqrt as *const u8);
+        builder.symbol("zun_jit_math_sign", zun_jit_math_sign as *const u8);
         builder.symbol("zun_jit_math_floor", zun_jit_math_floor as *const u8);
         builder.symbol("zun_jit_math_ceil", zun_jit_math_ceil as *const u8);
         builder.symbol("zun_jit_math_round", zun_jit_math_round as *const u8);
