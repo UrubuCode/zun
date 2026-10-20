@@ -1761,6 +1761,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_is_between_exclusive_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { isBetweenExclusive(low: number, high: number): boolean { if (this <= low) { return false; } return this < high; } } function main(): boolean { let value: number = 5.0; return value.isBetweenExclusive(0.0, 10.0); }",
+        )
+        .expect("compile Number isBetweenExclusive");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number isBetweenExclusive");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_is_approximately_source_method() {
         let module = zun_compiler::compile(
             "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",

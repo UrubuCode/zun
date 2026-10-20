@@ -33,6 +33,11 @@ class Number {
         return this.isBetween(0.0, 1.0);
     }
 
+    isBetweenExclusive(low: number, high: number): boolean {
+        if (this <= low) { return false; }
+        return this < high;
+    }
+
     isApproximately(other: number, epsilon: number): boolean {
         let difference: number = this - other;
         if (difference < 0.0) { difference = -difference; }
