@@ -22,21 +22,45 @@ pub struct IntKind {
 
 impl IntKind {
     /// `i8`..`i64`/`u8`..`u64` shorthands.
-    pub const I8: IntKind = IntKind { bits: 8, signed: true };
+    pub const I8: IntKind = IntKind {
+        bits: 8,
+        signed: true,
+    };
     /// See [`IntKind::I8`].
-    pub const I16: IntKind = IntKind { bits: 16, signed: true };
+    pub const I16: IntKind = IntKind {
+        bits: 16,
+        signed: true,
+    };
     /// See [`IntKind::I8`].
-    pub const I32: IntKind = IntKind { bits: 32, signed: true };
+    pub const I32: IntKind = IntKind {
+        bits: 32,
+        signed: true,
+    };
     /// See [`IntKind::I8`].
-    pub const I64: IntKind = IntKind { bits: 64, signed: true };
+    pub const I64: IntKind = IntKind {
+        bits: 64,
+        signed: true,
+    };
     /// See [`IntKind::I8`].
-    pub const U8: IntKind = IntKind { bits: 8, signed: false };
+    pub const U8: IntKind = IntKind {
+        bits: 8,
+        signed: false,
+    };
     /// See [`IntKind::I8`].
-    pub const U16: IntKind = IntKind { bits: 16, signed: false };
+    pub const U16: IntKind = IntKind {
+        bits: 16,
+        signed: false,
+    };
     /// See [`IntKind::I8`].
-    pub const U32: IntKind = IntKind { bits: 32, signed: false };
+    pub const U32: IntKind = IntKind {
+        bits: 32,
+        signed: false,
+    };
     /// See [`IntKind::I8`].
-    pub const U64: IntKind = IntKind { bits: 64, signed: false };
+    pub const U64: IntKind = IntKind {
+        bits: 64,
+        signed: false,
+    };
 }
 
 /// A floating-point kind.
@@ -237,6 +261,15 @@ pub enum ExprKind {
         /// The intrinsic dispatch id.
         id: u32,
         /// Arguments in order.
+        args: Vec<Expr>,
+    },
+    /// Call a function exported by another source module.
+    ExternalCall {
+        /// Module identity used by the linker.
+        module: String,
+        /// Exported function name.
+        name: String,
+        /// Arguments in source order.
         args: Vec<Expr>,
     },
     /// A virtual method call, dispatched on the receiver's runtime class.

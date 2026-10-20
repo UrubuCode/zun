@@ -24,14 +24,38 @@ use zun_sema::hir::{self, BinaryOp, ExprKind, FloatKind, IntKind, Stmt, Ty, Unar
 /// is not numeric.
 fn numkind_of(ty: Ty) -> Option<NumKind> {
     Some(match ty {
-        Ty::Int(IntKind { bits: 8, signed: true }) => NumKind::I8,
-        Ty::Int(IntKind { bits: 16, signed: true }) => NumKind::I16,
-        Ty::Int(IntKind { bits: 32, signed: true }) => NumKind::I32,
-        Ty::Int(IntKind { bits: 64, signed: true }) => NumKind::I64,
-        Ty::Int(IntKind { bits: 8, signed: false }) => NumKind::U8,
-        Ty::Int(IntKind { bits: 16, signed: false }) => NumKind::U16,
-        Ty::Int(IntKind { bits: 32, signed: false }) => NumKind::U32,
-        Ty::Int(IntKind { bits: 64, signed: false }) => NumKind::U64,
+        Ty::Int(IntKind {
+            bits: 8,
+            signed: true,
+        }) => NumKind::I8,
+        Ty::Int(IntKind {
+            bits: 16,
+            signed: true,
+        }) => NumKind::I16,
+        Ty::Int(IntKind {
+            bits: 32,
+            signed: true,
+        }) => NumKind::I32,
+        Ty::Int(IntKind {
+            bits: 64,
+            signed: true,
+        }) => NumKind::I64,
+        Ty::Int(IntKind {
+            bits: 8,
+            signed: false,
+        }) => NumKind::U8,
+        Ty::Int(IntKind {
+            bits: 16,
+            signed: false,
+        }) => NumKind::U16,
+        Ty::Int(IntKind {
+            bits: 32,
+            signed: false,
+        }) => NumKind::U32,
+        Ty::Int(IntKind {
+            bits: 64,
+            signed: false,
+        }) => NumKind::U64,
         Ty::Int(_) => return None,
         Ty::Float(FloatKind::F32) => NumKind::F32,
         Ty::Float(FloatKind::F64) => NumKind::F64,
@@ -226,19 +250,28 @@ impl FnLowerer<'_> {
             }
             NumKind::F32 => {
                 self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(v)));
-                self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(NumKind::F32.to_imm())));
+                self.emit(Instruction::new(
+                    Opcode::Conv,
+                    Operand::Imm32(NumKind::F32.to_imm()),
+                ));
             }
             NumKind::I64 | NumKind::U64 => {
                 self.emit(Instruction::new(Opcode::ConstI64, Operand::Imm64(v as i64)));
                 if kind != NumKind::I64 {
-                    self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+                    self.emit(Instruction::new(
+                        Opcode::Conv,
+                        Operand::Imm32(kind.to_imm()),
+                    ));
                 }
             }
             _ => {
                 // i8/i16/i32/u8/u16/u32: build as i32, then narrow if needed.
                 self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(v as i32)));
                 if kind != NumKind::I32 {
-                    self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+                    self.emit(Instruction::new(
+                        Opcode::Conv,
+                        Operand::Imm32(kind.to_imm()),
+                    ));
                 }
             }
         }
@@ -247,7 +280,10 @@ impl FnLowerer<'_> {
     /// Emit a `conv` to `ty` (used by the `as` operator).
     fn emit_conv_to(&mut self, ty: Ty) {
         if let Some(kind) = numkind_of(ty) {
-            self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+            self.emit(Instruction::new(
+                Opcode::Conv,
+                Operand::Imm32(kind.to_imm()),
+            ));
         }
     }
 
@@ -263,8 +299,7 @@ impl FnLowerer<'_> {
     /// Point `patch` at the current end of code.
     fn patch_to_here(&mut self, patch: BranchPatch) {
         let disp = (self.code.len() - (patch.operand_at + 4)) as i32;
-        self.code[patch.operand_at..patch.operand_at + 4]
-            .copy_from_slice(&disp.to_le_bytes());
+        self.code[patch.operand_at..patch.operand_at + 4].copy_from_slice(&disp.to_le_bytes());
     }
 
     /// Emit a backward branch to `target` (a previously recorded code offset).
@@ -333,7 +368,10 @@ impl FnLowerer<'_> {
             ExprKind::Number(v) => self.emit_numeric_const(*v, e.ty),
             ExprKind::String(s) => {
                 let idx = self.module.strings.intern(s);
-                self.emit(Instruction::new(Opcode::ConstStr, Operand::StringRef(idx.0)));
+                self.emit(Instruction::new(
+                    Opcode::ConstStr,
+                    Operand::StringRef(idx.0),
+                ));
             }
             ExprKind::Boolean(true) => self.emit(Instruction::simple(Opcode::ConstTrue)),
             ExprKind::Boolean(false) => self.emit(Instruction::simple(Opcode::ConstFalse)),
@@ -399,7 +437,13 @@ impl FnLowerer<'_> {
                 for a in args {
                     self.expr(a);
                 }
-                self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(*id as i32)));
+                self.emit(Instruction::new(
+                    Opcode::CallBuiltin,
+                    Operand::Imm32(*id as i32),
+                ));
+            }
+            ExprKind::ExternalCall { .. } => {
+                unreachable!("external calls require module linking before IL generation")
             }
             ExprKind::MethodCall { func, args } => {
                 // args[0] is the receiver; push it and the rest, then dispatch
@@ -485,9 +529,7 @@ mod tests {
 
     #[test]
     fn while_loop_branches_point_at_the_right_places() {
-        let module = lower_src(
-            "function main() { let n = 3; while (n > 0) { n = n - 1; } }",
-        );
+        let module = lower_src("function main() { let n = 3; while (n > 0) { n = n - 1; } }");
         let body = read_body(&module.code, module.tables.method_defs[0].body_offset).unwrap();
         let text = disassemble(body.code).unwrap();
         assert_eq!(
@@ -511,9 +553,8 @@ mod tests {
 
     #[test]
     fn if_else_falls_through_correctly() {
-        let module = lower_src(
-            "function main() { if (true) { print(\"a\"); } else { print(\"b\"); } }",
-        );
+        let module =
+            lower_src("function main() { if (true) { print(\"a\"); } else { print(\"b\"); } }");
         let body = read_body(&module.code, module.tables.method_defs[0].body_offset).unwrap();
         let text = disassemble(body.code).unwrap();
         assert_eq!(

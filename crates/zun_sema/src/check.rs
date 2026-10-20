@@ -17,6 +17,33 @@ pub fn check(
     program: &ast::Program,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> hir::Program {
+    check_with_externals(source, program, diagnostics, &[])
+}
+
+/// A source-level function signature imported from another module.
+#[derive(Debug, Clone)]
+pub struct ExternalFunction {
+    /// Module identity containing the export.
+    pub module: String,
+    /// Exported function name.
+    pub name: String,
+    /// Parameter types in declaration order.
+    pub params: Vec<Ty>,
+    /// Return type.
+    pub return_ty: Ty,
+}
+
+/// Check a program with source-module imports supplied by the linker.
+pub fn check_with_externals(
+    source: &str,
+    program: &ast::Program,
+    diagnostics: &mut Vec<Diagnostic>,
+    external_functions: &[ExternalFunction],
+) -> hir::Program {
+    let external_by_name: HashMap<_, _> = external_functions
+        .iter()
+        .map(|function| (function.name.clone(), function.clone()))
+        .collect();
     let mut checker = Checker {
         source,
         diagnostics,
@@ -26,6 +53,7 @@ pub fn check(
         classes_by_name: HashMap::new(),
         methods_by_class: Vec::new(),
         imports: HashMap::new(),
+        external_functions: external_by_name,
     };
     checker.resolve_imports(program);
     // Classes first so field and signature annotations can name them, then
@@ -84,6 +112,8 @@ struct Checker<'a> {
     methods_by_class: Vec<HashMap<String, u32>>,
     /// Imported intrinsic name -> (dispatch id, its native signature).
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
+    /// Imported source-module function signatures by local name.
+    external_functions: HashMap<String, ExternalFunction>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -118,8 +148,11 @@ impl Checker<'_> {
     }
 
     fn error(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics
-            .push(Diagnostic::error(message).with_code("SEM0001").with_span(span));
+        self.diagnostics.push(
+            Diagnostic::error(message)
+                .with_code("SEM0001")
+                .with_span(span),
+        );
     }
 
     /// Resolve a written type annotation to a [`Ty`].
@@ -605,9 +638,7 @@ impl Checker<'_> {
                 let operand = self.check_expr(cx, operand);
                 let ty = match op {
                     // Negation keeps the operand's numeric type; `!` needs bool.
-                    ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => {
-                        operand.ty
-                    }
+                    ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => operand.ty,
                     ast::UnaryOp::Neg => {
                         self.error(operand.span, format!("cannot negate {:?}", operand.ty));
                         Ty::Error
@@ -666,14 +697,58 @@ impl Checker<'_> {
                             {
                                 self.error(
                                     arg.span,
-                                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                                    format!(
+                                        "argument type {:?} does not match {expected:?}",
+                                        arg.ty
+                                    ),
                                 );
                             }
                         }
                     }
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id: intrinsic_id, args },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id: intrinsic_id,
+                            args,
+                        },
                         ty: native_ty(intrinsic.ret),
+                        span,
+                    };
+                }
+
+                if let Some(external) = self.external_functions.get(&name).cloned() {
+                    if args.len() != external.params.len() {
+                        self.error(
+                            span,
+                            format!(
+                                "`{name}` expects {} argument(s), found {}",
+                                external.params.len(),
+                                args.len()
+                            ),
+                        );
+                    } else {
+                        for (arg, &expected) in args.iter_mut().zip(&external.params) {
+                            coerce_numeric_literal(arg, expected);
+                            if !expected.is_error()
+                                && !arg.ty.is_error()
+                                && !self.is_assignable(arg.ty, expected)
+                            {
+                                self.error(
+                                    arg.span,
+                                    format!(
+                                        "argument type {:?} does not match {expected:?}",
+                                        arg.ty
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::ExternalCall {
+                            module: external.module,
+                            name: external.name,
+                            args,
+                        },
+                        ty: external.return_ty,
                         span,
                     };
                 }
@@ -782,10 +857,7 @@ impl Checker<'_> {
                 // Only numeric-to-numeric conversions are allowed.
                 let numeric = |t: Ty| t.is_int() || t.is_float();
                 if !value.ty.is_error() && !(numeric(value.ty) && numeric(target)) {
-                    self.error(
-                        span,
-                        format!("cannot convert {:?} to {target:?}", value.ty),
-                    );
+                    self.error(span, format!("cannot convert {:?} to {target:?}", value.ty));
                     return self.poison(span);
                 }
                 hir::Expr {
@@ -827,7 +899,10 @@ impl Checker<'_> {
                         {
                             self.error(
                                 arg.span,
-                                format!("field initializer type {:?} does not match {expected:?}", arg.ty),
+                                format!(
+                                    "field initializer type {:?} does not match {expected:?}",
+                                    arg.ty
+                                ),
                             );
                         }
                     }
@@ -930,9 +1005,11 @@ impl Checker<'_> {
         // Both numeric operands must be the same numeric type (no implicit
         // int/float mixing; conversions are explicit — PLAN.md §4.2).
         // Both operands must be the same numeric type, exact width included.
-        let same_numeric = |a: Ty, b: Ty| matches!((a, b),
+        let same_numeric = |a: Ty, b: Ty| {
+            matches!((a, b),
             (Ty::Int(x), Ty::Int(y)) if x == y)
-            || matches!((a, b), (Ty::Float(x), Ty::Float(y)) if x == y);
+                || matches!((a, b), (Ty::Float(x), Ty::Float(y)) if x == y)
+        };
         match op {
             Add => {
                 // `+` is numeric addition or string concatenation.
@@ -941,10 +1018,7 @@ impl Checker<'_> {
                 } else if lhs.ty == Ty::String && rhs.ty == Ty::String {
                     Ty::String
                 } else {
-                    self.error(
-                        span,
-                        format!("cannot add {:?} and {:?}", lhs.ty, rhs.ty),
-                    );
+                    self.error(span, format!("cannot add {:?} and {:?}", lhs.ty, rhs.ty));
                     Ty::Error
                 }
             }
@@ -954,7 +1028,10 @@ impl Checker<'_> {
                 } else {
                     self.error(
                         span,
-                        format!("arithmetic requires matching numbers, found {:?} and {:?}", lhs.ty, rhs.ty),
+                        format!(
+                            "arithmetic requires matching numbers, found {:?} and {:?}",
+                            lhs.ty, rhs.ty
+                        ),
                     );
                     Ty::Error
                 }
@@ -965,7 +1042,10 @@ impl Checker<'_> {
                 } else {
                     self.error(
                         span,
-                        format!("comparison requires matching numbers, found {:?} and {:?}", lhs.ty, rhs.ty),
+                        format!(
+                            "comparison requires matching numbers, found {:?} and {:?}",
+                            lhs.ty, rhs.ty
+                        ),
                     );
                     Ty::Error
                 }
@@ -1126,9 +1206,8 @@ mod tests {
 
     #[test]
     fn shadowing_gets_a_fresh_slot() {
-        let hir = check_ok(
-            "function f() { let x = 1; if (x > 0) { let x = \"inner\"; print(x); } }",
-        );
+        let hir =
+            check_ok("function f() { let x = 1; if (x > 0) { let x = \"inner\"; print(x); } }");
         assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);
     }
 
@@ -1160,24 +1239,18 @@ mod tests {
 
     #[test]
     fn wrong_argument_type_diagnoses() {
-        let msg = first_error(
-            "function g(n: number) {} function f() { g(\"s\"); }",
-        );
+        let msg = first_error("function g(n: number) {} function f() { g(\"s\"); }");
         assert!(msg.contains("does not match"), "{msg}");
     }
 
     #[test]
     fn wrong_return_type_diagnoses() {
-        assert!(
-            first_error("function f(): number { return \"s\"; }").contains("does not match")
-        );
+        assert!(first_error("function f(): number { return \"s\"; }").contains("does not match"));
     }
 
     #[test]
     fn inner_scope_names_do_not_leak() {
-        let msg = first_error(
-            "function f(x: boolean) { if (x) { let inner = 1; } print(inner); }",
-        );
+        let msg = first_error("function f(x: boolean) { if (x) { let inner = 1; } print(inner); }");
         assert!(msg.contains("unknown variable"), "{msg}");
     }
 
@@ -1314,27 +1387,25 @@ mod tests {
 
     #[test]
     fn int_and_float_are_distinct() {
-        let hir = check_ok(
-            "function main() { let a: int = 1; let b: float = 1.0; let c = 2; }",
-        );
+        let hir = check_ok("function main() { let a: int = 1; let b: float = 1.0; let c = 2; }");
         // a:int, b:float(Number), c defaults to Number.
         assert_eq!(hir.functions[0].locals, vec![Ty::INT, Ty::F64, Ty::F64]);
     }
 
     #[test]
     fn int_arithmetic_stays_int() {
-        let hir = check_ok(
-            "function f(): int { let x: int = 10; return x * 2 + 5; }",
-        );
+        let hir = check_ok("function f(): int { let x: int = 10; return x * 2 + 5; }");
         assert_eq!(hir.functions[0].return_ty, Ty::INT);
     }
 
     #[test]
     fn mixing_int_and_float_is_an_error() {
-        let msg = first_error(
-            "function f() { let x: int = 1; let y: float = 2.0; let z = x + y; }",
+        let msg =
+            first_error("function f() { let x: int = 1; let y: float = 2.0; let z = x + y; }");
+        assert!(
+            msg.contains("cannot add") || msg.contains("matching"),
+            "{msg}"
         );
-        assert!(msg.contains("cannot add") || msg.contains("matching"), "{msg}");
     }
 
     #[test]

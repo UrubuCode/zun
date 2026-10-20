@@ -9,5 +9,5 @@
 pub mod check;
 pub mod hir;
 
-pub use check::check;
+pub use check::{check, check_with_externals, ExternalFunction};
 pub use hir::{Program, Ty};
