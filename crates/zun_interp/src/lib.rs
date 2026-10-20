@@ -903,12 +903,90 @@ impl Interp<'_> {
         // Pop the arguments, convert them to neutral native values, run the
         // native body (in zun_natives), then convert the result back.
         let args = pop_n(stack, zun_natives::param_count(id))?;
+        if let Some(name) = managed_collection_builtin(id) {
+            stack.push(self.call_managed_collection(name, &args)?);
+            return Ok(());
+        }
         let native_args: Vec<zun_natives::NativeArg> = args.iter().map(to_native_arg).collect();
         let result = zun_natives::dispatch(id, &native_args, self.output)
             .map_err(|e| RunError::Native(e.0))?;
         stack.push(from_native_value(result, id));
         Ok(())
     }
+
+    fn call_managed_collection(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
+        let object = |value: &Value| match value {
+            Value::Object(object) => Some(*object),
+            Value::Any(any) => any
+                .as_object()
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+            _ => None,
+        };
+        let any = |value: &Value| {
+            zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+        };
+        match name {
+            "mapNew" => {
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
+                Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
+            }
+            "mapSet" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = any(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, key, value));
+                Ok(Value::Void)
+            }
+            "mapGet" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(zun_gc::with_current_heap(|heap| heap.map_get(object, key))
+                    .map(Value::Any)
+                    .unwrap_or(Value::Void))
+            }
+            "mapHas" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.map_has(object, key)).ok_or(RunError::BadToken)?))
+            }
+            "mapSize" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.map_len(object)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+            }
+            "setNew" => {
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
+                Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
+            }
+            "setAdd" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_add(object, value)).ok_or(RunError::BadToken)?))
+            }
+            "setHas" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.set_has(object, value)).ok_or(RunError::BadToken)?))
+            }
+            "setSize" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.set_len(object)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+            }
+            _ => Err(RunError::BadToken),
+        }
+    }
+}
+
+fn managed_collection_builtin(id: u32) -> Option<&'static str> {
+    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "setNew", "setAdd", "setHas", "setSize"] {
+        if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id) {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// Borrow a `Value` as a neutral [`NativeArg`](zun_natives::NativeArg).
@@ -1362,6 +1440,17 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run array for-of");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
         assert_eq!(output.lines, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn uses_runtime_backed_map_and_set_intrinsics() {
+        let module = zun_compiler::compile(
+            "import { mapNew, mapSet, mapHas, mapSize, setNew, setAdd, setHas, setSize } from \"zun:collections\"; function main(): any { let map = mapNew(); mapSet(map, 7.0, 42.0); let set = setNew(); setAdd(set, 7.0); if (mapHas(map, 7.0)) { if (setHas(set, 7.0)) { return mapSize(map) + setSize(set); } } return 0.0; }",
+        )
+        .expect("compile collection intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run collection intrinsics");
+        assert!(matches!(result, Value::Int(2, _)));
     }
 
     #[test]

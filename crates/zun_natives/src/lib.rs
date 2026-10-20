@@ -15,6 +15,7 @@
 //! can never collide. `zun_node` and `zun_napi` will be organized the same way.
 
 mod date;
+mod collections;
 mod env;
 mod fs;
 mod io;
@@ -178,6 +179,7 @@ pub static MODULES: &[Module] = &[
     number::MODULE,
     string::MODULE,
     date::MODULE,
+    collections::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
