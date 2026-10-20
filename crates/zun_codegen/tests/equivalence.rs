@@ -1115,6 +1115,18 @@ fn number_lerp_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn number_remap_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { remap(fromLow: number, fromHigh: number, toLow: number, toHigh: number): number { if (fromLow == fromHigh) { return toLow; } let amount: number = (this - fromLow) / (fromHigh - fromLow); return toLow + (toHigh - toLow) * amount; } } function main(): number { let value: number = 5.0; return value.remap(0.0, 10.0, 100.0, 200.0); }",
+    )
+    .expect("compile Number remap");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 150.0));
+}
+
+#[test]
 fn math_power_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",

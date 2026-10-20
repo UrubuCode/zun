@@ -1738,6 +1738,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_remap_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { remap(fromLow: number, fromHigh: number, toLow: number, toHigh: number): number { if (fromLow == fromHigh) { return toLow; } let amount: number = (this - fromLow) / (fromHigh - fromLow); return toLow + (toHigh - toLow) * amount; } } function main(): number { let value: number = 5.0; return value.remap(0.0, 10.0, 100.0, 200.0); }",
+        )
+        .expect("compile Number remap");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number remap");
+        assert!(matches!(result, Value::Float(150.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_string_source_methods_with_primitive_receiver() {
         let module = zun_compiler::compile(
             "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\

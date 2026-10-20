@@ -91,6 +91,12 @@ class Number {
         return this + (target - this) * amount;
     }
 
+    remap(fromLow: number, fromHigh: number, toLow: number, toHigh: number): number {
+        if (fromLow == fromHigh) { return toLow; }
+        let amount: number = (this - fromLow) / (fromHigh - fromLow);
+        return toLow + (toHigh - toLow) * amount;
+    }
+
     extern toFixed(digits: int): string;
     extern toString(): string;
 }
