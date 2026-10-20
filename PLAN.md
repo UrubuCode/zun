@@ -348,7 +348,8 @@ The following runtime contracts are implemented and covered by tests:
   `toFixed`), all covered by native dispatch tests.
 - Contiguous `ArrayStorage` with bounds-checked access and growth operations,
   integrated with heap allocation and precise object-reference tracing. The
-  source-level Array API and compiler lowering are still pending.
+  source-level `Array` type is now recognized by sema/IL typing; array
+  literals, indexing syntax, and source-level method lowering are still pending.
 
 The release benchmark baseline on 2026-10-20 is 402.555 ns/iteration for the
 integer Tier 0 loop and 0.486 ns/iteration for the equivalent JIT loop
