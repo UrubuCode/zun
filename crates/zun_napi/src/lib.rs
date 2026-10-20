@@ -373,6 +373,9 @@ pub unsafe extern "C" fn zun_host_execute_string(
     let value = value.as_bytes();
     // SAFETY: caller supplies writable storage for the required length.
     unsafe { *written = value.len() };
+    if out.is_null() {
+        return 0;
+    }
     if out_len < value.len() {
         return 3;
     }
@@ -464,5 +467,25 @@ mod tests {
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 3);
         assert_eq!(written, 3);
+    }
+
+    #[test]
+    fn host_string_execution_supports_size_query_then_copy() {
+        let module = zun_compiler::compile("function main(): string { return \"zun\"; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut written = 0;
+        let status = unsafe {
+            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), std::ptr::null_mut(), 0, &mut written)
+        };
+        assert_eq!(status, 0);
+        assert_eq!(written, 3);
+        let mut result = vec![0u8; written];
+        let status = unsafe {
+            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), result.as_mut_ptr(), result.len(), &mut written)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, 0);
+        assert_eq!(&result, b"zun");
     }
 }

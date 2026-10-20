@@ -14,7 +14,8 @@ a compiled `.zm` module and executes its entry point.
 
 The C ABI also exposes `zun_host_execute_string`, which copies a UTF-8 result
 into caller-owned storage and reports the required size when the buffer is too
-small.
+small. Call it first with `out = null` and `out_len = 0` to query the required
+size, then allocate that many bytes and call it again to copy the result.
 
 On platforms that require an import library, provide the Node N-API library at
 build time:
