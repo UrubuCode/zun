@@ -7,6 +7,7 @@ use zun_module::Module;
 #[derive(Debug)]
 pub enum ResumeResult {
     Complete(Value),
+    Yielded(Value),
     Suspended,
 }
 
@@ -55,6 +56,7 @@ impl<'a> ResumableSession<'a> {
                 types,
                 suspended: None,
                 resume_frame: None,
+                yielded: None,
             },
             method_rid,
             args: Some(args),
@@ -80,7 +82,11 @@ impl<'a> ResumableSession<'a> {
             }
             ExecutionOutcome::Suspended(frame) => {
                 self.pending = Some(frame);
-                Ok(ResumeResult::Suspended)
+                if let Some(value) = self.interp.yielded.take() {
+                    Ok(ResumeResult::Yielded(value))
+                } else {
+                    Ok(ResumeResult::Suspended)
+                }
             }
             ExecutionOutcome::Thrown(value) => Err(RunError::Thrown(value)),
             ExecutionOutcome::Fault(error) => Err(error),
@@ -120,6 +126,7 @@ pub(super) fn run_method_with(
         types,
         suspended: None,
         resume_frame: None,
+        yielded: None,
     };
     let result = interp.call(method_rid, args, None)?;
     interp.deliver_finalization_callbacks()?;

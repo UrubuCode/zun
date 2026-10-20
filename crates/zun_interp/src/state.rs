@@ -12,6 +12,8 @@ pub(super) struct Interp<'a> {
     pub(super) types: zun_types::TypeSystem,
     pub(super) suspended: Option<ExecutionFrame>,
     pub(super) resume_frame: Option<ExecutionFrame>,
+    /// Value produced by a generator yield at the current suspension point.
+    pub(super) yielded: Option<Value>,
 }
 
 /// A link in the chain of suspended caller frames, used to find precise GC

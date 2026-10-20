@@ -1210,9 +1210,15 @@ impl Interp<'_> {
                     stack.push(value);
                 }
                 Opcode::Yield => {
-                    return Err(RunError::Native(
-                        "generator yield reached the interpreter before lowering".into(),
+                    let value = pop(&mut stack)?;
+                    self.yielded = Some(value);
+                    self.suspended = Some(ExecutionFrame::snapshot(
+                        method_rid,
+                        *pc,
+                        &stack,
+                        &locals,
                     ));
+                    return Err(RunError::Suspended);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
