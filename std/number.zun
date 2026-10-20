@@ -38,6 +38,10 @@ class Number {
         return this < high;
     }
 
+    distanceTo(other: number): number {
+        return (this - other).abs();
+    }
+
     isApproximately(other: number, epsilon: number): boolean {
         let difference: number = this - other;
         if (difference < 0.0) { difference = -difference; }

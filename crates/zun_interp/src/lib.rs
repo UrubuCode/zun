@@ -1772,6 +1772,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_distance_to_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { abs(): number { if (this < 0.0) { return -this; } return this; } distanceTo(other: number): number { return (this - other).abs(); } } function main(): number { let value: number = 3.0; return value.distanceTo(10.5); }",
+        )
+        .expect("compile Number distanceTo");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number distanceTo");
+        assert!(matches!(result, Value::Float(7.5, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_number_is_approximately_source_method() {
         let module = zun_compiler::compile(
             "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",
