@@ -1,7 +1,6 @@
 // Numeric helpers implemented in Zun source.
 // Runtime-backed operations remain in the `zun:*` intrinsic modules.
 
-import { sqrt, min, max } from "zun:math";
 
 function mathAbs(value: number): number {
     if (value < 0.0) { return -value; }
@@ -14,14 +13,3 @@ function mathClamp(value: number, low: number, high: number): number {
     return value;
 }
 
-function mathSqrt(value: number): number {
-    return sqrt(value);
-}
-
-function mathMin(left: number, right: number): number {
-    return min(left, right);
-}
-
-function mathMax(left: number, right: number): number {
-    return max(left, right);
-}
