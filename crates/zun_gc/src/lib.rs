@@ -34,8 +34,10 @@ pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
 mod collection;
 mod object;
+mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
+use weak_state::{Ephemeron, FinalizerEntry, WeakSlot};
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
     bytes.iter().fold(1469598103934665603, |hash, byte| {
@@ -70,23 +72,6 @@ const CHUNK_SLOTS: usize = 64 * 1024;
 /// The size of one object slot in bytes.
 pub use zun_core::SLOT_SIZE;
 pub use object::Obj;
-
-#[derive(Debug, Clone, Copy)]
-struct WeakSlot {
-    target: Option<usize>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct Ephemeron {
-    entries: Vec<(usize, usize)>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct FinalizerEntry {
-    target: usize,
-    token: u64,
-    queued: bool,
-}
 
 /// Bookkeeping for one allocated object, enabling the sweep phase.
 #[derive(Debug)]
