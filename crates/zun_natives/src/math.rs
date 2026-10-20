@@ -46,6 +46,27 @@ fn receiver_value(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
     }
 }
 
+fn unary_float(args: &[NativeArg], name: &str, operation: fn(f64) -> f64) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError(format!("{name}: expected a number"))),
+    };
+    Ok(NativeValue::Float(operation(value)))
+}
+
+fn floor(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "floor", f64::floor)
+}
+
+fn ceil(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "ceil", f64::ceil)
+}
+
+fn round(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "round", f64::round)
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -57,6 +78,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "sqrtNumber", params: &[F64], ret: F64, imp: sqrt },
         NativeFn { name: "minNumber", params: &[F64, F64], ret: F64, imp: min },
         NativeFn { name: "maxNumber", params: &[F64, F64], ret: F64, imp: max },
+        NativeFn { name: "floor", params: &[F64], ret: F64, imp: floor },
+        NativeFn { name: "ceil", params: &[F64], ret: F64, imp: ceil },
+        NativeFn { name: "round", params: &[F64], ret: F64, imp: round },
         NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
     ],
 };

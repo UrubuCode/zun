@@ -392,6 +392,17 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn math_rounding_matches_numeric_expectations() {
+        let mut sink = TestSink;
+        let (floor_id, _) = resolve("zun:math", "floor").unwrap();
+        let (ceil_id, _) = resolve("zun:math", "ceil").unwrap();
+        let (round_id, _) = resolve("zun:math", "round").unwrap();
+        assert!(matches!(dispatch(floor_id, &[NativeArg::Float(-1.2)], &mut sink).unwrap(), NativeValue::Float(v) if v == -2.0));
+        assert!(matches!(dispatch(ceil_id, &[NativeArg::Float(-1.2)], &mut sink).unwrap(), NativeValue::Float(v) if v == -1.0));
+        assert!(matches!(dispatch(round_id, &[NativeArg::Float(1.6)], &mut sink).unwrap(), NativeValue::Float(v) if v == 2.0));
+    }
+
     struct TestSink;
 
     impl Sink for TestSink {
