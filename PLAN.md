@@ -193,7 +193,7 @@ contrato observável no código e um teste que o exercite.
 - **Entregue parcialmente:** resolução de exports e `MemberRef` entre escopos
   carregados. Imports de módulos de usuário são validados no build, mas ainda
   não são baixados para uma chamada executável no VM.
-- **Ainda aberto:** lowering de `async/await` no compilador, ABI/FFI tipado
+- **Ainda aberto:** generators baseados em state machines, ABI/FFI tipado
   integrado à IL, bindings Node N-API, AOT/R2R completo para métodos fora do
   subconjunto escalar, substituição de frames por OSR e trimming completo de
   metadata/diagnósticos.
@@ -378,11 +378,12 @@ mirroring the way weak collections forced dedicated GC work.
   unwind, cross-frame propagation, and finally-on-return/throw are covered;
   Cranelift methods with exception regions explicitly fall back to the
   interpreter.*
-- Iteration protocol (`for...of`, `Symbol.iterator`) and, later, generators
+- Iteration protocol (`for...of`, `Symbol.iterator`) and generators
   (`function*`). Generators lower to a state machine, reusing the async
   state-machine substrate. *Status: `SymbolRegistry`, `for...of` for Array,
   Map, and Set, and source-level iterator calls are implemented in Tier 0;
-  generators belong to Phase 4 and remain pending.*
+  `yield` is represented by the parser/AST; generator declaration syntax,
+  state-machine lowering, and runtime resume remain pending.*
 
 **Group 2 — syntactic / medium features (no deep runtime change):** spread/rest
 (`...`), array and object destructuring, default and rest parameters, optional
