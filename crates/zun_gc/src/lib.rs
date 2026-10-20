@@ -22,6 +22,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+mod native_roots;
+pub use native_roots::{append_native_roots, NativeRootScope};
+
 mod collection;
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
@@ -1439,51 +1442,6 @@ thread_local! {
     /// sets it before executing and clears it after, so interpreter and JIT
     /// share one heap. Raw pointer because the heap is owned on the stack.
     static CURRENT_HEAP: std::cell::Cell<*mut Heap> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-    /// Native frames currently active above the interpreter. Each entry is a
-    /// borrowed root slice registered by a short-lived [`NativeRootScope`].
-    static NATIVE_ROOTS: std::cell::RefCell<Vec<(*const Obj, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Guard that exposes object references held by a native/JIT frame to GC.
-///
-/// The slice must remain alive and unchanged until this guard is dropped.
-#[derive(Debug)]
-pub struct NativeRootScope {
-    _private: (),
-}
-
-impl NativeRootScope {
-    /// Register `roots` for the duration of a native call.
-    ///
-    /// # Safety
-    /// `roots` must remain allocated and unchanged until the returned guard is
-    /// dropped. The caller must also ensure every entry belongs to the current
-    /// heap.
-    pub unsafe fn enter(roots: &[Obj]) -> Self {
-        NATIVE_ROOTS.with(|registered| {
-            registered.borrow_mut().push((roots.as_ptr(), roots.len()));
-        });
-        Self { _private: () }
-    }
-}
-
-impl Drop for NativeRootScope {
-    fn drop(&mut self) {
-        NATIVE_ROOTS.with(|registered| {
-            registered.borrow_mut().pop();
-        });
-    }
-}
-
-/// Append roots registered by active native frames to a GC root set.
-pub fn append_native_roots(roots: &mut Vec<Obj>) {
-    NATIVE_ROOTS.with(|registered| {
-        for &(ptr, len) in registered.borrow().iter() {
-            // SAFETY: each scope promises that its borrowed slice remains
-            // valid until the scope is dropped.
-            roots.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) });
-        }
-    });
 }
 
 /// A native safepoint description published by a code generator.
