@@ -183,6 +183,11 @@ impl ModuleManifest {
         bytes
     }
 
+    /// Write the manifest to a file using its deterministic binary encoding.
+    pub fn write_file(&self, path: impl AsRef<Path>) -> Result<(), LoadError> {
+        std::fs::write(path, self.write()).map_err(LoadError::Io)
+    }
+
     /// Decode a manifest produced by [`ModuleManifest::write`].
     pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
         let mut cursor = 0;
@@ -210,6 +215,12 @@ impl ModuleManifest {
             entry,
             dependencies,
         })
+    }
+
+    /// Read a manifest from a file without scanning the surrounding directory.
+    pub fn read_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
+        let bytes = std::fs::read(path).map_err(LoadError::Io)?;
+        Self::read(&bytes)
     }
 
     /// Validate that every manifest identity is present in a loader.
@@ -659,5 +670,19 @@ mod tests {
         let mut trailing = bytes;
         trailing.push(0);
         assert!(ModuleManifest::read(&trailing).is_err());
+    }
+
+    #[test]
+    fn manifest_file_roundtrip() {
+        let manifest = ModuleManifest::new("app", vec!["core".into()]);
+        let path = std::env::temp_dir().join(format!(
+            "zun-manifest-{}-{}.zman",
+            std::process::id(),
+            manifest.dependencies.len()
+        ));
+        manifest.write_file(&path).expect("write manifest");
+        let loaded = ModuleManifest::read_file(&path).expect("read manifest");
+        std::fs::remove_file(&path).expect("remove manifest");
+        assert_eq!(loaded, manifest);
     }
 }
