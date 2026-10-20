@@ -604,6 +604,9 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
 #[cfg(test)]
 mod method_tests {
     use super::*;
+    use zun_il::{encode, Instruction, Operand};
+    use zun_metadata::{MethodDef, TableKind, Token};
+    use zun_module::write_body;
 
     #[test]
     fn runs_non_entry_method_with_arguments() {
@@ -620,6 +623,45 @@ mod method_tests {
         )
         .expect("run method");
         assert!(matches!(result, Value::Int(42, zun_il::NumKind::I32)));
+    }
+
+    #[test]
+    fn executes_dynamic_property_il() {
+        let mut module = zun_module::Module::new();
+        let property = module.strings.intern("answer");
+        let mut code = Vec::new();
+        for instruction in [
+            Instruction::simple(Opcode::NewDynamic),
+            Instruction::simple(Opcode::Dup),
+            Instruction::new(Opcode::ConstI32, Operand::Imm32(41)),
+            Instruction::simple(Opcode::BoxAny),
+            Instruction::new(Opcode::StoreDynamic, Operand::StringRef(property.0)),
+            Instruction::simple(Opcode::Pop),
+            Instruction::new(Opcode::LoadDynamic, Operand::StringRef(property.0)),
+            Instruction::simple(Opcode::UnboxAny),
+            Instruction::simple(Opcode::Ret),
+        ] {
+            encode(&instruction, &mut code);
+        }
+        let offset = write_body(
+            &mut module.code,
+            0,
+            0,
+            true,
+            zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(),
+            &[],
+            &code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("main"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: offset,
+        });
+        module.entry_point = Some(Token::new(TableKind::MethodDef, 1));
+
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("dynamic property IL");
+        assert!(matches!(result, Value::Int(41, zun_il::NumKind::I64)));
     }
 }
 
