@@ -1,0 +1,24 @@
+// Managed error hierarchy. Construction and throwing remain compiler/runtime
+// integration work; these classes establish the stable standard-library types.
+
+class Error {
+    message: string;
+}
+
+class EvalError extends Error {
+}
+
+class RangeError extends Error {
+}
+
+class ReferenceError extends Error {
+}
+
+class SyntaxError extends Error {
+}
+
+class TypeError extends Error {
+}
+
+class URIError extends Error {
+}

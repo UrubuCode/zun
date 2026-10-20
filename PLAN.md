@@ -396,6 +396,10 @@ and `reduce`) are not considered implemented by wrappers: they require a
 complete function-value representation, capture handling, indirect-call IL,
 verifier support, interpreter dispatch, and equivalent JIT lowering.
 
+The managed error hierarchy is now declared in `std/error.zun` with `Error`
+and the standard ECMAScript error subtypes. Throwing, stack capture, and
+constructor lowering remain runtime/compiler gates.
+
 The release benchmark rerun on 2026-10-20 measured 454.657 ns/iteration for
 the integer Tier 0 loop and 0.480 ns/iteration for the equivalent JIT loop
 (947.53x). The metadata-focused Tier 0 workloads measured 360.892
