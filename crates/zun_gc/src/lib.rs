@@ -601,6 +601,48 @@ impl Heap {
                         }
                     }
                 }
+                if let Some(properties) = self.dynamic_objects.get(&(obj.addr() as usize)) {
+                    for child in properties.object_references() {
+                        if let Some(&child_idx) = self.by_addr.get(&child) {
+                            if !self.records[child_idx].marked {
+                                self.records[child_idx].marked = true;
+                                work.push(child_idx);
+                            }
+                        }
+                    }
+                }
+                if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
+                    for child in array.object_references() {
+                        if let Some(&child_idx) = self.by_addr.get(&child) {
+                            if !self.records[child_idx].marked {
+                                self.records[child_idx].marked = true;
+                                work.push(child_idx);
+                            }
+                        }
+                    }
+                }
+                if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
+                    for (key, value) in map.iter() {
+                        for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
+                            if let Some(&child_idx) = self.by_addr.get(&child) {
+                                if !self.records[child_idx].marked {
+                                    self.records[child_idx].marked = true;
+                                    work.push(child_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
+                    for (key, _) in set.iter() {
+                        if let Some(&child_idx) = key.as_object().and_then(|child| self.by_addr.get(&child)) {
+                            if !self.records[child_idx].marked {
+                                self.records[child_idx].marked = true;
+                                work.push(child_idx);
+                            }
+                        }
+                    }
+                }
             }
             if !promoted { break; }
         }
@@ -1003,6 +1045,19 @@ mod tests {
         assert!(heap.weak_map_set(weak_map, key2, value2));
         assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 3);
         assert_eq!(heap.weak_map_get(weak_map), None);
+    }
+
+    #[test]
+    fn weak_map_promotion_traces_dynamic_value_children() {
+        let mut heap = Heap::new();
+        let weak_map = heap.weak_map_new();
+        let key = heap.alloc(1, 0);
+        let value = heap.alloc_dynamic();
+        let child = heap.alloc(2, 0);
+        heap.dynamic_set(value, "child", zun_core::Any::object(child.addr() as usize));
+        heap.weak_map_set(weak_map, key, value);
+        assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 0);
+        assert_eq!(heap.live_count(), 3);
     }
 
     #[test]

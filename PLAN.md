@@ -376,7 +376,8 @@ The following runtime contracts are implemented and covered by tests:
   `Symbol.for`-style keys; iterator protocol bindings remain a source/compiler
   integration gate.
 - GC weak-reference slots with post-mark clearing; `WeakMap` ephemeron
-  fixed-point marking is now implemented for direct object values; finalization
+  fixed-point marking is now implemented for managed object values and their
+  dynamic/collection children; finalization
   queues are now exposed as a post-sweep token queue; source-level bindings and
   callback scheduling remain separate follow-up gates.
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
