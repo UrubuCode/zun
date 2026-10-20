@@ -1,4 +1,4 @@
-use super::{Heap, Obj, Record, CHUNK_SLOTS};
+use super::{Ephemeron, FinalizationId, FinalizerEntry, Heap, Obj, Record, WeakMapId, WeakRefId, WeakSlot, CHUNK_SLOTS};
 
 impl Heap {
     pub fn new() -> Self {
@@ -187,5 +187,30 @@ impl Heap {
             zun_core::ErrorValue::new(name, message),
         );
         object
+    }
+
+    pub fn weak_ref_new(&mut self, target: Obj) -> WeakRefId {
+        let id = WeakRefId(self.weak_refs.len() as u32);
+        self.weak_refs.push(WeakSlot { target: Some(target.addr() as usize) });
+        id
+    }
+
+    pub fn weak_map_new(&mut self) -> WeakMapId {
+        let id = WeakMapId(self.weak_maps.len() as u32);
+        self.weak_maps.push(Ephemeron::default());
+        id
+    }
+
+    pub fn alloc_weak_map(&mut self) -> Obj {
+        let object = self.alloc(0, 0);
+        let id = self.weak_map_new();
+        self.weak_map_objects.insert(object.addr() as usize, id);
+        object
+    }
+
+    pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
+        let id = FinalizationId(self.finalizers.len() as u32);
+        self.finalizers.push(FinalizerEntry { target: target.addr() as usize, token, queued: false });
+        id
     }
 }

@@ -954,33 +954,11 @@ impl Heap {
         self.symbols.len()
     }
 
-    pub fn weak_ref_new(&mut self, target: Obj) -> WeakRefId {
-        let id = WeakRefId(self.weak_refs.len() as u32);
-        self.weak_refs.push(WeakSlot {
-            target: Some(target.addr() as usize),
-        });
-        id
-    }
-
     pub fn weak_ref_get(&self, id: WeakRefId) -> Option<Obj> {
         let address = self.weak_refs.get(id.0 as usize)?.target?;
         self.by_addr
             .get(&address)
             .map(|&index| Obj(self.records[index].addr))
-    }
-
-    pub fn weak_map_new(&mut self) -> WeakMapId {
-        let id = WeakMapId(self.weak_maps.len() as u32);
-        self.weak_maps.push(Ephemeron::default());
-        id
-    }
-
-    /// Allocate the managed object used as a source-level WeakMap handle.
-    pub fn alloc_weak_map(&mut self) -> Obj {
-        let object = self.alloc(0, 0);
-        let id = self.weak_map_new();
-        self.weak_map_objects.insert(object.addr() as usize, id);
-        object
     }
 
     pub fn weak_map_set_object(&mut self, object: Obj, key: Obj, value: Obj) -> bool {
@@ -1077,16 +1055,6 @@ impl Heap {
                 Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
             })
             .collect()
-    }
-
-    pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
-        let id = FinalizationId(self.finalizers.len() as u32);
-        self.finalizers.push(FinalizerEntry {
-            target: target.addr() as usize,
-            token,
-            queued: false,
-        });
-        id
     }
 
     /// Drain tokens whose targets were reclaimed by the last collection.
