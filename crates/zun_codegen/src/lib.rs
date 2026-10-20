@@ -259,6 +259,14 @@ impl Jit {
             stack_map_registry: zun_gc::StackMapRegistry::new(),
         };
 
+        let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
+        for (index, method) in zm.tables.method_defs.iter().enumerate() {
+            methods_by_name
+                .entry(method.name)
+                .or_default()
+                .push(index as u32 + 1);
+        }
+
         for &rid in &eligible {
             let body = read_body(
                 &zm.code,
@@ -302,12 +310,14 @@ impl Jit {
                 };
                 if instr.opcode == zun_il::Opcode::CallVirt {
                     let name = zm.tables.method_defs[token.rid() as usize - 1].name;
-                    callees.extend(zm.tables.method_defs.iter().enumerate().filter_map(
-                        |(index, method)| {
-                            (method.name == name && eligible.contains(&(index as u32 + 1)))
-                                .then_some(index as u32 + 1)
-                        },
-                    ));
+                    callees.extend(
+                        methods_by_name
+                            .get(&name)
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .filter(|rid| eligible.contains(rid)),
+                    );
                 } else if eligible.contains(&token.rid()) {
                     callees.push(token.rid());
                 }

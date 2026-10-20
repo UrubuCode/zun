@@ -134,6 +134,13 @@ fn kind_supported(byte: u8) -> bool {
 
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
+    let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
+    for (index, method) in module.tables.method_defs.iter().enumerate() {
+        methods_by_name
+            .entry(method.name)
+            .or_default()
+            .push(index as u32 + 1);
+    }
     let mut candidate: HashMap<u32, Vec<u32>> = HashMap::new();
     for (i, method) in module.tables.method_defs.iter().enumerate() {
         let rid = i as u32 + 1;
@@ -176,12 +183,16 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
                 let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
                     continue;
                 };
-                callees.extend(module.tables.method_defs.iter().enumerate().filter_map(
-                    |(index, candidate)| {
-                        (candidate.name == method.name && candidate.body_offset != u32::MAX)
-                            .then_some(index as u32 + 1)
-                    },
-                ));
+                callees.extend(
+                    methods_by_name
+                        .get(&method.name)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .filter(|rid| {
+                            module.tables.method_defs[*rid as usize - 1].body_offset != u32::MAX
+                        }),
+                );
             } else {
                 callees.push(token.rid());
             }
