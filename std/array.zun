@@ -449,6 +449,12 @@ class Array {
         return result;
     }
 
+    symmetricDifference(other: Array): Array {
+        let leftOnly = this.difference(other);
+        let rightOnly = other.difference(this);
+        return leftOnly.union(rightOnly);
+    }
+
     count(value: any): u64 {
         let total: u64 = 0;
         let index: u64 = 0;
