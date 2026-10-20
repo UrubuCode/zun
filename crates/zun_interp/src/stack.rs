@@ -38,6 +38,25 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
     Ok(())
 }
 
+pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let equal = match (&a, &b) {
+        (Value::Float(x, _), Value::Float(y, _)) => x == y,
+        (Value::Int(x, _), Value::Int(y, _)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
+        (Value::Null, Value::Null) => true,
+        (Value::Any(x), Value::Null) | (Value::Null, Value::Any(x)) => {
+            x.tag() == zun_core::AnyTag::Null
+        }
+        _ => false,
+    };
+    stack.push(Value::Bool(equal == want_equal));
+    Ok(())
+}
+
 pub(crate) fn underflow() -> RunError {
     RunError::Malformed("stack underflow".to_string())
 }

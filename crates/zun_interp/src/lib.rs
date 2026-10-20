@@ -18,7 +18,8 @@ use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
 use stack::{
-    bin_float, bin_int, bin_int_signed_aware, compare, convert, pop, pop_n, underflow, Ordering,
+    bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
+    Ordering,
 };
 use std::rc::Rc;
 use value::Value;
@@ -3822,28 +3823,6 @@ mod method_tests {
 /// A relational comparison operator.
 /// Ordered comparison over two ints (signed or unsigned by kind) or two floats;
 /// sema guarantees the operands share a numeric kind.
-/// Structural equality for `==`/`!=` across the primitive types. `want_equal`
-/// is true for `==` and false for `!=`.
-fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
-    let b = pop(stack)?;
-    let a = pop(stack)?;
-    let equal = match (&a, &b) {
-        (Value::Float(x, _), Value::Float(y, _)) => x == y,
-        (Value::Int(x, _), Value::Int(y, _)) => x == y,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Str(x), Value::Str(y)) => x == y,
-        // Reference identity: two object refs are equal iff the same object.
-        (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
-        (Value::Null, Value::Null) => true,
-        (Value::Any(x), Value::Null) | (Value::Null, Value::Any(x)) => {
-            x.tag() == zun_core::AnyTag::Null
-        }
-        _ => false,
-    };
-    stack.push(Value::Bool(equal == want_equal));
-    Ok(())
-}
-
 fn branch_target(instr_end: usize, operand: &Operand) -> usize {
     let disp = match operand {
         Operand::Branch(d) => *d,
