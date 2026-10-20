@@ -374,6 +374,21 @@ mod tests {
         assert_eq!(trimmed.tables.method_defs[1].body_offset, u32::MAX);
         assert_ne!(trimmed.tables.method_defs[2].body_offset, u32::MAX);
         assert_eq!(trimmed.entry_point, module.entry_point);
+        for method in &trimmed.tables.method_defs {
+            if method.body_offset == u32::MAX {
+                continue;
+            }
+            let body = read_body(&trimmed.code, method.body_offset).expect("trimmed body");
+            let info = zun_verify::MethodInfo {
+                local_count: body.local_count,
+                returns_value: body.returns_value,
+            };
+            zun_verify::verify(body.code, info, &|opcode, _| {
+                matches!(opcode, zun_il::Opcode::Call | zun_il::Opcode::CallVirt)
+                    .then_some((0, 1))
+            })
+            .expect("trimmed module remains verifiable");
+        }
     }
 
     #[test]
