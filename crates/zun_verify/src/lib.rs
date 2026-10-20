@@ -303,7 +303,7 @@ fn verify_stack(
                         let target = targets.branch_to[idx].expect("branch has a target");
                         work.push((target, height));
                     }
-                    Opcode::Throw => {
+                    Opcode::Throw | Opcode::Rethrow => {
                         if height == 0 {
                             return Err(VerifyError {
                                 offset: instr.offset,

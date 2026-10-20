@@ -407,6 +407,9 @@ impl FnLowerer<'_> {
                 self.stmts(body);
                 let try_end = self.code.len() as u32;
                 let mut exits = Vec::new();
+                if let Some(finally_body) = finally_body {
+                    self.stmts(finally_body);
+                }
                 exits.push(self.emit_branch(Opcode::Branch));
 
                 for catch in catches {
@@ -418,6 +421,9 @@ impl FnLowerer<'_> {
                         Operand::Local(catch.slot),
                     ));
                     self.stmts(&catch.body);
+                    if let Some(finally_body) = finally_body {
+                        self.stmts(finally_body);
+                    }
                     let handler_end = self.code.len() as u32;
                     exits.push(self.emit_branch(Opcode::Branch));
                     self.handlers.push(ExceptionHandler {
@@ -436,6 +442,7 @@ impl FnLowerer<'_> {
                 if let Some(finally_body) = finally_body {
                     let handler_start = self.code.len() as u32;
                     self.stmts(finally_body);
+                    self.emit(Instruction::simple(Opcode::Rethrow));
                     let handler_end = self.code.len() as u32;
                     self.handlers.push(ExceptionHandler {
                         try_start,

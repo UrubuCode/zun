@@ -214,6 +214,8 @@ define_opcodes! {
     Ret = 0x63, None, "ret", StackEffect::Terminator;
     /// Throw the exception object on top of the evaluation stack.
     Throw = 0x84, None, "throw", StackEffect::Terminator;
+    /// Rethrow the current exception after executing a finally handler.
+    Rethrow = 0x85, None, "rethrow", StackEffect::Terminator;
 
     // --- objects and calls (operand is a metadata token) ---
     /// Allocate an object and run its constructor.

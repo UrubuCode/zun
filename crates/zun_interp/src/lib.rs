@@ -500,6 +500,9 @@ impl Interp<'_> {
                         return Err(RunError::Thrown(exception));
                     }
                 }
+                Opcode::Rethrow => {
+                    return Err(RunError::Thrown(pop(&mut stack)?));
+                }
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);
                     if token.table() == Some(TableKind::MemberRef) {
