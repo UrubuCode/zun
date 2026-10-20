@@ -87,6 +87,18 @@ fn extern_method_uses_interpreter_fallback_until_native_jit_lowering_exists() {
 }
 
 #[test]
+fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
+    let module = zun_compiler::compile(
+        "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",
+    )
+    .expect("compile array program");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with array fallback");
+    assert!(!jit.is_compiled(entry), "array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 41.0));
+}
+
+#[test]
 fn unsigned_wrap_u8() {
     assert_equivalent(
         "function main(): u8 { let b: u8 = 250; return b + 10 as u8; }",
