@@ -27,6 +27,29 @@ fn contains(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
     }
 }
 
+fn index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("indexOf: expected a string".to_string())),
+    };
+    let needle = match args.get(1) {
+        Some(NativeArg::Str(needle)) => needle,
+        _ => return Err(NativeError("indexOf: expected a search string".to_string())),
+    };
+    let value_units: Vec<u16> = value.encode_utf16().collect();
+    let needle_units: Vec<u16> = needle.encode_utf16().collect();
+    let index = if needle_units.is_empty() {
+        0
+    } else {
+        value_units
+            .windows(needle_units.len())
+            .position(|window| window == needle_units.as_slice())
+            .map(|index| index as i64)
+            .unwrap_or(-1)
+    };
+    Ok(NativeValue::Int(index))
+}
+
 fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -87,6 +110,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "length", params: &[Str], ret: U64, imp: length },
         NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
+        NativeFn { name: "indexOf", params: &[Str, Str], ret: I32, imp: index_of },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },

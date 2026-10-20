@@ -101,6 +101,20 @@ fn string_primitive_methods_use_static_class_binding() {
 }
 
 #[test]
+fn string_index_of_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { indexOf } from \"zun:string\";\n\
+         class String { extern indexOf(needle: string): int; }\n\
+         function main(): int { let value: string = \"😀zun\"; return value.indexOf(\"zun\"); }",
+    )
+    .expect("compile String indexOf");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(2, zun_il::NumKind::I32)));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\

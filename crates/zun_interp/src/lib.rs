@@ -909,6 +909,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_index_of_with_utf16_indices() {
+        let module = zun_compiler::compile(
+            "import { indexOf } from \"zun:string\";\n\
+             class String { extern indexOf(needle: string): int; }\n\
+             function main(): int { let value: string = \"😀zun\"; return value.indexOf(\"zun\"); }",
+        )
+        .expect("compile String indexOf");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String indexOf");
+        assert!(matches!(result, Value::Int(2, zun_il::NumKind::I32)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
