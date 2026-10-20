@@ -107,15 +107,6 @@ pub struct Heap {
 }
 
 impl Heap {
-    /// Allocate a DataView whose first field keeps its backing buffer alive.
-    pub fn alloc_data_view(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::DataView::new(self.buffer_len(buffer)?, offset, length)?;
-        let object = self.alloc(0, 1);
-        object.set_field(0, buffer.addr() as u64);
-        self.data_views.insert(object.addr() as usize, view);
-        Some(object)
-    }
-
     pub fn data_view_get_u32(
         &self,
         object: Obj,
