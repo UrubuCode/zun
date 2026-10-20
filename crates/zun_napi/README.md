@@ -17,6 +17,9 @@ into caller-owned storage and reports the required size when the buffer is too
 small. Call it first with `out = null` and `out_len = 0` to query the required
 size, then allocate that many bytes and call it again to copy the result.
 
+Status codes are exported as `ZUN_HOST_OK`, `ZUN_HOST_INVALID_ARGUMENT`,
+`ZUN_HOST_VM_ERROR`, and `ZUN_HOST_BUFFER_TOO_SMALL`.
+
 On platforms that require an import library, provide the Node N-API library at
 build time:
 

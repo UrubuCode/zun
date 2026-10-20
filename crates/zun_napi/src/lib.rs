@@ -243,6 +243,15 @@ pub struct ZunHost {
     _private: (),
 }
 
+/// Successful host call.
+pub const ZUN_HOST_OK: i32 = 0;
+/// One or more host pointers or buffer arguments are invalid.
+pub const ZUN_HOST_INVALID_ARGUMENT: i32 = 1;
+/// The module failed during execution or returned the wrong value type.
+pub const ZUN_HOST_VM_ERROR: i32 = 2;
+/// The caller's output buffer is too small; the required size is returned.
+pub const ZUN_HOST_BUFFER_TOO_SMALL: i32 = 3;
+
 /// Create an embedding host.
 #[no_mangle]
 pub extern "C" fn zun_host_create() -> *mut ZunHost {
@@ -275,20 +284,20 @@ pub unsafe extern "C" fn zun_host_execute_i64(
     out: *mut i64,
 ) -> i32 {
     if host.is_null() || module_ptr.is_null() || out.is_null() {
-        return 1;
+        return ZUN_HOST_INVALID_ARGUMENT;
     }
     // SAFETY: caller supplies a valid immutable byte range for this call.
     let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
     let value = match zun_vm::execute(bytes) {
         Ok(value) => value,
-        Err(_) => return 2,
+        Err(_) => return ZUN_HOST_VM_ERROR,
     };
     let zun_interp::value::Value::Int(value, _) = value else {
-        return 2;
+        return ZUN_HOST_VM_ERROR;
     };
     // SAFETY: caller supplies writable storage for one i64.
     unsafe { *out = value };
-    0
+    ZUN_HOST_OK
 }
 
 /// Execute a compiled module and return its floating-point result through
@@ -301,20 +310,20 @@ pub unsafe extern "C" fn zun_host_execute_f64(
     out: *mut f64,
 ) -> i32 {
     if host.is_null() || module_ptr.is_null() || out.is_null() {
-        return 1;
+        return ZUN_HOST_INVALID_ARGUMENT;
     }
     // SAFETY: caller supplies a valid immutable byte range for this call.
     let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
     let value = match zun_vm::execute(bytes) {
         Ok(value) => value,
-        Err(_) => return 2,
+        Err(_) => return ZUN_HOST_VM_ERROR,
     };
     let zun_interp::value::Value::Float(value, _) = value else {
-        return 2;
+        return ZUN_HOST_VM_ERROR;
     };
     // SAFETY: caller supplies writable storage for one f64.
     unsafe { *out = value };
-    0
+    ZUN_HOST_OK
 }
 
 /// Execute a compiled module and return its boolean result through `out`.
@@ -327,20 +336,20 @@ pub unsafe extern "C" fn zun_host_execute_bool(
     out: *mut bool,
 ) -> i32 {
     if host.is_null() || module_ptr.is_null() || out.is_null() {
-        return 1;
+        return ZUN_HOST_INVALID_ARGUMENT;
     }
     // SAFETY: caller supplies a valid immutable byte range for this call.
     let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
     let value = match zun_vm::execute(bytes) {
         Ok(value) => value,
-        Err(_) => return 2,
+        Err(_) => return ZUN_HOST_VM_ERROR,
     };
     let zun_interp::value::Value::Bool(value) = value else {
-        return 2;
+        return ZUN_HOST_VM_ERROR;
     };
     // SAFETY: caller supplies writable storage for one bool.
     unsafe { *out = value };
-    0
+    ZUN_HOST_OK
 }
 
 /// Execute a compiled module and copy its UTF-8 string result into `out`.
@@ -359,16 +368,16 @@ pub unsafe extern "C" fn zun_host_execute_string(
     written: *mut usize,
 ) -> i32 {
     if host.is_null() || module_ptr.is_null() || written.is_null() || (out.is_null() && out_len != 0) {
-        return 1;
+        return ZUN_HOST_INVALID_ARGUMENT;
     }
     // SAFETY: caller supplies a valid immutable byte range for this call.
     let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
     let value = match zun_vm::execute(bytes) {
         Ok(value) => value,
-        Err(_) => return 2,
+        Err(_) => return ZUN_HOST_VM_ERROR,
     };
     let zun_interp::value::Value::Str(value) = value else {
-        return 2;
+        return ZUN_HOST_VM_ERROR;
     };
     let value = value.as_bytes();
     // SAFETY: caller supplies writable storage for the required length.
@@ -377,14 +386,14 @@ pub unsafe extern "C" fn zun_host_execute_string(
         return 0;
     }
     if out_len < value.len() {
-        return 3;
+        return ZUN_HOST_BUFFER_TOO_SMALL;
     }
     if !value.is_empty() {
         // SAFETY: the preceding size check proves the destination is large
         // enough and the caller owns the writable buffer for this call.
         unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), out, value.len()) };
     }
-    0
+    ZUN_HOST_OK
 }
 
 #[cfg(test)]
