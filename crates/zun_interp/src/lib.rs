@@ -1843,6 +1843,17 @@ mod method_tests {
     }
 
     #[test]
+    fn optional_managed_method_calls_non_null_receiver() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let value = new Map(); value.set(\"answer\", 41); return value?.size(); }",
+        )
+        .expect("compile optional managed method");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run optional managed method");
+        assert!(matches!(value, Value::Int(1, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn default_parameter_is_used_when_argument_is_omitted() {
         let module = zun_compiler::compile(
             "function add(value: number = 2.0): number { return value; } function main(): number { return add(); }",

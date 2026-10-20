@@ -496,6 +496,8 @@ pub enum ExprKind {
     },
     /// Read a dynamic property, returning null when the receiver is null.
     OptionalDynamicGet { object: Box<Expr>, name: String },
+    /// Null-safe call to a runtime-managed method. The receiver is args[0].
+    OptionalCallBuiltin { id: u32, args: Vec<Expr> },
     /// Write an Any value to a named dynamic property.
     DynamicSet {
         /// The object expression.

@@ -392,6 +392,13 @@ pub enum Expr {
         field: Name,
         span: Span,
     },
+    /// `object?.method(args)` — a null-safe managed method call.
+    OptionalMethodCall {
+        object: Box<Expr>,
+        method: Name,
+        args: Vec<Expr>,
+        span: Span,
+    },
     /// `expr as Type` — a numeric conversion.
     Cast {
         /// The value being converted.
@@ -468,6 +475,7 @@ impl Expr {
             | Expr::ComputedCall { span, .. }
             | Expr::MethodCall { span, .. }
             | Expr::OptionalField { span, .. }
+            | Expr::OptionalMethodCall { span, .. }
             | Expr::Spread { span, .. }
             | Expr::Cast { span, .. }
             | Expr::New { span, .. }

@@ -228,6 +228,15 @@ fn optional_dynamic_access_uses_the_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn optional_managed_method_uses_the_interpreter_fallback_boundary() {
+    let module = compile("function main(): u64 { let value = new Map(); return value?.size(); }");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "optional managed method requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Int(0, _)));
+}
+
+#[test]
 fn default_parameter_uses_the_interpreter_fallback_boundary() {
     let module = compile(
         "function add(value: number = 2.0): number { return value; } function main(): number { return add(); }",

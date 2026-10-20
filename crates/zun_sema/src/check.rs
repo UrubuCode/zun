@@ -333,6 +333,12 @@ impl Checker<'_> {
                     self.collect_mutated_expr(arg, names);
                 }
             }
+            ast::Expr::OptionalMethodCall { object, args, .. } => {
+                self.collect_mutated_expr(object, names);
+                for arg in args {
+                    self.collect_mutated_expr(arg, names);
+                }
+            }
             ast::Expr::Field { object, .. } | ast::Expr::Index { object, .. } => {
                 self.collect_mutated_expr(object, names)
             }
@@ -720,6 +726,12 @@ impl Checker<'_> {
             }
             ast::Expr::MethodCall { receiver, args, .. } => {
                 self.collect_capture_expr(cx, parameters, receiver, uses);
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
+            }
+            ast::Expr::OptionalMethodCall { object, args, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
@@ -2549,6 +2561,72 @@ impl Checker<'_> {
                         name: self.text(field).to_string(),
                     },
                     ty: Ty::Any,
+                    span,
+                }
+            }
+            ast::Expr::OptionalMethodCall {
+                object,
+                method,
+                args,
+                ..
+            } => {
+                let object = self.check_expr(cx, object);
+                let name = self.text(method).to_string();
+                let (native_name, return_ty, expected) = match (object.ty, name.as_str()) {
+                    (Ty::Map, "set") => ("mapSet", Ty::Void, vec![Ty::Any, Ty::Any]),
+                    (Ty::Map, "get") => ("mapGet", Ty::Any, vec![Ty::Any]),
+                    (Ty::Map, "has") => ("mapHas", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Map, "size") => ("mapSize", Ty::Int(IntKind::U64), vec![]),
+                    (Ty::Map, "delete") => ("mapDelete", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Map, "clear") => ("mapClear", Ty::Void, vec![]),
+                    (Ty::Set, "add") => ("setAdd", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Set, "has") => ("setHas", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Set, "size") => ("setSize", Ty::Int(IntKind::U64), vec![]),
+                    (Ty::Set, "delete") => ("setDelete", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Set, "clear") => ("setClear", Ty::Void, vec![]),
+                    (Ty::WeakMap, "set") => {
+                        ("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any])
+                    }
+                    (Ty::WeakMap, "get") => ("weakMapGet", Ty::Any, vec![Ty::Any]),
+                    (Ty::WeakMap, "has") => ("weakMapHas", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakMap, "delete") => {
+                        ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
+                    }
+                    (Ty::Error, _) => return self.poison(span),
+                    (other, _) => {
+                        self.error(
+                            object.span,
+                            format!("optional managed method requires Map, Set, or WeakMap receiver, found {other:?}"),
+                        );
+                        return self.poison(span);
+                    }
+                };
+                if args.len() != expected.len() {
+                    self.error(
+                        span,
+                        format!("`{name}` expects {} argument(s), found {}", expected.len(), args.len()),
+                    );
+                    return self.poison(span);
+                }
+                let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                    return self.poison(span);
+                };
+                let mut call_args = vec![object];
+                for (arg, expected_ty) in args.into_iter().zip(expected) {
+                    let mut value = self.check_expr(cx, arg);
+                    coerce_numeric_literal(&mut value, expected_ty);
+                    if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
+                        self.error(
+                            value.span,
+                            format!("argument type {:?} does not match {expected_ty:?}", value.ty),
+                        );
+                    }
+                    call_args.push(value);
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::OptionalCallBuiltin { id, args: call_args },
+                    ty: return_ty,
                     span,
                 }
             }

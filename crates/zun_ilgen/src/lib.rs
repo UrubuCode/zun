@@ -945,6 +945,25 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::ConstNull));
                 self.patch_to_here(end);
             }
+            ExprKind::OptionalCallBuiltin { id, args } => {
+                self.expr(&args[0]);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_null = self.emit_branch(Opcode::BranchTrue);
+                for arg in &args[1..] {
+                    self.expr(arg);
+                }
+                self.emit(Instruction::new(
+                    Opcode::CallBuiltin,
+                    Operand::Imm32(*id as i32),
+                ));
+                let end = self.emit_branch(Opcode::Branch);
+                self.patch_to_here(use_null);
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.patch_to_here(end);
+            }
             ExprKind::DynamicSet {
                 object,
                 name,

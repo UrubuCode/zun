@@ -810,13 +810,26 @@ impl Parser<'_> {
                 }
                 TokenKind::QuestionDot => {
                     self.bump();
-                    let field = self.name("an optional field name");
-                    let span = expr.span().to(field.span);
-                    expr = Expr::OptionalField {
-                        object: Box::new(expr),
-                        field,
-                        span,
-                    };
+                    let field = self.name("an optional field or method name");
+                    if self.at(TokenKind::LParen) {
+                        self.bump();
+                        let args = self.arguments();
+                        let close = self.tokens[self.pos - 1].span;
+                        let span = expr.span().to(close);
+                        expr = Expr::OptionalMethodCall {
+                            object: Box::new(expr),
+                            method: field,
+                            args,
+                            span,
+                        };
+                    } else {
+                        let span = expr.span().to(field.span);
+                        expr = Expr::OptionalField {
+                            object: Box::new(expr),
+                            field,
+                            span,
+                        };
+                    }
                 }
                 TokenKind::LBracket => {
                     self.bump();
