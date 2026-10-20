@@ -107,31 +107,6 @@ pub struct Heap {
 }
 
 impl Heap {
-    /// Allocate an object backed by a dynamic property bag.
-    pub fn alloc_dynamic(&mut self) -> Obj {
-        let object = self.alloc(0, 0);
-        self.dynamic_objects
-            .insert(object.addr() as usize, zun_core::DynamicObject::new());
-        object
-    }
-
-    /// Allocate an array object with contiguous core-owned storage.
-    pub fn alloc_array(&mut self, length: usize) -> Obj {
-        let object = self.alloc(0, 0);
-        self.arrays.insert(
-            object.addr() as usize,
-            zun_core::ArrayStorage::with_length(length),
-        );
-        object
-    }
-
-    pub fn alloc_buffer(&mut self, length: usize) -> Obj {
-        let object = self.alloc(0, 0);
-        self.buffers
-            .insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
-        object
-    }
-
     /// Allocate a DataView whose first field keeps its backing buffer alive.
     pub fn alloc_data_view(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
         let view = zun_core::DataView::new(self.buffer_len(buffer)?, offset, length)?;

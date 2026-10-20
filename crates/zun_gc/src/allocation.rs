@@ -55,4 +55,27 @@ impl Heap {
         self.by_addr.insert(base as usize, idx);
         Obj(base)
     }
+
+    pub fn alloc_dynamic(&mut self) -> Obj {
+        let object = self.alloc(0, 0);
+        self.dynamic_objects
+            .insert(object.addr() as usize, zun_core::DynamicObject::new());
+        object
+    }
+
+    pub fn alloc_array(&mut self, length: usize) -> Obj {
+        let object = self.alloc(0, 0);
+        self.arrays.insert(
+            object.addr() as usize,
+            zun_core::ArrayStorage::with_length(length),
+        );
+        object
+    }
+
+    pub fn alloc_buffer(&mut self, length: usize) -> Obj {
+        let object = self.alloc(0, 0);
+        self.buffers
+            .insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
+        object
+    }
 }
