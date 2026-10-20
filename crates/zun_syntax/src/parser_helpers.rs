@@ -17,6 +17,27 @@ pub(crate) fn decode_string(raw: &str) -> String {
     out
 }
 
+pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
+    let shift = |span: &mut Span| *span = Span::new(span.start + base, span.end + base);
+    match expr {
+        Expr::Ident(name) => shift(&mut name.span),
+        Expr::Assign { target, value, .. } => { shift(&mut target.span); rebase_expression_names(value, base); }
+        Expr::Binary { lhs, rhs, .. } => { rebase_expression_names(lhs, base); rebase_expression_names(rhs, base); }
+        Expr::Conditional { condition, when_true, when_false, .. } => { rebase_expression_names(condition, base); rebase_expression_names(when_true, base); rebase_expression_names(when_false, base); }
+        Expr::Unary { operand, .. } | Expr::Cast { expr: operand, .. } => rebase_expression_names(operand, base),
+        Expr::Call { callee, args, .. } => { shift(&mut callee.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::ComputedCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::MethodCall { receiver, method, args, .. } | Expr::OptionalMethodCall { object: receiver, method, args, .. } => { rebase_expression_names(receiver, base); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::Spread { expr, .. } => rebase_expression_names(expr, base),
+        Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } => { rebase_expression_names(object, base); shift(&mut field.span); }
+        Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::FieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
+        Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
+        Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
+        Expr::Function(_) | Expr::Number { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
+    }
+}
+
 pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
     let tokens = lex(source, diagnostics);
     let mut parser = Parser { source, tokens, pos: 0, diagnostics };
