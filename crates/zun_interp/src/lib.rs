@@ -1325,6 +1325,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_to_boolean_native_method() {
+        let module = zun_compiler::compile(
+            "import { toBoolean } from \"zun:string\";\n\
+             class String { extern toBoolean(): boolean; }\n\
+             function main(): boolean { let value: string = \" true \"; return value.toBoolean(); }",
+        )
+        .expect("compile String toBoolean");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String toBoolean");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

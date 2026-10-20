@@ -356,6 +356,12 @@ mod tests {
             dispatch(to_float_id, &[NativeArg::Str(" 3.5 ")], &mut sink).unwrap(),
             NativeValue::Float(value) if value == 3.5
         ));
+        let (to_boolean_id, to_boolean_fn) = resolve("zun:string", "toBoolean").unwrap();
+        assert_eq!(to_boolean_fn.params, &[NativeTy::Str]);
+        assert!(matches!(
+            dispatch(to_boolean_id, &[NativeArg::Str(" true ")], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
         assert!(matches!(
             dispatch(length_id, &[NativeArg::Str("😀")], &mut sink).unwrap(),
             NativeValue::Int(2)

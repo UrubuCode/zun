@@ -52,6 +52,18 @@ fn to_float(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
         .map_err(|_| NativeError("toFloat: invalid number string".to_string()))
 }
 
+fn to_boolean(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value.trim(),
+        _ => return Err(NativeError("toBoolean: expected a string".to_string())),
+    };
+    match value {
+        "true" => Ok(NativeValue::Bool(true)),
+        "false" => Ok(NativeValue::Bool(false)),
+        _ => Err(NativeError("toBoolean: expected true or false".to_string())),
+    }
+}
+
 fn contains(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1)) {
         (Some(NativeArg::Str(value)), Some(NativeArg::Str(needle))) => {
@@ -325,6 +337,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "compare", params: &[Str, Str], ret: I32, imp: compare },
         NativeFn { name: "toInt", params: &[Str], ret: I32, imp: to_int },
         NativeFn { name: "toFloat", params: &[Str], ret: F64, imp: to_float },
+        NativeFn { name: "toBoolean", params: &[Str], ret: Bool, imp: to_boolean },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "count", params: &[Str, Str], ret: I32, imp: count },
         NativeFn { name: "includes", params: &[Str, Str], ret: Bool, imp: contains },
