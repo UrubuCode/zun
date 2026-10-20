@@ -782,10 +782,13 @@ impl Checker<'_> {
                     "await is only available after async lowering is implemented",
                 );
                 let checked = self.check_expr(cx, operand);
+                let span = checked.span;
                 hir::Expr {
-                    kind: hir::ExprKind::Null,
+                    kind: hir::ExprKind::Await {
+                        operand: Box::new(checked),
+                    },
                     ty: Ty::Error,
-                    span: checked.span,
+                    span,
                 }
             }
             ast::Expr::Number { value, .. } => hir::Expr {

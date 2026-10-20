@@ -464,6 +464,9 @@ pub enum ExprKind {
         /// The stored value.
         value: Box<Expr>,
     },
+    /// Suspend the async state machine until the operand's Promise settles.
+    /// This remains gated until async state-machine lowering is enabled.
+    Await { operand: Box<Expr> },
     /// A binary operation. Operand types already checked.
     Binary {
         /// The operator.
