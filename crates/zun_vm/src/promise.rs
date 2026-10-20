@@ -347,6 +347,51 @@ impl<T: Send + 'static> Promise<T> {
         });
     }
 
+    /// Schedule cleanup after settlement while preserving the original result
+    /// in a returned promise. The cleanup and settlement are delivered on the
+    /// same microtask turn.
+    pub fn finally_scheduled(
+        &self,
+        queue: Arc<Mutex<MicrotaskQueue>>,
+        cleanup: impl FnOnce() + Send + 'static,
+    ) -> Promise<T> {
+        let completed = Promise::new();
+        let cleanup = Arc::new(Mutex::new(Some(cleanup)));
+        let success = completed.clone_handle();
+        let success_cleanup = Arc::clone(&cleanup);
+        let success_queue = Arc::clone(&queue);
+        self.then(move |value| {
+            let mut queue = success_queue.lock().expect("microtask mutex poisoned");
+            queue.schedule(move || {
+                if let Some(cleanup) = success_cleanup
+                    .lock()
+                    .expect("promise mutex poisoned")
+                    .take()
+                {
+                    cleanup();
+                }
+                success.resolve(value);
+            });
+        });
+        let failure = completed.clone_handle();
+        let failure_cleanup = Arc::clone(&cleanup);
+        let failure_queue = Arc::clone(&queue);
+        self.catch(move |error| {
+            let mut queue = failure_queue.lock().expect("microtask mutex poisoned");
+            queue.schedule(move || {
+                if let Some(cleanup) = failure_cleanup
+                    .lock()
+                    .expect("promise mutex poisoned")
+                    .take()
+                {
+                    cleanup();
+                }
+                failure.reject(error);
+            });
+        });
+        completed
+    }
+
     /// Whether the promise has already been resolved.
     pub fn is_resolved(&self) -> bool {
         self.state.load(Ordering::Acquire) == RESOLVED
@@ -709,6 +754,24 @@ mod tests {
         assert!(promise.reject("boom"));
         assert_eq!(completed.state(), PromiseState::Rejected);
         assert_eq!(completed.error().as_deref(), Some("boom"));
+        assert!(cleaned.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn finally_scheduled_defers_cleanup_and_preserves_settlement() {
+        let promise = Promise::new();
+        let queue = Arc::new(Mutex::new(MicrotaskQueue::default()));
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&cleaned);
+        let completed = promise.finally_scheduled(Arc::clone(&queue), move || {
+            marker.store(true, Ordering::SeqCst)
+        });
+        assert!(promise.resolve(7));
+        assert_eq!(completed.state(), PromiseState::Pending);
+        assert!(!cleaned.load(Ordering::SeqCst));
+        queue.lock().unwrap().run_all();
+        assert_eq!(completed.state(), PromiseState::Resolved);
+        assert!(!completed.is_rejected());
         assert!(cleaned.load(Ordering::SeqCst));
     }
 
