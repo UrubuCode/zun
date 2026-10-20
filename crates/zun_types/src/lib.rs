@@ -87,6 +87,30 @@ mod tests {
     }
 
     #[test]
+    fn vtable_uses_virtual_slots_instead_of_method_rids() {
+        let module = zun_compiler::compile(
+            "class Base { speak(): int { return 1; } }
+             class Derived extends Base { speak(): int { return 2; } }
+             function helper(): int { return 3; }
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        let speak = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "speak")
+            .map(|index| index as u32 + 1)
+            .expect("speak method");
+        let slots = types.virtual_slot_count();
+        assert!(slots <= module.tables.method_defs.len());
+        let slot = types.virtual_slot(speak).expect("speak slot");
+        assert!(slot < slots);
+        assert_eq!(types.get(2).expect("derived type").vtable.len(), slots);
+    }
+
+    #[test]
     fn layout_exposes_reference_field_slots() {
         let module = zun_compiler::compile(
             "class Child { value: int; }\n\
@@ -206,6 +230,16 @@ impl TypeSystem {
             .get(slot)
             .copied()
             .filter(|&rid| rid != 0)
+    }
+
+    /// Resolve a method RID to its compact virtual slot.
+    pub fn virtual_slot(&self, method_rid: u32) -> Option<usize> {
+        self.method_slots.get(method_rid as usize).copied().flatten()
+    }
+
+    /// Number of virtual slots materialized in each type vtable.
+    pub fn virtual_slot_count(&self) -> usize {
+        self.method_slots.iter().filter(|slot| slot.is_some()).count()
     }
 
     /// Number of local type descriptors.
