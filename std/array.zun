@@ -296,6 +296,18 @@ class Array {
         return true;
     }
 
+    isDescending(): boolean {
+        if (this.length < 2) { return true; }
+        let index: u64 = 1;
+        while (index < this.length) {
+            let previous: number = this[index - 1] as number;
+            let current: number = this[index] as number;
+            if (current > previous) { return false; }
+            index = index + 1;
+        }
+        return true;
+    }
+
     sum(): number {
     let total: number = 0.0;
     let index: u64 = 0;
