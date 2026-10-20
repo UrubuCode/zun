@@ -33,6 +33,7 @@ pub use stack_maps::{NativeStackMap, StackMapRegistry};
 pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
 
 mod collection;
+mod allocation;
 mod object;
 mod records;
 mod value_ops;
@@ -106,11 +107,6 @@ pub struct Heap {
 }
 
 impl Heap {
-    /// Create an empty heap.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Allocate an object with `field_count` fields of type `type_rid`,
     /// returning a pointer to it. Fields start zeroed. A freed block of the
     /// same field count is reused before bump-allocating a new one.
@@ -157,18 +153,6 @@ impl Heap {
         });
         self.by_addr.insert(base as usize, idx);
         Obj(base)
-    }
-
-    fn allocate_identity_hash(&mut self) -> u64 {
-        if self.next_identity_hash == 0 {
-            self.next_identity_hash = 1;
-        }
-        let hash = self.next_identity_hash;
-        self.next_identity_hash = self
-            .next_identity_hash
-            .checked_add(1)
-            .expect("identity hash exhausted");
-        hash
     }
 
     /// Allocate an object backed by a dynamic property bag.
