@@ -347,6 +347,15 @@ impl Checker<'_> {
     }
 
     fn collect_signatures(&mut self, program: &ast::Program) {
+        // Register every top-level name before resolving annotations. This
+        // permits a function-typed parameter to refer to a function declared
+        // later in the source file.
+        for (index, f) in program.functions.iter().enumerate() {
+            let name = self.text(&f.name).to_string();
+            if self.by_name.insert(name, index as u32).is_some() {
+                self.error(f.name.span, "duplicate function declaration");
+            }
+        }
         for f in &program.functions {
             let name = self.text(&f.name).to_string();
             let params = f
@@ -367,10 +376,6 @@ impl Checker<'_> {
                 Some(t) => self.resolve_annotation(t),
                 None => Ty::Void,
             };
-            let index = self.signatures.len() as u32;
-            if self.by_name.insert(name.clone(), index).is_some() {
-                self.error(f.name.span, format!("duplicate function `{name}`"));
-            }
             self.signatures.push(Signature {
                 name,
                 params,
