@@ -1,41 +1,44 @@
-// Core array helpers implemented in Zun source.
+// Array is a managed primitive-backed class. Its storage operations lower to
+// dedicated IL instructions while higher-level helpers remain source methods.
 
-function arrayLength(values: Array): u64 {
-    return values.length;
-}
+class Array {
+    length(): u64 {
+        return this.length;
+    }
 
-function arrayPush(values: Array, value: any): u64 {
-    return values.push(value);
-}
+    push(value: any): u64 {
+        return this.push(value);
+    }
 
-function arrayPop(values: Array): any {
-    return values.pop();
-}
+    pop(): any {
+        return this.pop();
+    }
 
-function arrayGet(values: Array, index: u64): any {
-    return values[index];
-}
+    get(index: u64): any {
+        return this[index];
+    }
 
-function arraySet(values: Array, index: u64, value: any): any {
-    values[index] = value;
-    return value;
-}
+    set(index: u64, value: any): any {
+        this[index] = value;
+        return value;
+    }
 
-function arrayContains(values: Array, value: any): boolean {
+    contains(value: any): boolean {
     let index: u64 = 0;
-    while (index < values.length) {
-        if (values[index] == value) { return true; }
+    while (index < this.length) {
+        if (this[index] == value) { return true; }
         index = index + 1;
     }
     return false;
-}
+    }
 
-function arraySum(values: Array): number {
+    sum(): number {
     let total: number = 0.0;
     let index: u64 = 0;
-    while (index < values.length) {
-        total = total + (values[index] as number);
+    while (index < this.length) {
+        total = total + (this[index] as number);
         index = index + 1;
     }
     return total;
+    }
 }

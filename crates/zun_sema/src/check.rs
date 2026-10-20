@@ -381,6 +381,7 @@ impl Checker<'_> {
                 let receiver_ty = match self.text(&class.name) {
                     "String" => Ty::String,
                     "Number" => Ty::F64,
+                    "Array" => Ty::Array,
                     _ => Ty::Instance(class_idx as u32),
                 };
                 let mut params = vec![receiver_ty];
@@ -974,6 +975,13 @@ impl Checker<'_> {
                         Some(&class) => class,
                         None => {
                             self.error(receiver.span, "Number methods are not available without class Number");
+                            return self.poison(span);
+                        }
+                    },
+                    Ty::Array => match self.classes_by_name.get("Array") {
+                        Some(&class) => class,
+                        None => {
+                            self.error(receiver.span, "Array methods are not available without class Array");
                             return self.poison(span);
                         }
                     },

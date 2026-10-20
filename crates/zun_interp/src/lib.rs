@@ -538,7 +538,10 @@ impl Interp<'_> {
                     // Primitive-backed classes use static method binding: the
                     // receiver is still passed as `this`, but has no heap type
                     // to consult for virtual dispatch.
-                    let target = if matches!(args.first(), Some(Value::Str(_) | Value::Float(_, _))) {
+                    let primitive_receiver = matches!(args.first(), Some(Value::Str(_) | Value::Float(_, _)))
+                        || matches!(args.first(), Some(Value::Object(object))
+                            if zun_gc::with_current_heap(|heap| heap.array_len(*object).is_some()));
+                    let target = if primitive_receiver {
                         token.rid()
                     } else {
                         let type_rid = args[0].as_object().type_rid();
@@ -916,6 +919,20 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run Number primitive methods");
         assert!(matches!(result, Value::Str(value) if value.as_ref() == "12.5"));
+    }
+
+    #[test]
+    fn executes_array_source_methods_with_array_receiver_binding() {
+        let module = zun_compiler::compile(
+            "class Array {\n\
+                 contains(value: any): boolean { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return true; } index = index + 1; } return false; }\n\
+             }\n\
+             function main(): boolean { let values = new Array(1); values[0] = 41; return values.contains(values[0]); }",
+        )
+        .expect("compile Array source method");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array source method");
+        assert!(matches!(result, Value::Bool(true)));
     }
 }
 
