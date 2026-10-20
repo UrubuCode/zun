@@ -737,7 +737,10 @@ impl Translator<'_> {
                     stack.push((ptr, JitKind::Object));
                 }
                 Opcode::ArrayLength => {
-                    let (array, _) = stack.pop().ok_or("stack underflow")?;
+                    let (array, kind) = stack.pop().ok_or("stack underflow")?;
+                    if kind == JitKind::Object {
+                        self.builder.declare_value_needs_stack_map(array);
+                    }
                     let length = self.array_length_fref();
                     let inst = self.builder.ins().call(length, &[array]);
                     let result = self.builder.inst_results(inst)[0];
