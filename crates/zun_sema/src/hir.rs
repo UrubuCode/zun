@@ -296,6 +296,8 @@ pub struct Function {
     /// Structural state-machine plan for an async function. The lowering pass
     /// consumes this after Promise suspension points have an IL representation.
     pub async_plan: Option<AsyncStateMachinePlan>,
+    /// Structural state-machine plan for a generator function.
+    pub generator_plan: Option<GeneratorStateMachinePlan>,
     /// The body statements.
     pub body: Vec<Stmt>,
 }
@@ -308,6 +310,17 @@ pub struct AsyncStateMachinePlan {
     /// Number of source await expressions represented by the plan.
     pub await_count: u16,
     /// Locals whose lifetime crosses a suspension point.
+    pub hoisted_locals: Vec<LocalSlot>,
+}
+
+/// Compiler-owned metadata for a stackless generator state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratorStateMachinePlan {
+    /// State zero is entry; each yield adds a resumable state.
+    pub state_count: u16,
+    /// Number of source yield expressions.
+    pub yield_count: u16,
+    /// Locals conservatively preserved by the suspended iterator object.
     pub hoisted_locals: Vec<LocalSlot>,
 }
 

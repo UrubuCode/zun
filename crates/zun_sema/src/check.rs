@@ -391,6 +391,11 @@ impl Checker<'_> {
                         await_count: count_awaits_in_block(&f.body) as u16,
                         hoisted_locals: (0..local_count as u16).collect(),
                     }),
+                    generator_plan: f.is_generator.then(|| hir::GeneratorStateMachinePlan {
+                        state_count: 1 + count_yields_in_block(&f.body) as u16,
+                        yield_count: count_yields_in_block(&f.body) as u16,
+                        hoisted_locals: (0..local_count as u16).collect(),
+                    }),
                     body: Vec::new(),
                 };
             };
@@ -480,6 +485,11 @@ impl Checker<'_> {
             async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
                 state_count: 1 + count_awaits_in_block(&f.body) as u16,
                 await_count: count_awaits_in_block(&f.body) as u16,
+                hoisted_locals: (0..local_count as u16).collect(),
+            }),
+            generator_plan: f.is_generator.then(|| hir::GeneratorStateMachinePlan {
+                state_count: 1 + count_yields_in_block(&f.body) as u16,
+                yield_count: count_yields_in_block(&f.body) as u16,
                 hoisted_locals: (0..local_count as u16).collect(),
             }),
             body,
@@ -2544,6 +2554,47 @@ impl Checker<'_> {
 
 fn count_awaits_in_block(block: &ast::Block) -> usize {
     block.statements.iter().map(count_awaits_in_stmt).sum()
+}
+
+fn count_yields_in_block(block: &ast::Block) -> usize {
+    block.statements.iter().map(count_yields_in_stmt).sum()
+}
+
+fn count_yields_in_stmt(stmt: &ast::Stmt) -> usize {
+    use ast::Stmt::*;
+    match stmt {
+        Let { init, .. } | ArrayDestructure { init, .. } | ObjectDestructure { init, .. } => count_yields_in_expr(init),
+        Expr(expr) => count_yields_in_expr(expr),
+        If { cond, then_block, else_block, .. } => count_yields_in_expr(cond) + count_yields_in_block(then_block) + else_block.as_ref().map_or(0, count_yields_in_block),
+        While { cond, body, .. } => count_yields_in_expr(cond) + count_yields_in_block(body),
+        DoWhile { body, cond, .. } => count_yields_in_block(body) + count_yields_in_expr(cond),
+        For { init, cond, update, body, .. } => init.as_deref().map_or(0, count_yields_in_stmt) + cond.as_ref().map_or(0, count_yields_in_expr) + update.as_ref().map_or(0, count_yields_in_expr) + count_yields_in_block(body),
+        ForOf { iterable, body, .. } => count_yields_in_expr(iterable) + count_yields_in_block(body),
+        Labeled { statement, .. } => count_yields_in_stmt(statement),
+        Break { .. } | Continue { .. } => 0,
+        Return { value, .. } => value.as_ref().map_or(0, count_yields_in_expr),
+        Throw { value, .. } => count_yields_in_expr(value),
+        Try { body, catches, finally, .. } => count_yields_in_block(body) + catches.iter().map(|c| count_yields_in_block(&c.body)).sum::<usize>() + finally.as_ref().map_or(0, count_yields_in_block),
+    }
+}
+
+fn count_yields_in_expr(expr: &ast::Expr) -> usize {
+    use ast::Expr::*;
+    match expr {
+        Yield { value, .. } => 1 + count_yields_in_expr(value),
+        Assign { value, .. } | Await { operand: value, .. } | Unary { operand: value, .. } | Spread { expr: value, .. } | Cast { expr: value, .. } => count_yields_in_expr(value),
+        Binary { lhs, rhs, .. } => count_yields_in_expr(lhs) + count_yields_in_expr(rhs),
+        Conditional { condition, when_true, when_false, .. } => count_yields_in_expr(condition) + count_yields_in_expr(when_true) + count_yields_in_expr(when_false),
+        Call { args, .. } | New { args, .. } => args.iter().map(count_yields_in_expr).sum(),
+        ComputedCall { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
+        MethodCall { receiver, args, .. } | OptionalMethodCall { object: receiver, args, .. } => count_yields_in_expr(receiver) + args.iter().map(count_yields_in_expr).sum::<usize>(),
+        OptionalField { object, .. } | Field { object, .. } => count_yields_in_expr(object),
+        FieldAssign { object, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(value),
+        Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
+        IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
+        Template { parts, .. } => parts.iter().map(|p| match p { ast::TemplatePart::Text(_) => 0, ast::TemplatePart::Expr(e) => count_yields_in_expr(e) }).sum(),
+        Function(_) | Number { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
+    }
 }
 
 fn count_awaits_in_stmt(stmt: &ast::Stmt) -> usize {

@@ -75,6 +75,18 @@
     }
 
     #[test]
+    fn generator_plan_counts_yields_and_hoists_locals() {
+        let (hir, diagnostics) = check_src(
+            "function* main(): int { let value: int = 1; yield value; yield value + 1; return value; }",
+        );
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("generator lowering")), "{diagnostics:?}");
+        let plan = hir.functions[0].generator_plan.as_ref().expect("generator plan");
+        assert_eq!(plan.yield_count, 2);
+        assert_eq!(plan.state_count, 3);
+        assert_eq!(plan.hoisted_locals, vec![0]);
+    }
+
+    #[test]
     fn async_await_is_rejected_inside_handlers() {
         let catch_error = first_error(
             "async function main(): Promise { try { return new Promise(); } catch (e: any) { await new Promise(); return new Promise(); } }",
