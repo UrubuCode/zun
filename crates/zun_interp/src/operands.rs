@@ -2,6 +2,14 @@
 
 use zun_il::Operand;
 
+pub(crate) fn branch_target(instr_end: usize, operand: &Operand) -> usize {
+    let displacement = match operand {
+        Operand::Branch(value) => *value,
+        _ => 0,
+    };
+    (instr_end as i64 + displacement as i64) as usize
+}
+
 pub(crate) fn operand_f64(o: &Operand) -> f64 {
     match o {
         Operand::Float64(value) => *value,

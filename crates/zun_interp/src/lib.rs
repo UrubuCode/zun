@@ -19,8 +19,8 @@ use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
 use operands::{
-    operand_f64, operand_i32, operand_i64, operand_local, operand_strref, operand_token,
-    operand_token_imm32,
+    branch_target, operand_f64, operand_i32, operand_i64, operand_local, operand_strref,
+    operand_token, operand_token_imm32,
 };
 use stack::{
     bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
@@ -3823,15 +3823,5 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
-}
-
-/// Ordered comparison over two ints (signed or unsigned by kind) or two floats;
-/// sema guarantees the operands share a numeric kind.
-fn branch_target(instr_end: usize, operand: &Operand) -> usize {
-    let disp = match operand {
-        Operand::Branch(d) => *d,
-        _ => 0,
-    };
-    (instr_end as i64 + disp as i64) as usize
 }
 
