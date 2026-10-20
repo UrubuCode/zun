@@ -852,6 +852,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_count_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { count(value: any): u64 { let total: u64 = 0; let index: u64 = 0; while (index < this.length) { if (this[index] == value) { total = total + 1; } index = index + 1; } return total; } }\n\
+             function main(): u64 { let values = new Array(4); values[0] = 7; values[1] = 3; values[2] = 7; values[3] = 7; let needle: any = values[0]; return values.count(needle); }",
+        )
+        .expect("compile Array count");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array count");
+        assert!(matches!(result, Value::Int(value, _) if value == 3));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",

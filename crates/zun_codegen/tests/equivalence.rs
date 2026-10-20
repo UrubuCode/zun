@@ -376,6 +376,19 @@ fn array_source_methods_keep_interpreter_fallback() {
 }
 
 #[test]
+fn array_count_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { count(value: any): u64 { let total: u64 = 0; let index: u64 = 0; while (index < this.length) { if (this[index] == value) { total = total + 1; } index = index + 1; } return total; } }\n\
+         function main(): u64 { let values = new Array(4); values[0] = 7; values[1] = 3; values[2] = 7; values[3] = 7; let needle: any = values[0]; return values.count(needle); }",
+    )
+    .expect("compile Array count");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 3));
+}
+
+#[test]
 fn array_search_methods_keep_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array {\n\
