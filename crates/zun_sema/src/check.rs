@@ -337,6 +337,7 @@ impl Checker<'_> {
             | ast::Expr::String { .. }
             | ast::Expr::Bool { .. }
             | ast::Expr::Null { .. } => {}
+            ast::Expr::Spread { expr, .. } => self.collect_mutated_expr(expr, names),
         }
     }
 
@@ -680,6 +681,9 @@ impl Checker<'_> {
             }
             ast::Expr::OptionalField { object, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses)
+            }
+            ast::Expr::Spread { expr, .. } => {
+                self.collect_capture_expr(cx, parameters, expr, uses)
             }
             ast::Expr::FieldAssign { object, value, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses);
@@ -2387,6 +2391,11 @@ impl Checker<'_> {
                     }
                 }
             }
+            ast::Expr::Spread { expr, .. } => {
+                self.error(span, "spread arguments are not lowered yet");
+                self.check_expr(cx, expr);
+                self.poison(span)
+            }
             ast::Expr::Function(function) => self.check_closure_expr(cx, function, span),
             ast::Expr::ComputedCall { callee, args, .. } => {
                 let is_well_known_iterator = matches!(callee.as_ref(), ast::Expr::Index {
@@ -2715,6 +2724,12 @@ mod tests {
     fn required_parameter_cannot_follow_default_parameter() {
         let msg = first_error("function f(first: number = 1.0, second: number): number { return second; }");
         assert!(msg.contains("follow a default parameter"), "{msg}");
+    }
+
+    #[test]
+    fn spread_arguments_are_rejected_until_lowering_exists() {
+        let msg = first_error("function main() { print(...values); }");
+        assert!(msg.contains("spread arguments are not lowered yet"), "{msg}");
     }
 
     #[test]

@@ -803,7 +803,16 @@ impl Parser<'_> {
     fn arguments(&mut self) -> Vec<Expr> {
         let mut args = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
-            args.push(self.expression());
+            if self.eat(TokenKind::Ellipsis) {
+                let expr = self.expression();
+                let span = expr.span();
+                args.push(Expr::Spread {
+                    expr: Box::new(expr),
+                    span,
+                });
+            } else {
+                args.push(self.expression());
+            }
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -1039,6 +1048,15 @@ mod tests {
     fn parses_default_parameter_expressions() {
         let p = parse_ok("function add(value: number = 2.0): number { return value; }");
         assert!(p.functions[0].params[0].default_value.is_some());
+    }
+
+    #[test]
+    fn parses_spread_call_arguments() {
+        let p = parse_ok("function main() { print(...values); }");
+        let Stmt::Expr(Expr::Call { args, .. }) = &p.functions[0].body.statements[0] else {
+            panic!("expected call expression");
+        };
+        assert!(matches!(args[0], Expr::Spread { .. }));
     }
 
     #[test]

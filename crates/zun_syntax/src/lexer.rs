@@ -100,6 +100,8 @@ pub enum TokenKind {
     Nullish,
     /// `?.`
     QuestionDot,
+    /// `...`
+    Ellipsis,
     /// `.`
     Dot,
 
@@ -245,7 +247,14 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                             TokenKind::Question
                         }
                     }
-                    b'.' => TokenKind::Dot,
+                    b'.' => {
+                        if bytes.get(pos) == Some(&b'.') && bytes.get(pos + 1) == Some(&b'.') {
+                            pos += 2;
+                            TokenKind::Ellipsis
+                        } else {
+                            TokenKind::Dot
+                        }
+                    }
                     b'+' => TokenKind::Plus,
                     b'-' => TokenKind::Minus,
                     b'*' => TokenKind::Star,
