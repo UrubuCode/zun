@@ -53,6 +53,23 @@ class Array {
         return this;
     }
 
+    rotateRight(shift: u64): Array {
+        if (this.length == 0) { return this; }
+        let amount: u64 = shift % this.length;
+        let rotation: u64 = 0;
+        while (rotation < amount) {
+            let last: any = this[this.length - 1];
+            let index: u64 = this.length - 1;
+            while (index > 0) {
+                this[index] = this[index - 1];
+                index = index - 1;
+            }
+            this[0] = last;
+            rotation = rotation + 1;
+        }
+        return this;
+    }
+
     at(index: u64): any {
         return this[index];
     }
