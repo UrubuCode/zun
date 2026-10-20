@@ -11,6 +11,10 @@ class String {
         return this + separator + other;
     }
 
+    isEmpty(): boolean {
+        return this.length() == 0;
+    }
+
     extern length(): u64;
     extern contains(needle: string): boolean;
     extern charCodeAt(index: u64): u32;

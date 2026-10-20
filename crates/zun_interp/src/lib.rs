@@ -934,6 +934,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_empty_source_method() {
+        let module = zun_compiler::compile(
+            "import { length } from \"zun:string\";\n\
+             class String { extern length(): u64; isEmpty(): boolean { return this.length() == 0; } }\n\
+             function main(): boolean { let value: string = \"\"; return value.isEmpty(); }",
+        )
+        .expect("compile String isEmpty");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isEmpty");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_source_methods_with_array_receiver_binding() {
         let module = zun_compiler::compile(
             "class Array {\n\
