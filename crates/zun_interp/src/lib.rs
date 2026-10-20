@@ -900,6 +900,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_sort_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { sort(): Array { let index: u64 = 0; while (index < this.length) { let smallest: u64 = index; let scan: u64 = index + 1; while (scan < this.length) { let candidate: number = this[scan] as number; let currentSmallest: number = this[smallest] as number; if (candidate < currentSmallest) { smallest = scan; } scan = scan + 1; } let temporary: any = this[index]; this[index] = this[smallest]; this[smallest] = temporary; index = index + 1; } return this; } }\n\
+             function main(): number { let values = new Array(3); values[0] = 9.0; values[1] = 2.0; values[2] = 7.0; values.sort(); return values[0] as number; }",
+        )
+        .expect("compile Array sort");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array sort");
+        assert!(matches!(result, Value::Float(value, _) if value == 2.0));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",

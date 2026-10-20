@@ -198,4 +198,23 @@ class Array {
         }
         return result;
     }
+
+    sort(): Array {
+        let index: u64 = 0;
+        while (index < this.length) {
+            let smallest: u64 = index;
+            let scan: u64 = index + 1;
+            while (scan < this.length) {
+                let candidate: number = this[scan] as number;
+                let currentSmallest: number = this[smallest] as number;
+                if (candidate < currentSmallest) { smallest = scan; }
+                scan = scan + 1;
+            }
+            let temporary: any = this[index];
+            this[index] = this[smallest];
+            this[smallest] = temporary;
+            index = index + 1;
+        }
+        return this;
+    }
 }
