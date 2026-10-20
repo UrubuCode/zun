@@ -361,6 +361,38 @@ class Array {
         return true;
     }
 
+    intersection(other: Array): Array {
+        let matches: u64 = 0;
+        let left: u64 = 0;
+        while (left < this.length) {
+            let right: u64 = 0;
+            while (right < other.length) {
+                if (this[left] == other[right]) {
+                    matches = matches + 1;
+                    break;
+                }
+                right = right + 1;
+            }
+            left = left + 1;
+        }
+        let result = new Array(matches);
+        let output: u64 = 0;
+        left = 0;
+        while (left < this.length) {
+            let right: u64 = 0;
+            while (right < other.length) {
+                if (this[left] == other[right]) {
+                    result[output] = this[left];
+                    output = output + 1;
+                    break;
+                }
+                right = right + 1;
+            }
+            left = left + 1;
+        }
+        return result;
+    }
+
     count(value: any): u64 {
         let total: u64 = 0;
         let index: u64 = 0;
