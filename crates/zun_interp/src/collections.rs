@@ -763,6 +763,35 @@ impl<'a> Interp<'a> {
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Str(source.into()))
             }
+            "finalizationRegistryNew" => {
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc(0, 0));
+                Ok(Value::Object(object))
+            }
+            "finalizationRegister" => {
+                let _registry = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let target = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let callback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(callback) => *callback,
+                    _ => return Err(RunError::BadToken),
+                };
+                let id = zun_gc::with_current_heap_mut(|heap| {
+                    heap.finalization_register_with_function(target, 0, callback)
+                });
+                Ok(Value::Int(id.get() as i64, zun_il::NumKind::U64))
+            }
+            "finalizationUnregister" => {
+                let _registry = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let id = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(id, _) if *id >= 0 => *id as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                    heap.finalization_unregister(zun_gc::FinalizationId::from_raw(id))
+                })))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))

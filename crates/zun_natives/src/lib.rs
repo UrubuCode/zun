@@ -78,6 +78,8 @@ pub enum NativeTy {
     Promise,
     /// A managed compiled regular expression.
     RegExp,
+    /// A managed finalization callback registry.
+    FinalizationRegistry,
     /// A callable Zun function, including its closure environment.
     Function,
 }

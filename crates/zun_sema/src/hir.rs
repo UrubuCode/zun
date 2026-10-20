@@ -93,6 +93,8 @@ pub enum Ty {
     WeakMap,
     /// A Rust-engine-backed regular expression.
     RegExp,
+    /// A GC-backed finalization callback registry.
+    FinalizationRegistry,
     /// A managed asynchronous result object.
     Promise,
     /// A managed byte-buffer view with a fixed element representation.

@@ -1,0 +1,12 @@
+// Thin source wrapper over the GC finalization queue.
+import { finalizationRegister, finalizationUnregister } from "zun:collections";
+
+class FinalizationRegistry {
+    register(target: any, callback: Function): u64 {
+        return finalizationRegister(this, target, callback);
+    }
+
+    unregister(id: u64): boolean {
+        return finalizationUnregister(this, id);
+    }
+}

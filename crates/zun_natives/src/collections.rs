@@ -153,5 +153,23 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Str,
             imp: unavailable,
         },
+        NativeFn {
+            name: "finalizationRegistryNew",
+            params: &[],
+            ret: FinalizationRegistry,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "finalizationRegister",
+            params: &[FinalizationRegistry, Opaque, Function],
+            ret: U64,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "finalizationUnregister",
+            params: &[FinalizationRegistry, U64],
+            ret: Bool,
+            imp: unavailable,
+        },
     ],
 };

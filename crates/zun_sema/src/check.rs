@@ -258,6 +258,7 @@ impl Checker<'_> {
                     "Set" => Ty::Set,
                     "WeakMap" => Ty::WeakMap,
                     "RegExp" => Ty::RegExp,
+                    "FinalizationRegistry" => Ty::FinalizationRegistry,
                     _ => Ty::Instance(class_idx as u32),
                 };
                 let mut params = vec![receiver_ty];
@@ -1588,6 +1589,16 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
+                    (Ty::FinalizationRegistry, "register") => Some((
+                        "finalizationRegister",
+                        Ty::Int(IntKind::U64),
+                        vec![Ty::Any, Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
+                    (Ty::FinalizationRegistry, "unregister") => Some((
+                        "finalizationUnregister",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
                     (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
                     (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
                     (Ty::Promise, "isReady") => Some(("promiseIsReady", Ty::Boolean, vec![])),
@@ -1990,6 +2001,10 @@ impl Checker<'_> {
                     "Set" => Some(("setNew", Ty::Set)),
                     "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
                     "RegExp" => Some(("regexpNew", Ty::RegExp)),
+                    "FinalizationRegistry" => Some((
+                        "finalizationRegistryNew",
+                        Ty::FinalizationRegistry,
+                    )),
                     "Promise" => Some(("promiseNew", Ty::Promise)),
                     _ => None,
                 };

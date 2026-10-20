@@ -1869,6 +1869,19 @@ mod method_tests {
     }
 
     #[test]
+    fn finalization_registry_registers_and_unregisters_a_callback() {
+        let module = zun_compiler::compile(
+            "function cleanup(value: any): void { }\n\
+             class Target {}\n\
+             function main(): boolean { let registry = new FinalizationRegistry(); let target = new Target(); let id = registry.register(target, cleanup); return registry.unregister(id); }",
+        )
+        .expect("compile finalization registry");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run finalization registry");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
