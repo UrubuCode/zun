@@ -621,7 +621,7 @@ an optimization gate.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: continue module-hygiene splits, then managed
    Cranelift values, precise JIT stack maps, true OSR, compaction, async and
-   generators, typed FFI/N-API, AOT/R2R, and the performance backlog.
+   generators, typed FFI/N-API, AOT/R2R, and the remaining performance backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
 
 Stop condition: stop only on a real environment blocker, a design decision not
@@ -633,7 +633,7 @@ Optimizations found by benchmarking. These are **not** correctness or complexity
 defects — they are constant-factor / engine costs to improve after the section 6
 backlog. Both measured on this date.
 
-### 7.1 `OrderedMap` insert constant (Map/Set floor)
+### 7.1 `OrderedMap` insert constant (Map/Set floor) — addressed
 
 Direct benchmark of `zun_core::OrderedMap` (the floor under `Map`/`Set`), insert
 then probe, at N=200k and N=1M (5x apart):
