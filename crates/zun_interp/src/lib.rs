@@ -1965,6 +1965,17 @@ mod method_tests {
     }
 
     #[test]
+    fn proxy_has_and_delete_fall_back_to_target_dynamic_properties() {
+        let module = zun_compiler::compile(
+            "import { proxyHas, proxySet, proxyDelete } from \"zun:collections\"; function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); if (!proxyHas(proxy, \"answer\")) { return false; } return proxyDelete(proxy, \"answer\") && !proxyHas(proxy, \"answer\"); }",
+        )
+        .expect("compile proxy has/delete");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy has/delete");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\

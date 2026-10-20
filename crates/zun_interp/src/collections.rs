@@ -883,6 +883,38 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Bool(true))
             }
+            "proxyHas" | "proxyDelete" => {
+                let proxy = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(key) => key.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                    return Err(RunError::BadToken);
+                };
+                let trap_name = if name == "proxyHas" { "has" } else { "deleteProperty" };
+                if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, trap_name)) {
+                    let mut call_args = Vec::with_capacity(3);
+                    if let Some(address) = callback.environment() {
+                        call_args.push(Value::Object(unsafe {
+                            zun_gc::Obj::from_addr(address as *mut u64)
+                        }));
+                    }
+                    call_args.push(Value::Object(target));
+                    call_args.push(Value::Str(key.into()));
+                    let result = self.call(callback.method_rid(), call_args, None)?;
+                    return Ok(Value::Bool(matches!(result, Value::Bool(true))));
+                }
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    if name == "proxyHas" {
+                        heap.dynamic_has(target, &key)
+                    } else {
+                        heap.dynamic_delete(target, &key)
+                    }
+                });
+                Ok(Value::Bool(result))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))

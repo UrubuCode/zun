@@ -201,5 +201,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: unavailable,
         },
+        NativeFn { name: "proxyHas", params: &[Proxy, Str], ret: Bool, imp: unavailable },
+        NativeFn { name: "proxyDelete", params: &[Proxy, Str], ret: Bool, imp: unavailable },
     ],
 };

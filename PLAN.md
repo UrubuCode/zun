@@ -414,10 +414,11 @@ wrapper (Cranelift remains explicitly deferred); `Reflect` now has Tier 0
 property keys through dedicated IL, while `Proxy`
 traps remain on the dynamic `Any`/`DynamicObject` path (Phase 4); `Proxy`
 construction now binds to those strongly traced target/handler records, and
-dynamic handlers can retain named closure traps. `proxyGet` and `proxySet` now
-invoke named `get`/`set` traps or fall back to the target's dynamic property in
-Tier 0; remaining
-Proxy traps and call-site caching are still Phase 4 work. `BigInt` needs a bignum
+dynamic handlers can retain named closure traps. `proxyGet`, `proxySet`,
+`proxyHas`, and `proxyDelete` now invoke named `get`/`set`/`has`/
+`deleteProperty` traps or fall back to the target's dynamic property in Tier 0;
+remaining Proxy traps and call-site caching are still Phase 4 work. `BigInt`
+needs a bignum
 (deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
 Cross-cutting rule: data structures with real algorithmic complexity (hashing,
