@@ -323,10 +323,7 @@ impl StackMapRegistry {
 
     /// Find the map covering `pc`, if one is registered.
     pub fn lookup(&self, pc: usize) -> Option<NativeStackMap> {
-        self.maps
-            .iter()
-            .copied()
-            .find(|map| pc >= map.pc && pc - map.pc <= map.span as usize)
+        self.maps.iter().copied().find(|map| map.pc == pc)
     }
 
     /// Number of registered safepoints.
