@@ -57,6 +57,12 @@ mod node_api {
         fn napi_create_int64(env: NapiEnv, value: i64, result: *mut NapiValue) -> NapiStatus;
         fn napi_create_double(env: NapiEnv, value: f64, result: *mut NapiValue) -> NapiStatus;
         fn napi_get_boolean(env: NapiEnv, value: bool, result: *mut NapiValue) -> NapiStatus;
+        fn napi_create_string_utf8(
+            env: NapiEnv,
+            str: *const u8,
+            length: usize,
+            result: *mut NapiValue,
+        ) -> NapiStatus;
     }
 
     unsafe extern "C" fn run_i64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
@@ -165,6 +171,39 @@ mod node_api {
         }
     }
 
+    unsafe extern "C" fn run_string(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
+        let mut argc = 1;
+        let mut argv = core::ptr::null_mut();
+        if unsafe {
+            napi_get_cb_info(env, info, &mut argc, &mut argv, core::ptr::null_mut(), core::ptr::null_mut())
+        } != NAPI_OK || argc != 1 {
+            return core::ptr::null_mut();
+        }
+        let mut data = core::ptr::null_mut();
+        let mut length = 0;
+        let status = unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) };
+        let status = if status == NAPI_OK {
+            status
+        } else {
+            unsafe { napi_get_buffer_info(env, argv, &mut data, &mut length) }
+        };
+        if status != NAPI_OK || data.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: N-API owns the ArrayBuffer for the callback duration.
+        let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
+        let Ok(zun_interp::value::Value::Str(value)) = zun_vm::execute(bytes) else {
+            return core::ptr::null_mut();
+        };
+        let value = value.as_bytes();
+        let mut result = core::ptr::null_mut();
+        if unsafe { napi_create_string_utf8(env, value.as_ptr(), value.len(), &mut result) } != NAPI_OK {
+            core::ptr::null_mut()
+        } else {
+            result
+        }
+    }
+
     /// N-API module entry point. `exports.runI64(arrayBuffer)` executes an
     /// integer-returning compiled `.zm` module.
     #[no_mangle]
@@ -176,6 +215,7 @@ mod node_api {
             (b"runI64\0".as_slice(), run_i64 as NapiCallback),
             (b"runF64\0".as_slice(), run_f64 as NapiCallback),
             (b"runBool\0".as_slice(), run_bool as NapiCallback),
+            (b"runString\0".as_slice(), run_string as NapiCallback),
         ] {
             let mut function = core::ptr::null_mut();
             if unsafe {

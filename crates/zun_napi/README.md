@@ -7,6 +7,7 @@ that exports:
 - `runI64(arrayBuffer)`
 - `runF64(arrayBuffer)`
 - `runBool(arrayBuffer)`
+- `runString(arrayBuffer)`
 
 Each function accepts an `ArrayBuffer` or Node `Buffer` containing the bytes of
 a compiled `.zm` module and executes its entry point.
