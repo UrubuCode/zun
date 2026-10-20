@@ -26,6 +26,14 @@ The JIT virtual-call path is covered by interpreter/JIT equivalence, including
 derived overrides. The remaining object-runtime gate is precise root handling
 at collection safepoints; virtual dispatch itself is no longer Tier 0-only.
 
+Language surface since then: exceptions (`throw`/`try`/`catch`/`finally`, with
+interpreter unwind, rethrow routing to outer handlers in the same frame, and an
+explicit Tier 0 fallback for methods with handler regions in the JIT) are
+complete; anonymous and arrow functions are lexed and parsed, with the closure
+HIR/sema/ilgen refactor as the next slice. The ordered remaining backlog and the
+rules that govern it are the active execution goal in section 6 (mirrored by
+`GOAL.md`).
+
 ## 1. Visão geral do pipeline
 
 ```
@@ -377,9 +385,11 @@ enums, union types with narrowing, and optional properties. These are handled by
 the checker and emit no new code except `enum`. *Status: separate checker
 track.*
 
-**Built-in surface still pending:** source-level class wrappers for `Map`/`Set`/
-`WeakMap` and the typed arrays (the runtime floor exists; constructors and
-intrinsic bindings are the next gate); `DataView` is integrated with the managed
+Managed `Map`/`Set`/`WeakMap` constructors and receiver bindings are now
+available from source, and `for...of` covers Array plus insertion-ordered
+Map/Set values through the interpreter fallback. The complete `Symbol.iterator`
+protocol and typed-array/DataView source bindings remain pending. `DataView` is
+integrated with the managed
 buffers; `RegExp` needs a regex engine (deferred); `Proxy`/`Reflect` go through
 the dynamic `Any`/`DynamicObject` path (Phase 4); `BigInt` needs a bignum
 (deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
@@ -531,6 +541,54 @@ AOT/R2R support for the full runtime surface, true OSR frame replacement, and
 production-grade trimming diagnostics/metadata removal. Each gate requires a
 runtime test and an interpreter/JIT equivalence test where JIT execution is
 applicable.
+
+## 6. Execution backlog and rules (active goal — 2026-10-20)
+
+This is the standing goal the implementation agent executes, part by part, until
+the whole backlog is done. It is mirrored by `GOAL.md` at the repo root.
+
+Rules (every slice):
+
+- atomic commit per sub-step; `cargo test --workspace` green before moving on;
+- the Tier 0 interpreter is the always-correct fallback; interpreter↔JIT
+  equivalence is required for any new IL;
+- opcodes only via the master table; every new opcode ships with
+  `_Valid`/`_Invalid_<Error>` verifier fixtures;
+- reference types/members by metadata token, never by offset;
+- data structures with real algorithmic complexity (hashing, buffers) live in
+  the Rust intrinsic floor; the TypeScript class is a thin wrapper over it,
+  never TypeScript-over-`Array`;
+- English everywhere; mark commits that touch GC, closure capture, or exception
+  unwind with `GC:` / `closure-capture:` / `unwind:` in the first line;
+- never leave the working tree dirty between commits.
+
+Ordered backlog:
+
+1. **Closures** (arrow / anonymous functions): HIR synthetic function with an
+   explicit environment parameter; sema free-variable analysis with
+   capture-by-binding (a captured variable that is mutated becomes a boxed heap
+   cell shared with the enclosing scope); ilgen lowering to `mkclosure` with GC
+   tracing of the environment; then flip sema to accept the syntax and wire
+   `Array` `map`/`filter`/`reduce`/`forEach` to inline arrows. Tests: map with an
+   arrow, capture of an outer variable, mutation-after-capture visible in the
+   closure, nested closures; interpreter↔JIT equivalence.
+2. **Iteration protocol**: Array `for...of` is implemented and Map/Set
+   insertion-ordered values are available through the collection fallback;
+   first-class `Symbol.iterator` objects remain pending.
+3. **Built-in class surface**: `Map`, `Set`, and `WeakMap` constructors plus
+   intrinsic receiver bindings are implemented. Typed arrays and `DataView`
+   remain pending source bindings over the existing runtime floor.
+4. **Weak-GC hardening**: a stress harness (GC forced at every safepoint, random
+   object graphs with cycles through `WeakMap`, liveness assertions) for the
+   ephemeron / weak-clear paths; a finalization test if `FinalizationRegistry`
+   exists.
+5. **Group 2 syntax** (section 4.4.2), by utility: spread/rest, destructuring,
+   default parameters, optional chaining `?.` and `??`, template literals,
+   `switch`.
+6. Keep this section and the section 5 ledger up to date as items land.
+
+Stop condition: stop only on a real environment blocker, a design decision not
+covered by the plan, or completion of the whole backlog.
 
 ## 5. Riscos e pontos de atenção
 
