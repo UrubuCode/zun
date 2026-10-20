@@ -1016,6 +1016,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_remove_all_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { removeAt(index: u64): any { let removed: any = this[index]; let cursor: u64 = index; while (cursor + 1 < this.length) { this[cursor] = this[cursor + 1]; cursor = cursor + 1; } this.pop(); return removed; } removeAll(value: any): u64 { let removed: u64 = 0; let index: u64 = 0; while (index < this.length) { if (this[index] == value) { this.removeAt(index); removed = removed + 1; } else { index = index + 1; } } return removed; } } function main(): number { let values = new Array(4); values[0] = 7.0; values[1] = 3.0; values[2] = 7.0; values[3] = 5.0; let needle: any = values[0]; return values.removeAll(needle) as number; }",
+        )
+        .expect("compile Array removeAll");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array removeAll");
+        assert!(matches!(result, Value::Float(value, _) if value == 2.0));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\

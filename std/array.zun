@@ -63,6 +63,20 @@ class Array {
         return false;
     }
 
+    removeAll(value: any): u64 {
+        let removed: u64 = 0;
+        let index: u64 = 0;
+        while (index < this.length) {
+            if (this[index] == value) {
+                this.removeAt(index);
+                removed = removed + 1;
+            } else {
+                index = index + 1;
+            }
+        }
+        return removed;
+    }
+
     swap(first: u64, second: u64): Array {
         let temporary: any = this[first];
         this[first] = this[second];
