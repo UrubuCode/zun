@@ -354,6 +354,15 @@ The following runtime contracts are implemented and covered by tests:
 - Array instructions have verifier fixtures and an explicit Tier 0 fallback
   test while Cranelift lowering for array storage remains pending.
 
+The source-level core library now includes tested instance methods for String
+classification/validation and quoting, Number predicates/interpolation, and
+Array mutation, ordering, set operations, and numeric aggregation. These
+methods deliberately remain ordinary Zun source and preserve the interpreter
+fallback/equivalence boundary. Higher-order Array methods (`map`, `filter`,
+and `reduce`) are not considered implemented by wrappers: they require a
+complete function-value representation, capture handling, indirect-call IL,
+verifier support, interpreter dispatch, and equivalent JIT lowering.
+
 The release benchmark rerun on 2026-10-20 measured 454.657 ns/iteration for
 the integer Tier 0 loop and 0.480 ns/iteration for the equivalent JIT loop
 (947.53x). The metadata-focused Tier 0 workloads measured 360.892
