@@ -1714,6 +1714,11 @@ fn math_expm1_and_log1p_are_jit_equivalent() {
 }
 
 #[test]
+fn math_hyperbolic_functions_are_jit_equivalent() {
+    assert_equivalent("import { sinhNumber, coshNumber, tanhNumber } from \"zun:math\"; function main(): number { return sinhNumber(1.0) + coshNumber(1.0) + tanhNumber(1.0); }");
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

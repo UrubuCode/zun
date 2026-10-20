@@ -8,6 +8,7 @@ import { sinNumber, cosNumber } from "zun:math";
 import { expNumber, logNumber } from "zun:math";
 import { log10Number, log2Number } from "zun:math";
 import { expm1Number, log1pNumber } from "zun:math";
+import { sinhNumber, coshNumber, tanhNumber } from "zun:math";
 import { tanNumber, atan2Number } from "zun:math";
 import { hypotNumber } from "zun:math";
 import { signNumber } from "zun:math";
@@ -87,6 +88,18 @@ function mathExpm1(value: number): number {
 
 function mathLog1p(value: number): number {
     return log1pNumber(value);
+}
+
+function mathSinh(value: number): number {
+    return sinhNumber(value);
+}
+
+function mathCosh(value: number): number {
+    return coshNumber(value);
+}
+
+function mathTanh(value: number): number {
+    return tanhNumber(value);
 }
 
 function mathTan(value: number): number {

@@ -123,6 +123,18 @@ fn log1p(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     unary_float(args, "log1p", f64::ln_1p)
 }
 
+fn sinh(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "sinh", f64::sinh)
+}
+
+fn cosh(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "cosh", f64::cosh)
+}
+
+fn tanh(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "tanh", f64::tanh)
+}
+
 fn tan(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     unary_float(args, "tan", f64::tan)
 }
@@ -177,6 +189,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "log2Number", params: &[F64], ret: F64, imp: log2 },
         NativeFn { name: "expm1Number", params: &[F64], ret: F64, imp: expm1 },
         NativeFn { name: "log1pNumber", params: &[F64], ret: F64, imp: log1p },
+        NativeFn { name: "sinhNumber", params: &[F64], ret: F64, imp: sinh },
+        NativeFn { name: "coshNumber", params: &[F64], ret: F64, imp: cosh },
+        NativeFn { name: "tanhNumber", params: &[F64], ret: F64, imp: tanh },
         NativeFn { name: "tanNumber", params: &[F64], ret: F64, imp: tan },
         NativeFn { name: "atan2Number", params: &[F64, F64], ret: F64, imp: atan2 },
         NativeFn { name: "hypotNumber", params: &[F64, F64], ret: F64, imp: hypot },
