@@ -163,6 +163,18 @@ pub enum CaptureMode {
     ByCell,
 }
 
+/// Where a captured binding is read from when constructing a nested closure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureSource {
+    /// A local in the enclosing function.
+    Local(LocalSlot),
+    /// An entry in the enclosing closure's environment.
+    Environment {
+        environment_slot: u16,
+        mode: CaptureMode,
+    },
+}
+
 /// One binding stored in a closure environment, in declaration order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capture {
@@ -176,6 +188,8 @@ pub struct Capture {
     pub ty: Ty,
     /// Binding or snapshot semantics.
     pub mode: CaptureMode,
+    /// Source location for this binding in the enclosing scope.
+    pub source: CaptureSource,
 }
 
 /// A capture together with the expression evaluated in the enclosing scope
@@ -330,6 +344,8 @@ pub enum ExprKind {
     CellLoad { slot: LocalSlot },
     /// Produce the shared cell object stored in a local slot.
     CellRef { slot: LocalSlot },
+    /// Read the cell object behind a capture in the hidden environment.
+    CaptureRef { environment_slot: u16 },
     /// Store a value through a shared cell.
     CellStore { slot: LocalSlot, value: Box<Expr> },
     /// Load a top-level function value.

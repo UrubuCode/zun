@@ -148,6 +148,7 @@ struct FunctionCx {
 struct CaptureUse {
     slots: Vec<hir::LocalSlot>,
     mutated: HashSet<hir::LocalSlot>,
+    inherited: Vec<hir::Capture>,
 }
 
 impl FunctionCx {
@@ -366,12 +367,25 @@ impl Checker<'_> {
             .into_iter()
             .map(|capture| hir::ClosureCapture {
                 value: Box::new(hir::Expr {
-                    kind: if capture.mode == hir::CaptureMode::ByCell {
-                        hir::ExprKind::CellRef {
-                            slot: capture.outer_slot,
+                    kind: match capture.source {
+                        hir::CaptureSource::Local(slot)
+                            if capture.mode == hir::CaptureMode::ByCell =>
+                        {
+                            hir::ExprKind::CellRef { slot }
                         }
-                    } else {
-                        hir::ExprKind::Local(capture.outer_slot)
+                        hir::CaptureSource::Local(slot) => hir::ExprKind::Local(slot),
+                        hir::CaptureSource::Environment {
+                            environment_slot,
+                            mode: hir::CaptureMode::ByCell,
+                        } => hir::ExprKind::CaptureRef { environment_slot },
+                        hir::CaptureSource::Environment {
+                            environment_slot,
+                            mode: hir::CaptureMode::ByValue,
+                        } => hir::ExprKind::CaptureLoad {
+                            environment_slot,
+                            ty: capture.ty,
+                            mode: hir::CaptureMode::ByValue,
+                        },
                     },
                     ty: capture.ty,
                     span,
@@ -403,6 +417,7 @@ impl Checker<'_> {
         for statement in &function.body.statements {
             self.collect_capture_stmt(cx, &parameters, statement, &mut uses);
         }
+        let local_capture_count = uses.slots.len();
         uses.slots
             .into_iter()
             .enumerate()
@@ -430,8 +445,21 @@ impl Checker<'_> {
                     } else {
                         hir::CaptureMode::ByValue
                     },
+                    source: hir::CaptureSource::Local(outer_slot),
                 }
             })
+            .chain(uses.inherited.into_iter().enumerate().map(move |(offset, mut capture)| {
+                let source_slot = match capture.source {
+                    hir::CaptureSource::Environment { environment_slot, .. } => environment_slot,
+                    hir::CaptureSource::Local(slot) => slot as u16,
+                };
+                capture.environment_slot = (local_capture_count + offset) as u16;
+                capture.source = hir::CaptureSource::Environment {
+                    environment_slot: source_slot,
+                    mode: capture.mode,
+                };
+                capture
+            }))
             .collect()
     }
 
@@ -519,6 +547,10 @@ impl Checker<'_> {
                 if mutated {
                     uses.mutated.insert(slot);
                 }
+            } else if let Some(capture) = cx.captures.get(text) {
+                if !uses.inherited.iter().any(|existing| existing.name == text) {
+                    uses.inherited.push(capture.clone());
+                }
             }
         };
         match expr {
@@ -572,9 +604,14 @@ impl Checker<'_> {
                 self.collect_capture_expr(cx, parameters, value, uses);
             }
             ast::Expr::Function(function) => {
-                // A nested function owns its own free-variable analysis.
-                // Its enclosing names are not direct uses of this closure.
-                let _ = function;
+                let nested_parameters: HashSet<String> = function
+                    .params
+                    .iter()
+                    .map(|parameter| self.text(&parameter.name).to_string())
+                    .collect();
+                for statement in &function.body.statements {
+                    self.collect_capture_stmt(cx, &nested_parameters, statement, uses);
+                }
             }
             ast::Expr::Number { .. }
             | ast::Expr::String { .. }

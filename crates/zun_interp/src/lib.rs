@@ -644,7 +644,7 @@ impl Interp<'_> {
                     {
                         return Err(RunError::BadToken);
                     }
-                    let args = if let Some(environment) = environment {
+                    let call_args = if let Some(environment) = environment {
                         let mut closure_args = Vec::with_capacity(args.len() + 1);
                         closure_args.push(Value::Object(environment));
                         closure_args.extend(args);
@@ -657,7 +657,7 @@ impl Interp<'_> {
                         locals: &locals,
                         parent,
                     };
-                    let result = match self.dispatch(handle.method_rid(), args, Some(&link)) {
+                    let result = match self.dispatch(handle.method_rid(), call_args, Some(&link)) {
                         Ok(value) => value,
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
@@ -1338,6 +1338,17 @@ mod method_tests {
         .expect("compile mutable captured arrow closure");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run mutable captured arrow closure");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn nested_arrow_closures_share_their_outer_environment() {
+        let module = zun_compiler::compile(
+            "function main(): any { let k = 10.0; let outer = x => { let inner = y => x + y + k; return inner(1.0); }; return outer(31.0); }",
+        )
+        .expect("compile nested arrow closures");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run nested arrow closures");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 

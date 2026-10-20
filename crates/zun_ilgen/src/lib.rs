@@ -21,7 +21,7 @@ use zun_metadata::{
 };
 use zun_module::{write_body_with_handlers, ExceptionHandler, HandlerKind, Module};
 use zun_sema::hir::{
-    self, BinaryOp, CaptureMode, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp,
+    self, BinaryOp, CaptureMode, CaptureSource, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp,
 };
 
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
@@ -585,6 +585,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::CellRef { slot } => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
             }
+            ExprKind::CaptureRef { environment_slot } => {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
+                self.emit_dynamic_load(&capture_name(*environment_slot));
+                self.emit(Instruction::simple(Opcode::UnboxAny));
+            }
             ExprKind::CellStore { slot, value } => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
                 self.expr(value);
@@ -602,8 +607,21 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
                 for capture in captures {
                     self.emit(Instruction::simple(Opcode::Dup));
-                    self.expr(&capture.value);
-                    self.emit(Instruction::simple(Opcode::BoxAny));
+                    if capture.capture.mode == CaptureMode::ByCell {
+                        match capture.capture.source {
+                            CaptureSource::Local(slot) => {
+                                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+                                self.emit(Instruction::simple(Opcode::BoxAny));
+                            }
+                            CaptureSource::Environment { environment_slot, .. } => {
+                                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
+                                self.emit_dynamic_load(&capture_name(environment_slot));
+                            }
+                        }
+                    } else {
+                        self.expr(&capture.value);
+                        self.emit(Instruction::simple(Opcode::BoxAny));
+                    }
                     self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
                     self.emit(Instruction::simple(Opcode::Pop));
                 }
