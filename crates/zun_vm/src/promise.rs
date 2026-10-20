@@ -21,6 +21,8 @@ pub enum PromiseState {
 pub enum Poll<T> {
     /// The machine suspended and must be resumed later.
     Pending,
+    /// The machine suspended on a concrete Promise awaiter.
+    Waiting(PromiseAwaiter<T>),
     /// The machine completed with a value.
     Ready(T),
     /// The machine completed with an exception-like failure.
@@ -42,10 +44,19 @@ pub struct Promise<T> {
 }
 
 /// Awaiter view used by compiler-generated async state machines.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PromiseAwaiter<T> {
     promise: Promise<T>,
 }
+
+impl<T> PartialEq for PromiseAwaiter<T> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.promise.state, &other.promise.state)
+            && Arc::ptr_eq(&self.promise.inner, &other.promise.inner)
+    }
+}
+
+impl<T> Eq for PromiseAwaiter<T> {}
 
 /// A stackless state machine whose suspension point is represented by `state`.
 ///
@@ -100,6 +111,7 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
         }
         match (self.poller)(&mut self.state) {
             Poll::Pending => Poll::Pending,
+            Poll::Waiting(awaiter) => Poll::Waiting(awaiter),
             Poll::Ready(value) => {
                 self.completed = true;
                 self.completion.resolve(value.clone());
@@ -851,6 +863,27 @@ mod tests {
         queue.lock().unwrap().run_all();
         assert_eq!(*seen.lock().unwrap(), Some(Ok(11)));
         assert!(awaiter.is_completed());
+    }
+
+    #[test]
+    fn state_machine_can_expose_a_concrete_waiting_awaiter() {
+        let source = Promise::new();
+        let awaiter = source.awaiter();
+        let mut machine = AsyncStateMachine::new({
+            let mut first = Some(awaiter);
+            move |state| {
+                if *state == 0 {
+                    *state = 1;
+                    Poll::Waiting(first.take().expect("awaiter is only yielded once"))
+                } else {
+                    Poll::Ready(9)
+                }
+            }
+        });
+        assert!(matches!(machine.poll(), Poll::Waiting(_)));
+        assert!(!machine.is_completed());
+        assert!(source.resolve(3));
+        assert_eq!(machine.poll(), Poll::Ready(9));
     }
 
     #[test]
