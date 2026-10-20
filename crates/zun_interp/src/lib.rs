@@ -922,6 +922,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_last_index_of() {
+        let module = zun_compiler::compile(
+            "import { lastIndexOf } from \"zun:string\";\n\
+             class String { extern lastIndexOf(needle: string): int; }\n\
+             function main(): int { let value: string = \"zunzun\"; return value.lastIndexOf(\"zun\"); }",
+        )
+        .expect("compile String lastIndexOf");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String lastIndexOf");
+        assert!(matches!(result, Value::Int(3, zun_il::NumKind::I32)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

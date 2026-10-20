@@ -357,6 +357,11 @@ mod tests {
             dispatch(index_id, &[NativeArg::Str("😀zun"), NativeArg::Str("zun")], &mut sink).unwrap(),
             NativeValue::Int(2)
         ));
+        let (last_index_id, _) = resolve("zun:string", "lastIndexOf").unwrap();
+        assert!(matches!(
+            dispatch(last_index_id, &[NativeArg::Str("zunzun"), NativeArg::Str("zun")], &mut sink).unwrap(),
+            NativeValue::Int(3)
+        ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),
