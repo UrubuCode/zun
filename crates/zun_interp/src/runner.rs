@@ -11,6 +11,15 @@ pub enum ResumeResult {
     Suspended,
 }
 
+/// Result of advancing a synchronous generator.
+#[derive(Debug)]
+pub enum GeneratorResult {
+    /// The generator produced one value and can be resumed.
+    Yielded(Value),
+    /// The generator returned and cannot produce more values.
+    Complete(Value),
+}
+
 /// Persistent interpreter boundary for async executions.
 ///
 /// The heap and suspended frame outlive an individual poll, matching the
@@ -21,6 +30,51 @@ pub struct ResumableSession<'a> {
     method_rid: u32,
     args: Option<Vec<Value>>,
     pending: Option<ExecutionFrame>,
+}
+
+/// Tier 0 generator boundary with an iterator-shaped next operation.
+pub struct GeneratorSession<'a> {
+    inner: ResumableSession<'a>,
+}
+
+impl core::fmt::Debug for GeneratorSession<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("GeneratorSession")
+            .field("method_rid", &self.inner.method_rid)
+            .field("suspended", &self.inner.pending.is_some())
+            .finish()
+    }
+}
+
+impl<'a> GeneratorSession<'a> {
+    /// Create a generator session for a checked generator method.
+    pub fn new(
+        module: &'a Module,
+        method_rid: u32,
+        args: Vec<Value>,
+        output: &'a mut dyn Output,
+    ) -> Result<Self, RunError> {
+        Ok(Self {
+            inner: ResumableSession::new(module, method_rid, args, output, None, None)?,
+        })
+    }
+
+    /// Advance the generator once.
+    pub fn next(&mut self) -> Result<GeneratorResult, RunError> {
+        match self.inner.poll()? {
+            ResumeResult::Yielded(value) => Ok(GeneratorResult::Yielded(value)),
+            ResumeResult::Complete(value) => Ok(GeneratorResult::Complete(value)),
+            ResumeResult::Suspended => Err(RunError::Malformed(
+                "generator suspended without yielding a value".into(),
+            )),
+        }
+    }
+
+    /// Access the generator heap for host integration.
+    pub fn heap_mut(&mut self) -> &mut zun_gc::Heap {
+        self.inner.heap_mut()
+    }
 }
 
 impl core::fmt::Debug for ResumableSession<'_> {

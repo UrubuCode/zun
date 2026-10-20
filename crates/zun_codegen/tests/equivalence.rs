@@ -3043,23 +3043,20 @@ fn generator_session_yields_and_resumes_in_tier0() {
         .map(|index| index as u32 + 1)
         .expect("generator method");
     let mut output = CaptureOutput::default();
-    let mut session = zun_interp::ResumableSession::new(
+    let mut session = zun_interp::GeneratorSession::new(
         &module,
         rid,
         Vec::new(),
         &mut output,
-        None,
-        None,
     )
     .expect("create generator session");
-    let first = session.poll().expect("first generator poll");
-    assert!(matches!(first, zun_interp::ResumeResult::Yielded(Value::Float(value, _)) if value == 1.0), "{first:?}");
+    assert!(matches!(session.next().expect("first generator next"), zun_interp::GeneratorResult::Yielded(Value::Float(value, _)) if value == 1.0));
     assert!(matches!(
-        session.poll().expect("second generator poll"),
-        zun_interp::ResumeResult::Yielded(Value::Float(value, _)) if value == 2.0
+        session.next().expect("second generator next"),
+        zun_interp::GeneratorResult::Yielded(Value::Float(value, _)) if value == 2.0
     ));
-    let complete = session.poll().expect("generator completion");
-    assert!(matches!(complete, zun_interp::ResumeResult::Complete(Value::Int(value, _)) if value == 3), "{complete:?}");
+    let complete = session.next().expect("generator completion");
+    assert!(matches!(complete, zun_interp::GeneratorResult::Complete(Value::Int(value, _)) if value == 3), "{complete:?}");
 }
 
 #[test]
