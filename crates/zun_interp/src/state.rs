@@ -42,6 +42,28 @@ pub(super) enum ExecutionOutcome {
     Complete(Value),
     Suspended(ExecutionFrame),
     Thrown(Value),
+    Fault(super::RunError),
+}
+
+impl ExecutionOutcome {
+    pub(super) fn from_result(result: Result<Value, super::RunError>) -> Self {
+        match result {
+            Ok(value) => Self::Complete(value),
+            Err(super::RunError::Thrown(value)) => Self::Thrown(value),
+            Err(error) => Self::Fault(error),
+        }
+    }
+
+    pub(super) fn into_result(self) -> Result<Value, super::RunError> {
+        match self {
+            Self::Complete(value) => Ok(value),
+            Self::Thrown(value) => Err(super::RunError::Thrown(value)),
+            Self::Fault(error) => Err(error),
+            Self::Suspended(_) => Err(super::RunError::Malformed(
+                "suspended execution cannot cross the synchronous boundary".into(),
+            )),
+        }
+    }
 }
 
 impl ExecutionFrame {
@@ -89,5 +111,13 @@ mod tests {
         let frame = ExecutionFrame::new(3, vec![Value::Void]);
         let outcome = ExecutionOutcome::Suspended(frame);
         assert!(matches!(outcome, ExecutionOutcome::Suspended(_)));
+    }
+
+    #[test]
+    fn execution_outcome_adapts_existing_sync_results() {
+        let outcome = ExecutionOutcome::from_result(Ok(Value::Bool(true)));
+        assert!(matches!(outcome, ExecutionOutcome::Complete(Value::Bool(true))));
+        let result = ExecutionOutcome::from_result(Err(super::RunError::BadToken)).into_result();
+        assert!(matches!(result, Err(super::RunError::BadToken)));
     }
 }
