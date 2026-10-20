@@ -17,6 +17,7 @@ mod error_value;
 mod date_value;
 mod ids;
 mod any_value;
+mod function_handle;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
@@ -27,6 +28,7 @@ pub use error_value::ErrorValue;
 pub use date_value::DateValue;
 pub use ids::{CoreTypeId, IntrinsicId};
 pub use any_value::{Any, AnyTag};
+pub use function_handle::FunctionHandle;
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -41,48 +43,6 @@ pub const OBJECT_HEADER_SLOTS: usize = 2;
 /// Convert an object field slot to its byte offset in the frozen layout.
 pub const fn field_offset(slot: usize) -> usize {
     (OBJECT_HEADER_SLOTS + slot) * SLOT_SIZE
-}
-
-/// Stable identity of a callable Zun function value.
-///
-/// The method RID identifies the code/signature metadata. `environment` is a
-/// managed object address containing captured locals, or zero for a non-
-/// capturing function. The handle is intentionally a plain frozen value;
-/// allocation and tracing belong to the GC/runtime layers built on top of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(C)]
-pub struct FunctionHandle {
-    method_rid: u32,
-    reserved: u32,
-    environment: usize,
-}
-
-impl FunctionHandle {
-    /// Construct a function value for a method and optional closure object.
-    pub const fn new(method_rid: u32, environment: Option<usize>) -> Self {
-        Self {
-            method_rid,
-            reserved: 0,
-            environment: match environment {
-                Some(address) => address,
-                None => 0,
-            },
-        }
-    }
-
-    /// Metadata method RID targeted by this function value.
-    pub const fn method_rid(self) -> u32 {
-        self.method_rid
-    }
-
-    /// Captured environment address, if this value is a closure.
-    pub const fn environment(self) -> Option<usize> {
-        if self.environment == 0 {
-            None
-        } else {
-            Some(self.environment)
-        }
-    }
 }
 
 /// Runtime identity for a Symbol. Symbols with the same description are still
