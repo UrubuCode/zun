@@ -27,7 +27,9 @@
 pub mod body;
 mod serial;
 
-pub use body::{read_body, write_body, MethodBody};
+pub use body::{
+    read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, MethodBody,
+};
 
 use zun_metadata::{BlobHeap, StringHeap, Tables, Token};
 

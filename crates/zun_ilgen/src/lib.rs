@@ -19,7 +19,7 @@ use zun_il::{encode, Instruction, NumKind, Opcode, Operand};
 use zun_metadata::{
     BlobIndex, FieldDef, MemberRef, MethodDef, ModuleRef, TableKind, Token, TypeDef,
 };
-use zun_module::{write_body, Module};
+use zun_module::{write_body_with_handlers, ExceptionHandler, HandlerKind, Module};
 use zun_sema::hir::{self, BinaryOp, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp};
 
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
@@ -91,9 +91,9 @@ pub fn lower(program: &hir::Program) -> Module {
     }
 
     for (index, f) in program.functions.iter().enumerate() {
-        let code = lower_function(f, &layout, &mut module);
+        let (code, handlers) = lower_function(f, &layout, &mut module);
         let local_kinds: Vec<u8> = f.locals.iter().map(|t| jitkind_byte(*t)).collect();
-        let offset = write_body(
+        let offset = write_body_with_handlers(
             &mut module.code,
             f.param_count,
             f.locals.len() as u16,
@@ -101,6 +101,7 @@ pub fn lower(program: &hir::Program) -> Module {
             jitkind_byte(f.return_ty),
             &local_kinds,
             &code,
+            &handlers,
         );
         module.tables.method_defs[index].body_offset = offset;
     }
@@ -208,13 +209,18 @@ fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
 }
 
 /// Lower one function body to ZIL bytes.
-fn lower_function(f: &hir::Function, layout: &Layout, module: &mut Module) -> Vec<u8> {
+fn lower_function(
+    f: &hir::Function,
+    layout: &Layout,
+    module: &mut Module,
+) -> (Vec<u8>, Vec<ExceptionHandler>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
         layout,
         module,
         break_patches: Vec::new(),
         continue_targets: Vec::new(),
+        handlers: Vec::new(),
     };
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
@@ -222,7 +228,7 @@ fn lower_function(f: &hir::Function, layout: &Layout, module: &mut Module) -> Ve
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
     }
-    gen.code
+    (gen.code, gen.handlers)
 }
 
 /// Handle to a forward branch whose displacement is patched once the target
@@ -238,6 +244,7 @@ struct FnLowerer<'a> {
     module: &'a mut Module,
     break_patches: Vec<Vec<BranchPatch>>,
     continue_targets: Vec<Vec<usize>>,
+    handlers: Vec<ExceptionHandler>,
 }
 
 impl FnLowerer<'_> {
@@ -391,8 +398,57 @@ impl FnLowerer<'_> {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Throw));
             }
-            Stmt::Try { .. } => {
-                unreachable!("try lowering requires handler-region emission")
+            Stmt::Try {
+                body,
+                catches,
+                finally_body,
+            } => {
+                let try_start = self.code.len() as u32;
+                self.stmts(body);
+                let try_end = self.code.len() as u32;
+                let mut exits = Vec::new();
+                exits.push(self.emit_branch(Opcode::Branch));
+
+                for catch in catches {
+                    let handler_start = self.code.len() as u32;
+                    // A matched handler receives the exception object on the
+                    // evaluation stack; bind it before entering user code.
+                    self.emit(Instruction::new(
+                        Opcode::StoreLocal,
+                        Operand::Local(catch.slot),
+                    ));
+                    self.stmts(&catch.body);
+                    let handler_end = self.code.len() as u32;
+                    exits.push(self.emit_branch(Opcode::Branch));
+                    self.handlers.push(ExceptionHandler {
+                        try_start,
+                        try_end,
+                        handler_start,
+                        handler_end,
+                        kind: HandlerKind::Catch,
+                        catch_type: match catch.ty {
+                            Ty::Instance(index) => Some(Token::new(TableKind::TypeDef, index + 1)),
+                            _ => None,
+                        },
+                    });
+                }
+
+                if let Some(finally_body) = finally_body {
+                    let handler_start = self.code.len() as u32;
+                    self.stmts(finally_body);
+                    let handler_end = self.code.len() as u32;
+                    self.handlers.push(ExceptionHandler {
+                        try_start,
+                        try_end,
+                        handler_start,
+                        handler_end,
+                        kind: HandlerKind::Finally,
+                        catch_type: None,
+                    });
+                }
+                for exit in exits {
+                    self.patch_to_here(exit);
+                }
             }
         }
     }
@@ -725,5 +781,17 @@ mod tests {
             module.entry_point,
             Some(Token::new(TableKind::MethodDef, 2))
         );
+    }
+
+    #[test]
+    fn try_catch_finally_lowers_handler_regions() {
+        let module = lower_src(
+            "class Error {} function main() { try { throw new Error(); } catch (error: Error) { print(1); } finally { print(2); } }",
+        );
+        let method = &module.tables.method_defs[0];
+        let body = read_body(&module.code, method.body_offset).unwrap();
+        assert_eq!(body.handlers.len(), 2);
+        assert!(body.handlers.iter().any(|h| h.kind == HandlerKind::Catch));
+        assert!(body.handlers.iter().any(|h| h.kind == HandlerKind::Finally));
     }
 }
