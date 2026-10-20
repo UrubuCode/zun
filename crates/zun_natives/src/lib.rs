@@ -14,9 +14,9 @@
 //! function keeps every existing id stable; nothing is numbered by hand, so ids
 //! can never collide. `zun_node` and `zun_napi` will be organized the same way.
 
-mod date;
-mod collections;
 mod buffer;
+mod collections;
+mod date;
 mod env;
 mod fs;
 mod io;

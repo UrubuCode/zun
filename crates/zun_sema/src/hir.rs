@@ -495,10 +495,7 @@ pub enum ExprKind {
         name: String,
     },
     /// Read a dynamic property, returning null when the receiver is null.
-    OptionalDynamicGet {
-        object: Box<Expr>,
-        name: String,
-    },
+    OptionalDynamicGet { object: Box<Expr>, name: String },
     /// Write an Any value to a named dynamic property.
     DynamicSet {
         /// The object expression.

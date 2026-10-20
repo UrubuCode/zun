@@ -351,9 +351,10 @@ impl OrderedMap {
 
     /// Return the live entry at an insertion-order position.
     pub fn entry_at(&self, position: usize) -> Option<(Any, Any)> {
-        self.entries.iter().filter_map(|entry| {
-            entry.map(|(key, value, _)| (key, value))
-        }).nth(position)
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
+            .nth(position)
     }
 
     pub fn clear(&mut self) {
@@ -1172,8 +1173,16 @@ impl DynamicObject {
         self.properties
             .values()
             .filter_map(|value| value.as_object())
-            .chain(self.symbol_properties.values().filter_map(|value| value.as_object()))
-            .chain(self.symbol_functions.values().filter_map(|value| value.environment()))
+            .chain(
+                self.symbol_properties
+                    .values()
+                    .filter_map(|value| value.as_object()),
+            )
+            .chain(
+                self.symbol_functions
+                    .values()
+                    .filter_map(|value| value.environment()),
+            )
     }
 }
 
@@ -1532,13 +1541,28 @@ mod tests {
             });
         }
         let mut map_iterator = MapIterator::new();
-        assert_eq!(map_iterator.next(&map).map(|(_, value)| value.as_int()), Some(Some(10)));
-        assert_eq!(map_iterator.next(&map).map(|(_, value)| value.as_int()), Some(Some(20)));
+        assert_eq!(
+            map_iterator.next(&map).map(|(_, value)| value.as_int()),
+            Some(Some(10))
+        );
+        assert_eq!(
+            map_iterator.next(&map).map(|(_, value)| value.as_int()),
+            Some(Some(20))
+        );
 
         let mut set_iterator = SetIterator::new();
-        assert_eq!(set_iterator.next(&map).and_then(|value| value.as_int()), Some(1));
-        assert_eq!(set_iterator.next(&map).and_then(|value| value.as_int()), Some(2));
-        assert_eq!(set_iterator.next(&map).and_then(|value| value.as_int()), Some(3));
+        assert_eq!(
+            set_iterator.next(&map).and_then(|value| value.as_int()),
+            Some(1)
+        );
+        assert_eq!(
+            set_iterator.next(&map).and_then(|value| value.as_int()),
+            Some(2)
+        );
+        assert_eq!(
+            set_iterator.next(&map).and_then(|value| value.as_int()),
+            Some(3)
+        );
         assert_eq!(set_iterator.next(&map), None);
     }
 }

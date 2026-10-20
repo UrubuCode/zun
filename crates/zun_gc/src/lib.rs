@@ -299,45 +299,111 @@ impl Heap {
         Some(object)
     }
 
-    pub fn data_view_get_u32(&self, object: Obj, relative: usize, little_endian: bool) -> Option<u32> {
+    pub fn data_view_get_u32(
+        &self,
+        object: Obj,
+        relative: usize,
+        little_endian: bool,
+    ) -> Option<u32> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        self.data_views.get(&(object.addr() as usize))?.get_u32(self.buffers.get(&(buffer.addr() as usize))?, relative, little_endian)
+        self.data_views.get(&(object.addr() as usize))?.get_u32(
+            self.buffers.get(&(buffer.addr() as usize))?,
+            relative,
+            little_endian,
+        )
     }
 
-    pub fn data_view_set_u32(&mut self, object: Obj, relative: usize, value: u32, little_endian: bool) -> Option<bool> {
+    pub fn data_view_set_u32(
+        &mut self,
+        object: Obj,
+        relative: usize,
+        value: u32,
+        little_endian: bool,
+    ) -> Option<bool> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
         let view = *self.data_views.get(&(object.addr() as usize))?;
-        Some(view.set_u32(self.buffers.get_mut(&(buffer.addr() as usize))?, relative, value, little_endian))
+        Some(view.set_u32(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            relative,
+            value,
+            little_endian,
+        ))
     }
 
-    pub fn data_view_get_u16(&self, object: Obj, relative: usize, little_endian: bool) -> Option<u16> {
+    pub fn data_view_get_u16(
+        &self,
+        object: Obj,
+        relative: usize,
+        little_endian: bool,
+    ) -> Option<u16> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        self.data_views.get(&(object.addr() as usize))?.get_u16(self.buffers.get(&(buffer.addr() as usize))?, relative, little_endian)
+        self.data_views.get(&(object.addr() as usize))?.get_u16(
+            self.buffers.get(&(buffer.addr() as usize))?,
+            relative,
+            little_endian,
+        )
     }
 
-    pub fn data_view_set_u16(&mut self, object: Obj, relative: usize, value: u16, little_endian: bool) -> Option<bool> {
+    pub fn data_view_set_u16(
+        &mut self,
+        object: Obj,
+        relative: usize,
+        value: u16,
+        little_endian: bool,
+    ) -> Option<bool> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
         let view = *self.data_views.get(&(object.addr() as usize))?;
-        Some(view.set_u16(self.buffers.get_mut(&(buffer.addr() as usize))?, relative, value, little_endian))
+        Some(view.set_u16(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            relative,
+            value,
+            little_endian,
+        ))
     }
 
-    pub fn data_view_get_f64(&self, object: Obj, relative: usize, little_endian: bool) -> Option<f64> {
+    pub fn data_view_get_f64(
+        &self,
+        object: Obj,
+        relative: usize,
+        little_endian: bool,
+    ) -> Option<f64> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        self.data_views.get(&(object.addr() as usize))?.get_f64(self.buffers.get(&(buffer.addr() as usize))?, relative, little_endian)
+        self.data_views.get(&(object.addr() as usize))?.get_f64(
+            self.buffers.get(&(buffer.addr() as usize))?,
+            relative,
+            little_endian,
+        )
     }
 
-    pub fn data_view_set_f64(&mut self, object: Obj, relative: usize, value: f64, little_endian: bool) -> Option<bool> {
+    pub fn data_view_set_f64(
+        &mut self,
+        object: Obj,
+        relative: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> Option<bool> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
         let view = *self.data_views.get(&(object.addr() as usize))?;
-        Some(view.set_f64(self.buffers.get_mut(&(buffer.addr() as usize))?, relative, value, little_endian))
+        Some(view.set_f64(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            relative,
+            value,
+            little_endian,
+        ))
     }
 
     /// Allocate a managed `Uint32Array` view over an existing buffer.
     pub fn alloc_u32_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U32)?;
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?,
+            offset,
+            length,
+            zun_core::TypedElement::U32,
+        )?;
         let object = self.alloc(0, 1);
         object.set_field(0, buffer.addr() as u64);
-        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        self.typed_views
+            .insert(object.addr() as usize, (buffer, view));
         Some(object)
     }
 
@@ -348,15 +414,25 @@ impl Heap {
 
     pub fn u32_array_set(&mut self, object: Obj, index: usize, value: u32) -> Option<bool> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u32(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+        Some(view.write_u32(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
     /// Allocate a managed `Uint8Array` view over an existing buffer.
     pub fn alloc_u8_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U8)?;
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?,
+            offset,
+            length,
+            zun_core::TypedElement::U8,
+        )?;
         let object = self.alloc(0, 1);
         object.set_field(0, buffer.addr() as u64);
-        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        self.typed_views
+            .insert(object.addr() as usize, (buffer, view));
         Some(object)
     }
 
@@ -367,15 +443,25 @@ impl Heap {
 
     pub fn u8_array_set(&mut self, object: Obj, index: usize, value: u8) -> Option<bool> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u8(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+        Some(view.write_u8(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
     /// Allocate a managed `Float64Array` view over an existing buffer.
     pub fn alloc_f64_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::F64)?;
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?,
+            offset,
+            length,
+            zun_core::TypedElement::F64,
+        )?;
         let object = self.alloc(0, 1);
         object.set_field(0, buffer.addr() as u64);
-        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        self.typed_views
+            .insert(object.addr() as usize, (buffer, view));
         Some(object)
     }
 
@@ -386,15 +472,25 @@ impl Heap {
 
     pub fn f64_array_set(&mut self, object: Obj, index: usize, value: f64) -> Option<bool> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_f64(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+        Some(view.write_f64(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
     /// Allocate a managed `Uint16Array` view over an existing buffer.
     pub fn alloc_u16_array(&mut self, buffer: Obj, offset: usize, length: usize) -> Option<Obj> {
-        let view = zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, zun_core::TypedElement::U16)?;
+        let view = zun_core::TypedArrayView::new(
+            self.buffer_len(buffer)?,
+            offset,
+            length,
+            zun_core::TypedElement::U16,
+        )?;
         let object = self.alloc(0, 1);
         object.set_field(0, buffer.addr() as u64);
-        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        self.typed_views
+            .insert(object.addr() as usize, (buffer, view));
         Some(object)
     }
 
@@ -405,14 +501,21 @@ impl Heap {
 
     pub fn u16_array_set(&mut self, object: Obj, index: usize, value: u16) -> Option<bool> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u16(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+        Some(view.write_u16(
+            self.buffers.get_mut(&(buffer.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
     pub fn alloc_array_iterator(&mut self, array: Obj) -> Option<Obj> {
         self.array_len(array)?;
         let iterator = self.alloc(0, 1);
         iterator.set_field(0, array.addr() as u64);
-        self.array_iterators.insert(iterator.addr() as usize, (array, zun_core::ArrayIterator::new()));
+        self.array_iterators.insert(
+            iterator.addr() as usize,
+            (array, zun_core::ArrayIterator::new()),
+        );
         Some(iterator)
     }
 
@@ -431,7 +534,10 @@ impl Heap {
         self.set_len(set)?;
         let iterator = self.alloc(0, 1);
         iterator.set_field(0, set.addr() as u64);
-        self.set_iterators.insert(iterator.addr() as usize, (set, zun_core::SetIterator::new()));
+        self.set_iterators.insert(
+            iterator.addr() as usize,
+            (set, zun_core::SetIterator::new()),
+        );
         Some(iterator)
     }
 
@@ -450,7 +556,10 @@ impl Heap {
         self.map_len(map)?;
         let iterator = self.alloc(0, 1);
         iterator.set_field(0, map.addr() as u64);
-        self.map_iterators.insert(iterator.addr() as usize, (map, zun_core::MapIterator::new()));
+        self.map_iterators.insert(
+            iterator.addr() as usize,
+            (map, zun_core::MapIterator::new()),
+        );
         Some(iterator)
     }
 
@@ -1211,17 +1320,17 @@ impl Heap {
             let mut promoted = false;
             for entry in &self.weak_maps {
                 for &(key, value) in &entry.entries {
-                let Some(&key_idx) = self.by_addr.get(&key) else {
-                    continue;
-                };
-                let Some(&value_idx) = self.by_addr.get(&value) else {
-                    continue;
-                };
-                if self.records[key_idx].marked && !self.records[value_idx].marked {
-                    self.records[value_idx].marked = true;
-                    work.push(value_idx);
-                    promoted = true;
-                }
+                    let Some(&key_idx) = self.by_addr.get(&key) else {
+                        continue;
+                    };
+                    let Some(&value_idx) = self.by_addr.get(&value) else {
+                        continue;
+                    };
+                    if self.records[key_idx].marked && !self.records[value_idx].marked {
+                        self.records[value_idx].marked = true;
+                        work.push(value_idx);
+                        promoted = true;
+                    }
                 }
             }
             while let Some(idx) = work.pop() {
@@ -1289,8 +1398,13 @@ impl Heap {
         // roots. Clear dead targets before sweep removes their addresses.
         for entry in &mut self.weak_maps {
             entry.entries.retain(|(key, value)| {
-                self.by_addr.get(key).is_some_and(|idx| self.records[*idx].marked)
-                    && self.by_addr.get(value).is_some_and(|idx| self.records[*idx].marked)
+                self.by_addr
+                    .get(key)
+                    .is_some_and(|idx| self.records[*idx].marked)
+                    && self
+                        .by_addr
+                        .get(value)
+                        .is_some_and(|idx| self.records[*idx].marked)
             });
         }
         for weak in &mut self.weak_refs {
@@ -1451,7 +1565,10 @@ impl Heap {
     }
 
     pub fn weak_map_get_object(&self, object: Obj) -> Option<(Obj, Obj)> {
-        let id = self.weak_map_objects.get(&(object.addr() as usize)).copied()?;
+        let id = self
+            .weak_map_objects
+            .get(&(object.addr() as usize))
+            .copied()?;
         self.weak_map_get(id)
     }
 
@@ -1461,17 +1578,27 @@ impl Heap {
 
     /// Read the value associated with a live object key from a managed WeakMap.
     pub fn weak_map_get_value_object(&self, object: Obj, key: Obj) -> Option<Obj> {
-        let id = self.weak_map_objects.get(&(object.addr() as usize)).copied()?;
+        let id = self
+            .weak_map_objects
+            .get(&(object.addr() as usize))
+            .copied()?;
         let entry = self.weak_maps.get(id.0 as usize)?;
         let key_address = key.addr() as usize;
-        let (_, value_address) = entry.entries.iter().find(|(candidate, _)| *candidate == key_address)?;
+        let (_, value_address) = entry
+            .entries
+            .iter()
+            .find(|(candidate, _)| *candidate == key_address)?;
         let value = self.by_addr.get(value_address)?;
         Some(Obj(self.records[*value].addr))
     }
 
     /// Remove the value associated with an object key from a managed WeakMap.
     pub fn weak_map_delete_object(&mut self, object: Obj, key: Obj) -> bool {
-        let Some(id) = self.weak_map_objects.get(&(object.addr() as usize)).copied() else {
+        let Some(id) = self
+            .weak_map_objects
+            .get(&(object.addr() as usize))
+            .copied()
+        else {
             return false;
         };
         let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else {
@@ -1479,7 +1606,9 @@ impl Heap {
         };
         let key_address = key.addr() as usize;
         let before = entry.entries.len();
-        entry.entries.retain(|(candidate, _)| *candidate != key_address);
+        entry
+            .entries
+            .retain(|(candidate, _)| *candidate != key_address);
         entry.entries.len() != before
     }
 
@@ -1489,7 +1618,11 @@ impl Heap {
         };
         let key = key.addr() as usize;
         let value = value.addr() as usize;
-        if let Some((_, existing_value)) = entry.entries.iter_mut().find(|(existing_key, _)| *existing_key == key) {
+        if let Some((_, existing_value)) = entry
+            .entries
+            .iter_mut()
+            .find(|(existing_key, _)| *existing_key == key)
+        {
             *existing_value = value;
         } else {
             entry.entries.push((key, value));
@@ -1509,11 +1642,15 @@ impl Heap {
         let Some(entry) = self.weak_maps.get(id.0 as usize) else {
             return Vec::new();
         };
-        entry.entries.iter().filter_map(|&(key_address, value_address)| {
-            let key = self.by_addr.get(&key_address)?;
-            let value = self.by_addr.get(&value_address)?;
-            Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
-        }).collect()
+        entry
+            .entries
+            .iter()
+            .filter_map(|&(key_address, value_address)| {
+                let key = self.by_addr.get(&key_address)?;
+                let value = self.by_addr.get(&value_address)?;
+                Some((Obj(self.records[*key].addr), Obj(self.records[*value].addr)))
+            })
+            .collect()
     }
 
     pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
@@ -1956,7 +2093,11 @@ mod tests {
         let mut live_keys = Vec::new();
         let mut entries = Vec::new();
         let ref_slots = |type_rid: u32| {
-            if type_rid == 0 { Vec::new() } else { vec![0usize] }
+            if type_rid == 0 {
+                Vec::new()
+            } else {
+                vec![0usize]
+            }
         };
 
         for index in 0..32u32 {
@@ -1981,7 +2122,6 @@ mod tests {
             }
         }
     }
-
 
     #[test]
     fn finalization_queues_token_after_target_is_swept() {

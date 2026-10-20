@@ -175,11 +175,14 @@ impl Checker<'_> {
                 hir::Stmt::Let { slot, init } if boxed.contains(slot) => {
                     let span = init.span;
                     let slot = *slot;
-                    let value = std::mem::replace(init, hir::Expr {
-                        kind: hir::ExprKind::Error,
-                        ty: Ty::Error,
-                        span,
-                    });
+                    let value = std::mem::replace(
+                        init,
+                        hir::Expr {
+                            kind: hir::ExprKind::Error,
+                            ty: Ty::Error,
+                            span,
+                        },
+                    );
                     *statement = hir::Stmt::BoxedLet { slot, init: value };
                 }
                 hir::Stmt::If {
@@ -243,12 +246,22 @@ impl Checker<'_> {
                     self.collect_mutated_names(&body.statements, names);
                     self.collect_mutated_expr(cond, names);
                 }
-                ast::Stmt::For { init, cond, update, body, .. } => {
+                ast::Stmt::For {
+                    init,
+                    cond,
+                    update,
+                    body,
+                    ..
+                } => {
                     if let Some(init) = init {
                         self.collect_mutated_names(std::slice::from_ref(init), names);
                     }
-                    if let Some(cond) = cond { self.collect_mutated_expr(cond, names); }
-                    if let Some(update) = update { self.collect_mutated_expr(update, names); }
+                    if let Some(cond) = cond {
+                        self.collect_mutated_expr(cond, names);
+                    }
+                    if let Some(update) = update {
+                        self.collect_mutated_expr(update, names);
+                    }
                     self.collect_mutated_names(&body.statements, names);
                 }
                 ast::Stmt::ForOf { iterable, body, .. } => {
@@ -290,7 +303,12 @@ impl Checker<'_> {
                 self.collect_mutated_expr(lhs, names);
                 self.collect_mutated_expr(rhs, names);
             }
-            ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+            ast::Expr::Conditional {
+                condition,
+                when_true,
+                when_false,
+                ..
+            } => {
                 self.collect_mutated_expr(condition, names);
                 self.collect_mutated_expr(when_true, names);
                 self.collect_mutated_expr(when_false, names);
@@ -333,7 +351,9 @@ impl Checker<'_> {
                 self.collect_mutated_expr(index, names);
                 self.collect_mutated_expr(value, names);
             }
-            ast::Expr::Function(_) | ast::Expr::Ident(_) | ast::Expr::Number { .. }
+            ast::Expr::Function(_)
+            | ast::Expr::Ident(_)
+            | ast::Expr::Number { .. }
             | ast::Expr::String { .. }
             | ast::Expr::Bool { .. }
             | ast::Expr::Null { .. } => {}
@@ -353,7 +373,10 @@ impl Checker<'_> {
             if parameter.default_value.is_some() {
                 saw_default = true;
             } else if saw_default {
-                self.error(parameter.name.span, "a required parameter cannot follow a default parameter");
+                self.error(
+                    parameter.name.span,
+                    "a required parameter cannot follow a default parameter",
+                );
             }
         }
         for capture in &captures {
@@ -410,10 +433,14 @@ impl Checker<'_> {
                     let mut checked = self.check_expr(&mut inner, value);
                     let expected = inner.locals[index + 1];
                     coerce_numeric_literal(&mut checked, expected);
-                    if !checked.ty.is_error()
-                        && !self.is_assignable(checked.ty, expected)
-                    {
-                        self.error(checked.span, format!("default expression type {:?} does not match {expected:?}", checked.ty));
+                    if !checked.ty.is_error() && !self.is_assignable(checked.ty, expected) {
+                        self.error(
+                            checked.span,
+                            format!(
+                                "default expression type {:?} does not match {expected:?}",
+                                checked.ty
+                            ),
+                        );
                     }
                     checked
                 })
@@ -513,18 +540,25 @@ impl Checker<'_> {
                     source: hir::CaptureSource::Local(outer_slot),
                 }
             })
-            .chain(uses.inherited.into_iter().enumerate().map(move |(offset, mut capture)| {
-                let source_slot = match capture.source {
-                    hir::CaptureSource::Environment { environment_slot, .. } => environment_slot,
-                    hir::CaptureSource::Local(slot) => slot as u16,
-                };
-                capture.environment_slot = (local_capture_count + offset) as u16;
-                capture.source = hir::CaptureSource::Environment {
-                    environment_slot: source_slot,
-                    mode: capture.mode,
-                };
-                capture
-            }))
+            .chain(
+                uses.inherited
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(offset, mut capture)| {
+                        let source_slot = match capture.source {
+                            hir::CaptureSource::Environment {
+                                environment_slot, ..
+                            } => environment_slot,
+                            hir::CaptureSource::Local(slot) => slot as u16,
+                        };
+                        capture.environment_slot = (local_capture_count + offset) as u16;
+                        capture.source = hir::CaptureSource::Environment {
+                            environment_slot: source_slot,
+                            mode: capture.mode,
+                        };
+                        capture
+                    }),
+            )
             .collect()
     }
 
@@ -567,11 +601,25 @@ impl Checker<'_> {
                 }
                 self.collect_capture_expr(cx, parameters, cond, uses);
             }
-            ast::Stmt::For { init, cond, update, body, .. } => {
-                if let Some(init) = init { self.collect_capture_stmt(cx, parameters, init, uses); }
-                if let Some(cond) = cond { self.collect_capture_expr(cx, parameters, cond, uses); }
-                if let Some(update) = update { self.collect_capture_expr(cx, parameters, update, uses); }
-                for statement in &body.statements { self.collect_capture_stmt(cx, parameters, statement, uses); }
+            ast::Stmt::For {
+                init,
+                cond,
+                update,
+                body,
+                ..
+            } => {
+                if let Some(init) = init {
+                    self.collect_capture_stmt(cx, parameters, init, uses);
+                }
+                if let Some(cond) = cond {
+                    self.collect_capture_expr(cx, parameters, cond, uses);
+                }
+                if let Some(update) = update {
+                    self.collect_capture_expr(cx, parameters, update, uses);
+                }
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
             }
             ast::Stmt::ForOf { iterable, body, .. } => {
                 self.collect_capture_expr(cx, parameters, iterable, uses);
@@ -646,7 +694,12 @@ impl Checker<'_> {
                 self.collect_capture_expr(cx, parameters, lhs, uses);
                 self.collect_capture_expr(cx, parameters, rhs, uses);
             }
-            ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+            ast::Expr::Conditional {
+                condition,
+                when_true,
+                when_false,
+                ..
+            } => {
                 self.collect_capture_expr(cx, parameters, condition, uses);
                 self.collect_capture_expr(cx, parameters, when_true, uses);
                 self.collect_capture_expr(cx, parameters, when_false, uses);
@@ -682,9 +735,7 @@ impl Checker<'_> {
             ast::Expr::OptionalField { object, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses)
             }
-            ast::Expr::Spread { expr, .. } => {
-                self.collect_capture_expr(cx, parameters, expr, uses)
-            }
+            ast::Expr::Spread { expr, .. } => self.collect_capture_expr(cx, parameters, expr, uses),
             ast::Expr::FieldAssign { object, value, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses);
                 self.collect_capture_expr(cx, parameters, value, uses);
@@ -987,7 +1038,12 @@ impl Checker<'_> {
                 name,
                 params,
                 return_ty,
-                optional_count: f.params.iter().rev().take_while(|p| p.default_value.is_some()).count(),
+                optional_count: f
+                    .params
+                    .iter()
+                    .rev()
+                    .take_while(|p| p.default_value.is_some())
+                    .count(),
             });
         }
 
@@ -1031,7 +1087,12 @@ impl Checker<'_> {
                     name,
                     params,
                     return_ty,
-                    optional_count: m.params.iter().rev().take_while(|p| p.default_value.is_some()).count(),
+                    optional_count: m
+                        .params
+                        .iter()
+                        .rev()
+                        .take_while(|p| p.default_value.is_some())
+                        .count(),
                 });
             }
         }
@@ -1050,7 +1111,10 @@ impl Checker<'_> {
             if parameter.default_value.is_some() {
                 saw_default = true;
             } else if saw_default {
-                self.error(parameter.name.span, "a required parameter cannot follow a default parameter");
+                self.error(
+                    parameter.name.span,
+                    "a required parameter cannot follow a default parameter",
+                );
             }
         }
         let sig = &self.signatures[index];
@@ -1152,10 +1216,14 @@ impl Checker<'_> {
                     let mut checked = self.check_expr(&mut cx, value);
                     let expected = param_tys[index + usize::from(this_class.is_some())];
                     coerce_numeric_literal(&mut checked, expected);
-                    if !checked.ty.is_error()
-                        && !self.is_assignable(checked.ty, expected)
-                    {
-                        self.error(checked.span, format!("default expression type {:?} does not match {expected:?}", checked.ty));
+                    if !checked.ty.is_error() && !self.is_assignable(checked.ty, expected) {
+                        self.error(
+                            checked.span,
+                            format!(
+                                "default expression type {:?} does not match {expected:?}",
+                                checked.ty
+                            ),
+                        );
                     }
                     checked
                 })
@@ -1251,19 +1319,41 @@ impl Checker<'_> {
                 let cond = self.check_condition(cx, cond);
                 hir::Stmt::DoWhile { body, cond }
             }
-            ast::Stmt::For { init, cond, update, body, .. } => {
-                let init = init.as_ref().map(|stmt| Box::new(self.check_stmt(cx, stmt)));
+            ast::Stmt::For {
+                init,
+                cond,
+                update,
+                body,
+                ..
+            } => {
+                let init = init
+                    .as_ref()
+                    .map(|stmt| Box::new(self.check_stmt(cx, stmt)));
                 let cond = cond
                     .as_ref()
                     .map(|expr| self.check_condition(cx, expr))
-                    .unwrap_or(hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span: body.span });
+                    .unwrap_or(hir::Expr {
+                        kind: hir::ExprKind::Boolean(true),
+                        ty: Ty::Boolean,
+                        span: body.span,
+                    });
                 let update = update.as_ref().map(|expr| self.check_expr(cx, expr));
                 cx.loop_depth += 1;
                 let body = self.check_block(cx, body);
                 cx.loop_depth -= 1;
-                hir::Stmt::For { init, cond, update, body }
+                hir::Stmt::For {
+                    init,
+                    cond,
+                    update,
+                    body,
+                }
             }
-            ast::Stmt::ForOf { name, iterable, body, span: _ } => {
+            ast::Stmt::ForOf {
+                name,
+                iterable,
+                body,
+                span: _,
+            } => {
                 let iterable_expr = self.check_expr(cx, iterable);
                 let (new_name, done_name, next_name) = match iterable_expr.ty {
                     Ty::Array => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
@@ -1271,7 +1361,10 @@ impl Checker<'_> {
                     Ty::Set => ("setIteratorNew", "setIteratorDone", "setIteratorNext"),
                     Ty::Error => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     other => {
-                        self.error(iterable_expr.span, format!("type {other:?} is not iterable"));
+                        self.error(
+                            iterable_expr.span,
+                            format!("type {other:?} is not iterable"),
+                        );
                         ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext")
                     }
                 };
@@ -1288,15 +1381,51 @@ impl Checker<'_> {
                     self.error(span, "missing iterator next intrinsic");
                     return hir::Stmt::Expr(self.poison(span));
                 };
-                let iterator = hir::Expr { kind: hir::ExprKind::CallBuiltin { id: new_id, args: vec![iterable_expr] }, ty: Ty::Any, span };
+                let iterator = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: new_id,
+                        args: vec![iterable_expr],
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
                 let iterator_slot = cx.declare("__for_of_iterator", Ty::Any);
-                let done = hir::Expr { kind: hir::ExprKind::CallBuiltin { id: done_id, args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }] }, ty: Ty::Boolean, span };
-                let next = hir::Expr { kind: hir::ExprKind::CallBuiltin { id: next_id, args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }] }, ty: Ty::Any, span };
+                let done = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: done_id,
+                        args: vec![hir::Expr {
+                            kind: hir::ExprKind::Local(iterator_slot),
+                            ty: Ty::Any,
+                            span,
+                        }],
+                    },
+                    ty: Ty::Boolean,
+                    span,
+                };
+                let next = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: next_id,
+                        args: vec![hir::Expr {
+                            kind: hir::ExprKind::Local(iterator_slot),
+                            ty: Ty::Any,
+                            span,
+                        }],
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
                 cx.scopes.push(Scope::new());
                 let binding = cx.declare(self.text(name), Ty::Any);
                 let body = self.check_block(cx, body);
                 cx.scopes.pop();
-                hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
+                hir::Stmt::ForOf {
+                    iterator,
+                    iterator_slot,
+                    done,
+                    next,
+                    binding,
+                    body,
+                }
             }
             ast::Stmt::Break { span } => {
                 if cx.loop_depth == 0 {
@@ -1394,13 +1523,11 @@ impl Checker<'_> {
                 ty: Ty::Boolean,
                 span,
             },
-            ast::Expr::Null { .. } => {
-                hir::Expr {
-                    kind: hir::ExprKind::Null,
-                    ty: Ty::Any,
-                    span,
-                }
-            }
+            ast::Expr::Null { .. } => hir::Expr {
+                kind: hir::ExprKind::Null,
+                ty: Ty::Any,
+                span,
+            },
             ast::Expr::Ident(name) => {
                 let text = self.text(name).to_string();
                 match cx.lookup(&text) {
@@ -1513,7 +1640,12 @@ impl Checker<'_> {
                     span,
                 }
             }
-            ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+            ast::Expr::Conditional {
+                condition,
+                when_true,
+                when_false,
+                ..
+            } => {
                 let condition = self.check_condition(cx, condition);
                 let when_true = self.check_expr(cx, when_true);
                 let when_false = self.check_expr(cx, when_false);
@@ -1590,7 +1722,12 @@ impl Checker<'_> {
                         } else {
                             let (param_tys, return_ty, optional_count, signature_name) = {
                                 let sig = &self.signatures[func as usize];
-                                (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
+                                (
+                                    sig.params.clone(),
+                                    sig.return_ty,
+                                    sig.optional_count,
+                                    sig.name.clone(),
+                                )
                             };
                             let sig = Signature {
                                 name: signature_name,
@@ -1846,7 +1983,12 @@ impl Checker<'_> {
                 };
                 let (param_tys, return_ty, optional_count, signature_name) = {
                     let sig = &self.signatures[func as usize];
-                    (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
+                    (
+                        sig.params.clone(),
+                        sig.return_ty,
+                        sig.optional_count,
+                        sig.name.clone(),
+                    )
                 };
                 let sig = Signature {
                     name: signature_name,
@@ -1934,29 +2076,92 @@ impl Checker<'_> {
                     (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),
                     (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "clear") => Some(("setClear", Ty::Void, vec![])),
-                    (Ty::WeakMap, "set") => Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any])),
+                    (Ty::WeakMap, "set") => {
+                        Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any]))
+                    }
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
-                    (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some(("u8ArrayGet", Ty::Int(IntKind::U8), vec![Ty::Int(IntKind::U64)])),
-                    (Ty::BufferView(hir::BufferViewKind::U8), "set") => Some(("u8ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U8)])),
-                    (Ty::BufferView(hir::BufferViewKind::U16), "get") => Some(("u16ArrayGet", Ty::Int(IntKind::U16), vec![Ty::Int(IntKind::U64)])),
-                    (Ty::BufferView(hir::BufferViewKind::U16), "set") => Some(("u16ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16)])),
-                    (Ty::BufferView(hir::BufferViewKind::U32), "get") => Some(("u32ArrayGet", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64)])),
-                    (Ty::BufferView(hir::BufferViewKind::U32), "set") => Some(("u32ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32)])),
-                    (Ty::BufferView(hir::BufferViewKind::F64), "get") => Some(("f64ArrayGet", Ty::F64, vec![Ty::Int(IntKind::U64)])),
-                    (Ty::BufferView(hir::BufferViewKind::F64), "set") => Some(("f64ArraySet", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::F64])),
-                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint32") => Some(("dataViewGetU32", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64), Ty::Boolean])),
-                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint32") => Some(("dataViewSetU32", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32), Ty::Boolean])),
-                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint16") => Some(("dataViewGetU16", Ty::Int(IntKind::U16), vec![Ty::Int(IntKind::U64), Ty::Boolean])),
-                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint16") => Some(("dataViewSetU16", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16), Ty::Boolean])),
-                    (Ty::BufferView(hir::BufferViewKind::DataView), "getFloat64") => Some(("dataViewGetF64", Ty::F64, vec![Ty::Int(IntKind::U64), Ty::Boolean])),
-                    (Ty::BufferView(hir::BufferViewKind::DataView), "setFloat64") => Some(("dataViewSetF64", Ty::Boolean, vec![Ty::Int(IntKind::U64), Ty::F64, Ty::Boolean])),
+                    (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
+                        "u8ArrayGet",
+                        Ty::Int(IntKind::U8),
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U8), "set") => Some((
+                        "u8ArraySet",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U8)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U16), "get") => Some((
+                        "u16ArrayGet",
+                        Ty::Int(IntKind::U16),
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U16), "set") => Some((
+                        "u16ArraySet",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U32), "get") => Some((
+                        "u32ArrayGet",
+                        Ty::Int(IntKind::U32),
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U32), "set") => Some((
+                        "u32ArraySet",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::F64), "get") => {
+                        Some(("f64ArrayGet", Ty::F64, vec![Ty::Int(IntKind::U64)]))
+                    }
+                    (Ty::BufferView(hir::BufferViewKind::F64), "set") => Some((
+                        "f64ArraySet",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::F64],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint32") => Some((
+                        "dataViewGetU32",
+                        Ty::Int(IntKind::U32),
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint32") => Some((
+                        "dataViewSetU32",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint16") => Some((
+                        "dataViewGetU16",
+                        Ty::Int(IntKind::U16),
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint16") => Some((
+                        "dataViewSetU16",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getFloat64") => Some((
+                        "dataViewGetF64",
+                        Ty::F64,
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setFloat64") => Some((
+                        "dataViewSetF64",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::F64, Ty::Boolean],
+                    )),
                     _ => None,
                 };
                 if let Some((native_name, return_ty, expected)) = managed_method {
                     if args.len() != expected.len() {
-                        self.error(span, format!("`{mname}` expects {} argument(s), found {}", expected.len(), args.len()));
+                        self.error(
+                            span,
+                            format!(
+                                "`{mname}` expects {} argument(s), found {}",
+                                expected.len(),
+                                args.len()
+                            ),
+                        );
                         return self.poison(span);
                     }
                     let mut call_args = vec![receiver];
@@ -1964,20 +2169,39 @@ impl Checker<'_> {
                         let mut value = self.check_expr(cx, arg);
                         coerce_numeric_literal(&mut value, expected_ty);
                         if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
-                            self.error(value.span, format!("argument type {:?} does not match {expected_ty:?}", value.ty));
+                            self.error(
+                                value.span,
+                                format!(
+                                    "argument type {:?} does not match {expected_ty:?}",
+                                    value.ty
+                                ),
+                            );
                         }
                         call_args.push(value);
                     }
-                    let module = if native_name.starts_with("dataView") || native_name.ends_with("ArrayGet") || native_name.ends_with("ArraySet") {
+                    let module = if native_name.starts_with("dataView")
+                        || native_name.ends_with("ArrayGet")
+                        || native_name.ends_with("ArraySet")
+                    {
                         "zun:buffer"
                     } else {
                         "zun:collections"
                     };
                     let Some((id, _)) = zun_natives::resolve(module, native_name) else {
-                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        self.error(
+                            span,
+                            format!("missing collection intrinsic `{native_name}`"),
+                        );
                         return self.poison(span);
                     };
-                    return hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty: return_ty, span };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: call_args,
+                        },
+                        ty: return_ty,
+                        span,
+                    };
                 }
                 let class = match receiver.ty {
                     Ty::String => match self.classes_by_name.get("String") {
@@ -2023,7 +2247,12 @@ impl Checker<'_> {
                 };
                 let (param_tys, return_ty, optional_count, signature_name) = {
                     let sig = &self.signatures[func as usize];
-                    (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
+                    (
+                        sig.params.clone(),
+                        sig.return_ty,
+                        sig.optional_count,
+                        sig.name.clone(),
+                    )
                 };
                 // param_tys[0] is `this`; the remaining are the declared params.
                 let mut call_args = vec![receiver];
@@ -2116,7 +2345,10 @@ impl Checker<'_> {
                         return self.poison(span);
                     };
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![length] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![length],
+                        },
                         ty: Ty::Any,
                         span,
                     };
@@ -2126,7 +2358,8 @@ impl Checker<'_> {
                         self.error(span, "`DataView` expects buffer, offset, and length");
                         return self.poison(span);
                     }
-                    let mut call_args: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                    let mut call_args: Vec<hir::Expr> =
+                        args.iter().map(|arg| self.check_expr(cx, arg)).collect();
                     for arg in call_args.iter_mut().skip(1) {
                         coerce_numeric_literal(arg, Ty::INT);
                     }
@@ -2135,7 +2368,10 @@ impl Checker<'_> {
                         return self.poison(span);
                     };
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: call_args,
+                        },
                         ty: Ty::BufferView(hir::BufferViewKind::DataView),
                         span,
                     };
@@ -2145,12 +2381,16 @@ impl Checker<'_> {
                         self.error(span, format!("`{name}` expects buffer, offset, and length"));
                         return self.poison(span);
                     }
-                    let mut call_args: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                    let mut call_args: Vec<hir::Expr> =
+                        args.iter().map(|arg| self.check_expr(cx, arg)).collect();
                     for arg in call_args.iter_mut().skip(1) {
                         coerce_numeric_literal(arg, Ty::INT);
                     }
                     let Some((id, _)) = zun_natives::resolve("zun:buffer", native_name) else {
-                        self.error(span, format!("missing typed-array intrinsic `{native_name}`"));
+                        self.error(
+                            span,
+                            format!("missing typed-array intrinsic `{native_name}`"),
+                        );
                         return self.poison(span);
                     };
                     let view_kind = match name.as_str() {
@@ -2161,7 +2401,10 @@ impl Checker<'_> {
                         _ => unreachable!(),
                     };
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: call_args,
+                        },
                         ty: Ty::BufferView(view_kind),
                         span,
                     };
@@ -2178,11 +2421,17 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                     let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
-                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        self.error(
+                            span,
+                            format!("missing collection intrinsic `{native_name}`"),
+                        );
                         return self.poison(span);
                     };
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: Vec::new(),
+                        },
                         ty,
                         span,
                     };
@@ -2289,7 +2538,10 @@ impl Checker<'_> {
             ast::Expr::OptionalField { object, field, .. } => {
                 let object = self.check_expr(cx, object);
                 if object.ty != Ty::Any && !object.ty.is_error() {
-                    self.error(object.span, "optional property access requires an any receiver");
+                    self.error(
+                        object.span,
+                        "optional property access requires an any receiver",
+                    );
                 }
                 hir::Expr {
                     kind: hir::ExprKind::OptionalDynamicGet {
@@ -2415,7 +2667,10 @@ impl Checker<'_> {
                         Ty::Set => "setIteratorNew",
                         Ty::Error => "arrayIteratorNew",
                         other => {
-                            self.error(object.span, format!("type {other:?} has no Symbol.iterator"));
+                            self.error(
+                                object.span,
+                                format!("type {other:?} has no Symbol.iterator"),
+                            );
                             return self.poison(span);
                         }
                     };
@@ -2424,7 +2679,10 @@ impl Checker<'_> {
                         return self.poison(span);
                     };
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![object],
+                        },
                         ty: Ty::Any,
                         span,
                     };
@@ -2722,14 +2980,19 @@ mod tests {
 
     #[test]
     fn required_parameter_cannot_follow_default_parameter() {
-        let msg = first_error("function f(first: number = 1.0, second: number): number { return second; }");
+        let msg = first_error(
+            "function f(first: number = 1.0, second: number): number { return second; }",
+        );
         assert!(msg.contains("follow a default parameter"), "{msg}");
     }
 
     #[test]
     fn spread_arguments_are_rejected_until_lowering_exists() {
         let msg = first_error("function main() { print(...values); }");
-        assert!(msg.contains("spread arguments are not lowered yet"), "{msg}");
+        assert!(
+            msg.contains("spread arguments are not lowered yet"),
+            "{msg}"
+        );
     }
 
     #[test]

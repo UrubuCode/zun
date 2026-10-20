@@ -56,7 +56,10 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "array iteration requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "array iteration requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
 }
 
@@ -67,7 +70,10 @@ fn managed_collections_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "managed collections require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "managed collections require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -78,7 +84,10 @@ fn managed_collection_constructors_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "managed constructors require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "managed constructors require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -100,7 +109,10 @@ fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "collection iteration requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "collection iteration requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
 }
 
@@ -111,7 +123,10 @@ fn symbol_iterator_calls_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Symbol.iterator requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Symbol.iterator requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
 }
 
@@ -122,7 +137,10 @@ fn typed_view_instance_accessors_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "typed views require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "typed views require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(255, _)));
 }
 
@@ -132,7 +150,10 @@ fn switch_lowering_is_jit_equivalent() {
         "function main(): u64 { let value: u64 = 2; switch (value) { case 1: return 10; case 2: return 20; default: return 30; } }",
     );
     let jit = zun_codegen::Jit::compile(&module);
-    assert!(jit.is_err(), "switch must remain on the interpreter fallback until verifier joins are lowered");
+    assert!(
+        jit.is_err(),
+        "switch must remain on the interpreter fallback until verifier joins are lowered"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(20, _)));
 }
 
@@ -162,7 +183,9 @@ fn short_circuit_logical_operators_are_jit_equivalent() {
 
 #[test]
 fn conditional_expression_is_jit_equivalent() {
-    let module = compile("function main(): number { let choose: boolean = false; return choose ? 1.0 : 2.0; }");
+    let module = compile(
+        "function main(): number { let choose: boolean = false; return choose ? 1.0 : 2.0; }",
+    );
     assert!(zun_codegen::Jit::compile(&module).is_err());
     assert!(matches!(interp_entry(&module), Value::Float(2.0, _)));
 }
@@ -172,18 +195,23 @@ fn null_literal_uses_the_interpreter_fallback_boundary() {
     let module = compile("function main(): any { return null; }");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "null currently requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "null currently requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Null));
 }
 
 #[test]
 fn nullish_coalescing_uses_the_interpreter_fallback_boundary() {
-    let module = compile(
-        "function main(): number { let value: any = null; return value ?? 42.0; }",
-    );
+    let module =
+        compile("function main(): number { let value: any = null; return value ?? 42.0; }");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "nullish coalescing requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "nullish coalescing requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
 }
 
@@ -192,7 +220,10 @@ fn optional_dynamic_access_uses_the_interpreter_fallback_boundary() {
     let module = compile("function main(): any { let value: any = null; return value?.answer; }");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "optional access requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "optional access requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Null));
 }
 
@@ -203,7 +234,10 @@ fn default_parameter_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "default parameter requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "default parameter requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(2.0, _)));
 }
 
@@ -214,7 +248,10 @@ fn method_default_parameter_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "default method parameter requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "default method parameter requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(3.0, _)));
 }
 

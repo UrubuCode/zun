@@ -101,7 +101,8 @@ pub fn lower(program: &hir::Program) -> Module {
     }
 
     for (index, f) in program.functions.iter().enumerate() {
-        let (code, handlers) = lower_function(f, &layout, &mut module, program.functions.len() as u32);
+        let (code, handlers) =
+            lower_function(f, &layout, &mut module, program.functions.len() as u32);
         let local_kinds: Vec<u8> = f.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
@@ -506,7 +507,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.patch_to_here(patch);
                 }
             }
-            Stmt::For { init, cond, update, body } => {
+            Stmt::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 if let Some(init) = init {
                     self.stmt(init);
                 }
@@ -532,9 +538,19 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.patch_to_here(patch);
                 }
             }
-            Stmt::ForOf { iterator, iterator_slot, done, next, binding, body } => {
+            Stmt::ForOf {
+                iterator,
+                iterator_slot,
+                done,
+                next,
+                binding,
+                body,
+            } => {
                 self.expr(iterator);
-                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*iterator_slot)));
+                self.emit(Instruction::new(
+                    Opcode::StoreLocal,
+                    Operand::Local(*iterator_slot),
+                ));
                 let loop_start = self.code.len();
                 self.expr(done);
                 let to_exit = self.emit_branch(Opcode::BranchTrue);
@@ -542,7 +558,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.continue_targets.push(vec![loop_start]);
                 self.continue_patches.push(Vec::new());
                 self.expr(next);
-                self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*binding)));
+                self.emit(Instruction::new(
+                    Opcode::StoreLocal,
+                    Operand::Local(*binding),
+                ));
                 self.stmts(body);
                 self.emit_branch_back(Opcode::Branch, loop_start);
                 self.patch_to_here(to_exit);
@@ -711,10 +730,15 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     if capture.capture.mode == CaptureMode::ByCell {
                         match capture.capture.source {
                             CaptureSource::Local(slot) => {
-                                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+                                self.emit(Instruction::new(
+                                    Opcode::LoadLocal,
+                                    Operand::Local(slot),
+                                ));
                                 self.emit(Instruction::simple(Opcode::BoxAny));
                             }
-                            CaptureSource::Environment { environment_slot, .. } => {
+                            CaptureSource::Environment {
+                                environment_slot, ..
+                            } => {
                                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
                                 self.emit_dynamic_load(&capture_name(environment_slot));
                             }
@@ -822,11 +846,17 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     BinaryOp::Le => Opcode::CmpLe,
                     BinaryOp::Gt => Opcode::CmpGt,
                     BinaryOp::Ge => Opcode::CmpGe,
-                    BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish => unreachable!("logical operators lower through branches"),
+                    BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish => {
+                        unreachable!("logical operators lower through branches")
+                    }
                 };
                 self.emit(Instruction::simple(opcode));
             }
-            ExprKind::Conditional { condition, when_true, when_false } => {
+            ExprKind::Conditional {
+                condition,
+                when_true,
+                when_false,
+            } => {
                 self.expr(condition);
                 let to_false = self.emit_branch(Opcode::BranchFalse);
                 self.expr(when_true);

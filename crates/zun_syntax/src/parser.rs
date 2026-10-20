@@ -187,7 +187,11 @@ impl Parser<'_> {
             } else {
                 None
             };
-            params.push(Param { name: pname, ty, default_value });
+            params.push(Param {
+                name: pname,
+                ty,
+                default_value,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -231,7 +235,11 @@ impl Parser<'_> {
             } else {
                 None
             };
-            params.push(Param { name: pname, ty, default_value });
+            params.push(Param {
+                name: pname,
+                ty,
+                default_value,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -253,8 +261,8 @@ impl Parser<'_> {
 
     fn function_expression(&mut self) -> Expr {
         let start = self.bump().span; // `function`
-        // A name is deliberately not accepted here: named declarations are
-        // parsed at the program/class level, while this form is anonymous.
+                                      // A name is deliberately not accepted here: named declarations are
+                                      // parsed at the program/class level, while this form is anonymous.
         self.expect(TokenKind::LParen, "`(` after anonymous function");
         let params = self.parameters();
         self.expect(TokenKind::RParen, "`)`");
@@ -279,7 +287,11 @@ impl Parser<'_> {
             } else {
                 None
             };
-            params.push(Param { name, ty, default_value });
+            params.push(Param {
+                name,
+                ty,
+                default_value,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -407,7 +419,13 @@ impl Parser<'_> {
                     }
                 }
                 let case_span = case_value.span();
-                cases.push((case_value, Block { statements, span: case_span }));
+                cases.push((
+                    case_value,
+                    Block {
+                        statements,
+                        span: case_span,
+                    },
+                ));
             } else if self.eat(TokenKind::KwDefault) {
                 self.expect(TokenKind::Colon, "`:` after default");
                 let mut statements = Vec::new();
@@ -420,7 +438,10 @@ impl Parser<'_> {
                         statements.push(statement);
                     }
                 }
-                default_body = Some(Block { statements, span: self.peek().span });
+                default_body = Some(Block {
+                    statements,
+                    span: self.peek().span,
+                });
             } else {
                 self.error_at(self.peek().span, "expected `case` or `default`");
                 self.bump();
@@ -446,7 +467,14 @@ impl Parser<'_> {
                 }],
             });
         }
-        chain.map(|block| block.statements.into_iter().next().unwrap_or(Stmt::Expr(Expr::Null { span: start })))
+        chain
+            .map(|block| {
+                block
+                    .statements
+                    .into_iter()
+                    .next()
+                    .unwrap_or(Stmt::Expr(Expr::Null { span: start }))
+            })
             .unwrap_or(Stmt::Expr(Expr::Null { span: start }))
     }
 
@@ -504,7 +532,12 @@ impl Parser<'_> {
             self.expect(TokenKind::RParen, "`)` after for update");
             let body = self.block();
             return Stmt::For {
-                init: Some(Box::new(Stmt::Let { name, ty, init, span: init_span })),
+                init: Some(Box::new(Stmt::Let {
+                    name,
+                    ty,
+                    init,
+                    span: init_span,
+                })),
                 cond,
                 update,
                 span: start.to(body.span),
@@ -517,7 +550,13 @@ impl Parser<'_> {
         let update = (!self.at(TokenKind::RParen)).then(|| self.expression());
         self.expect(TokenKind::RParen, "`)` after for update");
         let body = self.block();
-        Stmt::For { init: None, cond, update, span: start.to(body.span), body }
+        Stmt::For {
+            init: None,
+            cond,
+            update,
+            span: start.to(body.span),
+            body,
+        }
     }
 
     fn break_statement(&mut self) -> Stmt {
@@ -880,7 +919,11 @@ impl Parser<'_> {
                 if self.eat(TokenKind::Arrow) {
                     let body = self.arrow_body();
                     return Expr::Function(FunctionExpr {
-                        params: vec![Param { name, ty: None, default_value: None }],
+                        params: vec![Param {
+                            name,
+                            ty: None,
+                            default_value: None,
+                        }],
                         return_type: None,
                         span: t.span.to(body.span),
                         body,
@@ -1028,17 +1071,29 @@ mod tests {
         let src = "function main() { let a = x => x + 1; let b = (x: number, y) => { return x + y; }; let c = function(x) { return x; }; }";
         let p = parse_ok(src);
         let body = &p.functions[0].body.statements;
-        let Stmt::Let { init: Expr::Function(first), .. } = &body[0] else {
+        let Stmt::Let {
+            init: Expr::Function(first),
+            ..
+        } = &body[0]
+        else {
             panic!("expected single-parameter arrow");
         };
         assert!(first.is_arrow);
         assert_eq!(first.params.len(), 1);
-        let Stmt::Let { init: Expr::Function(second), .. } = &body[1] else {
+        let Stmt::Let {
+            init: Expr::Function(second),
+            ..
+        } = &body[1]
+        else {
             panic!("expected parenthesized arrow");
         };
         assert!(second.is_arrow);
         assert_eq!(second.params.len(), 2);
-        let Stmt::Let { init: Expr::Function(third), .. } = &body[2] else {
+        let Stmt::Let {
+            init: Expr::Function(third),
+            ..
+        } = &body[2]
+        else {
             panic!("expected anonymous function");
         };
         assert!(!third.is_arrow);
@@ -1063,7 +1118,13 @@ mod tests {
     fn parses_for_of_statement() {
         let src = "function main() { for (let value of values) { print(value); } }";
         let p = parse_ok(src);
-        let Stmt::ForOf { name, iterable, body, .. } = &p.functions[0].body.statements[0] else {
+        let Stmt::ForOf {
+            name,
+            iterable,
+            body,
+            ..
+        } = &p.functions[0].body.statements[0]
+        else {
             panic!("expected for-of statement");
         };
         assert_eq!(ident_text(src, name), "value");
@@ -1144,25 +1205,38 @@ mod tests {
     #[test]
     fn parses_do_while_statement() {
         let p = parse_ok("function main() { do { print(1); } while (false); }");
-        assert!(matches!(p.functions[0].body.statements[0], Stmt::DoWhile { .. }));
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::DoWhile { .. }
+        ));
     }
 
     #[test]
     fn parses_c_style_for_statement() {
-        let p = parse_ok("function main() { for (let i: int = 0; i < 3; i = i + 1) { print(i); } }");
-        assert!(matches!(p.functions[0].body.statements[0], Stmt::For { .. }));
+        let p =
+            parse_ok("function main() { for (let i: int = 0; i < 3; i = i + 1) { print(i); } }");
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::For { .. }
+        ));
     }
 
     #[test]
     fn parses_short_circuit_logical_operators() {
         let p = parse_ok("function main(): boolean { return true || false && false; }");
-        assert!(matches!(p.functions[0].body.statements[0], Stmt::Return { .. }));
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::Return { .. }
+        ));
     }
 
     #[test]
     fn parses_conditional_expression() {
         let p = parse_ok("function main(): int { return true ? 1 : 2; }");
-        assert!(matches!(p.functions[0].body.statements[0], Stmt::Return { .. }));
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::Return { .. }
+        ));
     }
 
     #[test]
@@ -1170,10 +1244,19 @@ mod tests {
         let p = parse_ok(
             "function main(): any { let value: any = null; return value?.answer ?? null; }",
         );
-        let Stmt::Return { value: Some(expr), .. } = &p.functions[0].body.statements[1] else {
+        let Stmt::Return {
+            value: Some(expr), ..
+        } = &p.functions[0].body.statements[1]
+        else {
             panic!("expected return expression");
         };
-        assert!(matches!(expr, Expr::Binary { op: BinaryOp::Nullish, .. }));
+        assert!(matches!(
+            expr,
+            Expr::Binary {
+                op: BinaryOp::Nullish,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1271,10 +1354,14 @@ mod tests {
 
     #[test]
     fn parses_computed_symbol_iterator_call() {
-        let program = parse_ok("function main(): any { let iterator = values[Symbol.iterator](); }");
+        let program =
+            parse_ok("function main(): any { let iterator = values[Symbol.iterator](); }");
         assert!(matches!(
             &program.functions[0].body.statements[0],
-            Stmt::Let { init: Expr::ComputedCall { .. }, .. }
+            Stmt::Let {
+                init: Expr::ComputedCall { .. },
+                ..
+            }
         ));
     }
 

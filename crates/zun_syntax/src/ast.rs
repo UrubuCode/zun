@@ -385,10 +385,7 @@ pub enum Expr {
         span: Span,
     },
     /// `...expr` in an argument list.
-    Spread {
-        expr: Box<Expr>,
-        span: Span,
-    },
+    Spread { expr: Box<Expr>, span: Span },
     /// `object?.field` — a null-safe dynamic property read.
     OptionalField {
         object: Box<Expr>,
