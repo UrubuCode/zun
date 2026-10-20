@@ -325,6 +325,8 @@ The following runtime contracts are implemented and covered by tests:
 - `Any` and `DynamicObject`, including dynamic-property IL, source lowering,
   and GC tracing of object-tagged dynamic values;
 - interpreted backedge observation as the first OSR integration boundary.
+- Cranelift relocatable object emission for the JIT-eligible subset, with the
+  `.zm` module retained as the fallback for ineligible methods.
 
 The remaining completion gates are full async state-machine lowering, complete
 typed FFI/ABI integration, N-API hosting, AOT/R2R object emission, true OSR

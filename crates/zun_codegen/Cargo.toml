@@ -17,6 +17,7 @@ cranelift-frontend = { workspace = true }
 cranelift-jit = { workspace = true }
 cranelift-module = { workspace = true }
 cranelift-native = { workspace = true }
+cranelift-object = { workspace = true }
 
 [dev-dependencies]
 zun_syntax = { path = "../zun_syntax" }

@@ -25,6 +25,7 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module as ClifModule};
+use cranelift_object::{ObjectBuilder, ObjectModule};
 use zun_module::{read_body, Module};
 
 use translate::clif_ty;
@@ -504,6 +505,84 @@ impl Jit {
     }
 }
 
+/// Emit the JIT-eligible portion of a ZIL module as a relocatable native
+/// object. The `.zm` module remains the fallback for methods that are not in
+/// the typed Cranelift subset; linking and runtime entry-point selection are
+/// deliberately left to the host build step.
+pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
+    let mut flags = settings::builder();
+    flags.set("opt_level", "speed").unwrap();
+    let isa = cranelift_native::builder()
+        .map_err(|e| JitError::UnsupportedHost(e.to_string()))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|e| JitError::UnsupportedHost(e.to_string()))?;
+    let builder = ObjectBuilder::new(
+        isa,
+        "zun-aot",
+        cranelift_module::default_libcall_names(),
+    )
+    .map_err(|e| JitError::Module(e.to_string()))?;
+    let mut module = ObjectModule::new(builder);
+    let eligible = eligible_methods(zm);
+    let types =
+        zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
+    let mut func_ids = HashMap::new();
+    let mut ctx = cranelift_codegen::Context::new();
+    let mut fb_ctx = FunctionBuilderContext::new();
+
+    for &rid in &eligible {
+        let body = read_body(
+            &zm.code,
+            zm.tables.method_defs[rid as usize - 1].body_offset,
+        )
+        .map_err(|e| JitError::Compile {
+            method_rid: rid,
+            detail: e.to_string(),
+        })?;
+        let sig = body_signature(&module, &body);
+        let fid = module
+            .declare_function(&format!("m{rid}"), Linkage::Local, &sig)
+            .map_err(|e| JitError::Module(e.to_string()))?;
+        func_ids.insert(rid, fid);
+    }
+
+    for &rid in &eligible {
+        let body = read_body(
+            &zm.code,
+            zm.tables.method_defs[rid as usize - 1].body_offset,
+        )
+        .map_err(|e| JitError::Compile {
+            method_rid: rid,
+            detail: e.to_string(),
+        })?;
+        ctx.func.signature = body_signature(&module, &body);
+        translate::translate_body(
+            &mut module,
+            zm,
+            &mut ctx,
+            &mut fb_ctx,
+            &func_ids,
+            &types,
+            core::ptr::null(),
+            &body,
+        )
+        .map_err(|detail| JitError::Compile {
+            method_rid: rid,
+            detail,
+        })?;
+        module
+            .define_function(func_ids[&rid], &mut ctx)
+            .map_err(|e| JitError::Compile {
+                method_rid: rid,
+                detail: e.to_string(),
+            })?;
+    }
+    module
+        .finish()
+        .emit()
+        .map_err(|e| JitError::Module(e.to_string()))
+}
+
 /// Read a nullary integer-returning entry point, sign/zero-extending to i64.
 ///
 /// # Safety
@@ -530,8 +609,8 @@ unsafe fn read_int(ptr: *const u8, bits: u8, signed: bool) -> i64 {
 /// It uses the host's native (C) calling convention so entry points are callable
 /// through `extern "C"` function pointers and calls between compiled methods
 /// match. Switching managed calls to `CallConv::Tail` is a later refinement.
-fn body_signature(
-    module: &JITModule,
+fn body_signature<M: ClifModule>(
+    module: &M,
     body: &zun_module::MethodBody<'_>,
 ) -> cranelift_codegen::ir::Signature {
     let mut sig = cranelift_codegen::ir::Signature::new(module.isa().default_call_conv());

@@ -187,6 +187,14 @@ fn non_overridden_virtual_call_is_jit_eligible() {
 }
 
 #[test]
+fn aot_object_contains_the_eligible_entry_point() {
+    let module = compile("function main(): int { return 7; }");
+    let object = zun_codegen::compile_object(&module).expect("emit object");
+    assert!(!object.is_empty());
+    assert!(object.windows(2).any(|bytes| bytes == b"m1"));
+}
+
+#[test]
 fn overridden_virtual_call_is_jit_eligible_and_dispatches_dynamically() {
     let src = "class Base { speak(): int { return 1; } }\n\
                class Derived extends Base { speak(): int { return 2; } }\n\
