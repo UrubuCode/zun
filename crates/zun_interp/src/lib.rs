@@ -17,6 +17,7 @@ mod output;
 mod operands;
 mod roots;
 mod stack;
+mod state;
 mod unwind;
 pub mod value;
 
@@ -32,6 +33,7 @@ use stack::{
     bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
     Ordering,
 };
+use state::{Interp, RootLink};
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -112,29 +114,6 @@ fn run_method_with(
         types,
     }
     .call(method_rid, args, None)
-}
-
-struct Interp<'a> {
-    module: &'a Module,
-    output: &'a mut dyn Output,
-    hook: Option<&'a dyn CallHook>,
-    loader: Option<&'a zun_loader::ModuleLoader>,
-    /// Object allocations since the last collection (GC trigger counter).
-    allocs: u32,
-    /// Adaptive allocation threshold. It backs off when a collection finds no
-    /// unreachable objects and returns to the base threshold after reclaiming.
-    gc_interval: u32,
-    types: zun_types::TypeSystem,
-}
-
-/// A link in the chain of suspended caller frames, used to find precise GC
-/// roots. Each active interpreter frame contributes the object references on
-/// its operand stack and in its locals; a frame is frozen (its stack/locals
-/// unchanged) while a callee runs, so these borrows are valid at a safepoint.
-struct RootLink<'a> {
-    stack: &'a [Value],
-    locals: &'a [Value],
-    parent: Option<&'a RootLink<'a>>,
 }
 
 impl Interp<'_> {
