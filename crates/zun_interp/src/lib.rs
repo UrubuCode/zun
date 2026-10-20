@@ -1144,10 +1144,12 @@ impl Interp<'_> {
                 Opcode::Await => {
                     let promise = pop(&mut stack)?.as_object();
                     let Some(value) = settled_await_value(promise) else {
+                        let await_pc = (*pc).saturating_sub(size);
                         let mut suspended = ExecutionFrame::new(method_rid, locals.to_vec());
                         suspended.stack = stack.to_vec();
-                        suspended.pc = *pc;
-                        suspended.suspend(promise, *pc);
+                        suspended.stack.push(Value::Object(promise));
+                        suspended.pc = await_pc;
+                        suspended.suspend(promise, await_pc);
                         self.suspended = Some(suspended);
                         return Err(RunError::Suspended);
                     };
@@ -1199,6 +1201,31 @@ mod method_tests {
             session.poll().expect("poll session"),
             ResumeResult::Complete(Value::Object(_))
         ));
+    }
+
+    #[test]
+    fn resumable_session_suspends_and_resumes_on_promise_settlement() {
+        let module = zun_compiler::compile(
+            "async function main(): Promise { let p = new Promise(); await p; return p; }",
+        )
+        .expect("compile async await function");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session = ResumableSession::new(
+            &module,
+            entry.rid(),
+            Vec::new(),
+            &mut output,
+            None,
+            None,
+        )
+        .expect("create resumable session");
+        assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
+        let promise = session.awaited_promise().expect("awaited promise");
+        let value = Value::Int(42, zun_il::NumKind::I32);
+        let boxed = value.box_any(session.heap_mut()).expect("box result");
+        assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
+        assert!(matches!(session.poll().expect("resumed poll"), ResumeResult::Complete(Value::Object(_))));
     }
 
     #[test]

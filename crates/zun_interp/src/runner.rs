@@ -87,6 +87,13 @@ impl<'a> ResumableSession<'a> {
     pub fn heap_mut(&mut self) -> &mut zun_gc::Heap {
         &mut self.heap
     }
+
+    pub fn awaited_promise(&self) -> Option<zun_gc::Obj> {
+        self.pending.as_ref().and_then(|frame| match frame.state {
+            super::state::FrameState::Suspended { promise, .. } => Some(promise),
+            super::state::FrameState::Runnable => None,
+        })
+    }
 }
 
 pub(super) fn run_method_with(

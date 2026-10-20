@@ -818,8 +818,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::Dup));
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
             }
-            ExprKind::Await { .. } => {
-                unreachable!("await requires async state-machine lowering");
+            ExprKind::Await { operand } => {
+                self.expr(operand);
+                self.emit(Instruction::simple(Opcode::Await));
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 if *op == BinaryOp::Nullish {

@@ -38,9 +38,12 @@
     }
 
     #[test]
-    fn async_source_with_await_is_rejected_until_state_machine_lowering_exists() {
-        let message = first_error("async function main(): Promise { return await load(); }");
-        assert!(message.contains("state-machine lowering"), "{message}");
+    fn async_source_with_await_builds_a_state_machine_plan() {
+        let (hir, diagnostics) = check_src(
+            "async function main(): Promise { let p = new Promise(); await p; return p; }",
+        );
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+        assert_eq!(hir.functions[0].async_plan.as_ref().unwrap().await_count, 1);
     }
 
     #[test]
@@ -61,7 +64,7 @@
         let (hir, diagnostics) = check_src(
             "async function main(): Promise { let first = await new Promise(); let second = await new Promise(); return new Promise(); }",
         );
-        assert!(!diagnostics.is_empty(), "async lowering must remain gated");
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
         let plan = hir.functions[0]
             .async_plan
             .as_ref()

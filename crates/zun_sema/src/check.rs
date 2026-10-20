@@ -337,12 +337,6 @@ impl Checker<'_> {
             // execute synchronously and return the already-created Promise.
             // Bodies containing await remain gated until state-machine IL is
             // available, so the front end never emits an invalid suspension.
-            if count_awaits_in_block(&f.body) != 0 {
-                self.error(
-                    f.name.span,
-                    "async functions with await require source-level state-machine lowering",
-                );
-            }
         }
 
         let mut cx = FunctionCx {
@@ -801,17 +795,13 @@ impl Checker<'_> {
         let span = expr.span();
         match expr {
             ast::Expr::Await { operand, .. } => {
-                self.error(
-                    expr.span(),
-                    "await is only available after async lowering is implemented",
-                );
                 let checked = self.check_expr(cx, operand);
                 let span = checked.span;
                 hir::Expr {
                     kind: hir::ExprKind::Await {
                         operand: Box::new(checked),
                     },
-                    ty: Ty::Error,
+                    ty: Ty::Any,
                     span,
                 }
             }
