@@ -6,6 +6,18 @@ Base de referência: `.docs-dotnet/` (análise do dotnet/runtime, 10 áreas). As
 
 ---
 
+## Implementation status update (2026-10-20)
+
+User-module execution now compiles source module sets, emits a manifest,
+validates `MemberRef` across loaded scopes, and executes external calls in Tier
+0. The interpreter also uses compact inherited virtual-slot tables instead of
+a type-by-all-methods matrix.
+
+Dynamic override dispatch in the JIT remains open, as do precise native-frame
+safepoints and stack maps, async/Promise, `Any`, FFI, N-API hosting, AOT/R2R,
+OSR, and trimming. These remain implementation work rather than documentation
+only.
+
 ## 1. Visão geral do pipeline
 
 ```
