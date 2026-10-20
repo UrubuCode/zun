@@ -437,6 +437,25 @@ mod tests {
     }
 
     #[test]
+    fn compiles_extern_method_to_builtin_call() {
+        let module = compile(
+            "import { receiverValue } from \"zun:math\";\n\
+             class Service { extern receiverValue(value: number): number; }\n\
+             function main(): number { return 0.0; }",
+        )
+        .expect("extern method should compile");
+        let method = module
+            .tables
+            .method_defs
+            .iter()
+            .find(|method| module.strings.get(method.name) == "receiverValue")
+            .expect("extern method metadata");
+        let body = zun_module::read_body(&module.code, method.body_offset).expect("method body");
+        let text = zun_il::disassemble(&body.code).expect("disassemble method body");
+        assert!(text.contains("call.builtin"), "{text}");
+    }
+
+    #[test]
     fn returns_frontend_diagnostics() {
         let diagnostics = compile("function main( { }").expect_err("must reject malformed source");
         assert!(diagnostics.iter().any(|d| d.severity == Severity::Error));
