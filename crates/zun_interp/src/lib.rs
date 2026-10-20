@@ -3865,5 +3865,16 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
+
+    #[test]
+    fn executes_managed_regexp_methods() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.source() != \"zun-[0-9]+\") { return false; } return pattern.isMatch(\"zun-42\"); }",
+        )
+        .expect("compile RegExp");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run RegExp");
+        assert!(matches!(result, Value::Bool(true)));
+    }
 }
 

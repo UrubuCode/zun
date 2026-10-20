@@ -733,6 +733,36 @@ impl<'a> Interp<'a> {
                     heap.weak_map_delete_object(map_object, key)
                 })))
             }
+            "regexpNew" => {
+                let source = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(source) => source.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_regex(source))
+                    .map_err(|error| RunError::Native(error.to_string()))?;
+                Ok(Value::Object(object))
+            }
+            "regexpIsMatch" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let input = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(input) => input,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| heap.regex_is_match(object, input))
+                        .ok_or(RunError::BadToken)?,
+                ))
+            }
+            "regexpSource" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let source = zun_gc::with_current_heap(|heap| {
+                    heap.regex_source(object).map(str::to_owned)
+                })
+                .ok_or(RunError::BadToken)?;
+                Ok(Value::Str(source.into()))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))

@@ -76,6 +76,8 @@ pub enum NativeTy {
     WeakMap,
     /// A managed Promise object.
     Promise,
+    /// A managed compiled regular expression.
+    RegExp,
 }
 
 /// A neutral argument value passed to a native function.

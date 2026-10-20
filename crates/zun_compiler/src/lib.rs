@@ -249,6 +249,7 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
             "zun:std:weak-map",
             include_str!("../../../std/weak_map.zun"),
         ),
+        ("zun:std:regexp", include_str!("../../../std/regexp.zun")),
         ("zun:std:date", include_str!("../../../std/date.zun")),
         ("zun:std:error", include_str!("../../../std/error.zun")),
     ])

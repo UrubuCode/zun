@@ -1586,6 +1586,8 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
                     (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
                     (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
                     (Ty::Promise, "isReady") => Some(("promiseIsReady", Ty::Boolean, vec![])),
@@ -1987,11 +1989,13 @@ impl Checker<'_> {
                     "Map" => Some(("mapNew", Ty::Map)),
                     "Set" => Some(("setNew", Ty::Set)),
                     "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
+                    "RegExp" => Some(("regexpNew", Ty::RegExp)),
                     "Promise" => Some(("promiseNew", Ty::Promise)),
                     _ => None,
                 };
                 if let Some((native_name, ty)) = managed_collection {
-                    if !args.is_empty() {
+                    let valid_args = name == "RegExp" && args.len() == 1;
+                    if !args.is_empty() && !valid_args {
                         self.error(span, format!("`{name}` expects no constructor arguments"));
                         return self.poison(span);
                     }
@@ -2010,7 +2014,11 @@ impl Checker<'_> {
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
-                            args: Vec::new(),
+                            args: if name == "RegExp" {
+                                args.iter().map(|arg| self.check_expr(cx, arg)).collect()
+                            } else {
+                                Vec::new()
+                            },
                         },
                         ty,
                         span,
@@ -2160,6 +2168,8 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
+                    (Ty::RegExp, "isMatch") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "source") => ("regexpSource", Ty::String, vec![]),
                     (Ty::Promise, "state") => ("promiseState", Ty::Int(IntKind::U8), vec![]),
                     (Ty::Promise, "result") => ("promiseResult", Ty::Any, vec![]),
                     (Ty::Promise, "isReady") => ("promiseIsReady", Ty::Boolean, vec![]),
