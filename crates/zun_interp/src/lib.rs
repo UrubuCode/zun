@@ -8,6 +8,7 @@
 
 mod builtins;
 mod collections;
+mod errors;
 mod native;
 mod metadata;
 mod output;
@@ -53,20 +54,6 @@ pub enum RunError {
     /// An exception escaped the current method because no handler matched.
     Thrown(Value),
 }
-
-impl core::fmt::Display for RunError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            RunError::NoEntryPoint => write!(f, "module has no entry point"),
-            RunError::BadToken => write!(f, "call did not resolve to a method"),
-            RunError::Malformed(m) => write!(f, "malformed bytecode: {m}"),
-            RunError::Native(m) => write!(f, "{m}"),
-            RunError::Thrown(value) => write!(f, "unhandled exception: {value:?}"),
-        }
-    }
-}
-
-impl std::error::Error for RunError {}
 
 /// A hook the interpreter consults before interpreting a call, so a faster
 /// backend (the JIT) can execute an eligible method instead. Returning `None`
