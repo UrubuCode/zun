@@ -19,6 +19,7 @@ mod fs;
 mod io;
 mod time;
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// A parameter or return type in a native signature.
@@ -187,6 +188,30 @@ fn registry() -> &'static [&'static NativeFn] {
     })
 }
 
+/// Name indexes for module and intrinsic resolution. They are built once from
+/// the positional tables, so adding an export cannot accidentally change an
+/// existing dispatch id.
+fn name_index() -> &'static HashMap<(&'static str, &'static str), u32> {
+    static INDEX: OnceLock<HashMap<(&'static str, &'static str), u32>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = HashMap::new();
+        for (module_index, module) in MODULES.iter().enumerate() {
+            for (function_index, function) in module.functions.iter().enumerate() {
+                index.insert(
+                    (module.name, function.name),
+                    global_id(module_index, function_index),
+                );
+            }
+        }
+        index
+    })
+}
+
+fn module_index() -> &'static HashMap<&'static str, &'static Module> {
+    static INDEX: OnceLock<HashMap<&'static str, &'static Module>> = OnceLock::new();
+    INDEX.get_or_init(|| MODULES.iter().map(|module| (module.name, module)).collect())
+}
+
 /// Look up a function by dispatch id (its registry position).
 pub fn by_id(id: u32) -> Option<&'static NativeFn> {
     registry().get(id as usize).copied()
@@ -194,14 +219,13 @@ pub fn by_id(id: u32) -> Option<&'static NativeFn> {
 
 /// Resolve `module::name` to its id and signature (for `import` checking).
 pub fn resolve(module: &str, name: &str) -> Option<(u32, &'static NativeFn)> {
-    let m = MODULES.iter().position(|md| md.name == module)?;
-    let i = MODULES[m].functions.iter().position(|f| f.name == name)?;
-    Some((global_id(m, i), &MODULES[m].functions[i]))
+    let id = *name_index().get(&(module, name))?;
+    Some((id, by_id(id)?))
 }
 
 /// Look up a module by its `zun:`-prefixed name.
 pub fn module(name: &str) -> Option<&'static Module> {
-    MODULES.iter().find(|m| m.name == name)
+    module_index().get(name).copied()
 }
 
 /// Parameter count of a function id.
@@ -249,5 +273,16 @@ mod tests {
     fn param_counts_are_right() {
         let (write_id, _) = resolve("zun:fs", "writeText").unwrap();
         assert_eq!(param_count(write_id), 2);
+    }
+
+    #[test]
+    fn name_indexes_preserve_positional_ids() {
+        for (module_index, module) in MODULES.iter().enumerate() {
+            for (function_index, function) in module.functions.iter().enumerate() {
+                let (id, resolved) = resolve(module.name, function.name).expect("indexed export");
+                assert_eq!(id, global_id(module_index, function_index));
+                assert_eq!(resolved.name, function.name);
+            }
+        }
     }
 }
