@@ -62,6 +62,27 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
     ])
 }
 
+/// Compile named modules and produce the flattened manifest consumed by the
+/// runtime loader. The input order is retained for deterministic dependency
+/// order, with the entry module stored separately at the end of the manifest.
+pub fn compile_modules_with_manifest<'a, I>(
+    entry: &str,
+    sources: I,
+) -> Result<(zun_loader::ModuleLoader, zun_loader::ModuleManifest), Vec<Diagnostic>>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let sources: Vec<_> = sources.into_iter().collect();
+    let names: Vec<String> = sources.iter().map(|(name, _)| (*name).to_owned()).collect();
+    let loader = compile_modules(sources.iter().copied())?;
+    let dependencies = names.into_iter().filter(|name| name != entry);
+    let manifest = zun_loader::ModuleManifest::new(entry, dependencies);
+    manifest
+        .validate(&loader)
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    Ok((loader, manifest))
+}
+
 /// Validate imports against the complete source set before module emission.
 ///
 /// This is the compiler-side half of module linking: native `zun:*` exports
@@ -197,5 +218,25 @@ mod tests {
         let loader = compile_standard_library().expect("standard library should load");
         assert!(loader.get("zun:std:math").is_some());
         assert!(loader.get("zun:std:string").is_some());
+    }
+
+    #[test]
+    fn build_produces_a_valid_flattened_manifest() {
+        let (loader, manifest) = compile_modules_with_manifest(
+            "app",
+            [
+                ("core", "function answer(): int { return 42; }"),
+                ("app", "function main(): int { return 0; }"),
+            ],
+        )
+        .expect("build");
+        assert_eq!(
+            manifest.load_order(&loader).expect("order"),
+            vec!["core", "app"]
+        );
+        assert_eq!(
+            zun_loader::ModuleManifest::read(&manifest.write()).unwrap(),
+            manifest
+        );
     }
 }
