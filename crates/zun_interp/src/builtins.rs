@@ -60,6 +60,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "reflectHas",
         "reflectDelete",
         "proxyNew",
+        "proxyGet",
         "promiseNew",
         "promiseResolve",
         "promiseReject",

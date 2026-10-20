@@ -1943,6 +1943,17 @@ mod method_tests {
     }
 
     #[test]
+    fn proxy_get_falls_back_to_target_dynamic_properties() {
+        let module = zun_compiler::compile(
+            "import { proxyGet } from \"zun:collections\"; function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+        )
+        .expect("compile proxy get");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy get");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(41.0)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
