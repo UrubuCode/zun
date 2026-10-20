@@ -376,6 +376,9 @@ impl Checker<'_> {
         let captures = self.analyze_closure_captures(outer, function);
         let mut saw_default = false;
         for parameter in &function.params {
+            if parameter.is_rest {
+                self.error(parameter.name.span, "rest parameters are not lowered yet");
+            }
             if parameter.default_value.is_some() {
                 saw_default = true;
             } else if saw_default {
@@ -1120,6 +1123,9 @@ impl Checker<'_> {
     ) -> hir::Function {
         let mut saw_default = false;
         for parameter in &f.params {
+            if parameter.is_rest {
+                self.error(parameter.name.span, "rest parameters are not lowered yet");
+            }
             if parameter.default_value.is_some() {
                 saw_default = true;
             } else if saw_default {
@@ -3027,6 +3033,12 @@ mod tests {
     #[test]
     fn mixed_add_is_an_error() {
         assert!(first_error("function f() { let x = 1 + \"a\"; }").contains("cannot add"));
+    }
+
+    #[test]
+    fn rest_parameters_remain_gated_until_variadic_lowering_exists() {
+        assert!(first_error("function collect(...values: any) { return values; }")
+            .contains("rest parameters are not lowered yet"));
     }
 
     #[test]

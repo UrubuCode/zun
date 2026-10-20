@@ -180,6 +180,7 @@ impl Parser<'_> {
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let is_rest = self.eat(TokenKind::Ellipsis);
             let pname = self.name("a parameter name");
             let ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
@@ -191,6 +192,7 @@ impl Parser<'_> {
                 name: pname,
                 ty,
                 default_value,
+                is_rest,
             });
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -228,6 +230,7 @@ impl Parser<'_> {
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let is_rest = self.eat(TokenKind::Ellipsis);
             let pname = self.name("a parameter name");
             let ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
@@ -239,6 +242,7 @@ impl Parser<'_> {
                 name: pname,
                 ty,
                 default_value,
+                is_rest,
             });
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -280,6 +284,7 @@ impl Parser<'_> {
     fn parameters(&mut self) -> Vec<Param> {
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let is_rest = self.eat(TokenKind::Ellipsis);
             let name = self.name("a parameter name");
             let ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
@@ -291,6 +296,7 @@ impl Parser<'_> {
                 name,
                 ty,
                 default_value,
+                is_rest,
             });
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -936,6 +942,7 @@ impl Parser<'_> {
                             name,
                             ty: None,
                             default_value: None,
+                            is_rest: false,
                         }],
                         return_type: None,
                         span: t.span.to(body.span),
@@ -1125,6 +1132,13 @@ mod tests {
             panic!("expected call expression");
         };
         assert!(matches!(args[0], Expr::Spread { .. }));
+    }
+
+    #[test]
+    fn parses_rest_parameter_without_enabling_lowering() {
+        let p = parse_ok("function collect(...values: Array) { return values; }");
+        assert!(p.functions[0].params[0].is_rest);
+        assert!(p.functions[0].params[0].ty.is_some());
     }
 
     #[test]

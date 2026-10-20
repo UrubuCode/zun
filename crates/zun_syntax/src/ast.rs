@@ -97,6 +97,8 @@ pub struct Param {
     pub ty: Option<TypeAnnotation>,
     /// Optional default expression evaluated when the argument is omitted.
     pub default_value: Option<Box<Expr>>,
+    /// Whether this is a variadic `...rest` parameter.
+    pub is_rest: bool,
 }
 
 /// A type annotation. Phase 1 only knows named types (`number`, `string`,
