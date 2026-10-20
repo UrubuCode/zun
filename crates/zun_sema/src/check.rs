@@ -140,6 +140,7 @@ struct FunctionCx {
     scopes: Vec<Scope>,
     return_ty: Ty,
     loop_depth: usize,
+    loop_labels: Vec<String>,
     mutated: HashSet<hir::LocalSlot>,
     mutated_names: HashSet<String>,
     boxed: HashSet<hir::LocalSlot>,
@@ -410,6 +411,7 @@ impl Checker<'_> {
                 .map(|annotation| self.resolve_annotation(annotation))
                 .unwrap_or(Ty::Any),
             loop_depth: 0,
+            loop_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
             boxed: HashSet::new(),
@@ -1177,6 +1179,7 @@ impl Checker<'_> {
             scopes: vec![Scope::new()],
             return_ty,
             loop_depth: 0,
+            loop_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
             boxed: HashSet::new(),
@@ -1523,21 +1526,45 @@ impl Checker<'_> {
                 }
             }
             ast::Stmt::Labeled { label, statement, .. } => {
+                let label_text = self.text(label).to_string();
+                let labels_loop = matches!(
+                    statement.as_ref(),
+                    ast::Stmt::While { .. }
+                        | ast::Stmt::DoWhile { .. }
+                        | ast::Stmt::For { .. }
+                        | ast::Stmt::ForOf { .. }
+                );
+                if labels_loop {
+                    cx.loop_labels.push(label_text.clone());
+                }
                 let body = self.check_stmt(cx, statement);
+                if labels_loop {
+                    cx.loop_labels.pop();
+                }
                 hir::Stmt::Labeled {
-                    label: self.text(label).to_string(),
+                    label: label_text,
                     body: Box::new(body),
                 }
             }
             ast::Stmt::Break { label, span } => {
                 if cx.loop_depth == 0 {
                     self.error(*span, "`break` is only valid inside a loop");
+                } else if let Some(label) = label {
+                    let name = self.text(label);
+                    if !cx.loop_labels.iter().any(|candidate| candidate == name) {
+                        self.error(*span, format!("unknown break label `{name}`"));
+                    }
                 }
                 hir::Stmt::Break(label.map(|name| self.text(&name).to_string()))
             }
             ast::Stmt::Continue { label, span } => {
                 if cx.loop_depth == 0 {
                     self.error(*span, "`continue` is only valid inside a loop");
+                } else if let Some(label) = label {
+                    let name = self.text(label);
+                    if !cx.loop_labels.iter().any(|candidate| candidate == name) {
+                        self.error(*span, format!("unknown continue label `{name}`"));
+                    }
                 }
                 hir::Stmt::Continue(label.map(|name| self.text(&name).to_string()))
             }
