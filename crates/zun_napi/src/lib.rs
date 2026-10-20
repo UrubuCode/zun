@@ -64,6 +64,11 @@ mod node_api {
             result: *mut NapiValue,
         ) -> NapiStatus;
         fn napi_get_undefined(env: NapiEnv, result: *mut NapiValue) -> NapiStatus;
+        fn napi_throw_type_error(
+            env: NapiEnv,
+            code: *const u8,
+            message: *const u8,
+        ) -> NapiStatus;
     }
 
     fn undefined(env: NapiEnv) -> NapiValue {
@@ -73,6 +78,14 @@ mod node_api {
         } else {
             core::ptr::null_mut()
         }
+    }
+
+    fn invalid_call(env: NapiEnv) -> NapiValue {
+        let message = b"expected an ArrayBuffer containing a valid Zun module\0";
+        let _ = unsafe {
+            napi_throw_type_error(env, core::ptr::null(), message.as_ptr())
+        };
+        undefined(env)
     }
 
     unsafe extern "C" fn run_i64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
@@ -90,7 +103,7 @@ mod node_api {
         } != NAPI_OK
             || argc != 1
         {
-            return undefined(env);
+            return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
@@ -101,17 +114,17 @@ mod node_api {
             unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
-            return undefined(env);
+            return invalid_call(env);
         }
         // SAFETY: N-API provides a live ArrayBuffer for the duration of this
         // callback and reports its exact byte length.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Int(value, _)) = zun_vm::execute(bytes) else {
-            return undefined(env);
+            return invalid_call(env);
         };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK {
-            undefined(env)
+            invalid_call(env)
         } else {
             result
         }
@@ -123,7 +136,7 @@ mod node_api {
         if unsafe {
             napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
         } != NAPI_OK || argc != 1 {
-            return undefined(env);
+            return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
@@ -134,16 +147,16 @@ mod node_api {
             unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
-            return undefined(env);
+            return invalid_call(env);
         }
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Float(value, _)) = zun_vm::execute(bytes) else {
-            return undefined(env);
+            return invalid_call(env);
         };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_double(env, value, &mut result) } != NAPI_OK {
-            undefined(env)
+            invalid_call(env)
         } else {
             result
         }
@@ -155,7 +168,7 @@ mod node_api {
         if unsafe {
             napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
         } != NAPI_OK || argc != 1 {
-            return undefined(env);
+            return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
@@ -166,16 +179,16 @@ mod node_api {
             unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
-            return undefined(env);
+            return invalid_call(env);
         }
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Bool(value)) = zun_vm::execute(bytes) else {
-            return undefined(env);
+            return invalid_call(env);
         };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_get_boolean(env, value, &mut result) } != NAPI_OK {
-            undefined(env)
+            invalid_call(env)
         } else {
             result
         }
@@ -187,7 +200,7 @@ mod node_api {
         if unsafe {
             napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
         } != NAPI_OK || argc != 1 {
-            return undefined(env);
+            return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
         let mut length = 0;
@@ -198,17 +211,17 @@ mod node_api {
             unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) }
         };
         if status != NAPI_OK || data.is_null() {
-            return undefined(env);
+            return invalid_call(env);
         }
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Str(value)) = zun_vm::execute(bytes) else {
-            return undefined(env);
+            return invalid_call(env);
         };
         let value = value.as_bytes();
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_string_utf8(env, value.as_ptr(), value.len(), &mut result) } != NAPI_OK {
-            undefined(env)
+            invalid_call(env)
         } else {
             result
         }
