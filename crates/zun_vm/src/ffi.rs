@@ -4,6 +4,7 @@
 //! implemented by Zun, while this API loads third-party native libraries.
 
 use std::ffi::OsStr;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Return the platform library-name candidates for a logical native library.
@@ -61,6 +62,47 @@ impl std::error::Error for FfiError {}
 pub struct NativeLibrary {
     library: libloading::Library,
     path: String,
+}
+
+/// Owns the native libraries resolved for one VM/host scope.
+///
+/// The logical name is the cache key, so repeated calls do not reopen the
+/// library or repeat platform-name probing. Dropping the resolver releases all
+/// handles together with the host scope.
+#[derive(Default)]
+pub struct NativeLibraryResolver {
+    libraries: HashMap<String, NativeLibrary>,
+}
+
+impl core::fmt::Debug for NativeLibraryResolver {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("NativeLibraryResolver")
+            .field("libraries", &self.libraries.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl NativeLibraryResolver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Resolve and cache a logical library name, returning the cached handle.
+    pub unsafe fn load(&mut self, name: &str) -> Result<&NativeLibrary, FfiError> {
+        if !self.libraries.contains_key(name) {
+            let library = unsafe { NativeLibrary::open_named(name) }?;
+            self.libraries.insert(name.to_owned(), library);
+        }
+        Ok(self.libraries.get(name).expect("library inserted or cached"))
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.libraries.contains_key(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.libraries.len()
+    }
 }
 
 impl core::fmt::Debug for NativeLibrary {
@@ -257,6 +299,15 @@ mod tests {
         let result = unsafe { NativeLibrary::open_named("zun-library-that-does-not-exist") };
         let error = result.expect_err("missing logical library must fail");
         assert!(error.to_string().contains("attempts:"));
+    }
+
+    #[test]
+    fn resolver_does_not_cache_failed_loads() {
+        let mut resolver = NativeLibraryResolver::new();
+        let result = unsafe { resolver.load("zun-library-that-does-not-exist") };
+        assert!(result.is_err());
+        assert_eq!(resolver.len(), 0);
+        assert!(!resolver.contains("zun-library-that-does-not-exist"));
     }
 
     #[test]
