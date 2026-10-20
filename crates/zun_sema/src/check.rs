@@ -25,6 +25,8 @@ mod diagnostics;
 mod module_resolution;
 #[path = "native_types.rs"]
 mod native_types;
+#[path = "poison.rs"]
+mod poison;
 #[path = "types.rs"]
 mod types;
 
@@ -2681,13 +2683,6 @@ impl Checker<'_> {
         }
     }
 
-    fn poison(&mut self, span: Span) -> hir::Expr {
-        hir::Expr {
-            kind: hir::ExprKind::Error,
-            ty: Ty::Error,
-            span,
-        }
-    }
 }
 
 /// Whether `expr` is a default (f64) number literal — a candidate to adopt a
