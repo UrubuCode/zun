@@ -105,7 +105,7 @@ fn managed_promise_intrinsics_preserve_interpreter_fallback_boundary() {
 #[test]
 fn managed_promise_class_methods_use_interpreter_fallback() {
     let module = compile(
-        "function main(): int { let promise = new Promise(); if (promise.state() != 0) { return 1; } promise.resolve(42.0); if (promise.state() == 1) { let value = promise.result(); return 0; } return 2; }",
+        "function main(): int { let promise = new Promise(); if (promise.isReady()) { return 1; } if (promise.state() != 0) { return 2; } promise.resolve(42.0); if (promise.isReady()) { let value = promise.result(); return 0; } return 3; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");

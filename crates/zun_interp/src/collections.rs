@@ -778,6 +778,14 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Any(value))
             }
+            "promiseIsReady" => {
+                let promise = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| heap.promise_is_ready(promise))
+                        .ok_or(RunError::BadToken)?,
+                ))
+            }
             _ => Err(RunError::BadToken),
         }
     }

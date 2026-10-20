@@ -32,6 +32,10 @@ impl ManagedPromise {
         self.state
     }
 
+    pub fn is_ready(&self) -> bool {
+        self.state != ManagedPromiseState::Pending
+    }
+
     pub fn result(&self) -> Option<Any> {
         self.result
     }

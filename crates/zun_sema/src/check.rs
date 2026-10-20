@@ -1533,6 +1533,7 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
                     (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
+                    (Ty::Promise, "isReady") => Some(("promiseIsReady", Ty::Boolean, vec![])),
                     (Ty::Promise, "resolve") => Some(("promiseResolve", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Promise, "reject") => Some(("promiseReject", Ty::Boolean, vec![Ty::String])),
                     (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
@@ -2106,6 +2107,7 @@ impl Checker<'_> {
                     }
                     (Ty::Promise, "state") => ("promiseState", Ty::Int(IntKind::U8), vec![]),
                     (Ty::Promise, "result") => ("promiseResult", Ty::Any, vec![]),
+                    (Ty::Promise, "isReady") => ("promiseIsReady", Ty::Boolean, vec![]),
                     (Ty::Promise, "resolve") => ("promiseResolve", Ty::Boolean, vec![Ty::Any]),
                     (Ty::Promise, "reject") => ("promiseReject", Ty::Boolean, vec![Ty::String]),
                     (Ty::Error, _) => return self.poison(span),

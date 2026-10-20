@@ -56,6 +56,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "promiseReject",
         "promiseState",
         "promiseResult",
+        "promiseIsReady",
     ] {
         if zun_natives::resolve("zun:collections", name)
             .or_else(|| zun_natives::resolve("zun:promise", name))
