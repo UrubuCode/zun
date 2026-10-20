@@ -168,6 +168,15 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
+    /// `do { body } while (cond);`.
+    DoWhile {
+        /// The loop body.
+        body: Block,
+        /// The condition checked after each body execution.
+        cond: Expr,
+        /// Span of the whole loop.
+        span: Span,
+    },
     /// `for (let name of iterable) { body }`.
     ForOf {
         /// The loop binding.

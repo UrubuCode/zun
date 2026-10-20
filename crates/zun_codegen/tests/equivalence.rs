@@ -137,6 +137,13 @@ fn switch_lowering_is_jit_equivalent() {
 }
 
 #[test]
+fn do_while_preserves_interpreter_fallback_boundary() {
+    assert_equivalent(
+        "function main(): int { let count: int = 0; do { count = count + 1; } while (false); return count; }",
+    );
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\

@@ -189,7 +189,9 @@ impl Checker<'_> {
                     self.rewrite_boxed_lets(then_body, boxed);
                     self.rewrite_boxed_lets(else_body, boxed);
                 }
-                hir::Stmt::While { body, .. } => self.rewrite_boxed_lets(body, boxed),
+                hir::Stmt::While { body, .. } | hir::Stmt::DoWhile { body, .. } => {
+                    self.rewrite_boxed_lets(body, boxed)
+                }
                 hir::Stmt::Try {
                     body,
                     catches,
@@ -229,6 +231,10 @@ impl Checker<'_> {
                 ast::Stmt::While { cond, body, .. } => {
                     self.collect_mutated_expr(cond, names);
                     self.collect_mutated_names(&body.statements, names);
+                }
+                ast::Stmt::DoWhile { body, cond, .. } => {
+                    self.collect_mutated_names(&body.statements, names);
+                    self.collect_mutated_expr(cond, names);
                 }
                 ast::Stmt::ForOf { iterable, body, .. } => {
                     self.collect_mutated_expr(iterable, names);
@@ -505,6 +511,12 @@ impl Checker<'_> {
                 for statement in &body.statements {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
                 }
+            }
+            ast::Stmt::DoWhile { body, cond, .. } => {
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+                self.collect_capture_expr(cx, parameters, cond, uses);
             }
             ast::Stmt::ForOf { iterable, body, .. } => {
                 self.collect_capture_expr(cx, parameters, iterable, uses);
@@ -1109,6 +1121,13 @@ impl Checker<'_> {
                 let body = self.check_block(cx, body);
                 cx.loop_depth -= 1;
                 hir::Stmt::While { cond, body }
+            }
+            ast::Stmt::DoWhile { body, cond, .. } => {
+                cx.loop_depth += 1;
+                let body = self.check_block(cx, body);
+                cx.loop_depth -= 1;
+                let cond = self.check_condition(cx, cond);
+                hir::Stmt::DoWhile { body, cond }
             }
             ast::Stmt::ForOf { name, iterable, body, span: _ } => {
                 let iterable_expr = self.check_expr(cx, iterable);

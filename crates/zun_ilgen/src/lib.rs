@@ -459,6 +459,24 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.patch_to_here(patch);
                 }
             }
+            Stmt::DoWhile { body, cond } => {
+                let loop_start = self.code.len();
+                self.break_patches.push(Vec::new());
+                self.continue_targets.push(vec![loop_start]);
+                self.stmts(body);
+                let continue_target = self.code.len();
+                if let Some(targets) = self.continue_targets.last_mut() {
+                    if let Some(last) = targets.last_mut() {
+                        *last = continue_target;
+                    }
+                }
+                self.expr(cond);
+                self.emit_branch_back(Opcode::BranchTrue, loop_start);
+                self.continue_targets.pop();
+                for patch in self.break_patches.pop().unwrap_or_default() {
+                    self.patch_to_here(patch);
+                }
+            }
             Stmt::ForOf { iterator, iterator_slot, done, next, binding, body } => {
                 self.expr(iterator);
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*iterator_slot)));

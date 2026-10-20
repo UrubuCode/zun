@@ -1341,6 +1341,17 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
 #[cfg(test)]
 mod method_tests {
     use super::*;
+
+    #[test]
+    fn executes_do_while_at_least_once() {
+        let module = zun_compiler::compile(
+            "function main(): int { let count: int = 0; do { count = count + 1; } while (false); return count; }",
+        )
+        .expect("compile do-while");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run do-while");
+        assert_eq!(value.as_int(), 1);
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;

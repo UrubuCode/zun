@@ -34,6 +34,8 @@ pub enum TokenKind {
     KwDefault,
     /// `while`
     KwWhile,
+    /// `do`
+    KwDo,
     /// `for`
     KwFor,
     /// `of`
@@ -304,6 +306,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "case" => TokenKind::KwCase,
         "default" => TokenKind::KwDefault,
         "while" => TokenKind::KwWhile,
+        "do" => TokenKind::KwDo,
         "for" => TokenKind::KwFor,
         "of" => TokenKind::KwOf,
         "break" => TokenKind::KwBreak,

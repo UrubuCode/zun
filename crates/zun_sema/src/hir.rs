@@ -316,6 +316,13 @@ pub enum Stmt {
         /// The loop body.
         body: Vec<Stmt>,
     },
+    /// `do { body } while (cond)` loop.
+    DoWhile {
+        /// The loop body.
+        body: Vec<Stmt>,
+        /// The condition checked after the body.
+        cond: Expr,
+    },
     /// Iterate through the runtime iterator protocol.
     ForOf {
         iterator: Expr,

@@ -312,6 +312,7 @@ impl Parser<'_> {
             TokenKind::KwIf => self.if_statement(),
             TokenKind::KwSwitch => self.switch_statement(),
             TokenKind::KwWhile => self.while_statement(),
+            TokenKind::KwDo => self.do_while_statement(),
             TokenKind::KwFor => self.for_statement(),
             TokenKind::KwBreak => self.break_statement(),
             TokenKind::KwContinue => self.continue_statement(),
@@ -442,6 +443,22 @@ impl Parser<'_> {
         let body = self.block();
         let span = start.to(body.span);
         Stmt::While { cond, body, span }
+    }
+
+    fn do_while_statement(&mut self) -> Stmt {
+        let start = self.bump().span; // `do`
+        let body = self.block();
+        self.expect(TokenKind::KwWhile, "`while` after do body");
+        self.expect(TokenKind::LParen, "`(` after do-while");
+        let cond = self.expression();
+        let close = self.expect(TokenKind::RParen, "`)` after do-while condition");
+        let end = close.map(|token| token.span).unwrap_or(cond.span());
+        self.expect(TokenKind::Semi, "`;` after do-while");
+        Stmt::DoWhile {
+            body,
+            cond,
+            span: start.to(end),
+        }
     }
 
     fn for_statement(&mut self) -> Stmt {
@@ -1022,6 +1039,12 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_do_while_statement() {
+        let p = parse_ok("function main() { do { print(1); } while (false); }");
+        assert!(matches!(p.functions[0].body.statements[0], Stmt::DoWhile { .. }));
     }
 
     #[test]
