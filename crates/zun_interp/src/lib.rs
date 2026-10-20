@@ -9,6 +9,7 @@
 mod builtins;
 mod collections;
 mod native;
+mod metadata;
 mod operands;
 mod roots;
 mod stack;
@@ -1181,32 +1182,6 @@ impl Interp<'_> {
         // Falling off the end with no `ret` returns void; ilgen always appends
         // a trailing `ret`, so this is a safety net.
         Ok(Value::Void)
-    }
-
-    /// For a TypeDef token, return `(field_start_rid, field_count)`.
-    fn type_field_range(&self, token: zun_metadata::Token) -> Result<(u32, usize), RunError> {
-        let ty = self
-            .module
-            .tables
-            .type_defs
-            .get(token.rid() as usize - 1)
-            .ok_or(RunError::BadToken)?;
-        Ok((ty.field_start, (ty.field_end - ty.field_start) as usize))
-    }
-
-    /// The value-type code (`FieldDef.kind`) of the field at 1-based `field_rid`.
-    fn field_kind_at(&self, field_rid: u32) -> Result<u8, RunError> {
-        self.module
-            .tables
-            .field_defs
-            .get(field_rid as usize - 1)
-            .map(|f| f.kind)
-            .ok_or(RunError::BadToken)
-    }
-
-    fn dynamic_name(&self, operand: &Operand) -> Result<&str, RunError> {
-        let index = operand_strref(operand);
-        Ok(self.module.strings.get(zun_metadata::StringIndex(index)))
     }
 
     fn route_exception(
