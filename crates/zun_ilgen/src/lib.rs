@@ -89,6 +89,14 @@ pub fn lower(program: &hir::Program) -> Module {
             body_offset: u32::MAX,
         });
     }
+    for closure in &program.closures {
+        let name = module.strings.intern(&closure.name);
+        module.tables.add_method_def(MethodDef {
+            name,
+            signature: BlobIndex(0),
+            body_offset: u32::MAX,
+        });
+    }
 
     for (index, f) in program.functions.iter().enumerate() {
         let (code, handlers) = lower_function(f, &layout, &mut module);
@@ -104,6 +112,24 @@ pub fn lower(program: &hir::Program) -> Module {
             &handlers,
         );
         module.tables.method_defs[index].body_offset = offset;
+    }
+    let closure_base = program.functions.len();
+    for (index, closure) in program.closures.iter().enumerate() {
+        let (code, handlers) = lower_closure_function(closure, &layout, &mut module);
+        let mut local_kinds = Vec::with_capacity(closure.locals.len() + 1);
+        local_kinds.push(jitkind_byte(Ty::DynamicObject));
+        local_kinds.extend(closure.locals.iter().map(|t| jitkind_byte(*t)));
+        let offset = write_body_with_handlers(
+            &mut module.code,
+            closure.param_count + 1,
+            local_kinds.len() as u16,
+            closure.return_ty != Ty::Void,
+            jitkind_byte(closure.return_ty),
+            &local_kinds,
+            &code,
+            &handlers,
+        );
+        module.tables.method_defs[closure_base + index].body_offset = offset;
     }
 
     module.entry_point = program
@@ -226,6 +252,29 @@ fn lower_function(
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
     // implicit return. (Non-void paths are the verifier's job later.)
+    if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
+        gen.emit(Instruction::simple(Opcode::Ret));
+    }
+    (gen.code, gen.handlers)
+}
+
+/// Lower a synthetic closure function. Its hidden environment is local slot 0
+/// and its user locals are shifted by one slot in the emitted method body.
+fn lower_closure_function(
+    f: &hir::ClosureFunction,
+    layout: &Layout,
+    module: &mut Module,
+) -> (Vec<u8>, Vec<ExceptionHandler>) {
+    let mut gen = FnLowerer {
+        code: Vec::new(),
+        layout,
+        module,
+        break_patches: Vec::new(),
+        continue_targets: Vec::new(),
+        handlers: Vec::new(),
+        finally_bodies: Vec::new(),
+    };
+    gen.stmts(&f.body);
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
     }
