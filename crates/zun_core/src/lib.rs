@@ -10,9 +10,11 @@ use std::collections::{BTreeMap, HashMap};
 mod views;
 mod ordered_map;
 mod collection_iterators;
+mod arrays;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
+pub use arrays::{ArrayIterator, ArrayStorage};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -263,12 +265,6 @@ pub struct DynamicObject {
     properties: BTreeMap<String, Any>,
     symbol_properties: BTreeMap<SymbolId, Any>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
-}
-
-/// Contiguous storage contract for a managed array.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ArrayStorage {
-    elements: Vec<Any>,
 }
 
 /// Contiguous byte storage for ArrayBuffer-like runtime objects.
@@ -524,108 +520,6 @@ impl ByteBuffer {
         }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
-    }
-}
-
-impl ArrayStorage {
-    /// Create an array with `length` initialized to `undefined`-like void values.
-    pub fn with_length(length: usize) -> Self {
-        Self {
-            elements: vec![Any::int(0); length],
-        }
-    }
-
-    /// Return the number of elements.
-    pub fn len(&self) -> usize {
-        self.elements.len()
-    }
-
-    /// Whether the array has no elements.
-    pub fn is_empty(&self) -> bool {
-        self.elements.is_empty()
-    }
-
-    /// Read an element with bounds checking.
-    pub fn get(&self, index: usize) -> Option<Any> {
-        self.elements.get(index).copied()
-    }
-
-    /// Replace an element with bounds checking and return its previous value.
-    pub fn set(&mut self, index: usize, value: Any) -> Option<Any> {
-        let slot = self.elements.get_mut(index)?;
-        Some(std::mem::replace(slot, value))
-    }
-
-    /// Append an element and return its new zero-based index.
-    pub fn push(&mut self, value: Any) -> usize {
-        let index = self.elements.len();
-        self.elements.push(value);
-        index
-    }
-
-    /// Remove and return the last element, if any.
-    pub fn pop(&mut self) -> Option<Any> {
-        self.elements.pop()
-    }
-
-    /// Resize the array, filling new slots with the zero numeric sentinel.
-    pub fn resize(&mut self, new_length: usize) {
-        self.elements.resize(new_length, Any::int(0));
-    }
-
-    /// Insert an element at an existing index, or append at `len`.
-    pub fn insert(&mut self, index: usize, value: Any) -> bool {
-        if index > self.elements.len() {
-            return false;
-        }
-        self.elements.insert(index, value);
-        true
-    }
-
-    /// Remove an element with bounds checking.
-    pub fn remove(&mut self, index: usize) -> Option<Any> {
-        (index < self.elements.len()).then(|| self.elements.remove(index))
-    }
-
-    /// Iterate over elements without exposing the backing vector.
-    pub fn iter(&self) -> impl Iterator<Item = Any> + '_ {
-        self.elements.iter().copied()
-    }
-
-    /// Return object references stored in the array for precise GC tracing.
-    pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
-        self.elements.iter().filter_map(|value| value.as_object())
-    }
-}
-
-/// State for the default `Array[Symbol.iterator]()` protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArrayIterator {
-    next_index: usize,
-}
-
-impl ArrayIterator {
-    /// Create an iterator positioned before the first array element.
-    pub fn new() -> Self {
-        Self { next_index: 0 }
-    }
-
-    /// Advance in insertion/index order, returning `None` at the end.
-    pub fn next(&mut self, array: &ArrayStorage) -> Option<Any> {
-        let value = array.get(self.next_index)?;
-        self.next_index += 1;
-        Some(value)
-    }
-
-    /// Whether the iterator has consumed the current array length.
-    pub fn is_done(&self, array: &ArrayStorage) -> bool {
-        self.next_index >= array.len()
-    }
-}
-
-impl Default for ArrayIterator {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
