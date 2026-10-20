@@ -28,6 +28,8 @@ pub enum TokenKind {
     KwElse,
     /// `while`
     KwWhile,
+    /// `break`
+    KwBreak,
     /// `return`
     KwReturn,
     /// `true`
@@ -272,6 +274,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
         "while" => TokenKind::KwWhile,
+        "break" => TokenKind::KwBreak,
         "return" => TokenKind::KwReturn,
         "true" => TokenKind::KwTrue,
         "false" => TokenKind::KwFalse,

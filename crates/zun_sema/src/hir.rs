@@ -205,6 +205,8 @@ pub enum Stmt {
         /// The loop body.
         body: Vec<Stmt>,
     },
+    /// Exit the innermost enclosing loop.
+    Break,
     /// Return, with a value unless the function returns `void`.
     Return(Option<Expr>),
 }

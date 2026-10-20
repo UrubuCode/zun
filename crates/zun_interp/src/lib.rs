@@ -924,6 +924,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_break_inside_loop() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",
+        )
+        .expect("compile break");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run break");
+        assert!(matches!(result, Value::Int(value, _) if value == 3));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",

@@ -134,6 +134,7 @@ struct FunctionCx {
     locals: Vec<Ty>,
     scopes: Vec<Scope>,
     return_ty: Ty,
+    loop_depth: usize,
 }
 
 impl FunctionCx {
@@ -431,6 +432,7 @@ impl Checker<'_> {
             locals: Vec::new(),
             scopes: vec![Scope::new()],
             return_ty,
+            loop_depth: 0,
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -558,8 +560,16 @@ impl Checker<'_> {
             }
             ast::Stmt::While { cond, body, .. } => {
                 let cond = self.check_condition(cx, cond);
+                cx.loop_depth += 1;
                 let body = self.check_block(cx, body);
+                cx.loop_depth -= 1;
                 hir::Stmt::While { cond, body }
+            }
+            ast::Stmt::Break { span } => {
+                if cx.loop_depth == 0 {
+                    self.error(*span, "`break` is only valid inside a loop");
+                }
+                hir::Stmt::Break
             }
             ast::Stmt::Return { value, span } => {
                 let value = value.as_ref().map(|v| {

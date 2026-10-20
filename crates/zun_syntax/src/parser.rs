@@ -271,6 +271,7 @@ impl Parser<'_> {
             TokenKind::KwLet => self.let_statement(),
             TokenKind::KwIf => self.if_statement(),
             TokenKind::KwWhile => self.while_statement(),
+            TokenKind::KwBreak => self.break_statement(),
             TokenKind::KwReturn => self.return_statement(),
             _ => {
                 let expr = self.expression();
@@ -326,6 +327,13 @@ impl Parser<'_> {
         let body = self.block();
         let span = start.to(body.span);
         Stmt::While { cond, body, span }
+    }
+
+    fn break_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let end = self.peek().span;
+        self.expect(TokenKind::Semi, "`;` after break");
+        Stmt::Break { span: start.to(end) }
     }
 
     fn return_statement(&mut self) -> Stmt {
