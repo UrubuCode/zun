@@ -453,6 +453,9 @@ closure call supplies the environment as an implicit first argument to the
 generated method. The implementation must add one closure-construction IL
 instruction, verifier stack effects, environment field load/store lowering,
 interpreter dispatch, and GC root tracing before lambda syntax is accepted.
+The first construction opcode, `mkclosure`, now consumes one managed object
+and produces a `FunctionHandle`; invocation with an environment remains the
+next runtime step.
 
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and

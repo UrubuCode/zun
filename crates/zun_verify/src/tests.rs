@@ -81,6 +81,20 @@ fn fixture_valid_load_function() {
 }
 
 #[test]
+fn fixture_valid_make_closure() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+        Instruction::new(
+            Opcode::MakeClosure,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
 fn fixture_valid_indirect_call() {
     let code = asm(&[
         Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),

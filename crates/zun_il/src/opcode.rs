@@ -252,6 +252,8 @@ define_opcodes! {
     ArrayPush = 0x80, None, "arraypush", StackEffect::Fixed { pops: 2, pushes: 1 };
     /// Load a top-level function handle without invoking it.
     LoadFunction = 0x81, Token, "ldftn", StackEffect::Fixed { pops: 0, pushes: 1 };
+    /// Build a closure handle from a managed environment and method token.
+    MakeClosure = 0x83, Token, "mkclosure", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Invoke a function handle with the signature named by the operand.
     CallIndirect = 0x82, Token, "call.indirect", StackEffect::Call;
 }
