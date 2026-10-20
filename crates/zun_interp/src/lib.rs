@@ -924,6 +924,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_last_index_of_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { lastIndexOf(value: any): int { let index: int = this.length as int; while (index > 0) { index = index - 1; if (this[index as u64] == value) { return index; } } return -1; } }\n\
+             function main(): int { let values = new Array(3); values[0] = 4; values[1] = 8; values[2] = 8; let needle: any = values[1]; return values.lastIndexOf(needle); }",
+        )
+        .expect("compile Array lastIndexOf");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array lastIndexOf");
+        assert!(matches!(result, Value::Int(value, _) if value == 2));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\
