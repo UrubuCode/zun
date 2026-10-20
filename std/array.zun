@@ -246,6 +246,30 @@ class Array {
         return result;
     }
 
+    chunk(size: u64): Array {
+        if (size == 0) { return new Array(0); }
+        let groups: u64 = this.length / size;
+        if (this.length % size != 0) { groups = groups + 1; }
+        let result = new Array(groups);
+        let group: u64 = 0;
+        let start: u64 = 0;
+        while (group < groups) {
+            let remaining: u64 = this.length - start;
+            let count: u64 = size;
+            if (remaining < count) { count = remaining; }
+            let part = new Array(count);
+            let index: u64 = 0;
+            while (index < count) {
+                part[index] = this[start + index];
+                index = index + 1;
+            }
+            result[group] = part;
+            start = start + count;
+            group = group + 1;
+        }
+        return result;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {

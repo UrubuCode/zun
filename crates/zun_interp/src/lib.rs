@@ -1082,6 +1082,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_chunk_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { chunk(size: u64): Array { if (size == 0) { return new Array(0); } let groups: u64 = this.length / size; if (this.length % size != 0) { groups = groups + 1; } let result = new Array(groups); let group: u64 = 0; let start: u64 = 0; while (group < groups) { let remaining: u64 = this.length - start; let count: u64 = size; if (remaining < count) { count = remaining; } let part = new Array(count); let index: u64 = 0; while (index < count) { part[index] = this[start + index]; index = index + 1; } result[group] = part; start = start + count; group = group + 1; } return result; } } function main(): number { let values = new Array(5); values[0] = 1.0; values[1] = 2.0; values[2] = 3.0; values[3] = 4.0; values[4] = 5.0; let groups = values.chunk(2); let last = groups[2] as Array; return last[0] as number; }",
+        )
+        .expect("compile Array chunk");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array chunk");
+        assert!(matches!(result, Value::Float(value, _) if value == 5.0));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\
