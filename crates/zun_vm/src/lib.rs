@@ -135,6 +135,12 @@ pub fn invoke_export(
             format!("{module}::{export} is not a method"),
         )));
     };
+    if let Ok(jit) = zun_codegen::Jit::new(scope.module()) {
+        let hook = JitHook::with_threshold(jit, scope.module(), 0);
+        if let Some(result) = zun_interp::CallHook::try_call(&hook, token.rid(), &args) {
+            return Ok(result);
+        }
+    }
     zun_interp::run_method(scope.module(), token.rid(), args, output).map_err(VmError::Run)
 }
 
