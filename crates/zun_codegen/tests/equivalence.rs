@@ -1641,6 +1641,18 @@ fn math_hypot_is_jit_equivalent() {
 }
 
 #[test]
+fn math_scalar_aliases_are_jit_equivalent() {
+    let module = compile(
+        "import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from \"zun:math\"; function main(): number { return sqrtNumber(9.0) + minNumber(2.0, 5.0) + maxNumber(2.0, 5.0) + floorNumber(2.9) + ceilNumber(2.1) + roundNumber(2.6); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with scalar math");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT scalar math"), RetVal::Float(value) if value == 21.0));
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 21.0));
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",
