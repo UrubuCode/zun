@@ -472,6 +472,35 @@ impl Interp<'_> {
                     let result = self.dispatch(callee_rid, args, Some(&link))?;
                     stack.push(result);
                 }
+                Opcode::CallIndirect => {
+                    let token = operand_token(&instr.operand);
+                    if token.table() != Some(TableKind::MethodDef) {
+                        return Err(RunError::BadToken);
+                    }
+                    let signature = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(token.rid() as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let body = read_body(&self.module.code, signature.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    let args = pop_n(&mut stack, body.param_count as usize)?;
+                    let function = pop(&mut stack)?;
+                    let Value::Function(handle) = function else {
+                        return Err(RunError::BadToken);
+                    };
+                    if handle.environment().is_some() || handle.method_rid() != token.rid() {
+                        return Err(RunError::BadToken);
+                    }
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
+                    let result = self.dispatch(handle.method_rid(), args, Some(&link))?;
+                    stack.push(result);
+                }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
                     self.call_builtin(id, &mut stack)?;
@@ -728,6 +757,50 @@ mod method_tests {
         )
         .expect("run method");
         assert!(matches!(result, Value::Int(42, zun_il::NumKind::I32)));
+    }
+
+    #[test]
+    fn executes_indirect_call_for_non_capturing_function() {
+        let mut module = zun_module::Module::new();
+        let add_body = [
+            Instruction::new(Opcode::LoadLocal, Operand::Local(0)),
+            Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+            Instruction::simple(Opcode::AddF64),
+            Instruction::simple(Opcode::Ret),
+        ];
+        let mut add_code = Vec::new();
+        for instruction in add_body { encode(&instruction, &mut add_code); }
+        let add_offset = write_body(
+            &mut module.code, 1, 1, true,
+            zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+            &[zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte()], &add_code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("add_one"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: add_offset,
+        });
+        let main_body = [
+            Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+            Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
+            Instruction::new(Opcode::CallIndirect, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+            Instruction::simple(Opcode::Ret),
+        ];
+        let mut main_code = Vec::new();
+        for instruction in main_body { encode(&instruction, &mut main_code); }
+        let main_offset = write_body(
+            &mut module.code, 0, 0, true,
+            zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(), &[], &main_code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("main"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: main_offset,
+        });
+        module.entry_point = Some(Token::new(TableKind::MethodDef, 2));
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run indirect call");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 
     #[test]

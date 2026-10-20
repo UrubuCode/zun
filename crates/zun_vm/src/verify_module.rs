@@ -87,7 +87,7 @@ fn resolve_loaded_call(
     opcode: Opcode,
     operand: &Operand,
 ) -> Option<(u8, u8)> {
-    if !matches!(opcode, Opcode::Call | Opcode::CallVirt) {
+    if !matches!(opcode, Opcode::Call | Opcode::CallVirt | Opcode::CallIndirect) {
         return resolve_call(requester.module(), opcode, operand);
     }
     let token = match operand {
@@ -113,7 +113,7 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
         // A direct or virtual call pops the (statically named) callee's
         // parameters and pushes its single result value. For callvirt the
         // static method's arity matches every override's, so it is exact.
-        Opcode::Call | Opcode::CallVirt => {
+        Opcode::Call | Opcode::CallVirt | Opcode::CallIndirect => {
             let token = match operand {
                 Operand::Token(t) => *t,
                 _ => return None,
@@ -123,7 +123,8 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
                 return None;
             }
             let body = read_body(&module.code, callee.body_offset).ok()?;
-            Some((body.param_count as u8, 1))
+            let handle = u8::from(opcode == Opcode::CallIndirect);
+            Some((body.param_count as u8 + handle, 1))
         }
         // newobj pops one initializer per field and pushes the new reference.
         Opcode::NewObj => {

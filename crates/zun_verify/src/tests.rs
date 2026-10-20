@@ -23,6 +23,7 @@ fn asm(instrs: &[Instruction]) -> Vec<u8> {
 fn resolver(opcode: Opcode, _operand: &Operand) -> Option<(u8, u8)> {
     match opcode {
         Opcode::Call | Opcode::CallVirt => Some((1, 1)),
+        Opcode::CallIndirect => Some((2, 1)),
         Opcode::CallBuiltin => Some((1, 1)),
         Opcode::NewObj => Some((0, 1)),
         _ => None,
@@ -70,6 +71,18 @@ fn fixture_valid_any_box_and_unbox() {
 fn fixture_valid_load_function() {
     let code = asm(&[
         Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_valid_indirect_call() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(35)),
+        Instruction::new(Opcode::CallIndirect, Operand::Token(Token::new(TableKind::MethodDef, 1))),
         Instruction::simple(Opcode::Pop),
         Instruction::simple(Opcode::Ret),
     ]);
