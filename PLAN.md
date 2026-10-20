@@ -527,8 +527,9 @@ The following runtime contracts are implemented and covered by tests:
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
-  microtask-scheduled success/failure continuations, and settlement-preserving
-  `finally` cleanup. Source-level
+  microtask-scheduled success/failure continuations, settlement-preserving
+  `finally` cleanup, and a readiness/continuation `PromiseAwaiter` protocol.
+  Source-level
   `async`/`await` lowering remains a separate pending gate; the source syntax
   is now tokenized and represented in the AST, with sema rejecting it until
   state-machine lowering is available.
