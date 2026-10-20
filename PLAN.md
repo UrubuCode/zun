@@ -378,7 +378,8 @@ mirroring the way weak collections forced dedicated GC work.
 chaining `?.` and nullish coalescing `??`, template literals, `switch`,
 `do/while` and C-style `for(;;)`, labelled `break`/`continue`, ternary and
 short-circuit `&&`/`||` value semantics, getters/setters, `static`
-fields/methods, and private `#fields`. *Status: `switch` and `do/while` are
+fields/methods, and private `#fields`. *Status: `switch`, `do/while`, C-style
+`for(;;)`, short-circuit `&&`/`||`, and ternary conditional expressions are
 implemented; the remaining features are pending and must be added only with
 complete parser, sema, and lowering paths.*
 
@@ -591,10 +592,11 @@ an optimization gate.
    after block reuse, key-aware managed lookup, and repeated-cycle stress
    coverage are implemented. FinalizationRegistry-specific behavior remains
    pending because no source-level FinalizationRegistry exists yet.
-5. **Group 2 syntax** (section 4.4.2), by utility: `switch` and `do/while` are
-   implemented; spread/rest, destructuring, default parameters, optional
-   chaining `?.` and `??`, template literals, and the remaining syntax are
-   pending.
+5. **Group 2 syntax** (section 4.4.2), by utility: `switch`, `do/while`,
+   C-style `for(;;)`, short-circuit `&&`/`||`, and ternary conditional
+   expressions are implemented; spread/rest, destructuring, default
+   parameters, optional chaining `?.` and `??`, template literals, and the
+   remaining syntax are pending.
 6. Keep this section and the section 5 ledger up to date as items land.
 
 Stop condition: stop only on a real environment blocker, a design decision not
