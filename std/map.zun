@@ -1,5 +1,5 @@
 // Thin class wrapper over the runtime-owned ordered hash table.
-import { mapSet, mapGet, mapHas, mapSize, mapDelete, mapClear } from "zun:collections";
+import { mapSet, mapGet, mapHas, mapSize, mapDelete, mapClear, mapValues } from "zun:collections";
 
 class Map {
     set(key: any, value: any): void { mapSet(this, key, value); }
@@ -8,4 +8,5 @@ class Map {
     size(): u64 { return mapSize(this); }
     delete(key: any): boolean { return mapDelete(this, key); }
     clear(): void { mapClear(this); }
+    values(): Array { return mapValues(this); }
 }
