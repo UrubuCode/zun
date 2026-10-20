@@ -159,12 +159,57 @@ pub struct ModuleManifest {
 }
 
 impl ModuleManifest {
+    const MAGIC: &'static [u8; 4] = b"ZMAN";
+    const VERSION: u16 = 0;
+
     /// Construct a manifest for an entry module and its dependencies.
     pub fn new(entry: impl Into<String>, dependencies: impl IntoIterator<Item = String>) -> Self {
         Self {
             entry: entry.into(),
             dependencies: dependencies.into_iter().collect(),
         }
+    }
+
+    /// Serialize the flattened manifest into a deterministic binary payload.
+    pub fn write(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(Self::MAGIC);
+        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(self.dependencies.len() as u32).to_le_bytes());
+        write_name(&mut bytes, &self.entry);
+        for dependency in &self.dependencies {
+            write_name(&mut bytes, dependency);
+        }
+        bytes
+    }
+
+    /// Decode a manifest produced by [`ModuleManifest::write`].
+    pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        let mut cursor = 0;
+        if take(bytes, &mut cursor, 4) != Some(Self::MAGIC.as_slice()) {
+            return Err(LoadError::InvalidManifest("bad manifest magic".into()));
+        }
+        let version = read_u16(bytes, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated manifest version".into()))?;
+        if version != Self::VERSION {
+            return Err(LoadError::InvalidManifest(format!(
+                "unsupported manifest version {version}"
+            )));
+        }
+        let count = read_u32(bytes, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated dependency count".into()))?;
+        let entry = read_name(bytes, &mut cursor)?;
+        let mut dependencies = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            dependencies.push(read_name(bytes, &mut cursor)?);
+        }
+        if cursor != bytes.len() {
+            return Err(LoadError::InvalidManifest("trailing manifest bytes".into()));
+        }
+        Ok(Self {
+            entry,
+            dependencies,
+        })
     }
 
     /// Validate that every manifest identity is present in a loader.
@@ -199,6 +244,35 @@ impl ModuleManifest {
         order.push(&self.entry);
         Ok(order)
     }
+}
+
+fn write_name(bytes: &mut Vec<u8>, name: &str) {
+    bytes.extend_from_slice(&(name.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(name.as_bytes());
+}
+
+fn take<'a>(bytes: &'a [u8], cursor: &mut usize, len: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(len)?;
+    let value = bytes.get(*cursor..end)?;
+    *cursor = end;
+    Some(value)
+}
+
+fn read_u16(bytes: &[u8], cursor: &mut usize) -> Option<u16> {
+    Some(u16::from_le_bytes(take(bytes, cursor, 2)?.try_into().ok()?))
+}
+
+fn read_u32(bytes: &[u8], cursor: &mut usize) -> Option<u32> {
+    Some(u32::from_le_bytes(take(bytes, cursor, 4)?.try_into().ok()?))
+}
+
+fn read_name(bytes: &[u8], cursor: &mut usize) -> Result<String, LoadError> {
+    let len = read_u32(bytes, cursor)
+        .ok_or_else(|| LoadError::InvalidManifest("truncated name length".into()))?;
+    let raw = take(bytes, cursor, len as usize)
+        .ok_or_else(|| LoadError::InvalidManifest("truncated name".into()))?;
+    String::from_utf8(raw.to_vec())
+        .map_err(|_| LoadError::InvalidManifest("manifest name is not UTF-8".into()))
 }
 
 /// The kind of member resolved from a MemberRef.
@@ -555,6 +629,10 @@ mod tests {
             manifest.load_order(&loader).expect("order"),
             vec!["core", "app"]
         );
+        assert_eq!(
+            ModuleManifest::read(&manifest.write()).expect("roundtrip"),
+            manifest
+        );
     }
 
     #[test]
@@ -571,5 +649,15 @@ mod tests {
             ModuleManifest::new("app", vec!["x".into(), "x".into()]).validate(&loader),
             Err(LoadError::InvalidManifest(_))
         ));
+    }
+
+    #[test]
+    fn manifest_rejects_truncated_or_trailing_bytes() {
+        let manifest = ModuleManifest::new("app", vec!["core".into()]);
+        let bytes = manifest.write();
+        assert!(ModuleManifest::read(&bytes[..bytes.len() - 1]).is_err());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(ModuleManifest::read(&trailing).is_err());
     }
 }
