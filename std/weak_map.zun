@@ -1,6 +1,7 @@
-// Thin source wrapper over the GC ephemeron-backed WeakMap floor.
-import { weakMapNew, weakMapSet, weakMapHas } from "zun:collections";
+// Thin class wrapper over the GC ephemeron-backed WeakMap floor.
+import { weakMapSet, weakMapHas } from "zun:collections";
 
-function createWeakMap(): any { return weakMapNew(); }
-function setWeakMapValue(map: WeakMap, key: any, value: any): boolean { return weakMapSet(map, key, value); }
-function hasWeakMapValue(map: WeakMap, key: any): boolean { return weakMapHas(map, key); }
+class WeakMap {
+    set(key: any, value: any): boolean { return weakMapSet(this, key, value); }
+    has(key: any): boolean { return weakMapHas(this, key); }
+}
