@@ -215,7 +215,10 @@ impl Heap {
         for entry in &mut self.finalizers {
             if !entry.queued && self.by_addr.get(&entry.target).is_none() {
                 entry.queued = true;
-                self.finalization_queue.push(entry.token);
+                self.finalization_queue.push(super::FinalizationRecord {
+                    token: entry.token,
+                    callback_id: entry.callback_id,
+                });
             }
         }
         freed

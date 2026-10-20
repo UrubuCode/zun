@@ -209,8 +209,22 @@ impl Heap {
     }
 
     pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
+        self.finalization_register_with_callback(target, token, 0)
+    }
+
+    pub fn finalization_register_with_callback(
+        &mut self,
+        target: Obj,
+        token: u64,
+        callback_id: u64,
+    ) -> FinalizationId {
         let id = FinalizationId(self.finalizers.len() as u32);
-        self.finalizers.push(FinalizerEntry { target: target.addr() as usize, token, queued: false });
+        self.finalizers.push(FinalizerEntry {
+            target: target.addr() as usize,
+            token,
+            callback_id,
+            queued: false,
+        });
         id
     }
 }

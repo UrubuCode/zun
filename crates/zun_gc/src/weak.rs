@@ -1,4 +1,4 @@
-use super::{Heap, Obj, WeakMapId, WeakRefId};
+use super::{FinalizationRecord, Heap, Obj, WeakMapId, WeakRefId};
 
 impl Heap {
     pub fn weak_ref_get(&self, id: WeakRefId) -> Option<Obj> {
@@ -103,6 +103,13 @@ impl Heap {
     }
 
     pub fn finalization_drain(&mut self) -> Vec<u64> {
+        self.finalization_drain_records()
+            .into_iter()
+            .map(|record| record.token)
+            .collect()
+    }
+
+    pub fn finalization_drain_records(&mut self) -> Vec<FinalizationRecord> {
         std::mem::take(&mut self.finalization_queue)
     }
 }

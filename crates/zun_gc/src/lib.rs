@@ -55,6 +55,7 @@ mod buffers;
 mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
+pub use weak_state::FinalizationRecord;
 use records::Record;
 use value_ops::any_same_value_zero;
 use weak_state::{Ephemeron, FinalizerEntry, WeakSlot};
@@ -84,7 +85,7 @@ pub struct Heap {
     weak_maps: Vec<Ephemeron>,
     /// Finalizers are queued after sweep and never run during collection.
     finalizers: Vec<FinalizerEntry>,
-    finalization_queue: Vec<u64>,
+    finalization_queue: Vec<FinalizationRecord>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
@@ -446,6 +447,19 @@ mod tests {
         assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
         assert_eq!(heap.finalization_drain(), vec![99]);
         assert!(heap.finalization_drain().is_empty());
+    }
+
+    #[test]
+    fn finalization_queue_preserves_callback_routing_metadata() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        heap.finalization_register_with_callback(target, 99, 7);
+        assert!(heap.finalization_drain_records().is_empty());
+        unsafe { heap.collect(&[], &|_| Vec::new()) };
+        assert_eq!(
+            heap.finalization_drain_records(),
+            vec![FinalizationRecord { token: 99, callback_id: 7 }]
+        );
     }
 
     #[test]
