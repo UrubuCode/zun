@@ -38,6 +38,38 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
     }
 }
 
+pub(crate) fn parse_template_parts(raw: &str, span: Span, diagnostics: &mut Vec<Diagnostic>) -> Vec<crate::ast::TemplatePart> {
+    let inner = &raw[1..raw.len() - 1];
+    let mut parts = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = find_template_marker(&inner[cursor..]) {
+        let start = cursor + relative;
+        if start > cursor { parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..start]))); }
+        let expression_start = start + 2;
+        let Some(end) = find_template_interpolation_end(inner, expression_start) else {
+            diagnostics.push(Diagnostic::error("unterminated template interpolation").with_code("SYN0004").with_span(span));
+            return parts;
+        };
+        let expression = inner[expression_start..end].trim();
+        let mut expression_diagnostics = Vec::new();
+        let Some(mut parsed) = parse_expression_fragment(expression, &mut expression_diagnostics) else {
+            diagnostics.extend(expression_diagnostics);
+            diagnostics.push(Diagnostic::error("invalid template interpolation").with_code("SYN0005").with_span(span));
+            cursor = end + 1;
+            continue;
+        };
+        if !expression_diagnostics.is_empty() { diagnostics.extend(expression_diagnostics); }
+        else {
+            let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
+            rebase_expression_names(&mut parsed, span.start + offset as u32);
+            parts.push(crate::ast::TemplatePart::Expr(Box::new(parsed)));
+        }
+        cursor = end + 1;
+    }
+    if cursor < inner.len() { parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..]))); }
+    parts
+}
+
 pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
     let tokens = lex(source, diagnostics);
     let mut parser = Parser { source, tokens, pos: 0, diagnostics };

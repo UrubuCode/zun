@@ -11,7 +11,7 @@ use zun_common::{Diagnostic, Span};
 
 #[path = "parser_helpers.rs"]
 mod parser_helpers;
-use parser_helpers::{decode_string, decode_template_text, find_template_interpolation_end, find_template_marker, parse_expression_fragment, rebase_expression_names};
+use parser_helpers::decode_string;
 
 /// Parse `source` into a [`Program`], appending any diagnostics.
 pub fn parse(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Program {
@@ -497,47 +497,6 @@ impl Parser<'_> {
 
     // --- expressions (precedence climbing) ---
 
-}
-
-fn parse_template_parts(
-    raw: &str,
-    span: Span,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<crate::ast::TemplatePart> {
-    let inner = &raw[1..raw.len() - 1];
-    let mut parts = Vec::new();
-    let mut cursor = 0;
-    while let Some(relative) = find_template_marker(&inner[cursor..]) {
-        let start = cursor + relative;
-        if start > cursor {
-            parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..start])));
-        }
-        let expression_start = start + 2;
-        let Some(end) = find_template_interpolation_end(inner, expression_start) else {
-            diagnostics.push(Diagnostic::error("unterminated template interpolation").with_code("SYN0004").with_span(span));
-            return parts;
-        };
-        let expression = inner[expression_start..end].trim();
-        let mut expression_diagnostics = Vec::new();
-        let Some(mut parsed) = parse_expression_fragment(expression, &mut expression_diagnostics) else {
-            diagnostics.extend(expression_diagnostics);
-            diagnostics.push(Diagnostic::error("invalid template interpolation").with_code("SYN0005").with_span(span));
-            cursor = end + 1;
-            continue;
-        };
-        if !expression_diagnostics.is_empty() {
-            diagnostics.extend(expression_diagnostics);
-        } else {
-            let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
-            rebase_expression_names(&mut parsed, span.start + offset as u32);
-            parts.push(crate::ast::TemplatePart::Expr(Box::new(parsed)));
-        }
-        cursor = end + 1;
-    }
-    if cursor < inner.len() {
-        parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..])));
-    }
-    parts
 }
 
 #[cfg(test)]
