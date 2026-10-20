@@ -294,6 +294,52 @@ pub fn append_native_roots(roots: &mut Vec<Obj>) {
     });
 }
 
+/// A native safepoint description published by a code generator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeStackMap {
+    /// Absolute program counter of the safepoint.
+    pub pc: usize,
+    /// Number of bytes covered by the native frame map.
+    pub span: u32,
+}
+
+/// Registry of native safepoint maps known to the GC boundary.
+#[derive(Debug, Default)]
+pub struct StackMapRegistry {
+    maps: Vec<NativeStackMap>,
+}
+
+impl StackMapRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Replace the registered map set with the maps from the current JIT image.
+    pub fn replace(&mut self, maps: impl IntoIterator<Item = NativeStackMap>) {
+        self.maps.clear();
+        self.maps.extend(maps);
+    }
+
+    /// Find the map covering `pc`, if one is registered.
+    pub fn lookup(&self, pc: usize) -> Option<NativeStackMap> {
+        self.maps
+            .iter()
+            .copied()
+            .find(|map| pc >= map.pc && pc - map.pc <= map.span as usize)
+    }
+
+    /// Number of registered safepoints.
+    pub fn len(&self) -> usize {
+        self.maps.len()
+    }
+
+    /// Whether the registry has no safepoints.
+    pub fn is_empty(&self) -> bool {
+        self.maps.is_empty()
+    }
+}
+
 /// A guard that registers `heap` as the current heap and clears it on drop.
 #[derive(Debug)]
 pub struct HeapScope {

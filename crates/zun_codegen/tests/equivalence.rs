@@ -188,6 +188,8 @@ fn non_overridden_virtual_call_is_jit_eligible() {
         "object call must produce a native safepoint map"
     );
     assert!(jit.stack_maps(read).unwrap().iter().all(|map| map.pc != 0));
+    let pc = jit.stack_maps(read).unwrap()[0].pc;
+    assert_eq!(jit.stack_map_registry().lookup(pc).unwrap().pc, pc);
     let jit_result = {
         let mut heap = zun_gc::Heap::new();
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };

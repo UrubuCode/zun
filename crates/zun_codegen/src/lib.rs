@@ -119,6 +119,7 @@ pub struct Jit {
     types: zun_types::TypeSystem,
     virtual_table: Box<[u64]>,
     stack_maps: HashMap<u32, Vec<StackMapInfo>>,
+    stack_map_registry: zun_gc::StackMapRegistry,
 }
 
 impl core::fmt::Debug for Jit {
@@ -171,6 +172,7 @@ impl Jit {
             types,
             virtual_table,
             stack_maps: HashMap::new(),
+            stack_map_registry: zun_gc::StackMapRegistry::new(),
         };
 
         for &rid in &eligible {
@@ -380,6 +382,14 @@ impl Jit {
                 map.pc = base + map.code_offset as usize;
             }
         }
+        self.stack_map_registry.replace(
+            self.stack_maps.values().flat_map(|maps| {
+                maps.iter().map(|map| zun_gc::NativeStackMap {
+                    pc: map.pc,
+                    span: map.span,
+                })
+            }),
+        );
     }
 
     /// Whether `method_rid` is eligible for JIT compilation.
@@ -395,6 +405,11 @@ impl Jit {
     /// Return the native safepoint maps emitted for a method, if it is JIT-defined.
     pub fn stack_maps(&self, method_rid: u32) -> Option<&[StackMapInfo]> {
         self.stack_maps.get(&method_rid).map(Vec::as_slice)
+    }
+
+    /// Access the GC-facing registry of absolute native safepoint maps.
+    pub fn stack_map_registry(&self) -> &zun_gc::StackMapRegistry {
+        &self.stack_map_registry
     }
 
     /// The parameter kinds of a compiled method (for marshalling arguments).
