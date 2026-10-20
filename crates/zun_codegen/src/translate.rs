@@ -280,7 +280,7 @@ impl Translator<'_> {
                         self.builder.ins().return_(&[]);
                     }
                 }
-                Opcode::Call => {
+                Opcode::Call | Opcode::CallVirt => {
                     let rid = match instr.operand {
                         Operand::Token(t) => t.rid(),
                         _ => return Err("call operand".into()),

@@ -178,7 +178,7 @@ impl Jit {
                 zun_il::decode_all(body.code)
                     .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?
                     .iter()
-                    .filter(|i| i.opcode == zun_il::Opcode::Call)
+                    .filter(|i| matches!(i.opcode, zun_il::Opcode::Call | zun_il::Opcode::CallVirt))
                     .filter_map(|i| match i.operand {
                         zun_il::Operand::Token(t) => Some(t.rid()),
                         _ => None,

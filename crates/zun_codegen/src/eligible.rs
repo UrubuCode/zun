@@ -48,6 +48,7 @@ fn opcode_supported(op: Opcode) -> bool {
             | Opcode::BranchFalse
             | Opcode::Ret
             | Opcode::Call
+            | Opcode::CallVirt
             | Opcode::NewObj
             | Opcode::LoadField
             | Opcode::StoreField
@@ -79,6 +80,27 @@ fn instr_fields_ok(module: &Module, instr: &zun_il::Instruction) -> bool {
         }
         _ => true,
     }
+}
+
+/// A virtual call may be lowered to a direct call when no method in the
+/// module can override the statically referenced method. Dynamic dispatch is
+/// still required for overridden methods and remains Tier 0 for now.
+fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> bool {
+    if instr.opcode != Opcode::CallVirt {
+        return true;
+    }
+    let Operand::Token(token) = instr.operand else {
+        return false;
+    };
+    let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
+        return false;
+    };
+    !module
+        .tables
+        .method_defs
+        .iter()
+        .enumerate()
+        .any(|(index, candidate)| index as u32 + 1 != token.rid() && candidate.name == method.name)
 }
 
 /// Whether a value-type code is one the typed JIT can represent.
@@ -115,9 +137,12 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         if !instrs.iter().all(|i| instr_fields_ok(module, i)) {
             continue;
         }
+        if !instrs.iter().all(|i| callvirt_is_non_overridden(module, i)) {
+            continue;
+        }
         let callees = instrs
             .iter()
-            .filter(|i| i.opcode == Opcode::Call)
+            .filter(|i| matches!(i.opcode, Opcode::Call | Opcode::CallVirt))
             .filter_map(|i| match i.operand {
                 Operand::Token(t) => Some(t.rid()),
                 _ => None,

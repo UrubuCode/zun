@@ -168,6 +168,25 @@ fn object_alloc_and_field_access_in_jit() {
 }
 
 #[test]
+fn non_overridden_virtual_call_is_jit_eligible() {
+    let src = "class Counter { n: int; get(): int { return this.n; } }\n\
+               function read(c: Counter): int { return c.get(); }\n\
+               function main(): int { return read(new Counter(7)); }";
+    let module = compile(src);
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(entry));
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    let interp_result = interp_entry(&module);
+    assert!(matches!((jit_result, interp_result),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 7));
+}
+
+#[test]
 fn string_field_method_is_not_jit_eligible() {
     // A method touching a string field must stay on the interpreter.
     let src = "class Named { tag: string; }\n\
