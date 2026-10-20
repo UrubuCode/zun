@@ -340,6 +340,54 @@ clearing, `WeakMap` requires ephemeron fixed-point marking, and
 represented by a strong array wrapper that silently violates reachability
 semantics.
 
+### 4.4.2 JavaScript/TypeScript language-feature roadmap
+
+Beyond the built-in classes, the language surface itself is still incomplete.
+Features are grouped by how much runtime/compiler architecture they force,
+mirroring the way weak collections forced dedicated GC work.
+
+**Group 1 — features that force runtime/compiler architecture:**
+
+- First-class functions and closures (anonymous `function` expressions, arrow
+  `=>`). A function value is a `(code pointer, captured environment)` pair; the
+  environment is heap-allocated and GC-traced (the .NET display-class model).
+  This is what makes functional `Array.map`/`filter`/`reduce` and callbacks
+  possible at all. *Status: runtime substrate implemented — closure construction
+  opcode, environment capture through indirect calls, and interpreter GC tracing
+  of closure environments. Surface syntax (`=>`, function expressions) and the
+  higher-order stdlib methods that consume callbacks remain to be wired.*
+- Exceptions: `throw`/`try`/`catch`/`finally`. Requires IL handler regions,
+  verifier support, interpreter unwinding, and Cranelift landing pads. The
+  `Error` hierarchy already exists but is unusable without throw/catch control
+  flow. *Status: pending — the next large architectural item.*
+- Iteration protocol (`for...of`, `Symbol.iterator`) and, later, generators
+  (`function*`). Generators lower to a state machine, reusing the async
+  state-machine substrate. *Status: a `SymbolRegistry` exists; `for...of` and
+  generators are still pending (generators belong to Phase 4).*
+
+**Group 2 — syntactic / medium features (no deep runtime change):** spread/rest
+(`...`), array and object destructuring, default and rest parameters, optional
+chaining `?.` and nullish coalescing `??`, template literals, `switch`,
+`do/while` and C-style `for(;;)`, labelled `break`/`continue`, ternary and
+short-circuit `&&`/`||` value semantics, getters/setters, `static`
+fields/methods, and private `#fields`. *Status: pending, added on demand.*
+
+**Group 3 — TypeScript type-level (erased at runtime):** generics, interfaces,
+enums, union types with narrowing, and optional properties. These are handled by
+the checker and emit no new code except `enum`. *Status: separate checker
+track.*
+
+**Built-in surface still pending:** source-level class wrappers for `Map`/`Set`/
+`WeakMap` and the typed arrays (the runtime floor exists; constructors and
+intrinsic bindings are the next gate); `DataView` is integrated with the managed
+buffers; `RegExp` needs a regex engine (deferred); `Proxy`/`Reflect` go through
+the dynamic `Any`/`DynamicObject` path (Phase 4); `BigInt` needs a bignum
+(deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
+
+Cross-cutting rule: data structures with real algorithmic complexity (hashing,
+buffers) live in the Rust intrinsic floor; the TypeScript class is only a thin
+typed wrapper over that floor — never TypeScript-over-`Array`.
+
 ## 5. Implementation ledger (2026-10-20)
 
 The following runtime contracts are implemented and covered by tests:
