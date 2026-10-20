@@ -2,6 +2,13 @@
 
 use super::*;
 
+pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
+    let tokens = lex(source, diagnostics);
+    let mut parser = Parser { source, tokens, pos: 0, diagnostics };
+    let expression = parser.expression();
+    if parser.at(TokenKind::Eof) && diagnostics.is_empty() { Some(expression) } else { None }
+}
+
 pub(crate) fn find_template_marker(source: &str) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = 0;

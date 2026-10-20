@@ -11,7 +11,7 @@ use zun_common::{Diagnostic, Span};
 
 #[path = "parser_helpers.rs"]
 mod parser_helpers;
-use parser_helpers::{decode_template_text, find_template_interpolation_end, find_template_marker};
+use parser_helpers::{decode_template_text, find_template_interpolation_end, find_template_marker, parse_expression_fragment};
 
 /// Parse `source` into a [`Program`], appending any diagnostics.
 pub fn parse(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Program {
@@ -562,17 +562,6 @@ fn parse_template_parts(
         parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..])));
     }
     parts
-}
-
-fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
-    let tokens = lex(source, diagnostics);
-    let mut parser = Parser { source, tokens, pos: 0, diagnostics };
-    let expression = parser.expression();
-    if parser.at(TokenKind::Eof) && diagnostics.is_empty() {
-        Some(expression)
-    } else {
-        None
-    }
 }
 
 fn rebase_expression_names(expr: &mut Expr, base: u32) {
