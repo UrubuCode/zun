@@ -538,7 +538,7 @@ impl Interp<'_> {
                     // Primitive-backed classes use static method binding: the
                     // receiver is still passed as `this`, but has no heap type
                     // to consult for virtual dispatch.
-                    let target = if matches!(args.first(), Some(Value::Str(_))) {
+                    let target = if matches!(args.first(), Some(Value::Str(_) | Value::Float(_, _))) {
                         token.rid()
                     } else {
                         let type_rid = args[0].as_object().type_rid();
@@ -903,6 +903,19 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run String primitive methods");
         assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
+    fn executes_number_primitive_methods_through_static_class_binding() {
+        let module = zun_compiler::compile(
+            "import { toFixed } from \"zun:number\";\n\
+             class Number { extern toFixed(digits: int): string; }\n\
+             function main(): string { let value: number = 12.5; return value.toFixed(1); }",
+        )
+        .expect("compile Number primitive methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number primitive methods");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "12.5"));
     }
 }
 

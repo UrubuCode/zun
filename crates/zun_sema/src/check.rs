@@ -378,10 +378,10 @@ impl Checker<'_> {
         for (class_idx, class) in program.classes.iter().enumerate() {
             for m in &class.methods {
                 let name = self.text(&m.name).to_string();
-                let receiver_ty = if self.text(&class.name) == "String" {
-                    Ty::String
-                } else {
-                    Ty::Instance(class_idx as u32)
+                let receiver_ty = match self.text(&class.name) {
+                    "String" => Ty::String,
+                    "Number" => Ty::F64,
+                    _ => Ty::Instance(class_idx as u32),
                 };
                 let mut params = vec![receiver_ty];
                 for p in &m.params {
@@ -967,6 +967,13 @@ impl Checker<'_> {
                         Some(&class) => class,
                         None => {
                             self.error(receiver.span, "String methods are not available without class String");
+                            return self.poison(span);
+                        }
+                    },
+                    Ty::F64 => match self.classes_by_name.get("Number") {
+                        Some(&class) => class,
+                        None => {
+                            self.error(receiver.span, "Number methods are not available without class Number");
                             return self.poison(span);
                         }
                     },

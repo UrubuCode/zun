@@ -101,6 +101,20 @@ fn string_primitive_methods_use_static_class_binding() {
 }
 
 #[test]
+fn number_primitive_methods_use_static_class_binding() {
+    let module = zun_compiler::compile(
+        "import { toFixed } from \"zun:number\";\n\
+         class Number { extern toFixed(digits: int): string; }\n\
+         function main(): string { let value: number = 12.5; return value.toFixed(1); }",
+    )
+    .expect("compile Number methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "native Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "12.5"));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

@@ -2,10 +2,14 @@
 
 import { parseFloat, toFixed } from "zun:number";
 
+class Number {
+    extern toFixed(digits: int): string;
+}
+
 function numberParse(value: string): number {
     return parseFloat(value);
 }
 
 function numberToFixed(value: number, digits: int): string {
-    return toFixed(value, digits);
+    return value.toFixed(digits);
 }
