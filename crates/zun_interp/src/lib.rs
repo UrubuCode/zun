@@ -696,6 +696,19 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run dynamic source");
         assert!(matches!(result, Value::Any(any) if any.as_float() == Some(41.0)));
     }
+
+    #[test]
+    fn executes_extern_method_with_receiver() {
+        let module = zun_compiler::compile(
+            "import { receiverValue } from \"zun:math\";\n\
+             class Service { extern receiverValue(value: number): number; }\n\
+             function main(): number { let service = new Service(); return service.receiverValue(7.5); }",
+        )
+        .expect("compile extern method");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run extern method");
+        assert!(matches!(result, Value::Float(value, _) if value == 7.5));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.
