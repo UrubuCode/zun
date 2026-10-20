@@ -291,21 +291,6 @@ impl Parser<'_> {
         })
     }
 
-    fn block(&mut self) -> Block {
-        let open = self.peek().span;
-        self.expect(TokenKind::LBrace, "`{`");
-        let mut statements = Vec::new();
-        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            statements.push(self.statement());
-        }
-        let close = self.peek().span;
-        self.expect(TokenKind::RBrace, "`}`");
-        Block {
-            statements,
-            span: open.to(close),
-        }
-    }
-
     fn statement(&mut self) -> Stmt {
         if self.at(TokenKind::Ident) && self.peek_n(1).kind == TokenKind::Colon {
             let label = self.name("a statement label");

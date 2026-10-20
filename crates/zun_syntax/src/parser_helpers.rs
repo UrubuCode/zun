@@ -3,6 +3,21 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn block(&mut self) -> Block {
+        let open = self.peek().span;
+        self.expect(TokenKind::LBrace, "`{`");
+        let mut statements = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            statements.push(self.statement());
+        }
+        let close = self.peek().span;
+        self.expect(TokenKind::RBrace, "`}`");
+        Block {
+            statements,
+            span: open.to(close),
+        }
+    }
+
     pub(crate) fn parameters(&mut self) -> Vec<Param> {
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
