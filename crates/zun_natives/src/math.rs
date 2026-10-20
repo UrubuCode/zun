@@ -54,6 +54,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "sqrt", params: &[F64], ret: F64, imp: sqrt },
         NativeFn { name: "min", params: &[F64, F64], ret: F64, imp: min },
         NativeFn { name: "max", params: &[F64, F64], ret: F64, imp: max },
+        NativeFn { name: "sqrtNumber", params: &[F64], ret: F64, imp: sqrt },
+        NativeFn { name: "minNumber", params: &[F64, F64], ret: F64, imp: min },
+        NativeFn { name: "maxNumber", params: &[F64, F64], ret: F64, imp: max },
         NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
     ],
 };
