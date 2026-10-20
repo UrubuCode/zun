@@ -333,6 +333,13 @@ impl OrderedMap {
             .filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
     }
 
+    /// Return the live entry at an insertion-order position.
+    pub fn entry_at(&self, position: usize) -> Option<(Any, Any)> {
+        self.entries.iter().filter_map(|entry| {
+            entry.map(|(key, value, _)| (key, value))
+        }).nth(position)
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
         self.buckets = vec![Vec::new(); 8];
@@ -361,6 +368,54 @@ impl OrderedMap {
         self.entries = entries;
         self.dead_len = 0;
         self.rehash();
+    }
+}
+
+/// State for the default `Map[Symbol.iterator]()` protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapIterator {
+    next_index: usize,
+}
+
+impl MapIterator {
+    pub fn new() -> Self {
+        Self { next_index: 0 }
+    }
+
+    pub fn next(&mut self, map: &OrderedMap) -> Option<(Any, Any)> {
+        let entry = map.entry_at(self.next_index)?;
+        self.next_index += 1;
+        Some(entry)
+    }
+}
+
+impl Default for MapIterator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// State for the default `Set[Symbol.iterator]()` protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetIterator {
+    next_index: usize,
+}
+
+impl SetIterator {
+    pub fn new() -> Self {
+        Self { next_index: 0 }
+    }
+
+    pub fn next(&mut self, set: &OrderedMap) -> Option<Any> {
+        let (value, _) = set.entry_at(self.next_index)?;
+        self.next_index += 1;
+        Some(value)
+    }
+}
+
+impl Default for SetIterator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1380,5 +1435,24 @@ mod tests {
         });
         let keys: Vec<i64> = map.iter().filter_map(|(key, _)| key.as_int()).collect();
         assert_eq!(keys, vec![10, 11, 12]);
+    }
+
+    #[test]
+    fn map_and_set_iterators_follow_live_insertion_order() {
+        let mut map = OrderedMap::new();
+        for value in 1..=3 {
+            map.insert(Any::int(value), Any::int(value * 10), value as u64, |key| {
+                key.as_int() == Some(value)
+            });
+        }
+        let mut map_iterator = MapIterator::new();
+        assert_eq!(map_iterator.next(&map).map(|(_, value)| value.as_int()), Some(Some(10)));
+        assert_eq!(map_iterator.next(&map).map(|(_, value)| value.as_int()), Some(Some(20)));
+
+        let mut set_iterator = SetIterator::new();
+        assert_eq!(set_iterator.next(&map).and_then(|value| value.as_int()), Some(1));
+        assert_eq!(set_iterator.next(&map).and_then(|value| value.as_int()), Some(2));
+        assert_eq!(set_iterator.next(&map).and_then(|value| value.as_int()), Some(3));
+        assert_eq!(set_iterator.next(&map), None);
     }
 }
