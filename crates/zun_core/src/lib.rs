@@ -13,12 +13,14 @@ mod collection_iterators;
 mod arrays;
 mod byte_buffer;
 mod dynamic_object;
+mod error_value;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
 pub use arrays::{ArrayIterator, ArrayStorage};
 pub use byte_buffer::ByteBuffer;
 pub use dynamic_object::DynamicObject;
+pub use error_value::ErrorValue;
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -263,33 +265,6 @@ impl Any {
 pub struct DateValue {
     millis: i64,
     valid: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ErrorValue {
-    name: String,
-    message: String,
-}
-
-impl ErrorValue {
-    pub fn new(name: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            message: message.into(),
-        }
-    }
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-    pub fn set_name(&mut self, name: impl Into<String>) {
-        self.name = name.into();
-    }
-    pub fn set_message(&mut self, message: impl Into<String>) {
-        self.message = message.into();
-    }
 }
 
 impl DateValue {
