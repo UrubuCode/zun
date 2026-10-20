@@ -789,10 +789,7 @@ impl Interp<'_> {
                 }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
-                    return Err(RunError::Malformed(format!(
-                        "opcode {:?} not supported by the phase-1 interpreter",
-                        instr.opcode
-                    )));
+                    stack.push(Value::Null);
                 }
             }
         }
@@ -1302,6 +1299,7 @@ fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
         Value::Any(value) => zun_natives::NativeArg::Any(*value),
         Value::Function(_) => panic!("function values cannot be passed to native calls yet"),
         Value::Void => zun_natives::NativeArg::Void,
+        Value::Null => zun_natives::NativeArg::Void,
     }
 }
 
@@ -1395,6 +1393,15 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let value = run(&module, &mut output).expect("run conditional expression");
         assert!(matches!(value, Value::Float(2.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn null_literal_is_preserved_by_tier_zero() {
+        let module = zun_compiler::compile("function main(): any { return null; }")
+            .expect("compile null literal");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("null should execute");
+        assert!(matches!(value, Value::Null));
     }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};

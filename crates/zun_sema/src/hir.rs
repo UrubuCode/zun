@@ -388,6 +388,8 @@ pub enum ExprKind {
     String(String),
     /// A boolean literal.
     Boolean(bool),
+    /// The explicit JavaScript `null` value.
+    Null,
     /// Read a local slot.
     Local(LocalSlot),
     /// Read the value from a shared cell stored in a local slot.

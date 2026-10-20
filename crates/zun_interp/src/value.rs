@@ -28,6 +28,8 @@ pub enum Value {
     Function(zun_core::FunctionHandle),
     /// The absence of a value (a void call's result).
     Void,
+    /// An explicit JavaScript `null` value.
+    Null,
 }
 
 impl Value {
@@ -43,6 +45,7 @@ impl Value {
             Value::Function(_) => None,
             Value::Str(value) => Some(zun_core::Any::string(heap.intern_string(value.clone()))),
             Value::Void => None,
+            Value::Null => Some(zun_core::Any::null()),
             Value::Any(value) => Some(*value),
         }
     }
@@ -68,6 +71,7 @@ impl Value {
                 .as_string()
                 .and_then(|handle| heap.try_string(handle).cloned())
                 .map(Value::Str),
+            zun_core::AnyTag::Null => Some(Value::Null),
         }
     }
 
@@ -131,6 +135,7 @@ impl Value {
             Value::Object(_) => "[object]".to_string(),
             Value::Function(_) => "[function]".to_string(),
             Value::Void => "undefined".to_string(),
+            Value::Null => "null".to_string(),
             Value::Any(_) => "[any]".to_string(),
         }
     }

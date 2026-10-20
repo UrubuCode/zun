@@ -1303,8 +1303,11 @@ impl Checker<'_> {
                 span,
             },
             ast::Expr::Null { .. } => {
-                self.error(span, "`null` is not supported in phase 1");
-                self.poison(span)
+                hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Any,
+                    span,
+                }
             }
             ast::Expr::Ident(name) => {
                 let text = self.text(name).to_string();

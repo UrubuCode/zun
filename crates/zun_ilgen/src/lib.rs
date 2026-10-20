@@ -655,6 +655,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             }
             ExprKind::Boolean(true) => self.emit(Instruction::simple(Opcode::ConstTrue)),
             ExprKind::Boolean(false) => self.emit(Instruction::simple(Opcode::ConstFalse)),
+            ExprKind::Null => self.emit(Instruction::simple(Opcode::ConstNull)),
             ExprKind::Local(slot) => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
             }

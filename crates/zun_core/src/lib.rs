@@ -73,6 +73,8 @@ pub enum AnyTag {
     Object = 3,
     /// An index into the runtime string table.
     String = 4,
+    /// The explicit JavaScript `null` value.
+    Null = 5,
 }
 
 /// Explicit tagged-union representation for opt-in dynamic values.
@@ -145,6 +147,13 @@ impl SymbolRegistry {
 }
 
 impl Any {
+    /// The explicit JavaScript `null` value.
+    pub const fn null() -> Self {
+        Self {
+            tag: AnyTag::Null,
+            payload: 0,
+        }
+    }
     /// Box a signed integer.
     pub const fn int(value: i64) -> Self {
         Self {
