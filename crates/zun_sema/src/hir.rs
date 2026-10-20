@@ -365,10 +365,12 @@ pub enum Stmt {
         binding: LocalSlot,
         body: Vec<Stmt>,
     },
-    /// Exit the innermost enclosing loop.
-    Break,
-    /// Continue with the next iteration of the innermost enclosing loop.
-    Continue,
+    /// Execute a labeled statement.
+    Labeled { label: String, body: Box<Stmt> },
+    /// Exit the innermost enclosing loop or the named loop.
+    Break(Option<String>),
+    /// Continue the innermost enclosing loop or the named loop.
+    Continue(Option<String>),
     /// Return, with a value unless the function returns `void`.
     Return(Option<Expr>),
     /// Transfer control to an enclosing exception handler.

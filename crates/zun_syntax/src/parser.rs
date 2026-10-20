@@ -33,6 +33,13 @@ impl Parser<'_> {
         self.tokens[self.pos]
     }
 
+    fn peek_n(&self, offset: usize) -> Token {
+        self.tokens
+            .get(self.pos + offset)
+            .copied()
+            .unwrap_or_else(|| *self.tokens.last().expect("lexer always emits EOF"))
+    }
+
     fn at(&self, kind: TokenKind) -> bool {
         self.peek().kind == kind
     }
@@ -340,6 +347,16 @@ impl Parser<'_> {
     }
 
     fn statement(&mut self) -> Stmt {
+        if self.at(TokenKind::Ident) && self.peek_n(1).kind == TokenKind::Colon {
+            let label = self.name("a statement label");
+            self.bump();
+            let statement = self.statement();
+            return Stmt::Labeled {
+                label,
+                statement: Box::new(statement),
+                span: label.span,
+            };
+        }
         match self.peek().kind {
             TokenKind::KwLet => self.let_statement(),
             TokenKind::KwIf => self.if_statement(),
@@ -605,18 +622,30 @@ impl Parser<'_> {
 
     fn break_statement(&mut self) -> Stmt {
         let start = self.bump().span;
+        let label = if self.at(TokenKind::Ident) {
+            Some(self.name("a break label"))
+        } else {
+            None
+        };
         let end = self.peek().span;
         self.expect(TokenKind::Semi, "`;` after break");
         Stmt::Break {
+            label,
             span: start.to(end),
         }
     }
 
     fn continue_statement(&mut self) -> Stmt {
         let start = self.bump().span;
+        let label = if self.at(TokenKind::Ident) {
+            Some(self.name("a continue label"))
+        } else {
+            None
+        };
         let end = self.peek().span;
         self.expect(TokenKind::Semi, "`;` after continue");
         Stmt::Continue {
+            label,
             span: start.to(end),
         }
     }
@@ -1403,6 +1432,23 @@ mod tests {
         assert_eq!(ident_text(src, name), "value");
         assert!(matches!(iterable, Expr::Ident(_)));
         assert_eq!(body.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_labeled_break_and_continue() {
+        let mut diagnostics = Vec::new();
+        let program = parse(
+            "function main(): int { outer: while (true) { continue outer; break outer; } return 0; }",
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let statements = &program.functions[0].body.statements;
+        assert!(matches!(
+            &statements[0],
+            Stmt::Labeled { statement, .. }
+                if matches!(statement.as_ref(), Stmt::While { body, .. }
+                    if matches!(body.statements[0], Stmt::Continue { label: Some(_), .. }))
+        ));
     }
 
     #[test]

@@ -232,13 +232,26 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
-    /// `break;`
+    /// `label: statement`.
+    Labeled {
+        /// The label name.
+        label: Name,
+        /// The labeled statement.
+        statement: Box<Stmt>,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `break label;`.
     Break {
+        /// Optional target label.
+        label: Option<Name>,
         /// Source location of the statement.
         span: Span,
     },
-    /// `continue;`
+    /// `continue label;`.
     Continue {
+        /// Optional target label.
+        label: Option<Name>,
         /// Source location of the statement.
         span: Span,
     },

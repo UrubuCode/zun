@@ -292,6 +292,9 @@ impl Checker<'_> {
                         self.collect_mutated_names(&block.statements, names);
                     }
                 }
+                ast::Stmt::Labeled { statement, .. } => {
+                    self.collect_mutated_names(std::slice::from_ref(statement), names);
+                }
                 ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
             }
         }
@@ -676,6 +679,9 @@ impl Checker<'_> {
                         self.collect_capture_stmt(cx, parameters, statement, uses);
                     }
                 }
+            }
+            ast::Stmt::Labeled { statement, .. } => {
+                self.collect_capture_stmt(cx, parameters, statement, uses);
             }
             ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
         }
@@ -1516,17 +1522,24 @@ impl Checker<'_> {
                     body,
                 }
             }
-            ast::Stmt::Break { span } => {
+            ast::Stmt::Labeled { label, statement, .. } => {
+                let body = self.check_stmt(cx, statement);
+                hir::Stmt::Labeled {
+                    label: self.text(label).to_string(),
+                    body: Box::new(body),
+                }
+            }
+            ast::Stmt::Break { label, span } => {
                 if cx.loop_depth == 0 {
                     self.error(*span, "`break` is only valid inside a loop");
                 }
-                hir::Stmt::Break
+                hir::Stmt::Break(label.map(|name| self.text(&name).to_string()))
             }
-            ast::Stmt::Continue { span } => {
+            ast::Stmt::Continue { label, span } => {
                 if cx.loop_depth == 0 {
                     self.error(*span, "`continue` is only valid inside a loop");
                 }
-                hir::Stmt::Continue
+                hir::Stmt::Continue(label.map(|name| self.text(&name).to_string()))
             }
             ast::Stmt::Return { value, span } => {
                 let value = value.as_ref().map(|v| {
