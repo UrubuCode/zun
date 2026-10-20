@@ -641,23 +641,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
 }
 
 impl DataView {
-    fn bytes(self, relative: usize, width: usize) -> Option<usize> {
-        relative
-            .checked_add(width)
-            .filter(|&end| end <= self.len())
-            .map(|_| self.offset() + relative)
-    }
-
-    pub fn get_u8(self, buffer: &ByteBuffer, relative: usize) -> Option<u8> {
-        buffer.get(self.bytes(relative, 1)?)
-    }
-
-    pub fn set_u8(&self, buffer: &mut ByteBuffer, relative: usize, value: u8) -> bool {
-        (*self)
-            .bytes(relative, 1)
-            .is_some_and(|offset| buffer.set(offset, value))
-    }
-
     pub fn get_u16(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<u16> {
         let offset = self.bytes(relative, 2)?;
         let bytes = [buffer.get(offset)?, buffer.get(offset + 1)?];

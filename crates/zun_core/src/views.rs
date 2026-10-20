@@ -99,4 +99,21 @@ impl DataView {
     pub fn len(self) -> usize {
         self.view.len()
     }
+
+    pub(crate) fn bytes(self, relative: usize, width: usize) -> Option<usize> {
+        relative
+            .checked_add(width)
+            .filter(|&end| end <= self.len())
+            .map(|_| self.offset() + relative)
+    }
+
+    pub fn get_u8(self, buffer: &ByteBuffer, relative: usize) -> Option<u8> {
+        buffer.get(self.bytes(relative, 1)?)
+    }
+
+    pub fn set_u8(&self, buffer: &mut ByteBuffer, relative: usize, value: u8) -> bool {
+        (*self)
+            .bytes(relative, 1)
+            .is_some_and(|offset| buffer.set(offset, value))
+    }
 }
