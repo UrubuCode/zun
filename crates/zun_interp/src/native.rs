@@ -13,7 +13,7 @@ pub(crate) fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
             zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize))
         }
         Value::Any(value) => zun_natives::NativeArg::Any(*value),
-        Value::Function(_) => panic!("function values cannot be passed to native calls yet"),
+        Value::Function(function) => zun_natives::NativeArg::Function(*function),
         Value::Void => zun_natives::NativeArg::Void,
         Value::Null => zun_natives::NativeArg::Void,
     }

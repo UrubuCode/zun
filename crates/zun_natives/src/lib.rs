@@ -78,6 +78,8 @@ pub enum NativeTy {
     Promise,
     /// A managed compiled regular expression.
     RegExp,
+    /// A callable Zun function, including its closure environment.
+    Function,
 }
 
 /// A neutral argument value passed to a native function.
@@ -95,6 +97,8 @@ pub enum NativeArg<'a> {
     Opaque,
     /// A managed value preserved across an intrinsic boundary.
     Any(zun_core::Any),
+    /// A callable value preserved across an intrinsic boundary.
+    Function(zun_core::FunctionHandle),
     /// No value.
     Void,
 }
@@ -117,6 +121,9 @@ impl NativeArg<'_> {
             NativeArg::Str(s) => s.to_string(),
             NativeArg::Opaque => "[object]".to_string(),
             NativeArg::Any(value) => format!("[any:{:?}]", value.tag()),
+            NativeArg::Function(function) => {
+                format!("[function:{}]", function.method_rid())
+            }
             NativeArg::Void => "undefined".to_string(),
         }
     }

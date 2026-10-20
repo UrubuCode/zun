@@ -24,5 +24,6 @@ pub(super) fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::WeakMap => Ty::WeakMap,
         N::Promise => Ty::Promise,
         N::RegExp => Ty::RegExp,
+        N::Function => Ty::Function(crate::hir::DYNAMIC_FUNCTION),
     }
 }
