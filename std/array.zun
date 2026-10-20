@@ -51,6 +51,18 @@ class Array {
         return this;
     }
 
+    removeFirst(value: any): boolean {
+        let index: u64 = 0;
+        while (index < this.length) {
+            if (this[index] == value) {
+                this.removeAt(index);
+                return true;
+            }
+            index = index + 1;
+        }
+        return false;
+    }
+
     swap(first: u64, second: u64): Array {
         let temporary: any = this[first];
         this[first] = this[second];
