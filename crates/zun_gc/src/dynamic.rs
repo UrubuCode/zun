@@ -5,6 +5,12 @@ impl Heap {
         self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get(name))
     }
 
+    pub fn dynamic_has(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.get(name).is_some())
+    }
+
     pub fn dynamic_get_symbol(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::Any> {
         self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol(symbol))
     }
@@ -27,5 +33,9 @@ impl Heap {
 
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects.get_mut(&(object.addr() as usize))?.remove(name)
+    }
+
+    pub fn dynamic_delete(&mut self, object: Obj, name: &str) -> bool {
+        self.dynamic_remove(object, name).is_some()
     }
 }

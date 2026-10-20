@@ -57,6 +57,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "finalizationRegistryNew",
         "finalizationRegister",
         "finalizationUnregister",
+        "reflectHas",
+        "reflectDelete",
         "promiseNew",
         "promiseResolve",
         "promiseReject",

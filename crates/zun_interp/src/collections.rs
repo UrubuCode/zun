@@ -792,6 +792,28 @@ impl<'a> Interp<'a> {
                     heap.finalization_unregister(zun_gc::FinalizationId::from_raw(id))
                 })))
             }
+            "reflectHas" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_has(object, name)
+                })))
+            }
+            "reflectDelete" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_delete(object, name)
+                })))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))

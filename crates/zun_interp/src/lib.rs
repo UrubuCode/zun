@@ -1893,6 +1893,17 @@ mod method_tests {
     }
 
     #[test]
+    fn reflect_has_and_delete_use_dynamic_object_storage() {
+        let module = zun_compiler::compile(
+            "import { reflectHas, reflectDelete } from \"zun:collections\"; function main(): boolean { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); if (!reflectHas(object, \"answer\")) { return false; } if (!reflectDelete(object, \"answer\")) { return false; } return !reflectHas(object, \"answer\"); }",
+        )
+        .expect("compile reflect has/delete");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run reflect has/delete");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\

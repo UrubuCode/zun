@@ -171,5 +171,17 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: unavailable,
         },
+        NativeFn {
+            name: "reflectHas",
+            params: &[DynamicObject, Str],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "reflectDelete",
+            params: &[DynamicObject, Str],
+            ret: Bool,
+            imp: unavailable,
+        },
     ],
 };

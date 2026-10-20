@@ -80,6 +80,8 @@ pub enum NativeTy {
     RegExp,
     /// A managed finalization callback registry.
     FinalizationRegistry,
+    /// A dictionary-backed dynamic object.
+    DynamicObject,
     /// A callable Zun function, including its closure environment.
     Function,
 }
