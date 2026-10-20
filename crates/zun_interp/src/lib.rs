@@ -958,6 +958,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_any_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { any(value: any): boolean { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return true; } index = index + 1; } return false; } } function main(): boolean { let values = new Array(3); values[0] = 1.0; values[1] = 2.0; values[2] = 3.0; let needle: any = values[1]; return values.any(needle); }",
+        )
+        .expect("compile Array any");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array any");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_swap_source_method() {
         let module = zun_compiler::compile(
             "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\
