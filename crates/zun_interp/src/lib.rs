@@ -10,6 +10,7 @@ mod builtins;
 mod collections;
 mod native;
 mod metadata;
+mod output;
 mod operands;
 mod roots;
 mod stack;
@@ -36,29 +37,7 @@ use zun_module::{read_body, Module};
 /// Sink for program output: the native modules' [`Sink`](zun_natives::Sink),
 /// re-exported so callers keep using `Output`.
 pub use zun_natives::Sink as Output;
-
-/// An [`Output`] that collects lines in a vector, for tests.
-#[derive(Debug, Default)]
-pub struct CaptureOutput {
-    /// Lines written so far.
-    pub lines: Vec<String>,
-}
-
-impl Output for CaptureOutput {
-    fn println(&mut self, line: &str) {
-        self.lines.push(line.to_string());
-    }
-}
-
-/// An [`Output`] that writes to real stdout.
-#[derive(Debug, Default)]
-pub struct StdoutOutput;
-
-impl Output for StdoutOutput {
-    fn println(&mut self, line: &str) {
-        println!("{line}");
-    }
-}
+pub use output::{CaptureOutput, StdoutOutput};
 
 /// Errors the interpreter can raise at runtime.
 #[derive(Debug, Clone)]
