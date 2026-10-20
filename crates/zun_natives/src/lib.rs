@@ -368,6 +368,12 @@ mod tests {
             dispatch(replace_id, &[NativeArg::Str("zun vm"), NativeArg::Str("vm"), NativeArg::Str("runtime")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun runtime"
         ));
+        let (substring_id, substring_fn) = resolve("zun:string", "substring").unwrap();
+        assert_eq!(substring_fn.params, &[NativeTy::Str, NativeTy::U64, NativeTy::U64]);
+        assert!(matches!(
+            dispatch(substring_id, &[NativeArg::Str("😀zun"), NativeArg::Int(2), NativeArg::Int(5)], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "zun"
+        ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),

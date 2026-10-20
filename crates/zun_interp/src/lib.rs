@@ -948,6 +948,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_substring_with_utf16_indices() {
+        let module = zun_compiler::compile(
+            "import { substring } from \"zun:string\";\n\
+             class String { extern substring(start: u64, end: u64): string; }\n\
+             function main(): string { let value: string = \"😀zun\"; return value.substring(2, 5); }",
+        )
+        .expect("compile String substring");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String substring");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zun"));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

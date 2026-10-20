@@ -82,6 +82,26 @@ fn replace(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     }
 }
 
+fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("substring: expected a string".to_string())),
+    };
+    let start = match args.get(1) {
+        Some(NativeArg::Int(index)) if *index >= 0 => *index as usize,
+        _ => return Err(NativeError("substring: expected a non-negative start".to_string())),
+    };
+    let end = match args.get(2) {
+        Some(NativeArg::Int(index)) if *index >= 0 => *index as usize,
+        _ => return Err(NativeError("substring: expected a non-negative end".to_string())),
+    };
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let start = start.min(units.len());
+    let end = end.min(units.len());
+    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+    Ok(NativeValue::Str(String::from_utf16_lossy(&units[start..end])))
+}
+
 fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -145,6 +165,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "indexOf", params: &[Str, Str], ret: I32, imp: index_of },
         NativeFn { name: "lastIndexOf", params: &[Str, Str], ret: I32, imp: last_index_of },
         NativeFn { name: "replace", params: &[Str, Str, Str], ret: Str, imp: replace },
+        NativeFn { name: "substring", params: &[Str, U64, U64], ret: Str, imp: substring },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },

@@ -143,6 +143,20 @@ fn string_replace_uses_interpreter_fallback() {
 }
 
 #[test]
+fn string_substring_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { substring } from \"zun:string\";\n\
+         class String { extern substring(start: u64, end: u64): string; }\n\
+         function main(): string { let value: string = \"😀zun\"; return value.substring(2, 5); }",
+    )
+    .expect("compile String substring");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "zun"));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\
