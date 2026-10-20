@@ -49,6 +49,8 @@ mod node_api {
             byte_length: *mut usize,
         ) -> NapiStatus;
         fn napi_create_int64(env: NapiEnv, value: i64, result: *mut NapiValue) -> NapiStatus;
+        fn napi_create_double(env: NapiEnv, value: f64, result: *mut NapiValue) -> NapiStatus;
+        fn napi_get_boolean(env: NapiEnv, value: bool, result: *mut NapiValue) -> NapiStatus;
     }
 
     unsafe extern "C" fn run_i64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
@@ -89,6 +91,58 @@ mod node_api {
         }
     }
 
+    unsafe extern "C" fn run_f64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
+        let mut argc = 1;
+        let mut argv = core::ptr::null_mut();
+        if unsafe {
+            napi_get_cb_info(env, info, &mut argc, &mut argv, core::ptr::null_mut(), core::ptr::null_mut())
+        } != NAPI_OK || argc != 1 {
+            return core::ptr::null_mut();
+        }
+        let mut data = core::ptr::null_mut();
+        let mut length = 0;
+        if unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) } != NAPI_OK || data.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: N-API owns the ArrayBuffer for the callback duration.
+        let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
+        let Ok(zun_interp::value::Value::Float(value, _)) = zun_vm::execute(bytes) else {
+            return core::ptr::null_mut();
+        };
+        let mut result = core::ptr::null_mut();
+        if unsafe { napi_create_double(env, value, &mut result) } != NAPI_OK {
+            core::ptr::null_mut()
+        } else {
+            result
+        }
+    }
+
+    unsafe extern "C" fn run_bool(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
+        let mut argc = 1;
+        let mut argv = core::ptr::null_mut();
+        if unsafe {
+            napi_get_cb_info(env, info, &mut argc, &mut argv, core::ptr::null_mut(), core::ptr::null_mut())
+        } != NAPI_OK || argc != 1 {
+            return core::ptr::null_mut();
+        }
+        let mut data = core::ptr::null_mut();
+        let mut length = 0;
+        if unsafe { napi_get_arraybuffer_info(env, argv, &mut data, &mut length) } != NAPI_OK || data.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: N-API owns the ArrayBuffer for the callback duration.
+        let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
+        let Ok(zun_interp::value::Value::Bool(value)) = zun_vm::execute(bytes) else {
+            return core::ptr::null_mut();
+        };
+        let mut result = core::ptr::null_mut();
+        if unsafe { napi_get_boolean(env, value, &mut result) } != NAPI_OK {
+            core::ptr::null_mut()
+        } else {
+            result
+        }
+    }
+
     /// N-API module entry point. `exports.runI64(arrayBuffer)` executes an
     /// integer-returning compiled `.zm` module.
     #[no_mangle]
@@ -96,20 +150,25 @@ mod node_api {
         env: NapiEnv,
         exports: NapiValue,
     ) -> NapiValue {
-        let mut function = core::ptr::null_mut();
-        let name = b"runI64";
-        if unsafe {
-            napi_create_function(
-                env,
-                name.as_ptr(),
-                name.len(),
-                run_i64,
-                core::ptr::null_mut(),
-                &mut function,
-            )
-        } == NAPI_OK
-        {
-            let _ = unsafe { napi_set_named_property(env, exports, name.as_ptr(), function) };
+        for (name, callback) in [
+            (b"runI64".as_slice(), run_i64 as NapiCallback),
+            (b"runF64".as_slice(), run_f64 as NapiCallback),
+            (b"runBool".as_slice(), run_bool as NapiCallback),
+        ] {
+            let mut function = core::ptr::null_mut();
+            if unsafe {
+                napi_create_function(
+                    env,
+                    name.as_ptr(),
+                    name.len(),
+                    callback,
+                    core::ptr::null_mut(),
+                    &mut function,
+                )
+            } == NAPI_OK
+            {
+                let _ = unsafe { napi_set_named_property(env, exports, name.as_ptr(), function) };
+            }
         }
         exports
     }
