@@ -1024,6 +1024,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_union_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { contains(value: any): boolean { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return true; } index = index + 1; } return false; } union(other: Array): Array { let total: u64 = this.length; let right: u64 = 0; while (right < other.length) { if (!this.contains(other[right])) { total = total + 1; } right = right + 1; } let result = new Array(total); let index: u64 = 0; while (index < this.length) { result[index] = this[index]; index = index + 1; } right = 0; while (right < other.length) { if (!this.contains(other[right])) { result[index] = other[right]; index = index + 1; } right = right + 1; } return result; } } function main(): number { let left = new Array(2); left[0] = 1.0; left[1] = 2.0; let right = new Array(2); right[0] = 2.0; right[1] = 3.0; let combined = left.union(right); return combined[2] as number; }",
+        )
+        .expect("compile Array union");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array union");
+        assert!(matches!(result, Value::Float(3.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_array_swap_source_method() {
         let module = zun_compiler::compile(
             "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\
