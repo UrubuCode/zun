@@ -818,7 +818,7 @@ impl Heap {
         all_roots.extend(functions.iter().filter_map(|function| {
             function
                 .environment()
-                .map(|address| Obj::from_addr(address as *mut u64))
+                .map(|address| unsafe { Obj::from_addr(address as *mut u64) })
         }));
         // SAFETY: the caller guarantees all explicit and captured roots are
         // valid objects in this heap.
