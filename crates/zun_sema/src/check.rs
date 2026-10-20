@@ -1841,6 +1841,32 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                let typed_view = match name.as_str() {
+                    "Uint8Array" => Some("u8ArrayNew"),
+                    "Uint16Array" => Some("u16ArrayNew"),
+                    "Uint32Array" => Some("u32ArrayNew"),
+                    "Float64Array" => Some("f64ArrayNew"),
+                    _ => None,
+                };
+                if let Some(native_name) = typed_view {
+                    if args.len() != 3 {
+                        self.error(span, format!("`{name}` expects buffer, offset, and length"));
+                        return self.poison(span);
+                    }
+                    let mut call_args: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                    for arg in call_args.iter_mut().skip(1) {
+                        coerce_numeric_literal(arg, Ty::INT);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:buffer", native_name) else {
+                        self.error(span, format!("missing typed-array intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 let managed_collection = match name.as_str() {
                     "Map" => Some(("mapNew", Ty::Map)),
                     "Set" => Some(("setNew", Ty::Set)),
