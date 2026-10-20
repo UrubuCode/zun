@@ -142,8 +142,22 @@ impl CallHook for JitHook<'_> {
     }
 
     fn on_backedge(&self, method_rid: u32, target_pc: usize) {
-        let mut counts = self.loop_counts.borrow_mut();
-        *counts.entry((method_rid, target_pc)).or_insert(0) += 1;
+        let count = {
+            let mut counts = self.loop_counts.borrow_mut();
+            let count = counts.entry((method_rid, target_pc)).or_insert(0);
+            *count += 1;
+            *count
+        };
+
+        // Compile eligible methods as soon as an interpreted loop proves that
+        // they are hot. The current frame continues in Tier 0; a future OSR
+        // bridge can consume the already-defined native body at this point.
+        if count >= u64::from(self.threshold.max(1))
+            && self.jit.borrow().is_compiled(method_rid)
+            && !self.jit.borrow().is_defined(method_rid)
+        {
+            let _ = self.jit.borrow_mut().ensure_compiled(self.module, method_rid);
+        }
     }
 }
 

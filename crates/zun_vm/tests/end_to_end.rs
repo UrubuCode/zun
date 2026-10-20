@@ -385,6 +385,28 @@ fn adaptive_tiering_compiles_hot_methods() {
 }
 
 #[test]
+fn hot_interpreted_backedge_compiles_eligible_method() {
+    use zun_interp::{run_with, CaptureOutput};
+    let src = "function spin(n: int): int { let i: int = 0; let total: int = 0; while (i < n) { total = total + i; i = i + 1; } return total; }\n\
+               function main(): int { return spin(5); }";
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    assert!(diags.is_empty());
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty());
+    let module = zun_ilgen::lower(&hir);
+    let loaded = zun_vm::load(&module.write()).unwrap();
+    let spin_rid = 1;
+    let jit = zun_codegen::Jit::new(&loaded).unwrap();
+    let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 2);
+    let mut out = CaptureOutput::default();
+    let result = run_with(&loaded, &mut out, Some(&hook)).unwrap();
+    assert!(matches!(result, zun_interp::value::Value::Int(10, _)));
+    assert!(hook.total_loop_backedges(spin_rid) >= 2);
+    assert!(hook.jit_is_defined(spin_rid));
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\
