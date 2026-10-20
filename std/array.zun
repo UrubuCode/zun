@@ -49,6 +49,15 @@ class Array {
         return this;
     }
 
+    fill(value: any): Array {
+        let index: u64 = 0;
+        while (index < this.length) {
+            this[index] = value;
+            index = index + 1;
+        }
+        return this;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {

@@ -1023,6 +1023,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array reverse");
         assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn executes_array_fill_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { fill(value: any): Array { let index: u64 = 0; while (index < this.length) { this[index] = value; index = index + 1; } return this; } first(): any { return this[0]; } }\n\
+             function main(): number { let values = new Array(2); values[0] = 9.0; values.fill(values[0]); return values.first() as number; }",
+        )
+        .expect("compile Array fill");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array fill");
+        assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.
