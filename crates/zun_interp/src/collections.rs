@@ -771,6 +771,13 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Int(state, zun_il::NumKind::U8))
             }
+            "promiseResult" => {
+                let promise = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let value = zun_gc::with_current_heap(|heap| heap.promise_result(promise))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Any(value))
+            }
             _ => Err(RunError::BadToken),
         }
     }

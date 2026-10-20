@@ -23,5 +23,6 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn { name: "promiseState", params: &[Promise], ret: U8, imp: unavailable },
+        NativeFn { name: "promiseResult", params: &[Promise], ret: Opaque, imp: unavailable },
     ],
 };
