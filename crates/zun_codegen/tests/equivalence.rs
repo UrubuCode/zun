@@ -128,6 +128,24 @@ fn date_numeric_intrinsics_are_equivalent_in_jit() {
 }
 
 #[test]
+fn date_numeric_intrinsics_handle_pre_epoch_timestamps() {
+    let module = compile(
+        "import { year, month, day, hour, minute, second, millisecond } from \"zun:date\";\n\
+         class Date { millis: i64; signature(): int { return year(this.millis) + month(this.millis) + day(this.millis) + hour(this.millis) + minute(this.millis) + second(this.millis) + millisecond(this.millis); } }\n\
+         function main(): int { return new Date(-1).signature(); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    assert!(matches!((jit_result, interp_entry(&module)),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1969 + 12 + 31 + 23 + 59 + 59 + 999));
+}
+
+#[test]
 fn date_surface_exposes_time_components_and_string_form() {
     let module = compile(
         "import { hour, minute, second, millisecond, isoDateTime } from \"zun:date\";\n\
