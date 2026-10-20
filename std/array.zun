@@ -14,6 +14,12 @@ class Array {
         return this.pop();
     }
 
+    clear(): void {
+        while (this.length > 0) {
+            this.pop();
+        }
+    }
+
     get(index: u64): any {
         return this[index];
     }

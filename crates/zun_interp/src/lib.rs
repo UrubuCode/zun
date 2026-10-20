@@ -864,6 +864,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_clear_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { clear(): void { while (this.length > 0) { this.pop(); } } }\n\
+             function main(): u64 { let values = new Array(2); values[0] = 7; values[1] = 3; values.clear(); return values.length; }",
+        )
+        .expect("compile Array clear");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array clear");
+        assert!(matches!(result, Value::Int(value, _) if value == 0));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",
