@@ -533,6 +533,22 @@ mod tests {
             dispatch(fixed_id, &[NativeArg::Float(3.5), NativeArg::Int(2)], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "3.50"
         ));
+        let (finite_id, finite_fn) = resolve("zun:number", "isFinite").unwrap();
+        let (nan_id, nan_fn) = resolve("zun:number", "isNaN").unwrap();
+        assert_eq!(finite_fn.params, &[NativeTy::F64]);
+        assert_eq!(nan_fn.params, &[NativeTy::F64]);
+        assert!(matches!(
+            dispatch(finite_id, &[NativeArg::Float(12.5)], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        assert!(matches!(
+            dispatch(finite_id, &[NativeArg::Float(f64::INFINITY)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+        assert!(matches!(
+            dispatch(nan_id, &[NativeArg::Float(f64::NAN)], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
     }
 
     #[test]

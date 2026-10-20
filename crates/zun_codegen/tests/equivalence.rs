@@ -1576,6 +1576,13 @@ fn number_remap_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn number_finiteness_and_safe_integer_predicates_are_equivalent() {
+    assert_equivalent(
+        "import { isFinite, isNaN } from \"zun:number\"; function main(): int { let value: number = 9007199254740991.0; if (!isFinite(value)) { return 0; } if (isNaN(value)) { return 0; } if ((value as int) as number != value) { return 0; } if (value < -9007199254740991.0) { return 0; } if (value > 9007199254740991.0) { return 0; } return 1; }",
+    );
+}
+
+#[test]
 fn math_power_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",

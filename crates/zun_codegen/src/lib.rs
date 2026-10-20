@@ -52,6 +52,8 @@ pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateV
 #[inline] pub extern "C" fn zun_jit_math_pow(left: f64, right: f64) -> f64 { left.powf(right) }
 #[inline] pub extern "C" fn zun_jit_math_atan2(left: f64, right: f64) -> f64 { left.atan2(right) }
 #[inline] pub extern "C" fn zun_jit_math_hypot(left: f64, right: f64) -> f64 { left.hypot(right) }
+#[inline] pub extern "C" fn zun_jit_number_is_finite(value: f64) -> i32 { value.is_finite() as i32 }
+#[inline] pub extern "C" fn zun_jit_number_is_nan(value: f64) -> i32 { value.is_nan() as i32 }
 
 use std::collections::{HashMap, HashSet};
 
@@ -209,6 +211,8 @@ impl Jit {
         builder.symbol("zun_jit_math_pow", zun_jit_math_pow as *const u8);
         builder.symbol("zun_jit_math_atan2", zun_jit_math_atan2 as *const u8);
         builder.symbol("zun_jit_math_hypot", zun_jit_math_hypot as *const u8);
+        builder.symbol("zun_jit_number_is_finite", zun_jit_number_is_finite as *const u8);
+        builder.symbol("zun_jit_number_is_nan", zun_jit_number_is_nan as *const u8);
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);
