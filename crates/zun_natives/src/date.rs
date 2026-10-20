@@ -29,12 +29,28 @@ fn hour(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
     Ok(NativeValue::Int(date(args, "hour")?.utc_time().ok_or_else(|| NativeError("hour: invalid date".into()))?.0 as i64))
 }
 
+fn minute(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Int(date(args, "minute")?.utc_time().ok_or_else(|| NativeError("minute: invalid date".into()))?.1 as i64))
+}
+
+fn second(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Int(date(args, "second")?.utc_time().ok_or_else(|| NativeError("second: invalid date".into()))?.2 as i64))
+}
+
+fn millisecond(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Int(date(args, "millisecond")?.utc_time().ok_or_else(|| NativeError("millisecond: invalid date".into()))?.3 as i64))
+}
+
 fn weekday(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     Ok(NativeValue::Int(date(args, "weekday")?.weekday().ok_or_else(|| NativeError("weekday: invalid date".into()))? as i64))
 }
 
 fn iso(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     date(args, "iso")?.iso_date().map(NativeValue::Str).ok_or_else(|| NativeError("iso: invalid date".into()))
+}
+
+fn iso_datetime(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    date(args, "isoDateTime")?.iso_datetime().map(NativeValue::Str).ok_or_else(|| NativeError("isoDateTime: invalid date".into()))
 }
 
 pub const MODULE: crate::Module = crate::Module {
@@ -44,7 +60,11 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "month", params: &[I64], ret: I32, imp: month },
         NativeFn { name: "day", params: &[I64], ret: I32, imp: day },
         NativeFn { name: "hour", params: &[I64], ret: I32, imp: hour },
+        NativeFn { name: "minute", params: &[I64], ret: I32, imp: minute },
+        NativeFn { name: "second", params: &[I64], ret: I32, imp: second },
+        NativeFn { name: "millisecond", params: &[I64], ret: I32, imp: millisecond },
         NativeFn { name: "weekday", params: &[I64], ret: I32, imp: weekday },
         NativeFn { name: "isoDate", params: &[I64], ret: Str, imp: iso },
+        NativeFn { name: "isoDateTime", params: &[I64], ret: Str, imp: iso_datetime },
     ],
 };
