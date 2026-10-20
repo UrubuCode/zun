@@ -256,17 +256,6 @@ impl Heap {
         ))
     }
 
-    pub fn alloc_array_iterator(&mut self, array: Obj) -> Option<Obj> {
-        self.array_len(array)?;
-        let iterator = self.alloc(0, 1);
-        iterator.set_field(0, array.addr() as u64);
-        self.array_iterators.insert(
-            iterator.addr() as usize,
-            (array, zun_core::ArrayIterator::new()),
-        );
-        Some(iterator)
-    }
-
     pub fn array_iterator_next(&mut self, iterator: Obj) -> Option<zun_core::Any> {
         let (array, state) = self.array_iterators.get_mut(&(iterator.addr() as usize))?;
         let storage = self.arrays.get(&(array.addr() as usize))?;
@@ -278,17 +267,6 @@ impl Heap {
         Some(state.is_done(self.arrays.get(&(array.addr() as usize))?))
     }
 
-    pub fn alloc_set_iterator(&mut self, set: Obj) -> Option<Obj> {
-        self.set_len(set)?;
-        let iterator = self.alloc(0, 1);
-        iterator.set_field(0, set.addr() as u64);
-        self.set_iterators.insert(
-            iterator.addr() as usize,
-            (set, zun_core::SetIterator::new()),
-        );
-        Some(iterator)
-    }
-
     pub fn set_iterator_next(&mut self, iterator: Obj) -> Option<zun_core::Any> {
         let (set, state) = self.set_iterators.get_mut(&(iterator.addr() as usize))?;
         let storage = self.sets.get(&(set.addr() as usize))?;
@@ -298,17 +276,6 @@ impl Heap {
     pub fn set_iterator_done(&self, iterator: Obj) -> Option<bool> {
         let (set, state) = self.set_iterators.get(&(iterator.addr() as usize))?;
         Some(state.is_done(self.sets.get(&(set.addr() as usize))?))
-    }
-
-    pub fn alloc_map_iterator(&mut self, map: Obj) -> Option<Obj> {
-        self.map_len(map)?;
-        let iterator = self.alloc(0, 1);
-        iterator.set_field(0, map.addr() as u64);
-        self.map_iterators.insert(
-            iterator.addr() as usize,
-            (map, zun_core::MapIterator::new()),
-        );
-        Some(iterator)
     }
 
     pub fn map_iterator_next(&mut self, iterator: Obj) -> Option<Obj> {
