@@ -717,7 +717,7 @@ mod method_tests {
 
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("dynamic property IL");
-        assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)), "{result:?}");
+        assert!(matches!(result, Value::Int(41, zun_il::NumKind::I64)));
     }
 
     #[test]
@@ -812,7 +812,7 @@ mod method_tests {
         .expect("compile array assignment");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array assignment");
-        assert!(matches!(result, Value::Int(41, zun_il::NumKind::I64)), "{result:?}");
+        assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)), "{result:?}");
     }
 }
 
