@@ -252,6 +252,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "length", params: &[Str], ret: U64, imp: length },
         NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
+        NativeFn { name: "includes", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "indexOf", params: &[Str, Str], ret: I32, imp: index_of },
         NativeFn { name: "lastIndexOf", params: &[Str, Str], ret: I32, imp: last_index_of },
         NativeFn { name: "replace", params: &[Str, Str, Str], ret: Str, imp: replace },

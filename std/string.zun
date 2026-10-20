@@ -1,6 +1,6 @@
 // The String surface is a statically bound primitive-backed class.
 
-import { length, contains, indexOf, lastIndexOf, replace, substring, padStart, padEnd, toLowerCase, toUpperCase, charCodeAt, startsWith, endsWith, trim, trimStart, trimEnd, repeat } from "zun:string";
+import { length, contains, includes, indexOf, lastIndexOf, replace, substring, padStart, padEnd, toLowerCase, toUpperCase, charCodeAt, startsWith, endsWith, trim, trimStart, trimEnd, repeat } from "zun:string";
 
 class String {
     concat(other: string): string {
@@ -21,6 +21,7 @@ class String {
 
     extern length(): u64;
     extern contains(needle: string): boolean;
+    extern includes(needle: string): boolean;
     extern indexOf(needle: string): int;
     extern lastIndexOf(needle: string): int;
     extern replace(needle: string, replacement: string): string;

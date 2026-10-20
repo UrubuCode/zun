@@ -909,6 +909,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_includes_method() {
+        let module = zun_compiler::compile(
+            "import { includes } from \"zun:string\";\n\
+             class String { extern includes(needle: string): boolean; }\n\
+             function main(): boolean { let value: string = \"zun runtime\"; return value.includes(\"runtime\"); }",
+        )
+        .expect("compile String includes");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String includes");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_index_of_with_utf16_indices() {
         let module = zun_compiler::compile(
             "import { indexOf } from \"zun:string\";\n\

@@ -101,6 +101,20 @@ fn string_primitive_methods_use_static_class_binding() {
 }
 
 #[test]
+fn string_includes_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { includes } from \"zun:string\";\n\
+         class String { extern includes(needle: string): boolean; }\n\
+         function main(): boolean { let value: string = \"zun runtime\"; return value.includes(\"runtime\"); }",
+    )
+    .expect("compile String includes");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn string_index_of_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { indexOf } from \"zun:string\";\n\
