@@ -11,6 +11,7 @@ pub(super) struct Interp<'a> {
     pub(super) gc_interval: u32,
     pub(super) types: zun_types::TypeSystem,
     pub(super) suspended: Option<ExecutionFrame>,
+    pub(super) resume_frame: Option<ExecutionFrame>,
 }
 
 /// A link in the chain of suspended caller frames, used to find precise GC

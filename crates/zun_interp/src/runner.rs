@@ -1,6 +1,6 @@
 use super::gc_policy::GC_INTERVAL;
 use super::{CallHook, Interp, Output, RunError, Value};
-use super::state::ExecutionOutcome;
+use super::state::{ExecutionFrame, ExecutionOutcome};
 use zun_module::Module;
 
 pub(super) fn run_method_with(
@@ -23,11 +23,20 @@ pub(super) fn run_method_with(
         gc_interval: GC_INTERVAL,
         types,
         suspended: None,
+        resume_frame: None,
     }
     .call(method_rid, args, None)
 }
 
 impl Interp<'_> {
+    /// Resume a previously suspended frame from its saved program counter.
+    /// The scheduler owns the decision about when the awaited Promise settled.
+    pub(super) fn resume_suspended(&mut self, frame: ExecutionFrame) -> ExecutionOutcome {
+        let method_rid = frame.method_rid;
+        self.resume_frame = Some(frame);
+        self.dispatch_outcome(method_rid, Vec::new(), None)
+    }
+
     pub(super) fn dispatch_outcome(
         &mut self,
         method_rid: u32,

@@ -126,11 +126,19 @@ impl Interp<'_> {
         let body = read_body(&self.module.code, method.body_offset)
             .map_err(|e| RunError::Malformed(e.to_string()))?;
 
-        let mut locals: Vec<Value> = Vec::with_capacity(body.local_count as usize);
-        locals.extend(args);
-        locals.resize(body.local_count as usize, Value::Void);
-
-        let mut frame = ExecutionFrame::new(method_rid, locals);
+        let mut frame = if let Some(frame) = self.resume_frame.take() {
+            if frame.method_rid != method_rid {
+                return Err(RunError::Malformed(
+                    "resumed frame method does not match dispatch target".into(),
+                ));
+            }
+            frame
+        } else {
+            let mut locals: Vec<Value> = Vec::with_capacity(body.local_count as usize);
+            locals.extend(args);
+            locals.resize(body.local_count as usize, Value::Void);
+            ExecutionFrame::new(method_rid, locals)
+        };
         let mut stack = &mut frame.stack;
         let locals = &mut frame.locals;
         let code = body.code;
