@@ -572,6 +572,11 @@ Ordered backlog:
    `Array` `map`/`filter`/`reduce`/`forEach` to inline arrows. Tests: map with an
    arrow, capture of an outer variable, mutation-after-capture visible in the
    closure, nested closures; interpreter↔JIT equivalence.
+Closure implementation note: the Tier 0 path now includes HIR synthetic
+functions, binding captures, boxed mutable locals, nested environments,
+`mkclosure` lowering, and GC tracing. Broader JIT closure-call lowering remains
+an optimization gate.
+
 2. **Iteration protocol**: Array `for...of` is implemented; managed iterator
    handles now exist for Array, Map, and Set, preserving insertion order and
    Map entry-pair semantics. First-class `Symbol.iterator` syntax/dispatch
