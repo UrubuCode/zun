@@ -241,6 +241,10 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
     compile_modules([
         ("zun:std:math", include_str!("../../../std/math.zun")),
         ("zun:std:string", include_str!("../../../std/string.zun")),
+        ("zun:std:number", include_str!("../../../std/number.zun")),
+        ("zun:std:array", include_str!("../../../std/array.zun")),
+        ("zun:std:date", include_str!("../../../std/date.zun")),
+        ("zun:std:error", include_str!("../../../std/error.zun")),
     ])
 }
 
@@ -536,6 +540,10 @@ mod tests {
         let loader = compile_standard_library().expect("standard library should load");
         assert!(loader.get("zun:std:math").is_some());
         assert!(loader.get("zun:std:string").is_some());
+        assert!(loader.get("zun:std:number").is_some());
+        assert!(loader.get("zun:std:array").is_some());
+        assert!(loader.get("zun:std:date").is_some());
+        assert!(loader.get("zun:std:error").is_some());
     }
 
     #[test]
