@@ -3,6 +3,19 @@
 import { parseFloat, toFixed, toString } from "zun:number";
 
 class Number {
+    abs(): number {
+        if (this < 0.0) { return -this; }
+        return this;
+    }
+
+    isZero(): boolean {
+        return this == 0.0;
+    }
+
+    isNegative(): boolean {
+        return this < 0.0;
+    }
+
     extern toFixed(digits: int): string;
     extern toString(): string;
 }

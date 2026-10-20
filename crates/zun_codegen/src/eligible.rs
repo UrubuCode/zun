@@ -94,7 +94,18 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
     let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
         return false;
     };
-    method.body_offset != u32::MAX
+    if method.body_offset == u32::MAX {
+        return false;
+    }
+    // CallVirt dispatches through an object vtable. Primitive-backed classes
+    // (for example `Number`) still use the opcode at Tier 0, but their
+    // receiver is a scalar and cannot be represented by the JIT vtable path.
+    let Ok(body) = read_body(&module.code, method.body_offset) else {
+        return false;
+    };
+    body.local_kinds
+        .first()
+        .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object)
 }
 
 /// Whether a value-type code is one the typed JIT can represent.

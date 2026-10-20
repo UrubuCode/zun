@@ -129,6 +129,19 @@ fn number_to_string_uses_interpreter_fallback() {
 }
 
 #[test]
+fn number_source_methods_use_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { abs(): number { if (this < 0.0) { return -this; } return this; } isZero(): boolean { return this == 0.0; } isNegative(): boolean { return this < 0.0; } }\n\
+         function main(): number { let value: number = -7.5; if (value.isNegative()) { return value.abs(); } return 0.0; }",
+    )
+    .expect("compile Number source methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number method calls must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(7.5, zun_il::NumKind::F64)));
+}
+
+#[test]
 fn string_source_methods_use_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\

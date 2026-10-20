@@ -935,6 +935,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_source_methods() {
+        let module = zun_compiler::compile(
+            "class Number { abs(): number { if (this < 0.0) { return -this; } return this; } isZero(): boolean { return this == 0.0; } isNegative(): boolean { return this < 0.0; } }\n\
+             function main(): number { let value: number = -7.5; if (value.isNegative()) { return value.abs(); } return 0.0; }",
+        )
+        .expect("compile Number source methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number source methods");
+        assert!(matches!(result, Value::Float(7.5, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_string_source_methods_with_primitive_receiver() {
         let module = zun_compiler::compile(
             "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\
