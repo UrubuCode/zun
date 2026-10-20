@@ -173,6 +173,19 @@ fn array_search_methods_keep_interpreter_fallback() {
 }
 
 #[test]
+fn array_access_methods_keep_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { at(index: u64): any { return this[index]; } first(): any { return this[0]; } last(): any { return this[this.length - 1]; } }\n\
+         function main(): number { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; return values.at(1) as number; }",
+    )
+    .expect("compile Array access methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

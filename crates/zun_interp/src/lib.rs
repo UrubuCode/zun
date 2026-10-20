@@ -974,6 +974,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array search methods");
         assert!(matches!(result, Value::Int(0, zun_il::NumKind::I32)));
     }
+
+    #[test]
+    fn executes_array_access_methods() {
+        let module = zun_compiler::compile(
+            "class Array { at(index: u64): any { return this[index]; } first(): any { return this[0]; } last(): any { return this[this.length - 1]; } }\n\
+             function main(): number { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; return values.at(1) as number; }",
+        )
+        .expect("compile Array access methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array access methods");
+        assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.

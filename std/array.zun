@@ -23,6 +23,18 @@ class Array {
         return value;
     }
 
+    at(index: u64): any {
+        return this[index];
+    }
+
+    first(): any {
+        return this[0];
+    }
+
+    last(): any {
+        return this[this.length - 1];
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {
