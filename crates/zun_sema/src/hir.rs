@@ -89,6 +89,8 @@ pub enum Ty {
     DynamicObject,
     /// A dynamically tagged value.
     Any,
+    /// A non-capturing function reference identified by function index.
+    Function(FuncIndex),
     /// `void` — only valid as a return type.
     Void,
     /// An instance of a user-declared class.
@@ -236,6 +238,8 @@ pub enum ExprKind {
     Boolean(bool),
     /// Read a local slot.
     Local(LocalSlot),
+    /// Load a top-level function value.
+    FunctionRef { func: FuncIndex },
     /// Write a local slot; the expression's value is the stored value.
     Assign {
         /// Destination slot.
@@ -265,6 +269,15 @@ pub enum ExprKind {
         func: FuncIndex,
         /// Arguments in order.
         args: Vec<Expr>,
+    },
+    /// Invoke a function-valued expression indirectly.
+    IndirectCall {
+        /// Function value expression.
+        callee: Box<Expr>,
+        /// Arguments in declaration order.
+        args: Vec<Expr>,
+        /// Function index providing the static signature token.
+        func: FuncIndex,
     },
     /// Call a runtime intrinsic by its stable id (see `zun_intrinsics`).
     CallBuiltin {

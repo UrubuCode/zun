@@ -804,6 +804,18 @@ mod method_tests {
     }
 
     #[test]
+    fn compiles_named_function_reference_and_indirect_call() {
+        let module = zun_compiler::compile(
+            "function add_one(value: number): number { return value + 1.0; }\n\
+             function main(): number { let f = add_one; return f(41.0); }",
+        )
+        .expect("compile function value source");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run function value source");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_dynamic_property_il() {
         let mut module = zun_module::Module::new();
         let property = module.strings.intern("answer");

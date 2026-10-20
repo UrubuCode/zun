@@ -648,6 +648,13 @@ impl Checker<'_> {
                         span,
                     },
                     None => {
+                        if let Some(&func) = self.by_name.get(&text) {
+                            return hir::Expr {
+                                kind: hir::ExprKind::FunctionRef { func },
+                                ty: Ty::Function(func),
+                                span,
+                            };
+                        }
                         self.error(span, format!("unknown variable `{text}`"));
                         self.poison(span)
                     }
@@ -736,6 +743,36 @@ impl Checker<'_> {
                 let name = self.text(callee).to_string();
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
+
+                if let Some(slot) = cx.lookup(&name) {
+                    let function_ty = cx.locals[slot as usize];
+                    if let Ty::Function(func) = function_ty {
+                        let (param_tys, return_ty) = {
+                            let sig = &self.signatures[func as usize];
+                            (sig.params.clone(), sig.return_ty)
+                        };
+                        if args.len() != param_tys.len() {
+                            self.error(span, format!("function value expects {} argument(s), found {}", param_tys.len(), args.len()));
+                        } else {
+                            for (arg, &expected) in args.iter_mut().zip(&param_tys) {
+                                coerce_numeric_literal(arg, expected);
+                                if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
+                                    self.error(arg.span, format!("argument type {:?} does not match {expected:?}", arg.ty));
+                                }
+                            }
+                        }
+                        let callee_expr = hir::Expr {
+                            kind: hir::ExprKind::Local(slot),
+                            ty: function_ty,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::IndirectCall { callee: Box::new(callee_expr), args, func },
+                            ty: return_ty,
+                            span,
+                        };
+                    }
+                }
 
                 // `print` is the one implicit intrinsic: one argument of any
                 // primitive type, returns void.

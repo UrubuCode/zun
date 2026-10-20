@@ -401,6 +401,12 @@ impl FnLowerer<'_> {
             ExprKind::Local(slot) => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
             }
+            ExprKind::FunctionRef { func } => {
+                self.emit(Instruction::new(
+                    Opcode::LoadFunction,
+                    Operand::Token(Token::new(TableKind::MethodDef, *func + 1)),
+                ));
+            }
             ExprKind::Assign { slot, value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Dup));
@@ -455,6 +461,14 @@ impl FnLowerer<'_> {
                 }
                 let token = Token::new(TableKind::MethodDef, *func + 1);
                 self.emit(Instruction::new(Opcode::Call, Operand::Token(token)));
+            }
+            ExprKind::IndirectCall { callee, args, func } => {
+                self.expr(callee);
+                for a in args {
+                    self.expr(a);
+                }
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
             }
             ExprKind::CallBuiltin { id, args } => {
                 for a in args {
