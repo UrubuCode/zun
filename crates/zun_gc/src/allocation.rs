@@ -265,4 +265,20 @@ impl Heap {
         });
         id
     }
+
+    /// Cancel a finalization registration before its target is queued.
+    ///
+    /// The slot is retained so existing `FinalizationId` values remain stable;
+    /// clearing the target makes the registration inert without shifting any
+    /// later IDs.
+    pub fn finalization_unregister(&mut self, id: FinalizationId) -> bool {
+        let Some(entry) = self.finalizers.get_mut(id.0 as usize) else {
+            return false;
+        };
+        if entry.target == 0 || entry.queued {
+            return false;
+        }
+        entry.target = 0;
+        true
+    }
 }

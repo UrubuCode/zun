@@ -485,6 +485,17 @@ mod tests {
     }
 
     #[test]
+    fn finalization_unregister_cancels_before_target_is_swept() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let id = heap.finalization_register(target, 99);
+        assert!(heap.finalization_unregister(id));
+        assert!(!heap.finalization_unregister(id));
+        unsafe { heap.collect(&[], &|_| Vec::new()) };
+        assert!(heap.finalization_drain().is_empty());
+    }
+
+    #[test]
     fn byte_buffers_roundtrip_through_the_heap() {
         let mut heap = Heap::new();
         let buffer = heap.alloc_buffer(4);

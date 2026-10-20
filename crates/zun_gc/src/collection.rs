@@ -235,7 +235,7 @@ impl Heap {
             }
         }
         for entry in &mut self.finalizers {
-            if !entry.queued && self.by_addr.get(&entry.target).is_none() {
+            if entry.target != 0 && !entry.queued && self.by_addr.get(&entry.target).is_none() {
                 entry.queued = true;
                 self.finalization_queue.push(super::FinalizationRecord {
                     token: entry.token,
