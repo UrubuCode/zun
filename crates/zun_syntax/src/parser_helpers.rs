@@ -3,6 +3,28 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn binary(&mut self, min_level: u8) -> Expr {
+        let mut lhs = self.unary();
+        loop {
+            let Some((op, level)) = binary_op(self.peek().kind) else {
+                break;
+            };
+            if level < min_level {
+                break;
+            }
+            self.bump();
+            let rhs = self.binary(level + 1);
+            let span = lhs.span().to(rhs.span());
+            lhs = Expr::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                span,
+            };
+        }
+        lhs
+    }
+
     pub(crate) fn conditional(&mut self) -> Expr {
         let condition = self.binary(0);
         if !self.eat(TokenKind::Question) {
