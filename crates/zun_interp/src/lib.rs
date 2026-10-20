@@ -688,6 +688,9 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::CallRest => {
+                    return Err(RunError::BadToken);
+                }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
                     self.call_builtin(id, &mut stack)?;

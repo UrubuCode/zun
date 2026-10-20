@@ -263,6 +263,8 @@ define_opcodes! {
     MakeClosure = 0x83, Token, "mkclosure", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Invoke a function handle with the signature named by the operand.
     CallIndirect = 0x82, Token, "call.indirect", StackEffect::Call;
+    /// Invoke a rest-parameter function with an explicit argument count.
+    CallRest = 0x86, TokenImm32, "call.rest", StackEffect::Call;
 }
 
 #[cfg(test)]
@@ -306,6 +308,7 @@ mod tests {
         assert_eq!(Opcode::Nop.operand(), OperandKind::None);
         assert_eq!(Opcode::ConstI64.operand().size(), 8);
         assert_eq!(Opcode::Call.operand().size(), 4);
+        assert_eq!(Opcode::CallRest.operand().size(), 8);
         assert_eq!(Opcode::LoadLocal.operand().size(), 2);
     }
 }
