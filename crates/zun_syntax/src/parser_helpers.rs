@@ -3,6 +3,37 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn statement(&mut self) -> Stmt {
+        if self.at(TokenKind::Ident) && self.peek_n(1).kind == TokenKind::Colon {
+            let label = self.name("a statement label");
+            self.bump();
+            let statement = self.statement();
+            return Stmt::Labeled {
+                label,
+                statement: Box::new(statement),
+                span: label.span,
+            };
+        }
+        match self.peek().kind {
+            TokenKind::KwLet => self.let_statement(),
+            TokenKind::KwIf => self.if_statement(),
+            TokenKind::KwSwitch => self.switch_statement(),
+            TokenKind::KwWhile => self.while_statement(),
+            TokenKind::KwDo => self.do_while_statement(),
+            TokenKind::KwFor => self.for_statement(),
+            TokenKind::KwBreak => self.break_statement(),
+            TokenKind::KwContinue => self.continue_statement(),
+            TokenKind::KwReturn => self.return_statement(),
+            TokenKind::KwThrow => self.throw_statement(),
+            TokenKind::KwTry => self.try_statement(),
+            _ => {
+                let expr = self.expression();
+                self.expect(TokenKind::Semi, "`;`");
+                Stmt::Expr(expr)
+            }
+        }
+    }
+
     pub(crate) fn block(&mut self) -> Block {
         let open = self.peek().span;
         self.expect(TokenKind::LBrace, "`{`");
