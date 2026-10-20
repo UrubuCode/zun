@@ -29,6 +29,13 @@ class Array {
         return value;
     }
 
+    swap(first: u64, second: u64): Array {
+        let temporary: any = this[first];
+        this[first] = this[second];
+        this[second] = temporary;
+        return this;
+    }
+
     at(index: u64): any {
         return this[index];
     }

@@ -936,6 +936,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_swap_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\
+             function main(): number { let values = new Array(2); values[0] = 4.0; values[1] = 8.0; values.swap(0, 1); return values[0] as number; }",
+        )
+        .expect("compile Array swap");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array swap");
+        assert!(matches!(result, Value::Float(value, _) if value == 8.0));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\
