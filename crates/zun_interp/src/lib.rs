@@ -1179,6 +1179,29 @@ mod method_tests {
     use crate::roots::collect_frame_roots;
 
     #[test]
+    fn resumable_session_completes_synchronous_async_function() {
+        let module = zun_compiler::compile(
+            "async function main(): Promise { return new Promise(); }",
+        )
+        .expect("compile synchronous async function");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session = ResumableSession::new(
+            &module,
+            entry.rid(),
+            Vec::new(),
+            &mut output,
+            None,
+            None,
+        )
+        .expect("create resumable session");
+        assert!(matches!(
+            session.poll().expect("poll session"),
+            ResumeResult::Complete(Value::Object(_))
+        ));
+    }
+
+    #[test]
     fn settled_await_reads_the_managed_promise_result() {
         let mut heap = zun_gc::Heap::new();
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
