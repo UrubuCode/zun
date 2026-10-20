@@ -59,6 +59,64 @@ where
     Ok(loader)
 }
 
+/// Compile a source-module set with user imports lowered to `MemberRef`s.
+pub fn compile_linked_modules<'a, I>(
+    sources: I,
+) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let sources: Vec<_> = sources.into_iter().collect();
+    validate_imports(sources.iter().copied())?;
+
+    let mut exports = HashMap::new();
+    for (module, source) in &sources {
+        for mut function in collect_function_signatures(source) {
+            function.module = (*module).to_owned();
+            exports.insert(((*module).to_owned(), function.name.clone()), function);
+        }
+    }
+
+    let mut loader = zun_loader::ModuleLoader::new();
+    for (module, source) in sources {
+        let mut externals = Vec::new();
+        let mut parse_diagnostics = Vec::new();
+        let ast = zun_syntax::parse(source, &mut parse_diagnostics);
+        for import in ast.imports {
+            for name in import.names {
+                let imported = &source[name.span.start as usize..name.span.end as usize];
+                if let Some(function) = exports.get(&(import.module.clone(), imported.to_owned())) {
+                    externals.push(function.clone());
+                }
+            }
+        }
+        let module_bytes = compile_with_externals(source, &externals)?;
+        let scope = zun_loader::ModuleScope::from_bytes(module, &module_bytes.write())
+            .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+        loader
+            .insert(scope)
+            .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    }
+    Ok(loader)
+}
+
+fn collect_function_signatures(source: &str) -> Vec<zun_sema::check::ExternalFunction> {
+    let source = zun_prelude::with_prelude(source);
+    let mut parse_diagnostics = Vec::new();
+    let ast = zun_syntax::parse(&source, &mut parse_diagnostics);
+    let mut check_diagnostics = Vec::new();
+    let hir = zun_sema::check_with_externals(&source, &ast, &mut check_diagnostics, &[]);
+    hir.functions
+        .into_iter()
+        .map(|function| zun_sema::check::ExternalFunction {
+            module: String::new(),
+            name: function.name,
+            params: function.locals[..function.param_count as usize].to_vec(),
+            return_ty: function.return_ty,
+        })
+        .collect()
+}
+
 /// Compile the checked-in Zun standard-library modules into a runtime loader.
 ///
 /// The source remains ordinary Zun code; this convenience entry point only
@@ -227,6 +285,24 @@ mod tests {
         assert_eq!(loader.len(), 2);
         assert!(loader.get("core").is_some());
         assert!(loader.get("app").is_some());
+    }
+
+    #[test]
+    fn compiles_linked_user_module_call() {
+        let loader = compile_linked_modules([
+            (
+                "core",
+                "function answer(value: int): int { return value + 1; }",
+            ),
+            (
+                "app",
+                "import { answer } from \"core\"; function main(): int { return answer(41); }",
+            ),
+        ])
+        .expect("linked compilation");
+        let app = loader.get("app").expect("app");
+        assert_eq!(app.module().tables.member_refs.len(), 1);
+        assert_eq!(app.module().tables.module_refs.len(), 1);
     }
 
     #[test]
