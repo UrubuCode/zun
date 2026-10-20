@@ -7,7 +7,7 @@
 
 use crate::hir;
 use crate::hir::{IntKind, Ty};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use zun_common::{Diagnostic, Span};
 use zun_syntax::ast;
 
@@ -138,6 +138,12 @@ struct FunctionCx {
     loop_depth: usize,
 }
 
+#[derive(Default)]
+struct CaptureUse {
+    slots: Vec<hir::LocalSlot>,
+    mutated: HashSet<hir::LocalSlot>,
+}
+
 impl FunctionCx {
     fn declare(&mut self, name: &str, ty: Ty) -> hir::LocalSlot {
         let slot = self.locals.len() as hir::LocalSlot;
@@ -155,6 +161,184 @@ impl FunctionCx {
 }
 
 impl Checker<'_> {
+    fn analyze_closure_captures(
+        &self,
+        cx: &FunctionCx,
+        function: &ast::FunctionExpr,
+    ) -> Vec<hir::Capture> {
+        let parameters: HashSet<String> = function
+            .params
+            .iter()
+            .map(|param| self.text(&param.name).to_string())
+            .collect();
+        let mut uses = CaptureUse::default();
+        for statement in &function.body.statements {
+            self.collect_capture_stmt(cx, &parameters, statement, &mut uses);
+        }
+        uses.slots
+            .into_iter()
+            .enumerate()
+            .map(|(environment_slot, outer_slot)| hir::Capture {
+                outer_slot,
+                environment_slot: environment_slot as u16,
+                ty: cx.locals[outer_slot as usize],
+                mode: if uses.mutated.contains(&outer_slot) {
+                    hir::CaptureMode::ByCell
+                } else {
+                    hir::CaptureMode::ByValue
+                },
+            })
+            .collect()
+    }
+
+    fn collect_capture_stmt(
+        &self,
+        cx: &FunctionCx,
+        parameters: &HashSet<String>,
+        statement: &ast::Stmt,
+        uses: &mut CaptureUse,
+    ) {
+        match statement {
+            ast::Stmt::Let { init, .. } | ast::Stmt::Expr(init) => {
+                self.collect_capture_expr(cx, parameters, init, uses)
+            }
+            ast::Stmt::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.collect_capture_expr(cx, parameters, cond, uses);
+                for statement in &then_block.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+                if let Some(block) = else_block {
+                    for statement in &block.statements {
+                        self.collect_capture_stmt(cx, parameters, statement, uses);
+                    }
+                }
+            }
+            ast::Stmt::While { cond, body, .. } => {
+                self.collect_capture_expr(cx, parameters, cond, uses);
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+            }
+            ast::Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    self.collect_capture_expr(cx, parameters, value, uses);
+                }
+            }
+            ast::Stmt::Throw { value, .. } => {
+                self.collect_capture_expr(cx, parameters, value, uses)
+            }
+            ast::Stmt::Try {
+                body,
+                catches,
+                finally,
+                ..
+            } => {
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+                for catch in catches {
+                    for statement in &catch.body.statements {
+                        self.collect_capture_stmt(cx, parameters, statement, uses);
+                    }
+                }
+                if let Some(block) = finally {
+                    for statement in &block.statements {
+                        self.collect_capture_stmt(cx, parameters, statement, uses);
+                    }
+                }
+            }
+            ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
+        }
+    }
+
+    fn collect_capture_expr(
+        &self,
+        cx: &FunctionCx,
+        parameters: &HashSet<String>,
+        expr: &ast::Expr,
+        uses: &mut CaptureUse,
+    ) {
+        let mut add_name = |name: &ast::Name, mutated: bool| {
+            let text = self.text(name);
+            if parameters.contains(text) {
+                return;
+            }
+            if let Some(slot) = cx.lookup(text) {
+                if !uses.slots.contains(&slot) {
+                    uses.slots.push(slot);
+                }
+                if mutated {
+                    uses.mutated.insert(slot);
+                }
+            }
+        };
+        match expr {
+            ast::Expr::Ident(name) => add_name(name, false),
+            ast::Expr::Assign { target, value, .. } => {
+                add_name(target, true);
+                self.collect_capture_expr(cx, parameters, value, uses);
+            }
+            ast::Expr::Binary { lhs, rhs, .. } => {
+                self.collect_capture_expr(cx, parameters, lhs, uses);
+                self.collect_capture_expr(cx, parameters, rhs, uses);
+            }
+            ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
+                self.collect_capture_expr(cx, parameters, operand, uses)
+            }
+            ast::Expr::Call { args, .. } => {
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
+            }
+            ast::Expr::MethodCall { receiver, args, .. } => {
+                self.collect_capture_expr(cx, parameters, receiver, uses);
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
+            }
+            ast::Expr::New { args, .. } => {
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
+            }
+            ast::Expr::Field { object, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses)
+            }
+            ast::Expr::FieldAssign { object, value, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
+                self.collect_capture_expr(cx, parameters, value, uses);
+            }
+            ast::Expr::Index { object, index, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
+                self.collect_capture_expr(cx, parameters, index, uses);
+            }
+            ast::Expr::IndexAssign {
+                object,
+                index,
+                value,
+                ..
+            } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
+                self.collect_capture_expr(cx, parameters, index, uses);
+                self.collect_capture_expr(cx, parameters, value, uses);
+            }
+            ast::Expr::Function(function) => {
+                // A nested function owns its own free-variable analysis.
+                // Its enclosing names are not direct uses of this closure.
+                let _ = function;
+            }
+            ast::Expr::Number { .. }
+            | ast::Expr::String { .. }
+            | ast::Expr::Bool { .. }
+            | ast::Expr::Null { .. } => {}
+        }
+    }
+
     fn text(&self, name: &ast::Name) -> &str {
         &self.source[name.span.start as usize..name.span.end as usize]
     }
@@ -1435,10 +1619,14 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Function(function) => {
+                let captures = self.analyze_closure_captures(cx, function);
                 self.error(
                     function.span,
                     "anonymous functions and arrow closures are not lowered yet",
                 );
+                debug_assert!(captures.iter().all(|capture| {
+                    capture.environment_slot < captures.len() as u16
+                }));
                 self.poison(span)
             }
         }
