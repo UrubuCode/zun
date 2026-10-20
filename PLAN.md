@@ -332,6 +332,13 @@ The following runtime contracts are implemented and covered by tests:
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, and Promise integration.
 
+The release benchmark baseline on 2026-10-20 is 402.555 ns/iteration for the
+integer Tier 0 loop and 0.486 ns/iteration for the equivalent JIT loop
+(828.64x). The metadata-focused Tier 0 workloads measure 359.803 ns/iteration
+for field load/store and 523.990 ns/iteration for virtual dispatch. These
+figures are machine-specific and should be re-run after interpreter or OSR
+changes; the benchmark source is `crates/zun_codegen/examples/bench.rs`.
+
 The remaining completion gates are full async state-machine lowering, complete
 typed FFI/ABI integration, N-API hosting, AOT/R2R object emission, true OSR
 frame replacement, and reachability-based trimming. Each gate requires a
