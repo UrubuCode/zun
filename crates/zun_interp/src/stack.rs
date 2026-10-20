@@ -23,6 +23,21 @@ impl Ordering {
     }
 }
 
+pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let result = match (&a, &b) {
+        (Value::Int(x, k), Value::Int(y, _)) => {
+            let (_, signed) = k.int_parts().expect("int kind");
+            if signed { op.apply(*x, *y) } else { op.apply(*x as u64, *y as u64) }
+        }
+        (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
+        _ => return Err(RunError::Malformed("comparison of mismatched numeric kinds".into())),
+    };
+    stack.push(Value::Bool(result));
+    Ok(())
+}
+
 pub(crate) fn underflow() -> RunError {
     RunError::Malformed("stack underflow".to_string())
 }

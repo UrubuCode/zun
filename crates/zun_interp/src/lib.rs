@@ -18,7 +18,7 @@ use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
 use stack::{
-    bin_float, bin_int, bin_int_signed_aware, convert, pop, pop_n, underflow, Ordering,
+    bin_float, bin_int, bin_int_signed_aware, compare, convert, pop, pop_n, underflow, Ordering,
 };
 use std::rc::Rc;
 use value::Value;
@@ -3822,29 +3822,6 @@ mod method_tests {
 /// A relational comparison operator.
 /// Ordered comparison over two ints (signed or unsigned by kind) or two floats;
 /// sema guarantees the operands share a numeric kind.
-fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunError> {
-    let b = pop(stack)?;
-    let a = pop(stack)?;
-    let result = match (&a, &b) {
-        (Value::Int(x, k), Value::Int(y, _)) => {
-            let (_, signed) = k.int_parts().expect("int kind");
-            if signed {
-                op.apply(*x, *y)
-            } else {
-                op.apply(*x as u64, *y as u64)
-            }
-        }
-        (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
-        _ => {
-            return Err(RunError::Malformed(
-                "comparison of mismatched numeric kinds".into(),
-            ))
-        }
-    };
-    stack.push(Value::Bool(result));
-    Ok(())
-}
-
 /// Structural equality for `==`/`!=` across the primitive types. `want_equal`
 /// is true for `==` and false for `!=`.
 fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
