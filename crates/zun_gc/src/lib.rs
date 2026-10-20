@@ -235,6 +235,11 @@ impl Heap {
         &self.strings[handle as usize]
     }
 
+    /// Resolve a string handle without panicking on malformed dynamic data.
+    pub fn try_string(&self, handle: u32) -> Option<&Rc<str>> {
+        self.strings.get(handle as usize)
+    }
+
     /// Number of objects' worth of chunks currently held (for diagnostics).
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
