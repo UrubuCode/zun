@@ -348,8 +348,11 @@ The following runtime contracts are implemented and covered by tests:
   `toFixed`), all covered by native dispatch tests.
 - Contiguous `ArrayStorage` with bounds-checked access and growth operations,
   integrated with heap allocation and precise object-reference tracing. The
-  source-level `Array` type is now recognized by sema/IL typing; array
-  literals, indexing syntax, and source-level method lowering are still pending.
+  source-level `Array` type is recognized by sema/IL typing; `new Array(n)`,
+  indexing, indexed assignment, `length`, `push`, and `pop` lower to verified
+  IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
+- Array instructions have verifier fixtures and an explicit Tier 0 fallback
+  test while Cranelift lowering for array storage remains pending.
 
 The release benchmark baseline on 2026-10-20 is 402.555 ns/iteration for the
 integer Tier 0 loop and 0.486 ns/iteration for the equivalent JIT loop
@@ -358,7 +361,7 @@ for field load/store and 523.990 ns/iteration for virtual dispatch. These
 figures are machine-specific and should be re-run after interpreter or OSR
 changes; the benchmark source is `crates/zun_codegen/examples/bench.rs`.
 
-The remaining completion gates are source-level Array lowering and the
+The remaining completion gates are Array `map`/`filter`/`reduce` and the
 complete String/Number/Array TypeScript core library, full async state-machine
 lowering, complete typed FFI/ABI integration, production Node N-API bindings,
 AOT/R2R support for the full runtime surface, true OSR frame replacement, and
