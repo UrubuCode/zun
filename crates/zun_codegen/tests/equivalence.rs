@@ -2954,6 +2954,58 @@ fn numeric_array_store_is_jit_equivalent() {
 }
 
 #[test]
+fn numeric_array_pop_is_jit_equivalent() {
+    let src = "function pop_value(values: Array): number { return values.pop() as number; }\n\
+               function main(): number { let values = new Array(1); values[0] = box_any(41.0); return pop_value(values); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "pop_value")
+        .map(|index| index as u32 + 1)
+        .expect("pop method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array pop");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    heap.array_set(array, 0, zun_core::Any::float(41.0));
+    let bits = {
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_packed(rid, &[array.addr() as u64]).expect("jit array pop")
+    };
+    assert_eq!(f64::from_bits(bits), 41.0);
+    assert_eq!(heap.array_len(array), Some(0));
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 41.0));
+}
+
+#[test]
+fn numeric_array_push_is_jit_equivalent() {
+    let src = "function push_value(values: Array, value: number): number { return values.push(value) as number; }\n\
+               function main(): number { let values = new Array(0); return push_value(values, 41.0); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "push_value")
+        .map(|index| index as u32 + 1)
+        .expect("push method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array push");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(0);
+    let bits = {
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_packed(rid, &[array.addr() as u64, 41.0f64.to_bits()])
+            .expect("jit array push")
+    };
+    assert_eq!(f64::from_bits(bits), 1.0);
+    assert_eq!(heap.array_get(array, 0).and_then(|value| value.as_float()), Some(41.0));
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 1.0));
+}
+
+#[test]
 fn non_overridden_virtual_call_is_jit_eligible() {
     let src = "class Counter { n: int; get(): int { return this.n; } }\n\
                function read(c: Counter): int { return c.get(); }\n\
