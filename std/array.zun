@@ -1,0 +1,22 @@
+// Core array helpers implemented in Zun source.
+
+function arrayLength(values: Array): u64 {
+    return values.length;
+}
+
+function arrayPush(values: Array, value: any): u64 {
+    return values.push(value);
+}
+
+function arrayPop(values: Array): any {
+    return values.pop();
+}
+
+function arrayGet(values: Array, index: u64): any {
+    return values[index];
+}
+
+function arraySet(values: Array, index: u64, value: any): any {
+    values[index] = value;
+    return value;
+}
