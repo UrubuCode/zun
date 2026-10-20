@@ -19,6 +19,10 @@ class String {
         return this;
     }
 
+    isBlank(): boolean {
+        return this.trim().isEmpty();
+    }
+
     extern length(): u64;
     extern contains(needle: string): boolean;
     extern includes(needle: string): boolean;

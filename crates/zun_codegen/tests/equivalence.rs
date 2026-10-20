@@ -227,6 +227,20 @@ fn string_trim_boundary_methods_use_interpreter_fallback() {
 }
 
 #[test]
+fn string_is_blank_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { trim, length } from \"zun:string\";\n\
+         class String { extern trim(): string; extern length(): u64; isEmpty(): boolean { return this.length() == 0; } isBlank(): boolean { return this.trim().isEmpty(); } }\n\
+         function main(): boolean { let value: string = \"   \"; return value.isBlank(); }",
+    )
+    .expect("compile String isBlank");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\

@@ -1026,6 +1026,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_blank_source_method() {
+        let module = zun_compiler::compile(
+            "import { trim, length } from \"zun:string\";\n\
+             class String { extern trim(): string; extern length(): u64; isEmpty(): boolean { return this.length() == 0; } isBlank(): boolean { return this.trim().isEmpty(); } }\n\
+             function main(): boolean { let value: string = \"   \"; return value.isBlank(); }",
+        )
+        .expect("compile String isBlank");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isBlank");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
