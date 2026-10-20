@@ -17,7 +17,7 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
-use stack::underflow;
+use stack::{pop, pop_n, underflow};
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3815,17 +3815,6 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
-}
-
-fn pop(stack: &mut Vec<Value>) -> Result<Value, RunError> {
-    stack.pop().ok_or_else(underflow)
-}
-
-fn pop_n(stack: &mut Vec<Value>, n: usize) -> Result<Vec<Value>, RunError> {
-    if stack.len() < n {
-        return Err(underflow());
-    }
-    Ok(stack.split_off(stack.len() - n))
 }
 
 fn bin_float(stack: &mut Vec<Value>, f: impl Fn(f64, f64) -> f64) -> Result<(), RunError> {
