@@ -68,10 +68,22 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         },
         Action::Build => {
             let out = out_path(path);
+            let manifest_out = out.with_extension("zman");
             match std::fs::write(&out, module.write()) {
                 Ok(()) => {
-                    println!("wrote {}", out.display());
-                    ExitCode::SUCCESS
+                    let manifest =
+                        zun_loader::ModuleManifest::new(file, std::iter::empty::<String>());
+                    match manifest.write_file(&manifest_out) {
+                        Ok(()) => {
+                            println!("wrote {}", out.display());
+                            println!("wrote {}", manifest_out.display());
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("zun: cannot write {}: {e}", manifest_out.display());
+                            ExitCode::FAILURE
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("zun: cannot write {}: {e}", out.display());
