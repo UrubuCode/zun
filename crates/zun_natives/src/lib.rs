@@ -338,6 +338,12 @@ mod tests {
             dispatch(length_id, &[NativeArg::Str("hé")], &mut sink).unwrap(),
             NativeValue::Int(2)
         ));
+        let (compare_id, compare_fn) = resolve("zun:string", "compare").unwrap();
+        assert_eq!(compare_fn.params, &[NativeTy::Str, NativeTy::Str]);
+        assert!(matches!(
+            dispatch(compare_id, &[NativeArg::Str("abc"), NativeArg::Str("abd")], &mut sink).unwrap(),
+            NativeValue::Int(-1)
+        ));
         assert!(matches!(
             dispatch(length_id, &[NativeArg::Str("😀")], &mut sink).unwrap(),
             NativeValue::Int(2)

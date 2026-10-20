@@ -18,6 +18,16 @@ fn concat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
     }
 }
 
+fn compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match (args.first(), args.get(1)) {
+        (Some(NativeArg::Str(left)), Some(NativeArg::Str(right))) => {
+            let result = if left < right { -1 } else if left > right { 1 } else { 0 };
+            Ok(NativeValue::Int(result))
+        }
+        _ => Err(NativeError("compare: expected two strings".to_string())),
+    }
+}
+
 fn contains(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1)) {
         (Some(NativeArg::Str(value)), Some(NativeArg::Str(needle))) => {
@@ -288,6 +298,7 @@ pub const MODULE: crate::Module = crate::Module {
     functions: &[
         NativeFn { name: "length", params: &[Str], ret: U64, imp: length },
         NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
+        NativeFn { name: "compare", params: &[Str, Str], ret: I32, imp: compare },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "count", params: &[Str, Str], ret: I32, imp: count },
         NativeFn { name: "includes", params: &[Str, Str], ret: Bool, imp: contains },

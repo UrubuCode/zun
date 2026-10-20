@@ -311,6 +311,20 @@ fn string_is_numeric_uses_interpreter_fallback() {
 }
 
 #[test]
+fn string_compare_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { compare } from \"zun:string\";\n\
+         class String { extern compare(other: string): int; }\n\
+         function main(): int { let value: string = \"abc\"; return value.compare(\"abd\"); }",
+    )
+    .expect("compile String compare");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == -1));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\
