@@ -717,8 +717,33 @@ impl Jit {
     ///
     /// # Safety contract
     /// The module was verified before compilation, and `args` must match the
-    /// method's parameter count and kinds.
+    /// method's parameter count and kinds. Object arguments must be valid
+    /// managed pointers for the current GC heap.
     pub fn call_packed(&self, method_rid: u32, args: &[u64]) -> Result<u64, JitError> {
+        let param_kinds = self
+            .sigs
+            .get(&method_rid)
+            .ok_or(JitError::Ineligible(method_rid))?
+            .param_kinds
+            .clone();
+        if param_kinds.len() != args.len() {
+            return Err(JitError::Arity {
+                expected: param_kinds.len(),
+                found: args.len(),
+            });
+        }
+        let native_roots: Vec<zun_gc::Obj> = args
+            .iter()
+            .zip(param_kinds)
+            .filter_map(|(&arg, kind)| {
+                (kind == JitKind::Object)
+                    .then(|| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
+            })
+            .collect();
+        // Keep managed arguments visible for the complete native call. The VM
+        // hook also registers its Value-level roots; this scope protects direct
+        // callers of the public packed entry point as well.
+        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let id = *self
             .shim_ids
             .get(&method_rid)
