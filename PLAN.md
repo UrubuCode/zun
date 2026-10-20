@@ -334,6 +334,8 @@ The following runtime contracts are implemented and covered by tests:
   `runI64`, `runF64`, and `runBool` ArrayBuffer-backed JavaScript functions.
   Linking the shared library requires the host's N-API import library through
   `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
+- Typed scalar FFI calls are exercised against a real Windows system library;
+  compiler/IL declarations for external symbols remain a separate gate.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, and Promise integration.
 
