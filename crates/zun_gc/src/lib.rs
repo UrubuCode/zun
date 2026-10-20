@@ -151,29 +151,6 @@ impl Heap {
         ))
     }
 
-    pub fn buffer_view_read_u32(
-        &self,
-        object: Obj,
-        view: zun_core::ByteView,
-        offset: usize,
-    ) -> Option<u32> {
-        view.read_u32(self.buffers.get(&(object.addr() as usize))?, offset)
-    }
-
-    pub fn buffer_view_write_u32(
-        &mut self,
-        object: Obj,
-        view: zun_core::ByteView,
-        offset: usize,
-        value: u32,
-    ) -> Option<bool> {
-        Some(view.write_u32(
-            self.buffers.get_mut(&(object.addr() as usize))?,
-            offset,
-            value,
-        ))
-    }
-
     pub fn buffer_view_read_u8(
         &self,
         object: Obj,
