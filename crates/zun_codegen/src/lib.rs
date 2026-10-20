@@ -117,7 +117,8 @@ pub struct Jit {
     ctx: cranelift_codegen::Context,
     fb_ctx: FunctionBuilderContext,
     types: zun_types::TypeSystem,
-    virtual_table: Box<[u64]>,
+    virtual_tables: Vec<Box<[u64]>>,
+    virtual_table_ptrs: Box<[u64]>,
     stack_maps: HashMap<u32, Vec<StackMapInfo>>,
     stack_map_registry: zun_gc::StackMapRegistry,
 }
@@ -153,8 +154,18 @@ impl Jit {
         let eligible = eligible_methods(zm);
         let types =
             zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
-        let virtual_slot_count = types.virtual_slot_count();
-        let virtual_table = vec![0; (types.len() + 1) * virtual_slot_count].into_boxed_slice();
+        let virtual_tables: Vec<Box<[u64]>> = (1..=types.len() as u32)
+            .map(|type_rid| {
+                types
+                    .get(type_rid)
+                    .map(|ty| vec![0; ty.vtable.len()].into_boxed_slice())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let mut virtual_table_ptrs = vec![0u64; types.len() + 1];
+        for (index, table) in virtual_tables.iter().enumerate() {
+            virtual_table_ptrs[index + 1] = table.as_ptr() as usize as u64;
+        }
 
         // Declare every eligible function and shim up front (signatures only) so
         // calls can reference any of them; bodies are defined later, eagerly by
@@ -170,7 +181,8 @@ impl Jit {
             ctx: cranelift_codegen::Context::new(),
             fb_ctx: FunctionBuilderContext::new(),
             types,
-            virtual_table,
+            virtual_tables,
+            virtual_table_ptrs: virtual_table_ptrs.into_boxed_slice(),
             stack_maps: HashMap::new(),
             stack_map_registry: zun_gc::StackMapRegistry::new(),
         };
@@ -297,8 +309,7 @@ impl Jit {
             &mut self.fb_ctx,
             &self.func_ids,
             &self.types,
-            self.virtual_table.as_ptr(),
-            self.types.virtual_slot_count(),
+            self.virtual_table_ptrs.as_ptr(),
             &body,
         )
         .map_err(|detail| JitError::Compile {
@@ -348,10 +359,6 @@ impl Jit {
     }
 
     fn refresh_virtual_table(&mut self) {
-        let slots = self.types.virtual_slot_count();
-        if slots == 0 {
-            return;
-        }
         for type_rid in 1..=self.types.len() as u32 {
             let Some(ty) = self.types.get(type_rid) else {
                 continue;
@@ -367,7 +374,7 @@ impl Jit {
                     continue;
                 }
                 let ptr = self.module.get_finalized_function(func_id);
-                self.virtual_table[type_rid as usize * slots + slot] = ptr as usize as u64;
+                self.virtual_tables[type_rid as usize - 1][slot] = ptr as usize as u64;
             }
         }
     }

@@ -61,8 +61,7 @@ pub fn translate_body(
     fb_ctx: &mut FunctionBuilderContext,
     func_ids: &HashMap<u32, FuncId>,
     types: &TypeSystem,
-    virtual_table: *const u64,
-    virtual_slot_count: usize,
+    virtual_table_ptrs: *const u64,
     body: &MethodBody<'_>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
@@ -125,8 +124,7 @@ pub fn translate_body(
         blocks,
         func_ids,
         types,
-        virtual_table,
-        virtual_slot_count,
+        virtual_table_ptrs,
         module,
         zm,
     };
@@ -188,8 +186,7 @@ struct Translator<'a> {
     module: &'a mut dyn ClifModule,
     zm: &'a ZmModule,
     types: &'a TypeSystem,
-    virtual_table: *const u64,
-    virtual_slot_count: usize,
+    virtual_table_ptrs: *const u64,
 }
 
 impl Translator<'_> {
@@ -326,25 +323,22 @@ impl Translator<'_> {
                     let inst = if instr.opcode == Opcode::CallVirt {
                         let receiver = args.first().copied().ok_or("virtual call receiver")?;
                         let slot = self.types.virtual_slot(rid).ok_or("virtual method slot")?;
-                        if self.virtual_slot_count == 0 {
-                            return Err("empty virtual slot table".into());
-                        }
                         let type_rid =
                             self.builder
                                 .ins()
                                 .load(types::I32, MemFlags::trusted(), receiver, 0);
                         let type_rid = self.builder.ins().uextend(types::I64, type_rid);
-                        let row = self
+                        let ptrs = self
                             .builder
                             .ins()
-                            .imul_imm(type_rid, self.virtual_slot_count as i64);
-                        let index = self.builder.ins().iadd_imm(row, slot as i64);
-                        let byte_offset = self.builder.ins().imul_imm(index, 8);
+                            .iconst(types::I64, self.virtual_table_ptrs as i64);
+                        let ptr_offset = self.builder.ins().imul_imm(type_rid, 8);
+                        let table_ptr_addr = self.builder.ins().iadd(ptrs, ptr_offset);
                         let table = self
                             .builder
                             .ins()
-                            .iconst(types::I64, self.virtual_table as i64);
-                        let address = self.builder.ins().iadd(table, byte_offset);
+                            .load(types::I64, MemFlags::trusted(), table_ptr_addr, 0);
+                        let address = self.builder.ins().iadd_imm(table, (slot * 8) as i64);
                         let target =
                             self.builder
                                 .ins()
