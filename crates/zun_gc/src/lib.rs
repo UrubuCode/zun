@@ -1027,6 +1027,17 @@ impl Heap {
             .and_then(|properties| properties.get(name))
     }
 
+    /// Read a symbol-keyed dynamic property from an object.
+    pub fn dynamic_get_symbol(
+        &self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_symbol(symbol))
+    }
+
     /// Insert or replace a dynamic property.
     pub fn dynamic_set(
         &mut self,
@@ -1037,6 +1048,18 @@ impl Heap {
         self.dynamic_objects
             .get_mut(&(object.addr() as usize))?
             .set(name, value)
+    }
+
+    /// Insert or replace a symbol-keyed dynamic property.
+    pub fn dynamic_set_symbol(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set_symbol(symbol, value)
     }
 
     /// Remove a dynamic property.
@@ -2092,6 +2115,22 @@ mod tests {
             heap.dynamic_remove(object, "answer")
                 .and_then(zun_core::Any::as_int),
             Some(42)
+        );
+    }
+
+    #[test]
+    fn symbol_properties_roundtrip_through_the_heap() {
+        let mut heap = Heap::new();
+        let object = heap.alloc_dynamic();
+        let iterator = heap.symbol_for("Symbol.iterator");
+        assert_eq!(
+            heap.dynamic_set_symbol(object, iterator, zun_core::Any::int(7)),
+            None
+        );
+        assert_eq!(
+            heap.dynamic_get_symbol(object, iterator)
+                .and_then(zun_core::Any::as_int),
+            Some(7)
         );
     }
 
