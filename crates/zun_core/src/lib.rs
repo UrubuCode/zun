@@ -11,6 +11,7 @@ mod views;
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
+pub use views::TypedArrayView;
 
 /// Size of one raw object slot in bytes.
 pub const SLOT_SIZE: usize = 8;
@@ -767,13 +768,6 @@ impl DataView {
             .enumerate()
             .all(|(index, byte)| buffer.set(offset + index, byte))
     }
-}
-
-/// Typed-array view metadata over a bounded byte window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TypedArrayView {
-    view: ByteView,
-    element: TypedElement,
 }
 
 impl TypedArrayView {

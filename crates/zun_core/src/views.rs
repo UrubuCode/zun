@@ -31,3 +31,10 @@ impl TypedElement {
         }
     }
 }
+
+/// Typed-array view metadata over a bounded byte window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypedArrayView {
+    pub(crate) view: ByteView,
+    pub(crate) element: TypedElement,
+}
