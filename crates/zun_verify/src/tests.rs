@@ -79,7 +79,6 @@ fn fixture_valid_array_operations() {
         Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
         Instruction::simple(Opcode::LoadArray),
         Instruction::simple(Opcode::Pop),
-        Instruction::simple(Opcode::Pop),
         Instruction::simple(Opcode::Ret),
     ]);
     assert_eq!(check(&code, VOID), Ok(()));
