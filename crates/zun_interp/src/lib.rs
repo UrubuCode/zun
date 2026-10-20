@@ -871,6 +871,15 @@ mod method_tests {
             method_start: 1,
             method_end: 2,
         });
+        let scratch_type = module.tables.add_type_def(TypeDef {
+            name: module.strings.intern("Scratch"),
+            namespace: zun_metadata::StringIndex(0),
+            base: Token::null(TableKind::TypeDef),
+            field_start: 0,
+            field_end: 0,
+            method_start: 0,
+            method_end: 0,
+        });
         let body = [
             Instruction::new(Opcode::LoadLocal, Operand::Local(1)),
             Instruction::new(Opcode::LoadLocal, Operand::Local(0)),
@@ -899,14 +908,20 @@ mod method_tests {
             signature: zun_metadata::BlobIndex(0),
             body_offset: target_offset,
         });
-        let main_body = [
+        let mut main_body = vec![
             Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
             Instruction::new(Opcode::NewObj, Operand::Token(environment_type)),
             Instruction::new(Opcode::MakeClosure, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        ];
+        for _ in 0..300 {
+            main_body.push(Instruction::new(Opcode::NewObj, Operand::Token(scratch_type)));
+            main_body.push(Instruction::simple(Opcode::Pop));
+        }
+        main_body.extend([
             Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)),
             Instruction::new(Opcode::CallIndirect, Operand::Token(Token::null(TableKind::MethodDef))),
             Instruction::simple(Opcode::Ret),
-        ];
+        ]);
         let mut main_code = Vec::new();
         for instruction in main_body { encode(&instruction, &mut main_code); }
         let main_offset = write_body(
