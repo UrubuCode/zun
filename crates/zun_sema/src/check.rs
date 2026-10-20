@@ -3036,15 +3036,33 @@ impl Checker<'_> {
                 }
                 let callee = self.check_expr(cx, callee);
                 if let Ty::Function(func) = callee.ty {
-                    if func == hir::DYNAMIC_FUNCTION
-                        || func == hir::DYNAMIC_PREDICATE
-                        || func == hir::DYNAMIC_REDUCER
-                    {
-                        self.error(span, "computed calls require a statically typed function value");
-                        return self.poison(span);
-                    }
                     let mut args: Vec<hir::Expr> =
                         args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+                    if matches!(
+                        func,
+                        hir::DYNAMIC_FUNCTION | hir::DYNAMIC_PREDICATE | hir::DYNAMIC_REDUCER
+                    ) {
+                        let (expected, return_ty) = match func {
+                            hir::DYNAMIC_REDUCER => (2, Ty::Any),
+                            hir::DYNAMIC_PREDICATE => (1, Ty::Boolean),
+                            _ => (1, Ty::Any),
+                        };
+                        if args.len() != expected {
+                            self.error(
+                                span,
+                                format!("dynamic function value expects {expected} argument(s), found {}", args.len()),
+                            );
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::IndirectCall {
+                                callee: Box::new(callee),
+                                args,
+                                func,
+                            },
+                            ty: return_ty,
+                            span,
+                        };
+                    }
                     let (param_tys, optional_count, rest_param, return_ty, signature_name) = {
                         let signature = &self.signatures[func as usize];
                         (
