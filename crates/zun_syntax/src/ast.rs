@@ -331,6 +331,17 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `condition ? when_true : when_false`.
+    Conditional {
+        /// The boolean condition.
+        condition: Box<Expr>,
+        /// Value selected when the condition is true.
+        when_true: Box<Expr>,
+        /// Value selected when the condition is false.
+        when_false: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `op operand`
     Unary {
         /// The operator.
@@ -439,6 +450,7 @@ impl Expr {
             | Expr::Null { span }
             | Expr::Assign { span, .. }
             | Expr::Binary { span, .. }
+            | Expr::Conditional { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Call { span, .. }
             | Expr::ComputedCall { span, .. }

@@ -289,6 +289,11 @@ impl Checker<'_> {
                 self.collect_mutated_expr(lhs, names);
                 self.collect_mutated_expr(rhs, names);
             }
+            ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+                self.collect_mutated_expr(condition, names);
+                self.collect_mutated_expr(when_true, names);
+                self.collect_mutated_expr(when_false, names);
+            }
             ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
                 self.collect_mutated_expr(operand, names)
             }
@@ -610,6 +615,11 @@ impl Checker<'_> {
             ast::Expr::Binary { lhs, rhs, .. } => {
                 self.collect_capture_expr(cx, parameters, lhs, uses);
                 self.collect_capture_expr(cx, parameters, rhs, uses);
+            }
+            ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+                self.collect_capture_expr(cx, parameters, condition, uses);
+                self.collect_capture_expr(cx, parameters, when_true, uses);
+                self.collect_capture_expr(cx, parameters, when_false, uses);
             }
             ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
                 self.collect_capture_expr(cx, parameters, operand, uses)
@@ -1403,6 +1413,26 @@ impl Checker<'_> {
                         op: *op,
                         lhs: Box::new(lhs),
                         rhs: Box::new(rhs),
+                    },
+                    ty,
+                    span,
+                }
+            }
+            ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+                let condition = self.check_condition(cx, condition);
+                let when_true = self.check_expr(cx, when_true);
+                let when_false = self.check_expr(cx, when_false);
+                let ty = if when_true.ty == when_false.ty {
+                    when_true.ty
+                } else {
+                    self.error(span, "conditional branches must have matching types");
+                    Ty::Error
+                };
+                hir::Expr {
+                    kind: hir::ExprKind::Conditional {
+                        condition: Box::new(condition),
+                        when_true: Box::new(when_true),
+                        when_false: Box::new(when_false),
                     },
                     ty,
                     span,

@@ -793,6 +793,15 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 };
                 self.emit(Instruction::simple(opcode));
             }
+            ExprKind::Conditional { condition, when_true, when_false } => {
+                self.expr(condition);
+                let to_false = self.emit_branch(Opcode::BranchFalse);
+                self.expr(when_true);
+                let to_end = self.emit_branch(Opcode::Branch);
+                self.patch_to_here(to_false);
+                self.expr(when_false);
+                self.patch_to_here(to_end);
+            }
             ExprKind::Unary { op, operand } => match op {
                 UnaryOp::Neg if operand.ty.is_int() => {
                     self.expr(operand);

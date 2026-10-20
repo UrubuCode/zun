@@ -443,6 +443,12 @@ pub enum ExprKind {
         /// Right operand.
         rhs: Box<Expr>,
     },
+    /// Select one of two values without evaluating the other branch.
+    Conditional {
+        condition: Box<Expr>,
+        when_true: Box<Expr>,
+        when_false: Box<Expr>,
+    },
     /// A unary operation.
     Unary {
         /// The operator.

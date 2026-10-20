@@ -94,6 +94,8 @@ pub enum TokenKind {
     Semi,
     /// `:`
     Colon,
+    /// `?`
+    Question,
     /// `.`
     Dot,
 
@@ -228,6 +230,7 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semi,
                     b':' => TokenKind::Colon,
+                    b'?' => TokenKind::Question,
                     b'.' => TokenKind::Dot,
                     b'+' => TokenKind::Plus,
                     b'-' => TokenKind::Minus,

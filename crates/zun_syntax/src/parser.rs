@@ -595,7 +595,7 @@ impl Parser<'_> {
     }
 
     fn assignment(&mut self) -> Expr {
-        let lhs = self.binary(0);
+        let lhs = self.conditional();
         if self.at(TokenKind::Eq) {
             let eq_span = self.bump().span;
             let value = self.assignment();
@@ -630,6 +630,23 @@ impl Parser<'_> {
             }
         }
         lhs
+    }
+
+    fn conditional(&mut self) -> Expr {
+        let condition = self.binary(0);
+        if !self.eat(TokenKind::Question) {
+            return condition;
+        }
+        let when_true = self.expression();
+        self.expect(TokenKind::Colon, "`:` in conditional expression");
+        let when_false = self.expression();
+        let span = condition.span().to(when_false.span());
+        Expr::Conditional {
+            condition: Box::new(condition),
+            when_true: Box::new(when_true),
+            when_false: Box::new(when_false),
+            span,
+        }
     }
 
     fn binary(&mut self, min_level: u8) -> Expr {
@@ -1089,6 +1106,12 @@ mod tests {
     #[test]
     fn parses_short_circuit_logical_operators() {
         let p = parse_ok("function main(): boolean { return true || false && false; }");
+        assert!(matches!(p.functions[0].body.statements[0], Stmt::Return { .. }));
+    }
+
+    #[test]
+    fn parses_conditional_expression() {
+        let p = parse_ok("function main(): int { return true ? 1 : 2; }");
         assert!(matches!(p.functions[0].body.statements[0], Stmt::Return { .. }));
     }
 

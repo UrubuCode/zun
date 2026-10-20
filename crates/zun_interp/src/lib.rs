@@ -1385,6 +1385,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run logical operators");
         assert!(matches!(value, Value::Bool(true)));
     }
+
+    #[test]
+    fn conditional_expression_selects_one_branch() {
+        let module = zun_compiler::compile(
+            "function main(): number { let choose: boolean = false; return choose ? 1.0 : 2.0; }",
+        )
+        .expect("compile conditional expression");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run conditional expression");
+        assert!(matches!(value, Value::Float(2.0, zun_il::NumKind::F64)));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;

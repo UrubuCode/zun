@@ -161,6 +161,13 @@ fn short_circuit_logical_operators_are_jit_equivalent() {
 }
 
 #[test]
+fn conditional_expression_is_jit_equivalent() {
+    let module = compile("function main(): number { let choose: boolean = false; return choose ? 1.0 : 2.0; }");
+    assert!(zun_codegen::Jit::compile(&module).is_err());
+    assert!(matches!(interp_entry(&module), Value::Float(2.0, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\
