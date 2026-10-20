@@ -229,6 +229,7 @@ impl Heap {
                 self.sets.remove(&(r.addr as usize));
                 self.weak_map_objects.remove(&(r.addr as usize));
                 self.promises.remove(&(r.addr as usize));
+                self.regexes.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }

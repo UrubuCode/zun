@@ -53,6 +53,7 @@ mod errors;
 mod dates;
 mod buffers;
 mod weak_state;
+mod regexes;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
 pub use weak_state::FinalizationRecord;
@@ -116,6 +117,8 @@ pub struct Heap {
     weak_map_objects: HashMap<usize, WeakMapId>,
     /// Promise state associated with managed Promise objects.
     promises: HashMap<usize, zun_core::ManagedPromise>,
+    /// Compiled regular expressions associated with managed RegExp objects.
+    regexes: HashMap<usize, zun_core::RegexValue>,
     /// Record index by object address, for tracing child references.
     by_addr: HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
