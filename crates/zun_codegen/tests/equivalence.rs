@@ -135,6 +135,24 @@ fn date_surface_updates_and_returns_timestamp_values() {
 }
 
 #[test]
+fn date_surface_supports_time_aliases_and_comparisons() {
+    let module = compile(
+        "class Date { millis: i64; getTime(): i64 { return this.millis; } setTime(value: i64): i64 { this.millis = value; return this.millis; } isBefore(other: Date): boolean { return this.millis < other.millis; } isAfter(other: Date): boolean { return this.millis > other.millis; } isEqual(other: Date): boolean { return this.millis == other.millis; } }\n\
+         function main(): int { let first: Date = new Date(10); let second: Date = new Date(20); first.setTime(15); if (first.getTime() == 15) { if (first.isBefore(second)) { if (second.isAfter(first)) { if (!first.isEqual(second)) { return 1; } } } } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    let interp_result = interp_entry(&module);
+    assert!(matches!((jit_result, interp_result),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
+}
+
+#[test]
 fn int_recursion() {
     assert_equivalent(
         "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\

@@ -11,6 +11,14 @@ class Date {
     }
 
     valueOf(): i64 { return this.millis; }
+    getTime(): i64 { return this.millis; }
+    setTime(value: i64): i64 {
+        this.millis = value;
+        return this.millis;
+    }
+    isBefore(other: Date): boolean { return this.millis < other.millis; }
+    isAfter(other: Date): boolean { return this.millis > other.millis; }
+    isEqual(other: Date): boolean { return this.millis == other.millis; }
 
     utcYear(): i32 { return year(this.millis); }
     utcMonth(): i32 { return month(this.millis); }
