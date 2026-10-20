@@ -1478,6 +1478,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_wrapped_by_source_method() {
+        let module = zun_compiler::compile(
+            "import { startsWith, endsWith } from \"zun:string\"; class String { extern startsWith(prefix: string): boolean; extern endsWith(suffix: string): boolean; isWrappedBy(prefix: string, suffix: string): boolean { if (!this.startsWith(prefix)) { return false; } return this.endsWith(suffix); } } function main(): boolean { let value: string = \"<zun>\"; return value.isWrappedBy(\"<\", \">\"); }",
+        )
+        .expect("compile String isWrappedBy");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isWrappedBy");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_compare_native_method() {
         let module = zun_compiler::compile(
             "import { compare } from \"zun:string\";\n\

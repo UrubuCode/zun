@@ -108,6 +108,11 @@ class String {
         return this.substring(1, this.length() - 1);
     }
 
+    isWrappedBy(prefix: string, suffix: string): boolean {
+        if (!this.startsWith(prefix)) { return false; }
+        return this.endsWith(suffix);
+    }
+
     isWhitespace(): boolean {
         if (this.isEmpty()) { return false; }
         return this.trim().isEmpty();
