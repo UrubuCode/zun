@@ -1012,7 +1012,8 @@ impl Checker<'_> {
                         self.error(span, "`Array` expects one length argument");
                         return self.poison(span);
                     }
-                    let length = self.check_expr(cx, &args[0]);
+                    let mut length = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut length, Ty::INT);
                     if !length.ty.is_int() {
                         self.error(length.span, "array length must be an integer");
                     }
