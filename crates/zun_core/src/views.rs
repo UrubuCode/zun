@@ -116,4 +116,32 @@ impl DataView {
             .bytes(relative, 1)
             .is_some_and(|offset| buffer.set(offset, value))
     }
+
+    pub fn get_u16(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<u16> {
+        let offset = self.bytes(relative, 2)?;
+        let bytes = [buffer.get(offset)?, buffer.get(offset + 1)?];
+        Some(if little_endian {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        })
+    }
+
+    pub fn set_u16(
+        &self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: u16,
+        little_endian: bool,
+    ) -> bool {
+        let Some(offset) = (*self).bytes(relative, 2) else {
+            return false;
+        };
+        let bytes = if little_endian {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        buffer.set(offset, bytes[0]) && buffer.set(offset + 1, bytes[1])
+    }
 }
