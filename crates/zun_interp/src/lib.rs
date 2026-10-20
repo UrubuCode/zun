@@ -790,7 +790,7 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
 mod method_tests {
     use super::*;
     use zun_il::{encode, Instruction, Operand};
-    use zun_metadata::{MethodDef, TableKind, Token, TypeDef};
+    use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
 
     #[test]
@@ -857,18 +857,26 @@ mod method_tests {
     #[test]
     fn executes_indirect_call_with_closure_environment() {
         let mut module = zun_module::Module::new();
+        let environment_field = module.tables.add_field_def(FieldDef {
+            name: module.strings.intern("captured"),
+            signature: zun_metadata::BlobIndex(0),
+            kind: zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+        });
         let environment_type = module.tables.add_type_def(TypeDef {
             name: module.strings.intern("ClosureEnvironment"),
             namespace: zun_metadata::StringIndex(0),
             base: Token::null(TableKind::TypeDef),
-            field_start: 0,
-            field_end: 0,
+            field_start: environment_field.rid(),
+            field_end: environment_field.rid() + 1,
             method_start: 1,
             method_end: 2,
         });
         let body = [
             Instruction::new(Opcode::LoadLocal, Operand::Local(1)),
+            Instruction::new(Opcode::LoadLocal, Operand::Local(0)),
+            Instruction::new(Opcode::LoadField, Operand::Token(environment_field)),
             Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+            Instruction::simple(Opcode::AddF64),
             Instruction::simple(Opcode::AddF64),
             Instruction::simple(Opcode::Ret),
         ];
@@ -892,9 +900,10 @@ mod method_tests {
             body_offset: target_offset,
         });
         let main_body = [
+            Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
             Instruction::new(Opcode::NewObj, Operand::Token(environment_type)),
             Instruction::new(Opcode::MakeClosure, Operand::Token(Token::new(TableKind::MethodDef, 1))),
-            Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
+            Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)),
             Instruction::new(Opcode::CallIndirect, Operand::Token(Token::null(TableKind::MethodDef))),
             Instruction::simple(Opcode::Ret),
         ];
