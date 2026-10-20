@@ -1762,6 +1762,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_named_function_callback_with_incompatible_return() {
+        let msg = first_error(
+            "function returns_text(value: number): string { return \"value\"; }\n\
+             function apply(f: returns_text, value: number): number { return f(value); }",
+        );
+        assert!(msg.contains("return type") || msg.contains("does not match"), "{msg}");
+    }
+
+    #[test]
     fn any_does_not_implicitly_enable_arithmetic() {
         let msg = first_error("function f(value: any) { let result = value + 1; }");
         assert!(msg.contains("cannot add"), "{msg}");
