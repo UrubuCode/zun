@@ -86,14 +86,18 @@ pub fn execute_manifest(
         ))
     })?;
     let module = scope.module();
-    verify_module(module).map_err(VmError::Verify)?;
-    match zun_codegen::Jit::new(module) {
-        Ok(jit) => {
-            let hook = JitHook::new(jit, module);
-            run_with(module, output, Some(&hook)).map_err(VmError::Run)
-        }
-        Err(_) => run_with(module, output, None).map_err(VmError::Run),
-    }
+    let entry = module
+        .entry_point
+        .ok_or(RunError::NoEntryPoint)
+        .map_err(VmError::Run)?;
+    zun_interp::run_method_loaded(
+        scope,
+        loader,
+        entry.rid(),
+        Vec::new(),
+        output,
+    )
+    .map_err(VmError::Run)
 }
 
 /// Validate every module selected by a manifest before any code executes.

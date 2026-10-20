@@ -510,6 +510,56 @@ impl ModuleLoader {
             .ok_or_else(|| LoadError::UnresolvedModule(member_name.to_string()))
     }
 
+    /// Resolve a top-level member reference stored in a raw requesting module.
+    /// This is used by runtimes before a full scope-aware frame is available.
+    pub fn resolve_member_ref_in_module<'a>(
+        &'a self,
+        requester: &Module,
+        token: Token,
+    ) -> Result<ResolvedMember<'a>, LoadError> {
+        if token.table() != Some(TableKind::MemberRef) {
+            return Err(LoadError::UnresolvedModule(format!(
+                "invalid member token 0x{:08x}",
+                token.to_raw()
+            )));
+        }
+        let member = requester
+            .tables
+            .member_refs
+            .get(token.rid() as usize - 1)
+            .ok_or_else(|| LoadError::UnresolvedModule(format!("member RID {}", token.rid())))?;
+        if member.parent.table() != Some(TableKind::ModuleRef) {
+            return Err(LoadError::UnresolvedModule(
+                "only top-level external members are supported".into(),
+            ));
+        }
+        let module_ref = requester
+            .tables
+            .module_refs
+            .get(member.parent.rid() as usize - 1)
+            .ok_or_else(|| LoadError::UnresolvedModule("invalid module reference".into()))?;
+        let module_name = requester.strings.get(module_ref.name);
+        let target = self
+            .get(module_name)
+            .ok_or_else(|| LoadError::UnresolvedModule(module_name.to_owned()))?;
+        let member_name = requester.strings.get(member.name);
+        match target.export(member_name) {
+            Some(Export::Method(token)) => Ok(ResolvedMember {
+                scope: target,
+                token,
+                kind: MemberKind::Method,
+            }),
+            Some(Export::Type(_)) => Err(LoadError::UnresolvedModule(format!(
+                "{}::{member_name} is not a method",
+                target.name()
+            ))),
+            None => Err(LoadError::UnresolvedModule(format!(
+                "{}::{member_name}",
+                target.name()
+            ))),
+        }
+    }
+
     /// Resolve a member reference and require that it names a callable method.
     pub fn resolve_method_ref<'a>(
         &'a self,

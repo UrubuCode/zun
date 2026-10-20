@@ -4,9 +4,9 @@
 //! It owns no executable code and does not alter the `.zm` format: all slots
 //! are derived from the stable TypeDef/FieldDef/MethodDef tables.
 
+use zun_il::JitKind;
 use zun_metadata::Token;
 use zun_module::Module;
-use zun_il::JitKind;
 
 /// A field's resolved object-layout information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +57,7 @@ impl std::error::Error for TypeError {}
 pub struct TypeSystem {
     types: Vec<TypeDescriptor>,
     fields: Vec<Option<FieldLayout>>,
+    method_slots: Vec<Option<usize>>,
 }
 
 #[cfg(test)]
@@ -102,6 +103,18 @@ impl TypeSystem {
     /// Build descriptors and virtual dispatch tables from module metadata.
     pub fn from_module(module: &Module) -> Result<Self, TypeError> {
         let method_count = module.tables.method_defs.len();
+        let mut method_slots = vec![None; method_count + 1];
+        let mut slot_names = Vec::new();
+        for (index, method) in module.tables.method_defs.iter().enumerate() {
+            let slot = slot_names
+                .iter()
+                .position(|&name| name == method.name)
+                .unwrap_or_else(|| {
+                    slot_names.push(method.name);
+                    slot_names.len() - 1
+                });
+            method_slots[index + 1] = Some(slot);
+        }
         let mut types = Vec::with_capacity(module.tables.type_defs.len());
         let mut field_index = vec![None; module.tables.field_defs.len() + 1];
         for (index, ty) in module.tables.type_defs.iter().enumerate() {
@@ -122,30 +135,18 @@ impl TypeSystem {
                 type_fields.push(layout);
             }
 
-            let mut vtable = vec![0; method_count + 1];
-            for static_rid in 1..=method_count as u32 {
-                let name = module.tables.method_defs[static_rid as usize - 1].name;
-                let mut current = type_rid;
-                loop {
-                    let current_ty = module
-                        .tables
-                        .type_defs
-                        .get(current as usize - 1)
-                        .ok_or(TypeError::BadBase)?;
-                    let implementation = (current_ty.method_start..current_ty.method_end)
-                        .find(|rid| module.tables.method_defs[*rid as usize - 1].name == name);
-                    if let Some(rid) = implementation {
-                        vtable[static_rid as usize] = rid;
-                        break;
-                    }
-                    if current_ty.base.is_null() {
-                        break;
-                    }
-                    if current_ty.base.table() != Some(zun_metadata::TableKind::TypeDef) {
-                        return Err(TypeError::BadBase);
-                    }
-                    current = current_ty.base.rid();
-                }
+            let mut vtable = ty.base.is_null().then(|| Vec::new()).unwrap_or_else(|| {
+                types
+                    .get(ty.base.rid() as usize - 1)
+                    .map(|base: &TypeDescriptor| base.vtable.clone())
+                    .unwrap_or_default()
+            });
+            if vtable.len() < slot_names.len() {
+                vtable.resize(slot_names.len(), 0);
+            }
+            for rid in ty.method_start..ty.method_end {
+                let slot = method_slots[rid as usize].ok_or(TypeError::BadMetadata)?;
+                vtable[slot] = rid;
             }
             types.push(TypeDescriptor {
                 type_rid,
@@ -154,12 +155,18 @@ impl TypeSystem {
                 vtable,
             });
         }
-        Ok(Self { types, fields: field_index })
+        Ok(Self {
+            types,
+            fields: field_index,
+            method_slots,
+        })
     }
 
     /// Resolve a local type RID to its descriptor.
     pub fn get(&self, type_rid: u32) -> Option<&TypeDescriptor> {
-        type_rid.checked_sub(1).and_then(|rid| self.types.get(rid as usize))
+        type_rid
+            .checked_sub(1)
+            .and_then(|rid| self.types.get(rid as usize))
     }
 
     /// Resolve a field RID to its physical slot and encoded value kind.
@@ -183,7 +190,16 @@ impl TypeSystem {
 
     /// Resolve a virtual method token for a runtime type in O(1).
     pub fn resolve_virtual(&self, type_rid: u32, method_rid: u32) -> Option<u32> {
-        self.get(type_rid)?.vtable.get(method_rid as usize).copied().filter(|&rid| rid != 0)
+        let slot = self
+            .method_slots
+            .get(method_rid as usize)
+            .copied()
+            .flatten()?;
+        self.get(type_rid)?
+            .vtable
+            .get(slot)
+            .copied()
+            .filter(|&rid| rid != 0)
     }
 
     /// Number of local type descriptors.

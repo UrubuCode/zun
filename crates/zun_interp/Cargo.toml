@@ -12,6 +12,7 @@ zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
 zun_gc = { path = "../zun_gc" }
 zun_natives = { path = "../zun_natives" }
+zun_loader = { path = "../zun_loader" }
 zun_types = { path = "../zun_types" }
 
 [dev-dependencies]

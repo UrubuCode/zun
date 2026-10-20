@@ -88,7 +88,7 @@ pub fn run_with(
     hook: Option<&dyn CallHook>,
 ) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
-    run_method_with(module, entry.rid(), Vec::new(), output, hook)
+    run_method_with(module, entry.rid(), Vec::new(), output, hook, None)
 }
 
 /// Execute a specific method body with positional arguments.
@@ -102,7 +102,18 @@ pub fn run_method(
     args: Vec<Value>,
     output: &mut dyn Output,
 ) -> Result<Value, RunError> {
-    run_method_with(module, method_rid, args, output, None)
+    run_method_with(module, method_rid, args, output, None, None)
+}
+
+/// Execute a method from a loaded module set, allowing top-level MemberRef calls.
+pub fn run_method_loaded(
+    scope: &zun_loader::ModuleScope,
+    loader: &zun_loader::ModuleLoader,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    run_method_with(scope.module(), method_rid, args, output, None, Some(loader))
 }
 
 fn run_method_with(
@@ -111,6 +122,7 @@ fn run_method_with(
     args: Vec<Value>,
     output: &mut dyn Output,
     hook: Option<&dyn CallHook>,
+    loader: Option<&zun_loader::ModuleLoader>,
 ) -> Result<Value, RunError> {
     // Own the heap for the run and register it as the thread's current heap so
     // the interpreter and any JIT code allocate into the same one.
@@ -121,6 +133,7 @@ fn run_method_with(
         module,
         output,
         hook,
+        loader,
         allocs: 0,
         types,
     }
@@ -134,6 +147,7 @@ struct Interp<'a> {
     module: &'a Module,
     output: &'a mut dyn Output,
     hook: Option<&'a dyn CallHook>,
+    loader: Option<&'a zun_loader::ModuleLoader>,
     /// Object allocations since the last collection (GC trigger counter).
     allocs: u32,
     types: zun_types::TypeSystem,
@@ -275,6 +289,32 @@ impl Interp<'_> {
                 }
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);
+                    if token.table() == Some(TableKind::MemberRef) {
+                        let loader = self.loader.ok_or(RunError::BadToken)?;
+                        let resolved = loader
+                            .resolve_member_ref_in_module(self.module, token)
+                            .map_err(|_| RunError::BadToken)?;
+                        let callee = resolved.scope.module();
+                        let body = read_body(
+                            &callee.code,
+                            callee.tables.method_defs[resolved.token.rid() as usize - 1]
+                                .body_offset,
+                        )
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                        let args = pop_n(&mut stack, body.param_count as usize)?;
+                        if args.iter().any(|arg| matches!(arg, Value::Object(_))) {
+                            return Err(RunError::BadToken);
+                        }
+                        let result = run_method_loaded(
+                            resolved.scope,
+                            loader,
+                            resolved.token.rid(),
+                            args,
+                            self.output,
+                        )?;
+                        stack.push(result);
+                        continue;
+                    }
                     if token.table() != Some(TableKind::MethodDef) {
                         return Err(RunError::BadToken);
                     }
