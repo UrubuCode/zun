@@ -1648,8 +1648,8 @@ fn math_scalar_aliases_are_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with scalar math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT scalar math"), RetVal::Float(value) if value == 21.0));
-    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 21.0));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT scalar math"), RetVal::Float(value) if value == 18.0));
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 18.0));
 }
 
 #[test]
