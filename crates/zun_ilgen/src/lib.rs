@@ -257,6 +257,7 @@ fn lower_function(
         finally_bodies: Vec::new(),
         closure_method_base,
     };
+    gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16);
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
     // implicit return. (Non-void paths are the verifier's job later.)
@@ -285,6 +286,7 @@ fn lower_closure_function(
         finally_bodies: Vec::new(),
         closure_method_base,
     };
+    gen.emit_defaults(&f.defaults, 1);
     gen.stmts(&f.body);
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
@@ -314,6 +316,23 @@ struct FnLowerer<'a, 'b> {
 impl<'a, 'b> FnLowerer<'a, 'b> {
     fn emit(&mut self, instr: Instruction) {
         encode(&instr, &mut self.code);
+    }
+
+    /// Materialize omitted arguments before entering the function body. Calls
+    /// use null sentinels so the framed ABI remains fixed-width.
+    fn emit_defaults(&mut self, defaults: &[Option<hir::Expr>], slot_offset: u16) {
+        for (index, default) in defaults.iter().enumerate() {
+            let Some(default) = default else { continue };
+            let slot = slot_offset + index as u16;
+            self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+            self.emit(Instruction::simple(Opcode::BoxAny));
+            self.emit(Instruction::simple(Opcode::ConstNull));
+            self.emit(Instruction::simple(Opcode::CmpEq));
+            let skip = self.emit_branch(Opcode::BranchFalse);
+            self.expr(default);
+            self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(slot)));
+            self.patch_to_here(skip);
+        }
     }
 
     fn emit_dynamic_load(&mut self, name: &str) {

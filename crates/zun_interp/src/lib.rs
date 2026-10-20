@@ -1436,6 +1436,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run optional property read");
         assert!(matches!(value, Value::Any(any) if any.as_float() == Some(41.0)));
     }
+
+    #[test]
+    fn default_parameter_is_used_when_argument_is_omitted() {
+        let module = zun_compiler::compile(
+            "function add(value: number = 2.0): number { return value; } function main(): number { return add(); }",
+        )
+        .expect("compile default parameter");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run default parameter");
+        assert!(matches!(value, Value::Float(2.0, zun_il::NumKind::F64)));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
@@ -3960,6 +3971,9 @@ fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
         // Reference identity: two object refs are equal iff the same object.
         (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
         (Value::Null, Value::Null) => true,
+        (Value::Any(x), Value::Null) | (Value::Null, Value::Any(x)) => {
+            x.tag() == zun_core::AnyTag::Null
+        }
         _ => false,
     };
     stack.push(Value::Bool(equal == want_equal));

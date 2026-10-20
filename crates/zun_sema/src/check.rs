@@ -104,6 +104,7 @@ struct Signature {
     name: String,
     params: Vec<Ty>,
     return_ty: Ty,
+    optional_count: usize,
 }
 
 /// A collected class: its base and its own (not inherited) fields.
@@ -345,14 +346,6 @@ impl Checker<'_> {
         function: &ast::FunctionExpr,
         span: Span,
     ) -> hir::Expr {
-        for parameter in &function.params {
-            if parameter.default_value.is_some() {
-                self.error(
-                    parameter.name.span,
-                    "default parameters are parsed but not yet supported in calls",
-                );
-            }
-        }
         let captures = self.analyze_closure_captures(outer, function);
         for capture in &captures {
             if capture.mode == hir::CaptureMode::ByCell {
@@ -909,6 +902,32 @@ impl Checker<'_> {
         }
     }
 
+    /// Pad omitted trailing optional arguments with the null sentinel consumed
+    /// by the callee's default-parameter prologue.
+    fn pad_default_args(&mut self, args: &mut Vec<hir::Expr>, sig: &Signature, span: Span) {
+        let required = sig.params.len().saturating_sub(sig.optional_count);
+        if args.len() < required || args.len() > sig.params.len() {
+            self.error(
+                span,
+                format!(
+                    "`{}` expects {} to {} argument(s), found {}",
+                    sig.name,
+                    required,
+                    sig.params.len(),
+                    args.len()
+                ),
+            );
+            return;
+        }
+        while args.len() < sig.params.len() {
+            args.push(hir::Expr {
+                kind: hir::ExprKind::Null,
+                ty: sig.params[args.len()],
+                span,
+            });
+        }
+    }
+
     fn collect_signatures(&mut self, program: &ast::Program) {
         // Register every top-level name before resolving annotations. This
         // permits a function-typed parameter to refer to a function declared
@@ -943,6 +962,7 @@ impl Checker<'_> {
                 name,
                 params,
                 return_ty,
+                optional_count: f.params.iter().rev().take_while(|p| p.default_value.is_some()).count(),
             });
         }
 
@@ -986,6 +1006,7 @@ impl Checker<'_> {
                     name,
                     params,
                     return_ty,
+                    optional_count: m.params.iter().rev().take_while(|p| p.default_value.is_some()).count(),
                 });
             }
         }
@@ -999,14 +1020,6 @@ impl Checker<'_> {
         f: &ast::Function,
         this_class: Option<u32>,
     ) -> hir::Function {
-        for parameter in &f.params {
-            if parameter.default_value.is_some() {
-                self.error(
-                    parameter.name.span,
-                    "default parameters are parsed but not yet supported in calls",
-                );
-            }
-        }
         let sig = &self.signatures[index];
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
@@ -1529,20 +1542,30 @@ impl Checker<'_> {
                             }
                             Ty::Any
                         } else {
-                            let (param_tys, return_ty) = {
+                            let (param_tys, return_ty, optional_count, signature_name) = {
                                 let sig = &self.signatures[func as usize];
-                                (sig.params.clone(), sig.return_ty)
+                                (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
                             };
-                            if args.len() != param_tys.len() {
+                            let sig = Signature {
+                                name: signature_name,
+                                params: param_tys.clone(),
+                                return_ty,
+                                optional_count,
+                            };
+                            if args.len() < param_tys.len().saturating_sub(optional_count)
+                                || args.len() > param_tys.len()
+                            {
                                 self.error(
                                     span,
                                     format!(
-                                        "function value expects {} argument(s), found {}",
+                                        "function value expects {} to {} argument(s), found {}",
+                                        param_tys.len().saturating_sub(optional_count),
                                         param_tys.len(),
                                         args.len()
                                     ),
                                 );
                             } else {
+                                self.pad_default_args(&mut args, &sig, span);
                                 for (arg, &expected) in args.iter_mut().zip(&param_tys) {
                                     coerce_numeric_literal(arg, expected);
                                     if !expected.is_error()
@@ -1775,20 +1798,30 @@ impl Checker<'_> {
                     self.error(callee.span, format!("unknown function `{name}`"));
                     return self.poison(span);
                 };
-                let (param_tys, return_ty) = {
+                let (param_tys, return_ty, optional_count, signature_name) = {
                     let sig = &self.signatures[func as usize];
-                    (sig.params.clone(), sig.return_ty)
+                    (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
                 };
-                if args.len() != param_tys.len() {
+                let sig = Signature {
+                    name: signature_name,
+                    params: param_tys.clone(),
+                    return_ty,
+                    optional_count,
+                };
+                if args.len() < param_tys.len().saturating_sub(optional_count)
+                    || args.len() > param_tys.len()
+                {
                     self.error(
                         span,
                         format!(
-                            "`{name}` expects {} argument(s), found {}",
+                            "`{name}` expects {} to {} argument(s), found {}",
+                            param_tys.len().saturating_sub(optional_count),
                             param_tys.len(),
                             args.len()
                         ),
                     );
                 } else {
+                    self.pad_default_args(&mut args, &sig, span);
                     for (arg, &expected) in args.iter_mut().zip(&param_tys) {
                         coerce_numeric_literal(arg, expected);
                         if !expected.is_error()
@@ -1942,25 +1975,35 @@ impl Checker<'_> {
                     self.error(method.span, format!("no method `{mname}` on this type"));
                     return self.poison(span);
                 };
-                let (param_tys, return_ty) = {
+                let (param_tys, return_ty, optional_count, signature_name) = {
                     let sig = &self.signatures[func as usize];
-                    (sig.params.clone(), sig.return_ty)
+                    (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
                 };
                 // param_tys[0] is `this`; the remaining are the declared params.
                 let mut call_args = vec![receiver];
                 for a in args {
                     call_args.push(self.check_expr(cx, a));
                 }
-                if call_args.len() != param_tys.len() {
+                let sig = Signature {
+                    name: signature_name,
+                    params: param_tys.clone(),
+                    return_ty,
+                    optional_count,
+                };
+                if call_args.len() < param_tys.len().saturating_sub(optional_count)
+                    || call_args.len() > param_tys.len()
+                {
                     self.error(
                         span,
                         format!(
-                            "`{mname}` expects {} argument(s), found {}",
+                            "`{mname}` expects {} to {} argument(s), found {}",
+                            param_tys.len() - 1 - optional_count,
                             param_tys.len() - 1,
                             call_args.len() - 1
                         ),
                     );
                 } else {
+                    self.pad_default_args(&mut call_args, &sig, span);
                     for (arg, &expected) in call_args.iter_mut().zip(&param_tys).skip(1) {
                         coerce_numeric_literal(arg, expected);
                         if !expected.is_error()
