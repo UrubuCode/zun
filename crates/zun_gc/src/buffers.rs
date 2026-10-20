@@ -52,4 +52,12 @@ impl Heap {
     pub fn data_view_write_u32(&mut self, object: Obj, view: zun_core::DataView, offset: usize, value: u32, little_endian: bool) -> Option<bool> {
         Some(view.set_u32(self.buffers.get_mut(&(object.addr() as usize))?, offset, value, little_endian))
     }
+
+    pub fn data_view_read_f64(&self, object: Obj, view: zun_core::DataView, offset: usize, little_endian: bool) -> Option<f64> {
+        view.get_f64(self.buffers.get(&(object.addr() as usize))?, offset, little_endian)
+    }
+
+    pub fn data_view_write_f64(&mut self, object: Obj, view: zun_core::DataView, offset: usize, value: f64, little_endian: bool) -> Option<bool> {
+        Some(view.set_f64(self.buffers.get_mut(&(object.addr() as usize))?, offset, value, little_endian))
+    }
 }
