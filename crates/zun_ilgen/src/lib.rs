@@ -252,6 +252,7 @@ fn lower_function(
         module,
         break_patches: Vec::new(),
         continue_targets: Vec::new(),
+        continue_patches: Vec::new(),
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         closure_method_base,
@@ -279,6 +280,7 @@ fn lower_closure_function(
         module,
         break_patches: Vec::new(),
         continue_targets: Vec::new(),
+        continue_patches: Vec::new(),
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         closure_method_base,
@@ -303,6 +305,7 @@ struct FnLowerer<'a, 'b> {
     module: &'b mut Module,
     break_patches: Vec<Vec<BranchPatch>>,
     continue_targets: Vec<Vec<usize>>,
+    continue_patches: Vec<Vec<BranchPatch>>,
     handlers: Vec<ExceptionHandler>,
     finally_bodies: Vec<&'a [Stmt]>,
     closure_method_base: u32,
@@ -392,6 +395,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         self.code[patch.operand_at..patch.operand_at + 4].copy_from_slice(&disp.to_le_bytes());
     }
 
+    /// Point `patch` at an arbitrary code offset.
+    fn patch_to_target(&mut self, patch: BranchPatch, target: usize) {
+        let disp = (target as i64 - (patch.operand_at + 4) as i64) as i32;
+        self.code[patch.operand_at..patch.operand_at + 4].copy_from_slice(&disp.to_le_bytes());
+    }
+
     /// Emit a backward branch to `target` (a previously recorded code offset).
     fn emit_branch_back(&mut self, opcode: Opcode, target: usize) {
         // Displacement is relative to the end of this instruction: 1 opcode
@@ -451,10 +460,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let to_exit = self.emit_branch(Opcode::BranchFalse);
                 self.break_patches.push(Vec::new());
                 self.continue_targets.push(vec![loop_start]);
+                self.continue_patches.push(Vec::new());
                 self.stmts(body);
                 self.emit_branch_back(Opcode::Branch, loop_start);
                 self.patch_to_here(to_exit);
                 self.continue_targets.pop();
+                self.continue_patches.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -462,17 +473,16 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             Stmt::DoWhile { body, cond } => {
                 let loop_start = self.code.len();
                 self.break_patches.push(Vec::new());
-                self.continue_targets.push(vec![loop_start]);
+                self.continue_targets.push(vec![usize::MAX]);
+                self.continue_patches.push(Vec::new());
                 self.stmts(body);
                 let continue_target = self.code.len();
-                if let Some(targets) = self.continue_targets.last_mut() {
-                    if let Some(last) = targets.last_mut() {
-                        *last = continue_target;
-                    }
+                self.continue_targets.pop();
+                for patch in self.continue_patches.pop().unwrap_or_default() {
+                    self.patch_to_target(patch, continue_target);
                 }
                 self.expr(cond);
                 self.emit_branch_back(Opcode::BranchTrue, loop_start);
-                self.continue_targets.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -485,12 +495,14 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let to_exit = self.emit_branch(Opcode::BranchTrue);
                 self.break_patches.push(Vec::new());
                 self.continue_targets.push(vec![loop_start]);
+                self.continue_patches.push(Vec::new());
                 self.expr(next);
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*binding)));
                 self.stmts(body);
                 self.emit_branch_back(Opcode::Branch, loop_start);
                 self.patch_to_here(to_exit);
                 self.continue_targets.pop();
+                self.continue_patches.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -507,7 +519,14 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     .last()
                     .and_then(|targets| targets.last())
                 {
-                    self.emit_branch_back(Opcode::Branch, target);
+                    if target == usize::MAX {
+                        let patch = self.emit_branch(Opcode::Branch);
+                        if let Some(patches) = self.continue_patches.last_mut() {
+                            patches.push(patch);
+                        }
+                    } else {
+                        self.emit_branch_back(Opcode::Branch, target);
+                    }
                 }
             }
             Stmt::Return(value) => {
