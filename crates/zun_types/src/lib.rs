@@ -84,6 +84,18 @@ mod tests {
             .expect("derived implementation");
         assert_ne!(base_method, derived_method);
     }
+
+    #[test]
+    fn layout_exposes_reference_field_slots() {
+        let module = zun_compiler::compile(
+            "class Child { value: int; }\n\
+             class Parent { child: Child; count: int; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        assert_eq!(types.reference_slots(2), vec![0]);
+    }
 }
 
 impl TypeSystem {
