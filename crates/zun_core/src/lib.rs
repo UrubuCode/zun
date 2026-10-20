@@ -6,6 +6,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+#[path = "views.rs"]
+mod views;
+pub use views::ByteView;
+
 /// Size of one raw object slot in bytes.
 pub const SLOT_SIZE: usize = 8;
 
@@ -631,13 +635,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
         (153 * (month + if month > 2 { -3 } else { 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Some(era * 146_097 + day_of_era - 719_468)
-}
-
-/// Bounds-checked view into a shared byte buffer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ByteView {
-    offset: usize,
-    length: usize,
 }
 
 /// Unaligned, endian-aware view into a shared byte buffer.
