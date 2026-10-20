@@ -1,0 +1,9 @@
+// String helpers implemented in Zun source.
+
+function stringConcat(left: string, right: string): string {
+    return left + right;
+}
+
+function stringWithSeparator(left: string, separator: string, right: string): string {
+    return left + separator + right;
+}

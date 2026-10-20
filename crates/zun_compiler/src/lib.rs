@@ -56,7 +56,10 @@ where
 /// The source remains ordinary Zun code; this convenience entry point only
 /// supplies the stable module identities used by hosts and tests.
 pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
-    compile_modules([("zun:std:math", include_str!("../../../std/math.zun"))])
+    compile_modules([
+        ("zun:std:math", include_str!("../../../std/math.zun")),
+        ("zun:std:string", include_str!("../../../std/string.zun")),
+    ])
 }
 
 /// Validate imports against the complete source set before module emission.
@@ -193,5 +196,6 @@ mod tests {
         compile(&source).expect("standard library module should compile");
         let loader = compile_standard_library().expect("standard library should load");
         assert!(loader.get("zun:std:math").is_some());
+        assert!(loader.get("zun:std:string").is_some());
     }
 }
