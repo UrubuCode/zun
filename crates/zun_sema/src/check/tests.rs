@@ -87,6 +87,14 @@
     }
 
     #[test]
+    fn await_requires_a_promise_operand() {
+        let message = first_error(
+            "async function main(): Promise { await 1; return new Promise(); }",
+        );
+        assert!(message.contains("Promise type"), "{message}");
+    }
+
+    #[test]
     fn let_infers_type_from_initializer() {
         let hir = check_ok("function f() { let x = 1; let s = \"hi\"; }");
         assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);

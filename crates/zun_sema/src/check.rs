@@ -810,6 +810,12 @@ impl Checker<'_> {
         match expr {
             ast::Expr::Await { operand, .. } => {
                 let checked = self.check_expr(cx, operand);
+                if checked.ty != Ty::Promise && checked.ty != Ty::Any {
+                    self.error(
+                        checked.span,
+                        "await operand must have Promise type",
+                    );
+                }
                 let span = checked.span;
                 hir::Expr {
                     kind: hir::ExprKind::Await {
