@@ -2690,6 +2690,19 @@ fn object_alloc_and_field_access_in_jit() {
     let mut heap = zun_gc::Heap::new();
     let jit_result = {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let observe_rid = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "observe")
+            .map(|index| index as u32 + 1)
+            .expect("observe method");
+        let point = heap.alloc(1, 2);
+        point.set_field(0, 3);
+        let observed = jit
+            .call_packed(observe_rid, &[point.addr() as u64])
+            .expect("direct packed object call");
+        assert_eq!(observed, 3);
         jit.call_entry(entry).expect("jit call")
     };
     let interp_result = interp_entry(&module);
