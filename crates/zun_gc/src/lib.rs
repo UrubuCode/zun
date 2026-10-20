@@ -291,6 +291,18 @@ impl Heap {
         Some(self.buffers.get_mut(&(object.addr() as usize))?.write_f64(offset, value))
     }
 
+    pub fn buffer_view(&self, object: Obj, offset: usize, length: usize) -> Option<zun_core::ByteView> {
+        zun_core::ByteView::new(self.buffer_len(object)?, offset, length)
+    }
+
+    pub fn buffer_view_read_u32(&self, object: Obj, view: zun_core::ByteView, offset: usize) -> Option<u32> {
+        view.read_u32(self.buffers.get(&(object.addr() as usize))?, offset)
+    }
+
+    pub fn buffer_view_write_u32(&mut self, object: Obj, view: zun_core::ByteView, offset: usize, value: u32) -> Option<bool> {
+        Some(view.write_u32(self.buffers.get_mut(&(object.addr() as usize))?, offset, value))
+    }
+
     /// Allocate a runtime-backed Map with insertion-ordered hash storage.
     pub fn alloc_map(&mut self) -> Obj {
         let object = self.alloc(0, 0);
@@ -1001,6 +1013,10 @@ mod tests {
         assert_eq!(heap.buffer_write_f64(buffer, 8, 2.5), Some(true));
         assert_eq!(heap.buffer_read_f64(buffer, 8), Some(2.5));
         assert_eq!(heap.buffer_write_u32(buffer, 14, 1), Some(false));
+        let view = heap.buffer_view(buffer, 4, 8).unwrap();
+        assert_eq!(heap.buffer_view_write_u32(buffer, view, 0, 0x1234), Some(true));
+        assert_eq!(heap.buffer_view_read_u32(buffer, view, 0), Some(0x1234));
+        assert_eq!(heap.buffer_view_write_u32(buffer, view, 5, 1), Some(false));
     }
 
     #[test]

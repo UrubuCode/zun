@@ -273,6 +273,33 @@ pub struct ByteBuffer {
     bytes: Vec<u8>,
 }
 
+/// Bounds-checked view into a shared byte buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteView {
+    offset: usize,
+    length: usize,
+}
+
+impl ByteView {
+    pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
+        offset.checked_add(length).filter(|&end| end <= buffer_length).map(|_| Self { offset, length })
+    }
+
+    pub fn offset(self) -> usize { self.offset }
+    pub fn len(self) -> usize { self.length }
+
+    pub fn read_u32(self, buffer: &ByteBuffer, relative: usize) -> Option<u32> {
+        let end = relative.checked_add(4)?;
+        if end > self.length { return None; }
+        buffer.read_u32(self.offset + relative)
+    }
+
+    pub fn write_u32(self, buffer: &mut ByteBuffer, relative: usize, value: u32) -> bool {
+        let Some(end) = relative.checked_add(4) else { return false; };
+        end <= self.length && buffer.write_u32(self.offset + relative, value)
+    }
+}
+
 impl ByteBuffer {
     pub fn new(length: usize) -> Self { Self { bytes: vec![0; length] } }
     pub fn len(&self) -> usize { self.bytes.len() }
@@ -589,6 +616,12 @@ mod tests {
         assert!(typed.write_f64(8, 3.5));
         assert_eq!(typed.read_f64(8), Some(3.5));
         assert!(!typed.write_u32(14, 1));
+        let view = ByteView::new(typed.len(), 2, 8).unwrap();
+        assert_eq!(view.read_u32(&typed, 0), Some(0xdead_beef));
+        assert!(view.write_u32(&mut typed, 4, 7));
+        assert_eq!(typed.read_u32(6), Some(7));
+        assert!(!view.write_u32(&mut typed, 5, 8));
+        assert!(ByteView::new(typed.len(), 15, 2).is_none());
     }
 
     #[test]

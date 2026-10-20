@@ -382,7 +382,8 @@ The following runtime contracts are implemented and covered by tests:
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
   intrinsic substrate for `ArrayBuffer` and typed-array views. Little-endian
   `u16`, `u32`, and `f64` view operations are covered; source-level view
-  classes remain the next integration gate.
+  classes remain the next integration gate. `ByteView` now enforces bounded
+  shared windows without copying the underlying storage.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
