@@ -67,6 +67,37 @@ fn fixture_valid_any_box_and_unbox() {
 }
 
 #[test]
+fn fixture_valid_array_operations() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::simple(Opcode::NewArray),
+        Instruction::simple(Opcode::Dup),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),
+        Instruction::simple(Opcode::StoreArray),
+        Instruction::simple(Opcode::Pop),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+        Instruction::simple(Opcode::LoadArray),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_array_load_underflow() {
+    let code = asm(&[
+        Instruction::simple(Opcode::LoadArray),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+    ));
+}
+
+#[test]
 fn fixture_invalid_any_box_underflow() {
     let code = asm(&[
         Instruction::simple(Opcode::BoxAny),
