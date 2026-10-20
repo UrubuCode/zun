@@ -1848,6 +1848,25 @@ impl Checker<'_> {
                     "Float64Array" => Some("f64ArrayNew"),
                     _ => None,
                 };
+                if name == "DataView" {
+                    if args.len() != 3 {
+                        self.error(span, "`DataView` expects buffer, offset, and length");
+                        return self.poison(span);
+                    }
+                    let mut call_args: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                    for arg in call_args.iter_mut().skip(1) {
+                        coerce_numeric_literal(arg, Ty::INT);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:buffer", "dataViewNew") else {
+                        self.error(span, "missing DataView intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 if let Some(native_name) = typed_view {
                     if args.len() != 3 {
                         self.error(span, format!("`{name}` expects buffer, offset, and length"));
