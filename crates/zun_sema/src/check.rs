@@ -437,7 +437,39 @@ impl Checker<'_> {
             cx.declare(&pname, ty);
         }
 
-        let body = self.check_block(&mut cx, &f.body);
+        let body = if f.is_extern {
+            let Some((intrinsic_id, intrinsic)) = self.imports.get(&name).copied() else {
+                self.error(f.name.span, format!("extern method `{name}` must be bound to an imported intrinsic"));
+                return hir::Function { name, param_count: param_tys.len() as u16, locals: cx.locals, return_ty, body: Vec::new() };
+            };
+            let native_params: Vec<Ty> = intrinsic.params.iter().map(|&t| native_ty(t)).collect();
+            if native_params != param_tys {
+                self.error(
+                    f.name.span,
+                    format!("extern method `{name}` signature does not match intrinsic `{}`", intrinsic.name),
+                );
+            }
+            if native_ty(intrinsic.ret) != return_ty {
+                self.error(
+                    f.name.span,
+                    format!("extern method `{name}` return type does not match intrinsic `{}`", intrinsic.name),
+                );
+            }
+            let args = (0..param_tys.len())
+                .map(|slot| hir::Expr {
+                    kind: hir::ExprKind::Local(slot as hir::LocalSlot),
+                    ty: param_tys[slot],
+                    span: f.name.span,
+                })
+                .collect();
+            vec![hir::Stmt::Return(Some(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id: intrinsic_id, args },
+                ty: return_ty,
+                span: f.name.span,
+            }))]
+        } else {
+            self.check_block(&mut cx, &f.body)
+        };
         hir::Function {
             name,
             param_count: param_tys.len() as u16,
@@ -1578,5 +1610,18 @@ mod tests {
         // extra diagnostics.
         let (_, diags) = check_src("function f() { let x = y + 1; }");
         assert_eq!(diags.len(), 1, "{diags:?}");
+    }
+
+    #[test]
+    fn extern_method_requires_an_explicit_intrinsic_binding() {
+        let (_, diagnostics) = check_src(
+            "class Service { extern missing(): int; }\nfunction main(): int { return 0; }",
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("must be bound to an imported intrinsic")),
+            "{diagnostics:?}"
+        );
     }
 }

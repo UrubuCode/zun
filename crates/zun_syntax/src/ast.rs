@@ -64,6 +64,8 @@ pub struct Function {
     pub params: Vec<Param>,
     /// Declared return type, if annotated.
     pub return_type: Option<TypeAnnotation>,
+    /// Whether this declaration is implemented by a runtime intrinsic.
+    pub is_extern: bool,
     /// The body block.
     pub body: Block,
     /// Span of the whole declaration.
