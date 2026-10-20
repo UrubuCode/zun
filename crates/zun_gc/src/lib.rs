@@ -20,6 +20,31 @@
 //! moves or frees a block, so raw access through [`Obj`] is sound.
 
 use std::rc::Rc;
+use std::collections::HashMap;
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(1469598103934665603, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(1099511628211)
+    })
+}
+
+fn any_same_value_zero(a: zun_core::Any, b: zun_core::Any, strings: &[Rc<str>]) -> bool {
+    if a.tag() != b.tag() {
+        return false;
+    }
+    match a.tag() {
+        zun_core::AnyTag::Float => {
+            let left = a.as_float().unwrap();
+            let right = b.as_float().unwrap();
+            left == right || (left.is_nan() && right.is_nan())
+        }
+        zun_core::AnyTag::String => strings.get(a.as_string().unwrap() as usize)
+            == strings.get(b.as_string().unwrap() as usize),
+        zun_core::AnyTag::Int => a.as_int() == b.as_int(),
+        zun_core::AnyTag::Bool => a.as_bool() == b.as_bool(),
+        zun_core::AnyTag::Object => a.as_object() == b.as_object(),
+    }
+}
 
 /// Slots per allocation chunk (objects are bump-allocated within a chunk).
 const CHUNK_SLOTS: usize = 64 * 1024;
@@ -94,13 +119,15 @@ pub struct Heap {
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
-    dynamic_objects: std::collections::HashMap<usize, zun_core::DynamicObject>,
+    dynamic_objects: HashMap<usize, zun_core::DynamicObject>,
     /// Contiguous array storage associated with array objects.
-    arrays: std::collections::HashMap<usize, zun_core::ArrayStorage>,
+    arrays: HashMap<usize, zun_core::ArrayStorage>,
+    /// Ordered hash tables associated with Map objects.
+    maps: HashMap<usize, zun_core::OrderedMap>,
     /// Record index by object address, for tracing child references.
-    by_addr: std::collections::HashMap<usize, usize>,
+    by_addr: HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
-    free: std::collections::HashMap<usize, Vec<usize>>,
+    free: HashMap<usize, Vec<usize>>,
     /// Monotonic identity hashes. Zero is reserved as the uninitialized value.
     next_identity_hash: u64,
 }
@@ -181,6 +208,54 @@ impl Heap {
         self.arrays
             .insert(object.addr() as usize, zun_core::ArrayStorage::with_length(length));
         object
+    }
+
+    /// Allocate a runtime-backed Map with insertion-ordered hash storage.
+    pub fn alloc_map(&mut self) -> Obj {
+        let object = self.alloc(0, 0);
+        self.maps.insert(object.addr() as usize, zun_core::OrderedMap::new());
+        object
+    }
+
+    /// Insert a key/value pair and return the replaced value, if any.
+    pub fn map_insert(&mut self, object: Obj, key: zun_core::Any, value: zun_core::Any) -> Option<zun_core::Any> {
+        let hash = self.any_hash(key);
+        let strings = &self.strings;
+        self.maps.get_mut(&(object.addr() as usize))?.insert(key, value, hash, |candidate| {
+            any_same_value_zero(candidate, key, strings)
+        })
+    }
+
+    /// Look up a key using SameValueZero equality.
+    pub fn map_get(&self, object: Obj, key: zun_core::Any) -> Option<zun_core::Any> {
+        let hash = self.any_hash(key);
+        let strings = &self.strings;
+        self.maps.get(&(object.addr() as usize))?.get(hash, |candidate| {
+            any_same_value_zero(candidate, key, strings)
+        })
+    }
+
+    /// Remove a key and return its key/value pair.
+    pub fn map_remove(&mut self, object: Obj, key: zun_core::Any) -> Option<(zun_core::Any, zun_core::Any)> {
+        let hash = self.any_hash(key);
+        let strings = &self.strings;
+        self.maps.get_mut(&(object.addr() as usize))?.remove(hash, |candidate| {
+            any_same_value_zero(candidate, key, strings)
+        })
+    }
+
+    pub fn map_len(&self, object: Obj) -> Option<usize> {
+        self.maps.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
+    }
+
+    fn any_hash(&self, value: zun_core::Any) -> u64 {
+        match value.tag() {
+            zun_core::AnyTag::Int => value.as_int().unwrap() as u64 ^ 0x11,
+            zun_core::AnyTag::Float => value.as_float().unwrap().to_bits() ^ 0x22,
+            zun_core::AnyTag::Bool => value.as_bool().unwrap() as u64 ^ 0x33,
+            zun_core::AnyTag::Object => unsafe { Obj::from_addr(value.as_object().unwrap() as *mut u64) }.identity_hash() ^ 0x44,
+            zun_core::AnyTag::String => self.try_string(value.as_string().unwrap()).map_or(0, |s| hash_bytes(s.as_bytes())) ^ 0x55,
+        }
     }
 
     /// Return the length of an array object.
@@ -319,6 +394,18 @@ impl Heap {
                     }
                 }
             }
+            if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
+                for (key, value) in map.iter() {
+                    for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
+                        if let Some(&cidx) = self.by_addr.get(&child) {
+                            if !self.records[cidx].marked {
+                                self.records[cidx].marked = true;
+                                work.push(cidx);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
@@ -330,6 +417,7 @@ impl Heap {
                 self.by_addr.remove(&(r.addr as usize));
                 self.dynamic_objects.remove(&(r.addr as usize));
                 self.arrays.remove(&(r.addr as usize));
+                self.maps.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }
@@ -549,6 +637,33 @@ mod tests {
         assert_eq!(o.field(0), 0);
         assert_eq!(o.field(1), 0);
         assert_eq!(o.field(2), 0);
+    }
+
+    #[test]
+    fn map_uses_same_value_zero_and_preserves_entries() {
+        let mut heap = Heap::new();
+        let map = heap.alloc_map();
+        let one = heap.intern_string(Rc::from("one"));
+        assert_eq!(heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one)), None);
+        assert_eq!(heap.map_insert(map, zun_core::Any::float(f64::NAN), zun_core::Any::bool(true)), None);
+        assert_eq!(heap.map_get(map, zun_core::Any::int(1)).and_then(|v| v.as_string()).and_then(|h| heap.try_string(h)).map(|s| s.as_ref()), Some("one"));
+        assert_eq!(heap.map_get(map, zun_core::Any::float(f64::NAN)).and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(heap.map_len(map), Some(2));
+        assert_eq!(heap.map_remove(map, zun_core::Any::int(1)).and_then(|(_, value)| value.as_string()), Some(0));
+        assert_eq!(heap.map_len(map), Some(1));
+    }
+
+    #[test]
+    fn map_traces_object_keys_and_values() {
+        let mut heap = Heap::new();
+        let map = heap.alloc_map();
+        let key = heap.alloc(1, 0);
+        let value = heap.alloc(2, 0);
+        heap.map_insert(map, zun_core::Any::object(key.addr() as usize), zun_core::Any::object(value.addr() as usize));
+        let no_refs = |_: u32| Vec::<usize>::new();
+        let freed = unsafe { heap.collect(&[map], &no_refs) };
+        assert_eq!(freed, 0);
+        assert_eq!(heap.live_count(), 3);
     }
 
     #[test]
