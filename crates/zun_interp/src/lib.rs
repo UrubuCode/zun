@@ -698,6 +698,50 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
+                Opcode::CallRestArrayFixed => {
+                    let (token, fixed_count) = operand_token_imm32(&instr.operand);
+                    if token.table() != Some(TableKind::MethodDef) || fixed_count < 0 {
+                        return Err(RunError::BadToken);
+                    }
+                    let callee_rid = token.rid();
+                    let callee = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(callee_rid as usize - 1)
+                        .ok_or(RunError::BadToken)?;
+                    let callee_body = read_body(&self.module.code, callee.body_offset)
+                        .map_err(|e| RunError::Malformed(e.to_string()))?;
+                    let fixed_count = fixed_count as usize;
+                    if callee_body.param_count != fixed_count as u16 + 1 {
+                        return Err(RunError::BadToken);
+                    }
+                    let mut args = pop_n(&mut stack, fixed_count + 1)?;
+                    let array = args.pop().ok_or(RunError::BadToken)?.as_object();
+                    args.push(Value::Object(array));
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
+                    let result = match self.dispatch(callee_rid, args, Some(&link)) {
+                        Ok(value) => value,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    stack.push(result);
+                }
                 Opcode::CallIndirect => {
                     let token = operand_token(&instr.operand);
                     if !matches!(
@@ -1979,6 +2023,17 @@ mod method_tests {
         .expect("compile spread call");
         let mut output = CaptureOutput::default();
         let value = run(&module, &mut output).expect("run spread call");
+        assert!(matches!(value, Value::Int(3, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn spread_array_follows_fixed_arguments_before_rest() {
+        let module = zun_compiler::compile(
+            "function count(prefix: u64, ...values: Array): u64 { return values.length; } function main(): u64 { return count(7, ...new Array(3)); }",
+        )
+        .expect("compile fixed spread call");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run fixed spread call");
         assert!(matches!(value, Value::Int(3, zun_il::NumKind::U64)));
     }
 

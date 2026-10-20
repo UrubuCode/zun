@@ -1737,25 +1737,49 @@ impl Checker<'_> {
             }
             ast::Expr::Call { callee, args, .. } => {
                 let name = self.text(callee).to_string();
-                if args.len() == 1 {
-                    if let ast::Expr::Spread { expr, .. } = &args[0] {
-                        if let Some(&func) = self.by_name.get(&name) {
-                            let rest_param = self.signatures[func as usize].rest_param;
-                            if rest_param == Some(0) {
-                                let array = self.check_expr(cx, expr);
-                                if array.ty != Ty::Array && !array.ty.is_error() {
-                                    self.error(array.span, "spread call requires an Array value");
-                                    return self.poison(span);
+                if let Some(ast::Expr::Spread { expr, .. }) = args.last() {
+                    if let Some(&func) = self.by_name.get(&name) {
+                        let rest_param = self.signatures[func as usize].rest_param;
+                        if rest_param == Some(args.len() - 1) {
+                            let mut fixed_args = Vec::with_capacity(args.len() - 1);
+                            for argument in &args[..args.len() - 1] {
+                                fixed_args.push(self.check_expr(cx, argument));
+                            }
+                            let array = self.check_expr(cx, expr);
+                            if array.ty != Ty::Array && !array.ty.is_error() {
+                                self.error(array.span, "spread call requires an Array value");
+                                return self.poison(span);
+                            }
+                            let params = self.signatures[func as usize].params.clone();
+                            for (argument, &expected) in fixed_args.iter_mut().zip(&params) {
+                                coerce_numeric_literal(argument, expected);
+                                if !expected.is_error()
+                                    && !argument.ty.is_error()
+                                    && !self.is_assignable(argument.ty, expected)
+                                {
+                                    self.error(
+                                        argument.span,
+                                        format!("argument type {:?} does not match {expected:?}", argument.ty),
+                                    );
                                 }
-                                return hir::Expr {
-                                    kind: hir::ExprKind::CallRestArray {
+                            }
+                            let return_ty = self.signatures[func as usize].return_ty;
+                            return hir::Expr {
+                                kind: if fixed_args.is_empty() {
+                                    hir::ExprKind::CallRestArray {
                                         func,
                                         args: Box::new(array),
-                                    },
-                                    ty: self.signatures[func as usize].return_ty,
-                                    span,
-                                };
-                            }
+                                    }
+                                } else {
+                                    hir::ExprKind::CallRestArrayFixed {
+                                        func,
+                                        fixed_args,
+                                        args: Box::new(array),
+                                    }
+                                },
+                                ty: return_ty,
+                                span,
+                            };
                         }
                     }
                 }

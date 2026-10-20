@@ -267,6 +267,8 @@ define_opcodes! {
     CallRest = 0x86, TokenImm32, "call.rest", StackEffect::Call;
     /// Invoke a rest-parameter function with an array of arguments.
     CallRestArray = 0x87, Token, "call.rest.array", StackEffect::Call;
+    /// Invoke a rest-parameter function with fixed arguments and an array.
+    CallRestArrayFixed = 0x88, TokenImm32, "call.rest.array.fixed", StackEffect::Call;
 }
 
 #[cfg(test)]

@@ -909,6 +909,21 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::Token(token),
                 ));
             }
+            ExprKind::CallRestArrayFixed {
+                func,
+                fixed_args,
+                args,
+            } => {
+                for arg in fixed_args {
+                    self.expr(arg);
+                }
+                self.expr(args);
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(
+                    Opcode::CallRestArrayFixed,
+                    Operand::TokenImm32(token, fixed_args.len() as i32),
+                ));
+            }
             ExprKind::IndirectCall { callee, args, func } => {
                 self.expr(callee);
                 for a in args {

@@ -32,6 +32,10 @@ fn resolver(opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
             _ => None,
         },
         Opcode::CallRestArray => Some((1, 1)),
+        Opcode::CallRestArrayFixed => match operand {
+            Operand::TokenImm32(_, count) if *count >= 0 => Some((*count as u8 + 1, 1)),
+            _ => None,
+        },
         Opcode::CallBuiltin => Some((1, 1)),
         Opcode::NewObj => Some((0, 1)),
         _ => None,
@@ -135,6 +139,36 @@ fn fixture_valid_rest_call_with_explicit_argument_count() {
 fn fixture_invalid_rest_call_with_negative_argument_count() {
     let code = asm(&[Instruction::new(
         Opcode::CallRest,
+        Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), -1),
+    )]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError {
+            kind: ErrorKind::UnknownCallArity,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn fixture_valid_fixed_rest_array_call() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(3)),
+        Instruction::new(Opcode::NewArray, Operand::None),
+        Instruction::new(
+            Opcode::CallRestArrayFixed,
+            Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), 1),
+        ),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    check(&code, RETURNS).expect("valid fixed rest array call");
+}
+
+#[test]
+fn fixture_invalid_fixed_rest_array_call_with_negative_count() {
+    let code = asm(&[Instruction::new(
+        Opcode::CallRestArrayFixed,
         Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), -1),
     )]);
     assert!(matches!(

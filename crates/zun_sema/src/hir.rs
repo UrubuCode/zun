@@ -487,6 +487,15 @@ pub enum ExprKind {
         /// Array expression containing the arguments.
         args: Box<Expr>,
     },
+    /// Call a rest function with fixed arguments followed by an Array spread.
+    CallRestArrayFixed {
+        /// Index into [`Program::functions`].
+        func: FuncIndex,
+        /// Fixed arguments before the spread.
+        fixed_args: Vec<Expr>,
+        /// Array expression containing the rest arguments.
+        args: Box<Expr>,
+    },
     /// Invoke a function-valued expression indirectly.
     IndirectCall {
         /// Function value expression.
