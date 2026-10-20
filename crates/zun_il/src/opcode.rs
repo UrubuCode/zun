@@ -212,6 +212,8 @@ define_opcodes! {
     BranchFalse = 0x62, Branch, "br.false", StackEffect::Fixed { pops: 1, pushes: 0 };
     /// Return, popping the return value if the method has one.
     Ret = 0x63, None, "ret", StackEffect::Terminator;
+    /// Throw the exception object on top of the evaluation stack.
+    Throw = 0x84, None, "throw", StackEffect::Terminator;
 
     // --- objects and calls (operand is a metadata token) ---
     /// Allocate an object and run its constructor.

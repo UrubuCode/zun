@@ -226,6 +226,14 @@ fn verify_stack(
                         let target = targets.branch_to[idx].expect("branch has a target");
                         work.push((target, height));
                     }
+                    Opcode::Throw => {
+                        if height == 0 {
+                            return Err(VerifyError {
+                                offset: instr.offset,
+                                kind: ErrorKind::StackUnderflow,
+                            });
+                        }
+                    }
                     _ => unreachable!("unexpected terminator {:?}", instr.opcode),
                 }
                 // Terminators do not fall through.

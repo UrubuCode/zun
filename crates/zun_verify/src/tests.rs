@@ -231,6 +231,27 @@ fn fixture_valid_return_value_leaves_one() {
 }
 
 #[test]
+fn fixture_valid_throw_consumes_exception() {
+    let code = asm(&[
+        Instruction::simple(Opcode::NewDynamic),
+        Instruction::simple(Opcode::Throw),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_throw_without_exception() {
+    let code = asm(&[Instruction::simple(Opcode::Throw)]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn fixture_valid_if_else_joins_consistently() {
     // const.true; br.false +L; const.f64 1; stloc0; br +M; [L] const.f64 2;
     // stloc0; [M] ret
