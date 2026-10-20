@@ -453,7 +453,9 @@ The following runtime contracts are implemented and covered by tests:
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
   microtask-scheduled success/failure continuations, and settlement-preserving
   `finally` cleanup. Source-level
-  `async`/`await` lowering remains a separate pending gate.
+  `async`/`await` lowering remains a separate pending gate; the source syntax
+  is now tokenized and represented in the AST, with sema rejecting it until
+  state-machine lowering is available.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
