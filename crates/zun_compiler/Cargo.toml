@@ -12,3 +12,4 @@ zun_syntax = { path = "../zun_syntax" }
 zun_sema = { path = "../zun_sema" }
 zun_ilgen = { path = "../zun_ilgen" }
 zun_loader = { path = "../zun_loader" }
+zun_natives = { path = "../zun_natives" }
