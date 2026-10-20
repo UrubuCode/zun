@@ -415,10 +415,11 @@ The following runtime contracts are implemented and covered by tests:
   invalid-input rejection. JIT lowering remains a separate gate for the native
   date intrinsics.
 
-The typed Cranelift backend now lowers the numeric `zun:date` subset through a
-stable C ABI/import table (`i64 -> i32`), with eligibility and interp/JIT
-equivalence coverage. String-returning Date calls and other builtins remain
-Tier 0 until their value representations and ABI lowering are defined.
+The typed Cranelift backend now lowers numeric `zun:date`, `zun:math`, and
+`zun:number` predicates through stable C ABI/import entries, with eligibility
+and interp/JIT equivalence coverage. String-returning Date calls, string
+operations, and other managed-value builtins remain Tier 0 until their value
+representations and ABI lowering are defined.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
