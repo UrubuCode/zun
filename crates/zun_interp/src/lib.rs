@@ -1464,6 +1464,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_math_exponential_and_logarithm_intrinsics() {
+        let module = zun_compiler::compile(
+            "import { expNumber, logNumber } from \"zun:math\"; function main(): number { return expNumber(0.0) + logNumber(1.0); }",
+        )
+        .expect("compile math exponential and logarithm");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run math exponential and logarithm");
+        assert!(matches!(result, Value::Float(value, _) if value == 1.0));
+    }
+
+    #[test]
     fn executes_number_finiteness_source_methods() {
         let module = zun_compiler::compile(
             "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\

@@ -85,6 +85,14 @@ fn cos(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
     unary_float(args, "cos", f64::cos)
 }
 
+fn exp(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "exp", f64::exp)
+}
+
+fn log(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "log", f64::ln)
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -106,5 +114,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "powNumber", params: &[F64, F64], ret: F64, imp: pow },
         NativeFn { name: "sinNumber", params: &[F64], ret: F64, imp: sin },
         NativeFn { name: "cosNumber", params: &[F64], ret: F64, imp: cos },
+        NativeFn { name: "expNumber", params: &[F64], ret: F64, imp: exp },
+        NativeFn { name: "logNumber", params: &[F64], ret: F64, imp: log },
     ],
 };

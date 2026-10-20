@@ -529,6 +529,15 @@ mod tests {
         assert!(matches!(dispatch(cos_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0));
     }
 
+    #[test]
+    fn math_exponential_and_logarithm_match_numeric_expectations() {
+        let mut sink = TestSink;
+        let (exp_id, _) = resolve("zun:math", "expNumber").unwrap();
+        let (log_id, _) = resolve("zun:math", "logNumber").unwrap();
+        assert!(matches!(dispatch(exp_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0));
+        assert!(matches!(dispatch(log_id, &[NativeArg::Float(1.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
+    }
+
     struct TestSink;
 
     impl Sink for TestSink {

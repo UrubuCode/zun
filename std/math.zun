@@ -4,6 +4,7 @@
 import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from "zun:math";
 import { powNumber } from "zun:math";
 import { sinNumber, cosNumber } from "zun:math";
+import { expNumber, logNumber } from "zun:math";
 
 
 function mathAbs(value: number): number {
@@ -51,5 +52,13 @@ function mathSin(value: number): number {
 
 function mathCos(value: number): number {
     return cosNumber(value);
+}
+
+function mathExp(value: number): number {
+    return expNumber(value);
+}
+
+function mathLog(value: number): number {
+    return logNumber(value);
 }
 
