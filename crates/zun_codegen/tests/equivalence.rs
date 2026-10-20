@@ -115,6 +115,20 @@ fn number_primitive_methods_use_static_class_binding() {
 }
 
 #[test]
+fn number_to_string_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { toString } from \"zun:number\";\n\
+         class Number { extern toString(): string; }\n\
+         function main(): string { let value: number = 12.5; return value.toString(); }",
+    )
+    .expect("compile Number toString");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "12.5"));
+}
+
+#[test]
 fn string_source_methods_use_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\

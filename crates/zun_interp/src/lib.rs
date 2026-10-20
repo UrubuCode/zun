@@ -922,6 +922,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_to_string_primitive_method() {
+        let module = zun_compiler::compile(
+            "import { toString } from \"zun:number\";\n\
+             class Number { extern toString(): string; }\n\
+             function main(): string { let value: number = 12.5; return value.toString(); }",
+        )
+        .expect("compile Number toString");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number toString");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "12.5"));
+    }
+
+    #[test]
     fn executes_string_source_methods_with_primitive_receiver() {
         let module = zun_compiler::compile(
             "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\

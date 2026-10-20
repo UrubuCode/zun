@@ -388,6 +388,12 @@ mod tests {
         let (parse_id, _) = resolve("zun:number", "parseFloat").unwrap();
         let (fixed_id, _) = resolve("zun:number", "toFixed").unwrap();
         let mut sink = TestSink;
+        let (string_id, string_fn) = resolve("zun:number", "toString").unwrap();
+        assert_eq!(string_fn.params, &[NativeTy::F64]);
+        assert!(matches!(
+            dispatch(string_id, &[NativeArg::Float(12.5)], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "12.5"
+        ));
         assert!(matches!(
             dispatch(parse_id, &[NativeArg::Str(" 3.50 ")], &mut sink).unwrap(),
             NativeValue::Float(value) if value == 3.5

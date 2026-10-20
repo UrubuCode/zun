@@ -25,11 +25,20 @@ fn to_fixed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
     Ok(NativeValue::Str(format!("{value:.digits$}")))
 }
 
+fn to_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Float(value)) => Ok(NativeValue::Str(value.to_string())),
+        Some(NativeArg::Int(value)) => Ok(NativeValue::Str(value.to_string())),
+        _ => Err(NativeError("toString: expected a number".to_string())),
+    }
+}
+
 /// Runtime-backed numeric conversion functions.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:number",
     functions: &[
         NativeFn { name: "parseFloat", params: &[Str], ret: F64, imp: parse_float },
         NativeFn { name: "toFixed", params: &[F64, I32], ret: Str, imp: to_fixed },
+        NativeFn { name: "toString", params: &[F64], ret: Str, imp: to_string },
     ],
 };

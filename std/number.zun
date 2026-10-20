@@ -1,9 +1,10 @@
 // Numeric conversion helpers implemented in Zun source.
 
-import { parseFloat, toFixed } from "zun:number";
+import { parseFloat, toFixed, toString } from "zun:number";
 
 class Number {
     extern toFixed(digits: int): string;
+    extern toString(): string;
 }
 
 function numberParse(value: string): number {
