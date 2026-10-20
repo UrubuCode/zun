@@ -415,6 +415,82 @@ Cross-cutting rule: data structures with real algorithmic complexity (hashing,
 buffers) live in the Rust intrinsic floor; the TypeScript class is only a thin
 typed wrapper over that floor — never TypeScript-over-`Array`.
 
+## 4.5 Dynamic path: unified object model, shapes, and call sites (design)
+
+**Validation.** For a typed VM whose dynamic code is the exception, the proven
+design is the .NET **DLR** (doc 07/09): per-call-site caching of `(guard, action)`
+rules, combined with **shapes** (hidden classes) for dynamic objects. This beats
+V8/JSC-style whole-method speculation + deopt *for Zun*, because the fallback is
+local to each site (no frame reconstruction), and it stays strictly scoped to the
+`any`/dynamic path — typed code keeps the CLR fixed-layout model of section 3
+untouched. Alternatives considered and rejected: always-dictionary objects (too
+slow); whole-program type inference (that is exactly what TS types already give
+the typed subset); tracing JITs (more complex, no better fit here). This section
+refines section 3's "`DynamicObject` (dicionário)" into shape-based storage with
+a dictionary only as the fallback mode.
+
+### Unified object model
+
+One object shape for both worlds, so the fast access path is identical:
+
+- header = `[shape/class ptr][multiplexed hash/flags]` + a flat slot array.
+- A **typed class** is a shape *frozen at compile time* from TS types (section 3):
+  field access is `load [slots + offset]` with **no guard**, because the static
+  type proves the shape.
+- A **dynamic object** gets a **runtime shape**: adding a property transitions
+  along a shape-transition tree; objects with the same keys+order share a shape
+  and the same flat slots, so access is `load [slots + offset]` behind a cheap
+  `shape == S` guard. A pathological / megamorphic object degrades to a
+  dictionary (today's `DynamicObject` map) as the fallback — like V8 dictionary
+  elements. This replaces the always-`BTreeMap` `DynamicObject` with shape+slots,
+  dictionary only as fallback.
+
+This is the analogue of .NET's `ExpandoClass` behind `ExpandoObject` (doc 07/09),
+and it is the "ideal middle" between a fully static class and a fully dynamic
+dictionary: the same machine-level access for both, with a guard only where the
+shape was discovered at runtime.
+
+### Call sites (DLR-style)
+
+Each dynamic operation (`GetMember`, `SetMember`, `InvokeMember`, `BinaryOp`,
+index, convert) is a call site caching `(guard, action)` rules: L0 monomorphic
+on the site, L1 a small per-site polymorphic set (~10), L2 shared per binder
+(~128); on total miss the binder re-resolves and installs a new rule, and a
+megamorphic site stays on the slow (cold) binder path. The guard
+(`tag ==` / `shape ==`) plus the **local** fallback are the correctness core —
+there is no whole-method deopt. The rule action is an interpreter closure in
+Tier 0 and a compiled stub in Tier 1, reusing the existing interpreter/JIT rather
+than a second codegen.
+
+### Boxing (the ideal middle)
+
+Typed values are already unboxed (native i32/f64/object-ptr on the typed stack);
+only `any` is boxed. Keep `Any` as a compact tagged value for the dynamic path and
+keep its representation behind an abstraction so it can change. **Defer**
+NaN-boxing / pointer-tagging: their main win (one word per value) matters when
+*every* value is dynamic (the V8/JSC world); here typed values never box, so the
+pressure is low. Revisit NaN-boxing only if a dynamic-heavy workload measures it
+as worth the complexity. Rule: never box what is typed; box only `any`, compactly.
+
+### Array and Object in the VM
+
+Storage with real complexity stays in the Rust floor (as `ArrayStorage` already
+does); the `.zun` class is a thin surface. A generic / `any` `Array` stores boxed
+`Any` elements over that floor; typed arrays keep their primitive buffers.
+Optional later: V8-style elements-kind specialization (packed int/double/holey/
+dictionary) if mixed arrays prove hot — performance backlog, not now.
+
+### Payoff beyond property access
+
+Shapes make `JSON.parse` of uniform records (the common case — arrays of
+same-shaped objects) converge to a shared shape, giving compact storage and fast
+field access; `JSON.stringify`, serialization, and reflection iterate shapes. So
+the same mechanism pays for JSON, serialization, and reflection, not only `o.x`.
+
+Grounded in docs 07/09 (DLR) and 03/04/05 (object layout, dispatch, allocation).
+Scope: the `any` / `DynamicObject` / `Proxy` / `Reflect` path (section 4.4.2);
+typed code is unaffected.
+
 ## 5. Implementation ledger (2026-10-20)
 
 The following runtime contracts are implemented and covered by tests:
