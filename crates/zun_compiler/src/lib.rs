@@ -51,6 +51,14 @@ where
     Ok(loader)
 }
 
+/// Compile the checked-in Zun standard-library modules into a runtime loader.
+///
+/// The source remains ordinary Zun code; this convenience entry point only
+/// supplies the stable module identities used by hosts and tests.
+pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
+    compile_modules([("zun:std:math", include_str!("../../../std/math.zun"))])
+}
+
 /// Validate imports against the complete source set before module emission.
 ///
 /// This is the compiler-side half of module linking: native `zun:*` exports
@@ -183,5 +191,7 @@ mod tests {
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/math.zun"))
                 .expect("std/math.zun");
         compile(&source).expect("standard library module should compile");
+        let loader = compile_standard_library().expect("standard library should load");
+        assert!(loader.get("zun:std:math").is_some());
     }
 }
