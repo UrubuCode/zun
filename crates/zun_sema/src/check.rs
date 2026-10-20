@@ -35,6 +35,8 @@ mod numeric_literals;
 mod function_context;
 #[path = "boxed_locals.rs"]
 mod boxed_locals;
+#[path = "capture_analysis.rs"]
+mod capture_analysis;
 #[path = "poison.rs"]
 mod poison;
 #[path = "type_expect.rs"]
@@ -274,78 +276,7 @@ impl Checker<'_> {
     }
 
     fn collect_mutated_expr(&self, expr: &ast::Expr, names: &mut HashSet<String>) {
-        match expr {
-            ast::Expr::Assign { target, value, .. } => {
-                names.insert(self.text(target).to_string());
-                self.collect_mutated_expr(value, names);
-            }
-            ast::Expr::Binary { lhs, rhs, .. } => {
-                self.collect_mutated_expr(lhs, names);
-                self.collect_mutated_expr(rhs, names);
-            }
-            ast::Expr::Conditional {
-                condition,
-                when_true,
-                when_false,
-                ..
-            } => {
-                self.collect_mutated_expr(condition, names);
-                self.collect_mutated_expr(when_true, names);
-                self.collect_mutated_expr(when_false, names);
-            }
-            ast::Expr::Unary { operand, .. } | ast::Expr::Cast { expr: operand, .. } => {
-                self.collect_mutated_expr(operand, names)
-            }
-            ast::Expr::Call { args, .. } | ast::Expr::New { args, .. } => {
-                for arg in args {
-                    self.collect_mutated_expr(arg, names);
-                }
-            }
-            ast::Expr::ComputedCall { callee, args, .. } => {
-                self.collect_mutated_expr(callee, names);
-                for arg in args {
-                    self.collect_mutated_expr(arg, names);
-                }
-            }
-            ast::Expr::MethodCall { receiver, args, .. } => {
-                self.collect_mutated_expr(receiver, names);
-                for arg in args {
-                    self.collect_mutated_expr(arg, names);
-                }
-            }
-            ast::Expr::OptionalMethodCall { object, args, .. } => {
-                self.collect_mutated_expr(object, names);
-                for arg in args {
-                    self.collect_mutated_expr(arg, names);
-                }
-            }
-            ast::Expr::Field { object, .. } | ast::Expr::Index { object, .. } => {
-                self.collect_mutated_expr(object, names)
-            }
-            ast::Expr::OptionalField { object, .. } => self.collect_mutated_expr(object, names),
-            ast::Expr::FieldAssign { object, value, .. } => {
-                self.collect_mutated_expr(object, names);
-                self.collect_mutated_expr(value, names);
-            }
-            ast::Expr::IndexAssign {
-                object,
-                index,
-                value,
-                ..
-            } => {
-                self.collect_mutated_expr(object, names);
-                self.collect_mutated_expr(index, names);
-                self.collect_mutated_expr(value, names);
-            }
-            ast::Expr::Function(_)
-            | ast::Expr::Ident(_)
-            | ast::Expr::Number { .. }
-            | ast::Expr::String { .. }
-            | ast::Expr::Template { .. }
-            | ast::Expr::Bool { .. }
-            | ast::Expr::Null { .. } => {}
-            ast::Expr::Spread { expr, .. } => self.collect_mutated_expr(expr, names),
-        }
+        capture_analysis::collect_mutated_expr(self, expr, names);
     }
 
     fn collect_signatures(&mut self, program: &ast::Program) {
