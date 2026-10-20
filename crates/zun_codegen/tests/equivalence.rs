@@ -1583,6 +1583,13 @@ fn number_finiteness_and_safe_integer_predicates_are_equivalent() {
 }
 
 #[test]
+fn number_negative_zero_predicate_is_jit_equivalent() {
+    assert_equivalent(
+        "import { isNegativeZero } from \"zun:number\"; function main(): boolean { return isNegativeZero(-0.0); }",
+    );
+}
+
+#[test]
 fn math_power_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",

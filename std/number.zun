@@ -1,6 +1,6 @@
 // Numeric conversion helpers implemented in Zun source.
 
-import { parseFloat, toFixed, toString, isFinite, isNaN } from "zun:number";
+import { parseFloat, toFixed, toString, isFinite, isNaN, isNegativeZero } from "zun:number";
 
 class Number {
     abs(): number {
@@ -61,6 +61,8 @@ class Number {
     isNaN(): boolean {
         return isNaN(this);
     }
+
+    extern isNegativeZero(): boolean;
 
     isFinite(): boolean {
         return isFinite(this);

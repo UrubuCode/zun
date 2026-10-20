@@ -399,6 +399,7 @@ impl Translator<'_> {
                         Some("hypotNumber") => ("zun_jit_math_hypot", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("isFinite") => ("zun_jit_number_is_finite", 1, types::F64, JitKind::Bool, types::I32),
                         Some("isNaN") => ("zun_jit_number_is_nan", 1, types::F64, JitKind::Bool, types::I32),
+                        Some("isNegativeZero") => ("zun_jit_number_is_negative_zero", 1, types::F64, JitKind::Bool, types::I32),
                         _ => return Err("unsupported builtin".into()),
                     };
                     if stack.len() < arg_count { return Err("builtin stack underflow".into()); }

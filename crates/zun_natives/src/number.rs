@@ -51,6 +51,15 @@ fn is_nan(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
     Ok(NativeValue::Bool(value.is_nan()))
 }
 
+fn is_negative_zero(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("isNegativeZero: expected a number".to_string())),
+    };
+    Ok(NativeValue::Bool(value == 0.0 && value.is_sign_negative()))
+}
+
 /// Runtime-backed numeric conversion functions.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:number",
@@ -60,5 +69,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "toString", params: &[F64], ret: Str, imp: to_string },
         NativeFn { name: "isFinite", params: &[F64], ret: Bool, imp: is_finite },
         NativeFn { name: "isNaN", params: &[F64], ret: Bool, imp: is_nan },
+        NativeFn { name: "isNegativeZero", params: &[F64], ret: Bool, imp: is_negative_zero },
     ],
 };
