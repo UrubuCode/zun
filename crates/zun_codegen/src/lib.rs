@@ -19,61 +19,199 @@ pub use eligible::eligible_methods;
 pub use zun_il::{JitKind, NumKind};
 
 #[inline]
-pub extern "C" fn zun_jit_date_year(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().0 }
-#[inline] pub extern "C" fn zun_jit_date_is_valid(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).millis().is_some() as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_month(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().1 as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_day(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().2 as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_hour(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().0 as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_minute(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().1 as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_second(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().2 as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_millisecond(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().3 as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_weekday(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).weekday().unwrap() as i32 }
-#[inline]
-pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).ordinal().unwrap() as i32 }
-
-#[inline] pub extern "C" fn zun_jit_math_abs(value: f64) -> f64 { value.abs() }
-#[inline] pub extern "C" fn zun_jit_math_sqrt(value: f64) -> f64 { value.sqrt() }
-#[inline] pub extern "C" fn zun_jit_math_cbrt(value: f64) -> f64 { value.cbrt() }
-#[inline] pub extern "C" fn zun_jit_math_sign(value: f64) -> f64 {
-    if value.is_nan() || value == 0.0 { value } else if value.is_sign_positive() { 1.0 } else { -1.0 }
+pub extern "C" fn zun_jit_date_year(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_date()
+        .unwrap()
+        .0
 }
-#[inline] pub extern "C" fn zun_jit_math_floor(value: f64) -> f64 { value.floor() }
-#[inline] pub extern "C" fn zun_jit_math_ceil(value: f64) -> f64 { value.ceil() }
-#[inline] pub extern "C" fn zun_jit_math_round(value: f64) -> f64 { value.round() }
-#[inline] pub extern "C" fn zun_jit_math_trunc(value: f64) -> f64 { value.trunc() }
-#[inline] pub extern "C" fn zun_jit_math_sin(value: f64) -> f64 { value.sin() }
-#[inline] pub extern "C" fn zun_jit_math_cos(value: f64) -> f64 { value.cos() }
-#[inline] pub extern "C" fn zun_jit_math_exp(value: f64) -> f64 { value.exp() }
-#[inline] pub extern "C" fn zun_jit_math_log(value: f64) -> f64 { value.ln() }
-#[inline] pub extern "C" fn zun_jit_math_log10(value: f64) -> f64 { value.log10() }
-#[inline] pub extern "C" fn zun_jit_math_log2(value: f64) -> f64 { value.log2() }
-#[inline] pub extern "C" fn zun_jit_math_expm1(value: f64) -> f64 { value.exp_m1() }
-#[inline] pub extern "C" fn zun_jit_math_log1p(value: f64) -> f64 { value.ln_1p() }
-#[inline] pub extern "C" fn zun_jit_math_sinh(value: f64) -> f64 { value.sinh() }
-#[inline] pub extern "C" fn zun_jit_math_cosh(value: f64) -> f64 { value.cosh() }
-#[inline] pub extern "C" fn zun_jit_math_tanh(value: f64) -> f64 { value.tanh() }
-#[inline] pub extern "C" fn zun_jit_math_asinh(value: f64) -> f64 { value.asinh() }
-#[inline] pub extern "C" fn zun_jit_math_acosh(value: f64) -> f64 { value.acosh() }
-#[inline] pub extern "C" fn zun_jit_math_atanh(value: f64) -> f64 { value.atanh() }
-#[inline] pub extern "C" fn zun_jit_math_tan(value: f64) -> f64 { value.tan() }
-#[inline] pub extern "C" fn zun_jit_math_min(left: f64, right: f64) -> f64 { left.min(right) }
-#[inline] pub extern "C" fn zun_jit_math_max(left: f64, right: f64) -> f64 { left.max(right) }
-#[inline] pub extern "C" fn zun_jit_math_pow(left: f64, right: f64) -> f64 { left.powf(right) }
-#[inline] pub extern "C" fn zun_jit_math_atan2(left: f64, right: f64) -> f64 { left.atan2(right) }
-#[inline] pub extern "C" fn zun_jit_math_hypot(left: f64, right: f64) -> f64 { left.hypot(right) }
-#[inline] pub extern "C" fn zun_jit_number_is_finite(value: f64) -> i32 { value.is_finite() as i32 }
-#[inline] pub extern "C" fn zun_jit_number_is_nan(value: f64) -> i32 { value.is_nan() as i32 }
-#[inline] pub extern "C" fn zun_jit_number_is_negative_zero(value: f64) -> i32 {
+#[inline]
+pub extern "C" fn zun_jit_date_is_valid(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis).millis().is_some() as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_month(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_date()
+        .unwrap()
+        .1 as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_day(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_date()
+        .unwrap()
+        .2 as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_hour(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_time()
+        .unwrap()
+        .0 as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_minute(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_time()
+        .unwrap()
+        .1 as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_second(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_time()
+        .unwrap()
+        .2 as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_millisecond(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis)
+        .utc_time()
+        .unwrap()
+        .3 as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_weekday(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis).weekday().unwrap() as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 {
+    zun_core::DateValue::from_millis(millis).ordinal().unwrap() as i32
+}
+
+#[inline]
+pub extern "C" fn zun_jit_math_abs(value: f64) -> f64 {
+    value.abs()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_sqrt(value: f64) -> f64 {
+    value.sqrt()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_cbrt(value: f64) -> f64 {
+    value.cbrt()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_sign(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 {
+        value
+    } else if value.is_sign_positive() {
+        1.0
+    } else {
+        -1.0
+    }
+}
+#[inline]
+pub extern "C" fn zun_jit_math_floor(value: f64) -> f64 {
+    value.floor()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_ceil(value: f64) -> f64 {
+    value.ceil()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_round(value: f64) -> f64 {
+    value.round()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_trunc(value: f64) -> f64 {
+    value.trunc()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_sin(value: f64) -> f64 {
+    value.sin()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_cos(value: f64) -> f64 {
+    value.cos()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_exp(value: f64) -> f64 {
+    value.exp()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_log(value: f64) -> f64 {
+    value.ln()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_log10(value: f64) -> f64 {
+    value.log10()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_log2(value: f64) -> f64 {
+    value.log2()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_expm1(value: f64) -> f64 {
+    value.exp_m1()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_log1p(value: f64) -> f64 {
+    value.ln_1p()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_sinh(value: f64) -> f64 {
+    value.sinh()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_cosh(value: f64) -> f64 {
+    value.cosh()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_tanh(value: f64) -> f64 {
+    value.tanh()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_asinh(value: f64) -> f64 {
+    value.asinh()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_acosh(value: f64) -> f64 {
+    value.acosh()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_atanh(value: f64) -> f64 {
+    value.atanh()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_tan(value: f64) -> f64 {
+    value.tan()
+}
+#[inline]
+pub extern "C" fn zun_jit_math_min(left: f64, right: f64) -> f64 {
+    left.min(right)
+}
+#[inline]
+pub extern "C" fn zun_jit_math_max(left: f64, right: f64) -> f64 {
+    left.max(right)
+}
+#[inline]
+pub extern "C" fn zun_jit_math_pow(left: f64, right: f64) -> f64 {
+    left.powf(right)
+}
+#[inline]
+pub extern "C" fn zun_jit_math_atan2(left: f64, right: f64) -> f64 {
+    left.atan2(right)
+}
+#[inline]
+pub extern "C" fn zun_jit_math_hypot(left: f64, right: f64) -> f64 {
+    left.hypot(right)
+}
+#[inline]
+pub extern "C" fn zun_jit_number_is_finite(value: f64) -> i32 {
+    value.is_finite() as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_number_is_nan(value: f64) -> i32 {
+    value.is_nan() as i32
+}
+#[inline]
+pub extern "C" fn zun_jit_number_is_negative_zero(value: f64) -> i32 {
     (value == 0.0 && value.is_sign_negative()) as i32
 }
-#[inline] pub extern "C" fn zun_jit_number_is_safe_integer(value: f64) -> i32 {
+#[inline]
+pub extern "C" fn zun_jit_number_is_safe_integer(value: f64) -> i32 {
     (value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0) as i32
 }
 
@@ -216,9 +354,15 @@ impl Jit {
         builder.symbol("zun_jit_date_hour", zun_jit_date_hour as *const u8);
         builder.symbol("zun_jit_date_minute", zun_jit_date_minute as *const u8);
         builder.symbol("zun_jit_date_second", zun_jit_date_second as *const u8);
-        builder.symbol("zun_jit_date_millisecond", zun_jit_date_millisecond as *const u8);
+        builder.symbol(
+            "zun_jit_date_millisecond",
+            zun_jit_date_millisecond as *const u8,
+        );
         builder.symbol("zun_jit_date_weekday", zun_jit_date_weekday as *const u8);
-        builder.symbol("zun_jit_date_day_of_year", zun_jit_date_day_of_year as *const u8);
+        builder.symbol(
+            "zun_jit_date_day_of_year",
+            zun_jit_date_day_of_year as *const u8,
+        );
         builder.symbol("zun_jit_math_abs", zun_jit_math_abs as *const u8);
         builder.symbol("zun_jit_math_sqrt", zun_jit_math_sqrt as *const u8);
         builder.symbol("zun_jit_math_cbrt", zun_jit_math_cbrt as *const u8);
@@ -247,10 +391,19 @@ impl Jit {
         builder.symbol("zun_jit_math_pow", zun_jit_math_pow as *const u8);
         builder.symbol("zun_jit_math_atan2", zun_jit_math_atan2 as *const u8);
         builder.symbol("zun_jit_math_hypot", zun_jit_math_hypot as *const u8);
-        builder.symbol("zun_jit_number_is_finite", zun_jit_number_is_finite as *const u8);
+        builder.symbol(
+            "zun_jit_number_is_finite",
+            zun_jit_number_is_finite as *const u8,
+        );
         builder.symbol("zun_jit_number_is_nan", zun_jit_number_is_nan as *const u8);
-        builder.symbol("zun_jit_number_is_negative_zero", zun_jit_number_is_negative_zero as *const u8);
-        builder.symbol("zun_jit_number_is_safe_integer", zun_jit_number_is_safe_integer as *const u8);
+        builder.symbol(
+            "zun_jit_number_is_negative_zero",
+            zun_jit_number_is_negative_zero as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_number_is_safe_integer",
+            zun_jit_number_is_safe_integer as *const u8,
+        );
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);
@@ -501,14 +654,13 @@ impl Jit {
                 map.pc = base + map.code_offset as usize;
             }
         }
-        self.stack_map_registry.replace(
-            self.stack_maps.values().flat_map(|maps| {
+        self.stack_map_registry
+            .replace(self.stack_maps.values().flat_map(|maps| {
                 maps.iter().map(|map| zun_gc::NativeStackMap {
                     pc: map.pc,
                     span: map.span,
                 })
-            }),
-        );
+            }));
     }
 
     /// Whether `method_rid` is eligible for JIT compilation.
@@ -627,12 +779,8 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
         .map_err(|e| JitError::UnsupportedHost(e.to_string()))?
         .finish(settings::Flags::new(flags))
         .map_err(|e| JitError::UnsupportedHost(e.to_string()))?;
-    let builder = ObjectBuilder::new(
-        isa,
-        "zun-aot",
-        cranelift_module::default_libcall_names(),
-    )
-    .map_err(|e| JitError::Module(e.to_string()))?;
+    let builder = ObjectBuilder::new(isa, "zun-aot", cranelift_module::default_libcall_names())
+        .map_err(|e| JitError::Module(e.to_string()))?;
     let mut module = ObjectModule::new(builder);
     let eligible = eligible_methods(zm);
     let types =

@@ -50,12 +50,20 @@ impl Value {
     /// Unbox a dynamic value, rejecting invalid tags or stale string handles.
     pub fn unbox_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<Self> {
         match any.tag() {
-            zun_core::AnyTag::Int => any.as_int().map(|value| Value::Int(value, zun_il::NumKind::I64)),
-            zun_core::AnyTag::Float => any.as_float().map(|value| Value::Float(value, zun_il::NumKind::F64)),
+            zun_core::AnyTag::Int => any
+                .as_int()
+                .map(|value| Value::Int(value, zun_il::NumKind::I64)),
+            zun_core::AnyTag::Float => any
+                .as_float()
+                .map(|value| Value::Float(value, zun_il::NumKind::F64)),
             zun_core::AnyTag::Bool => any.as_bool().map(Value::Bool),
-            zun_core::AnyTag::Object => any.as_object().filter(|address| *address != 0).map(|address| {
-                Value::Object(unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-            }),
+            zun_core::AnyTag::Object => {
+                any.as_object()
+                    .filter(|address| *address != 0)
+                    .map(|address| {
+                        Value::Object(unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                    })
+            }
             zun_core::AnyTag::String => any
                 .as_string()
                 .and_then(|handle| heap.try_string(handle).cloned())
@@ -259,13 +267,19 @@ mod tests {
     #[test]
     fn any_box_and_unbox_roundtrip() {
         let mut heap = zun_gc::Heap::new();
-        for value in [Value::Int(7, NumKind::I32), Value::Float(2.5, NumKind::F64), Value::Bool(true)] {
+        for value in [
+            Value::Int(7, NumKind::I32),
+            Value::Float(2.5, NumKind::F64),
+            Value::Bool(true),
+        ] {
             let any = value.box_any(&mut heap).expect("boxable");
             assert!(Value::unbox_any(any, &heap).is_some());
         }
         let value = Value::Str("hello".into());
         let any = value.box_any(&mut heap).expect("boxable");
-        assert!(matches!(Value::unbox_any(any, &heap), Some(Value::Str(text)) if &*text == "hello"));
+        assert!(
+            matches!(Value::unbox_any(any, &heap), Some(Value::Str(text)) if &*text == "hello")
+        );
         assert!(Value::Void.box_any(&mut heap).is_none());
     }
 }

@@ -335,10 +335,12 @@ impl Translator<'_> {
                             .iconst(types::I64, self.virtual_table_ptrs as i64);
                         let ptr_offset = self.builder.ins().imul_imm(type_rid, 8);
                         let table_ptr_addr = self.builder.ins().iadd(ptrs, ptr_offset);
-                        let table = self
-                            .builder
-                            .ins()
-                            .load(types::I64, MemFlags::trusted(), table_ptr_addr, 0);
+                        let table = self.builder.ins().load(
+                            types::I64,
+                            MemFlags::trusted(),
+                            table_ptr_addr,
+                            0,
+                        );
                         let address = self.builder.ins().iadd_imm(table, (slot * 8) as i64);
                         let target =
                             self.builder
@@ -371,59 +373,324 @@ impl Translator<'_> {
                     }
                 }
                 Opcode::CallBuiltin => {
-                    let id = match instr.operand { Operand::Imm32(id) => id as u32, _ => return Err("builtin operand".into()) };
-                    let (name, arg_count, arg_type, result_kind, result_type) = match zun_natives::by_id(id).map(|f| f.name) {
-                        Some("isValid") => ("zun_jit_date_is_valid", 1, types::I64, JitKind::Bool, types::I32),
-                        Some("year") => ("zun_jit_date_year", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("month") => ("zun_jit_date_month", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("day") => ("zun_jit_date_day", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("hour") => ("zun_jit_date_hour", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("minute") => ("zun_jit_date_minute", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("second") => ("zun_jit_date_second", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("millisecond") => ("zun_jit_date_millisecond", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("weekday") => ("zun_jit_date_weekday", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("dayOfYear") => ("zun_jit_date_day_of_year", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
-                        Some("abs") => ("zun_jit_math_abs", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("signNumber") => ("zun_jit_math_sign", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("sqrt" | "sqrtNumber") => ("zun_jit_math_sqrt", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("cbrtNumber") => ("zun_jit_math_cbrt", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("floor" | "floorNumber") => ("zun_jit_math_floor", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("ceil" | "ceilNumber") => ("zun_jit_math_ceil", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("round" | "roundNumber") => ("zun_jit_math_round", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("truncNumber") => ("zun_jit_math_trunc", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("sinNumber") => ("zun_jit_math_sin", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("cosNumber") => ("zun_jit_math_cos", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("expNumber") => ("zun_jit_math_exp", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("logNumber") => ("zun_jit_math_log", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("log10Number") => ("zun_jit_math_log10", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("log2Number") => ("zun_jit_math_log2", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("expm1Number") => ("zun_jit_math_expm1", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("log1pNumber") => ("zun_jit_math_log1p", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("sinhNumber") => ("zun_jit_math_sinh", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("coshNumber") => ("zun_jit_math_cosh", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("tanhNumber") => ("zun_jit_math_tanh", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("asinhNumber") => ("zun_jit_math_asinh", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("acoshNumber") => ("zun_jit_math_acosh", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("atanhNumber") => ("zun_jit_math_atanh", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("tanNumber") => ("zun_jit_math_tan", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("min" | "minNumber") => ("zun_jit_math_min", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("max" | "maxNumber") => ("zun_jit_math_max", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("powNumber") => ("zun_jit_math_pow", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("atan2Number") => ("zun_jit_math_atan2", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("hypotNumber") => ("zun_jit_math_hypot", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
-                        Some("isFinite") => ("zun_jit_number_is_finite", 1, types::F64, JitKind::Bool, types::I32),
-                        Some("isNaN") => ("zun_jit_number_is_nan", 1, types::F64, JitKind::Bool, types::I32),
-                        Some("isNegativeZero") => ("zun_jit_number_is_negative_zero", 1, types::F64, JitKind::Bool, types::I32),
-                        Some("isSafeInteger") => ("zun_jit_number_is_safe_integer", 1, types::F64, JitKind::Bool, types::I32),
-                        _ => return Err("unsupported builtin".into()),
+                    let id = match instr.operand {
+                        Operand::Imm32(id) => id as u32,
+                        _ => return Err("builtin operand".into()),
                     };
-                    if stack.len() < arg_count { return Err("builtin stack underflow".into()); }
+                    let (name, arg_count, arg_type, result_kind, result_type) =
+                        match zun_natives::by_id(id).map(|f| f.name) {
+                            Some("isValid") => (
+                                "zun_jit_date_is_valid",
+                                1,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("year") => (
+                                "zun_jit_date_year",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("month") => (
+                                "zun_jit_date_month",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("day") => (
+                                "zun_jit_date_day",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("hour") => (
+                                "zun_jit_date_hour",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("minute") => (
+                                "zun_jit_date_minute",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("second") => (
+                                "zun_jit_date_second",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("millisecond") => (
+                                "zun_jit_date_millisecond",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("weekday") => (
+                                "zun_jit_date_weekday",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("dayOfYear") => (
+                                "zun_jit_date_day_of_year",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("abs") => (
+                                "zun_jit_math_abs",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("signNumber") => (
+                                "zun_jit_math_sign",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("sqrt" | "sqrtNumber") => (
+                                "zun_jit_math_sqrt",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("cbrtNumber") => (
+                                "zun_jit_math_cbrt",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("floor" | "floorNumber") => (
+                                "zun_jit_math_floor",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("ceil" | "ceilNumber") => (
+                                "zun_jit_math_ceil",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("round" | "roundNumber") => (
+                                "zun_jit_math_round",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("truncNumber") => (
+                                "zun_jit_math_trunc",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("sinNumber") => (
+                                "zun_jit_math_sin",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("cosNumber") => (
+                                "zun_jit_math_cos",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("expNumber") => (
+                                "zun_jit_math_exp",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("logNumber") => (
+                                "zun_jit_math_log",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("log10Number") => (
+                                "zun_jit_math_log10",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("log2Number") => (
+                                "zun_jit_math_log2",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("expm1Number") => (
+                                "zun_jit_math_expm1",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("log1pNumber") => (
+                                "zun_jit_math_log1p",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("sinhNumber") => (
+                                "zun_jit_math_sinh",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("coshNumber") => (
+                                "zun_jit_math_cosh",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("tanhNumber") => (
+                                "zun_jit_math_tanh",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("asinhNumber") => (
+                                "zun_jit_math_asinh",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("acoshNumber") => (
+                                "zun_jit_math_acosh",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("atanhNumber") => (
+                                "zun_jit_math_atanh",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("tanNumber") => (
+                                "zun_jit_math_tan",
+                                1,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("min" | "minNumber") => (
+                                "zun_jit_math_min",
+                                2,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("max" | "maxNumber") => (
+                                "zun_jit_math_max",
+                                2,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("powNumber") => (
+                                "zun_jit_math_pow",
+                                2,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("atan2Number") => (
+                                "zun_jit_math_atan2",
+                                2,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("hypotNumber") => (
+                                "zun_jit_math_hypot",
+                                2,
+                                types::F64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("isFinite") => (
+                                "zun_jit_number_is_finite",
+                                1,
+                                types::F64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("isNaN") => (
+                                "zun_jit_number_is_nan",
+                                1,
+                                types::F64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("isNegativeZero") => (
+                                "zun_jit_number_is_negative_zero",
+                                1,
+                                types::F64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("isSafeInteger") => (
+                                "zun_jit_number_is_safe_integer",
+                                1,
+                                types::F64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            _ => return Err("unsupported builtin".into()),
+                        };
+                    if stack.len() < arg_count {
+                        return Err("builtin stack underflow".into());
+                    }
                     let args: Vec<Slot> = stack.split_off(stack.len() - arg_count);
-                    let fid = if let Some(&fid) = builtin_ids.get(name) { fid } else {
+                    let fid = if let Some(&fid) = builtin_ids.get(name) {
+                        fid
+                    } else {
                         let mut sig = Signature::new(self.builder.func.signature.call_conv);
-                        for _ in 0..arg_count { sig.params.push(AbiParam::new(arg_type)); }
+                        for _ in 0..arg_count {
+                            sig.params.push(AbiParam::new(arg_type));
+                        }
                         sig.returns.push(AbiParam::new(result_type));
-                        let fid = self.module.declare_function(name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
+                        let fid = self
+                            .module
+                            .declare_function(name, Linkage::Import, &sig)
+                            .map_err(|e| e.to_string())?;
                         builtin_ids.insert(name, fid);
                         fid
                     };

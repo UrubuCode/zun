@@ -29,7 +29,10 @@ fn assert_equivalent(src: &str) {
     let entry = module.entry_point.expect("entry point").rid();
 
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(entry), "entry should be JIT-eligible:\n{src}");
+    assert!(
+        jit.is_compiled(entry),
+        "entry should be JIT-eligible:\n{src}"
+    );
 
     let jit_result = jit.call_entry(entry).expect("jit call");
     let interp_result = interp_entry(&module);
@@ -73,7 +76,10 @@ fn managed_error_hierarchy_constructs_and_preserves_fields() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "string-field error objects stay interpreter-only");
+    assert!(
+        !jit.is_compiled(entry),
+        "string-field error objects stay interpreter-only"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -86,7 +92,10 @@ fn managed_error_to_string_uses_name_and_message() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "string operations stay interpreter-only");
+    assert!(
+        !jit.is_compiled(entry),
+        "string operations stay interpreter-only"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -180,7 +189,10 @@ fn date_surface_exposes_time_components_and_string_form() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "date string operations remain interpreter-only");
+    assert!(
+        !jit.is_compiled(entry),
+        "date string operations remain interpreter-only"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -229,7 +241,10 @@ fn date_surface_exposes_ecmascript_utc_aliases() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "date string aliases remain interpreter-only");
+    assert!(
+        !jit.is_compiled(entry),
+        "date string aliases remain interpreter-only"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -263,7 +278,10 @@ fn date_surface_parses_iso_datetime_values() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "ISO parsing remains interpreter-only until native JIT calls are lowered");
+    assert!(
+        !jit.is_compiled(entry),
+        "ISO parsing remains interpreter-only until native JIT calls are lowered"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -276,7 +294,10 @@ fn date_surface_json_representation_matches_iso() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Date JSON strings remain interpreter-only");
+    assert!(
+        !jit.is_compiled(entry),
+        "Date JSON strings remain interpreter-only"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -342,7 +363,10 @@ fn extern_method_uses_interpreter_fallback_until_native_jit_lowering_exists() {
     .expect("compile extern method");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback methods");
-    assert!(!jit.is_compiled(entry), "native builtin call must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "native builtin call must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 7.5));
 }
 
@@ -356,7 +380,10 @@ fn string_primitive_methods_use_static_class_binding() {
     .expect("compile String methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
-    assert!(!jit.is_compiled(entry), "native String methods must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "native String methods must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -385,7 +412,10 @@ fn string_index_of_uses_interpreter_fallback() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
     assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Int(2, zun_il::NumKind::I32)));
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Int(2, zun_il::NumKind::I32)
+    ));
 }
 
 #[test]
@@ -399,7 +429,10 @@ fn string_last_index_of_uses_interpreter_fallback() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
     assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Int(3, zun_il::NumKind::I32)));
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Int(3, zun_il::NumKind::I32)
+    ));
 }
 
 #[test]
@@ -692,7 +725,10 @@ fn number_primitive_methods_use_static_class_binding() {
     .expect("compile Number methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
-    assert!(!jit.is_compiled(entry), "native Number methods must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "native Number methods must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "12.5"));
 }
 
@@ -797,8 +833,14 @@ fn number_source_methods_use_interpreter_fallback() {
     .expect("compile Number source methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
-    assert!(!jit.is_compiled(entry), "Number method calls must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(7.5, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Number method calls must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(7.5, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -810,8 +852,14 @@ fn number_clamp_uses_interpreter_fallback() {
     .expect("compile Number clamp");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
-    assert!(!jit.is_compiled(entry), "Number method calls must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(10.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Number method calls must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(10.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -823,8 +871,14 @@ fn number_min_and_max_use_interpreter_fallback() {
     .expect("compile Number min max");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
-    assert!(!jit.is_compiled(entry), "Number method calls must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(14.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Number method calls must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(14.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -836,7 +890,10 @@ fn string_source_methods_use_interpreter_fallback() {
     .expect("compile String source methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
-    assert!(!jit.is_compiled(entry), "String method calls must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "String method calls must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "zun:vm"));
 }
 
@@ -878,7 +935,10 @@ fn array_source_methods_keep_interpreter_fallback() {
     .expect("compile Array source method");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -894,8 +954,13 @@ fn array_higher_order_methods_keep_interpreter_fallback() {
     .expect("compile Array higher-order methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with callback fallback");
-    assert!(!jit.is_compiled(entry), "indirect callback methods must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(value, zun_il::NumKind::F64) if value == 42.0));
+    assert!(
+        !jit.is_compiled(entry),
+        "indirect callback methods must remain Tier 0"
+    );
+    assert!(
+        matches!(interp_entry(&module), Value::Float(value, zun_il::NumKind::F64) if value == 42.0)
+    );
 }
 
 #[test]
@@ -1039,7 +1104,7 @@ fn array_take_and_drop_keep_interpreter_fallback() {
     assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
     let result = interp_entry(&module);
     assert!(matches!(result, Value::Float(value, _) if value == 40.0));
-    }
+}
 
 #[test]
 fn array_remove_at_keeps_interpreter_fallback() {
@@ -1636,7 +1701,9 @@ fn math_power_is_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 8.0));
+    assert!(
+        matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 8.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 8.0));
 }
 
@@ -1649,7 +1716,9 @@ fn math_trigonometry_is_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 1.0));
+    assert!(
+        matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 1.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 1.0));
 }
 
@@ -1662,7 +1731,9 @@ fn math_exponential_and_logarithm_are_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 1.0));
+    assert!(
+        matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 1.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 1.0));
 }
 
@@ -1675,7 +1746,9 @@ fn math_tangent_and_atan2_are_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 0.0));
+    assert!(
+        matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 0.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 0.0));
 }
 
@@ -1688,7 +1761,9 @@ fn math_hypot_is_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 5.0));
+    assert!(
+        matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 5.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 5.0));
 }
 
@@ -1700,7 +1775,9 @@ fn math_scalar_aliases_are_jit_equivalent() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with scalar math");
     assert!(jit.is_compiled(entry));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT scalar math"), RetVal::Float(value) if value == 18.0));
+    assert!(
+        matches!(jit.call_entry(entry).expect("run JIT scalar math"), RetVal::Float(value) if value == 18.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 18.0));
 }
 
@@ -1757,7 +1834,10 @@ fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds break module");
     assert!(jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 3));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT break"), RetVal::Int(3)));
+    assert!(matches!(
+        jit.call_entry(entry).expect("run JIT break"),
+        RetVal::Int(3)
+    ));
 }
 
 #[test]
@@ -1770,7 +1850,10 @@ fn continue_keeps_interpreter_and_jit_paths_equivalent() {
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds continue module");
     assert!(jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 12));
-    assert!(matches!(jit.call_entry(entry).expect("run JIT continue"), RetVal::Int(12)));
+    assert!(matches!(
+        jit.call_entry(entry).expect("run JIT continue"),
+        RetVal::Int(12)
+    ));
 }
 
 #[test]
@@ -1785,8 +1868,14 @@ fn array_search_methods_keep_interpreter_fallback() {
     .expect("compile Array search methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Int(0, zun_il::NumKind::I32)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Int(0, zun_il::NumKind::I32)
+    ));
 }
 
 #[test]
@@ -1798,8 +1887,14 @@ fn array_access_methods_keep_interpreter_fallback() {
     .expect("compile Array access methods");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(9.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1811,8 +1906,14 @@ fn array_reverse_keeps_interpreter_fallback() {
     .expect("compile Array reverse");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(9.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1824,8 +1925,14 @@ fn array_fill_keeps_interpreter_fallback() {
     .expect("compile Array fill");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(9.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1837,8 +1944,14 @@ fn array_slice_keeps_interpreter_fallback() {
     .expect("compile Array slice");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(7.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(7.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1850,8 +1963,14 @@ fn array_concat_keeps_interpreter_fallback() {
     .expect("compile Array concat");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(9.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1863,8 +1982,14 @@ fn array_copy_within_keeps_interpreter_fallback() {
     .expect("compile Array copyWithin");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(7.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(7.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1876,8 +2001,14 @@ fn array_flat_keeps_interpreter_fallback() {
     .expect("compile Array flat");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(9.0, zun_il::NumKind::F64)
+    ));
 }
 
 #[test]
@@ -1889,7 +2020,10 @@ fn array_includes_keeps_interpreter_fallback() {
     .expect("compile Array includes");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "Array instructions must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -2045,22 +2179,21 @@ fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     .expect("compile array program");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with array fallback");
-    assert!(!jit.is_compiled(entry), "array instructions must remain Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "array instructions must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 41.0));
 }
 
 #[test]
 fn unsigned_wrap_u8() {
-    assert_equivalent(
-        "function main(): u8 { let b: u8 = 250; return b + 10 as u8; }",
-    );
+    assert_equivalent("function main(): u8 { let b: u8 = 250; return b + 10 as u8; }");
 }
 
 #[test]
 fn signed_overflow_i8() {
-    assert_equivalent(
-        "function main(): i8 { let s: i8 = 127; return s + 1 as i8; }",
-    );
+    assert_equivalent("function main(): i8 { let s: i8 = 127; return s + 1 as i8; }");
 }
 
 #[test]
@@ -2085,30 +2218,22 @@ fn unsigned_comparison() {
 
 #[test]
 fn f32_precision() {
-    assert_equivalent(
-        "function main(): f32 { let x: f32 = 1.0 as f32; return x / 3.0 as f32; }",
-    );
+    assert_equivalent("function main(): f32 { let x: f32 = 1.0 as f32; return x / 3.0 as f32; }");
 }
 
 #[test]
 fn int_to_float_conversion() {
-    assert_equivalent(
-        "function main(): number { let n: int = 7; return n as number / 2.0; }",
-    );
+    assert_equivalent("function main(): number { let n: int = 7; return n as number / 2.0; }");
 }
 
 #[test]
 fn i64_arithmetic() {
-    assert_equivalent(
-        "function main(): i64 { let x: i64 = 1000000 as i64; return x * x; }",
-    );
+    assert_equivalent("function main(): i64 { let x: i64 = 1000000 as i64; return x * x; }");
 }
 
 #[test]
 fn boolean_return() {
-    assert_equivalent(
-        "function main(): boolean { let a: int = 3; return a < 5; }",
-    );
+    assert_equivalent("function main(): boolean { let a: int = 3; return a < 5; }");
 }
 
 #[test]
@@ -2118,7 +2243,10 @@ fn named_function_values_remain_on_interpreter_fallback() {
     let module = compile(src);
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback");
-    assert!(!jit.is_compiled(entry), "indirect calls require Tier 0 until JIT lowering exists");
+    assert!(
+        !jit.is_compiled(entry),
+        "indirect calls require Tier 0 until JIT lowering exists"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 42.0));
 }
 
@@ -2210,7 +2338,10 @@ fn string_field_method_is_not_jit_eligible() {
                function main(): int { return make(); }";
     let module = compile(src);
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(2), "string-field method must be ineligible");
+    assert!(
+        !jit.is_compiled(2),
+        "string-field method must be ineligible"
+    );
 }
 
 #[test]

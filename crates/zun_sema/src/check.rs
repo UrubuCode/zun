@@ -465,8 +465,17 @@ impl Checker<'_> {
 
         let body = if f.is_extern {
             let Some((intrinsic_id, intrinsic)) = self.imports.get(&name).copied() else {
-                self.error(f.name.span, format!("extern method `{name}` must be bound to an imported intrinsic"));
-                return hir::Function { name, param_count: param_tys.len() as u16, locals: cx.locals, return_ty, body: Vec::new() };
+                self.error(
+                    f.name.span,
+                    format!("extern method `{name}` must be bound to an imported intrinsic"),
+                );
+                return hir::Function {
+                    name,
+                    param_count: param_tys.len() as u16,
+                    locals: cx.locals,
+                    return_ty,
+                    body: Vec::new(),
+                };
             };
             let native_params: Vec<Ty> = intrinsic.params.iter().map(|&t| native_ty(t)).collect();
             let signature_matches = native_params.len() == param_tys.len()
@@ -480,13 +489,19 @@ impl Checker<'_> {
             if !signature_matches {
                 self.error(
                     f.name.span,
-                    format!("extern method `{name}` signature does not match intrinsic `{}`", intrinsic.name),
+                    format!(
+                        "extern method `{name}` signature does not match intrinsic `{}`",
+                        intrinsic.name
+                    ),
                 );
             }
             if native_ty(intrinsic.ret) != return_ty {
                 self.error(
                     f.name.span,
-                    format!("extern method `{name}` return type does not match intrinsic `{}`", intrinsic.name),
+                    format!(
+                        "extern method `{name}` return type does not match intrinsic `{}`",
+                        intrinsic.name
+                    ),
                 );
             }
             let args = (0..param_tys.len())
@@ -497,7 +512,10 @@ impl Checker<'_> {
                 })
                 .collect();
             vec![hir::Stmt::Return(Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id: intrinsic_id, args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id: intrinsic_id,
+                    args,
+                },
                 ty: return_ty,
                 span: f.name.span,
             }))]
@@ -785,12 +803,28 @@ impl Checker<'_> {
                                 (sig.params.clone(), sig.return_ty)
                             };
                             if args.len() != param_tys.len() {
-                                self.error(span, format!("function value expects {} argument(s), found {}", param_tys.len(), args.len()));
+                                self.error(
+                                    span,
+                                    format!(
+                                        "function value expects {} argument(s), found {}",
+                                        param_tys.len(),
+                                        args.len()
+                                    ),
+                                );
                             } else {
                                 for (arg, &expected) in args.iter_mut().zip(&param_tys) {
                                     coerce_numeric_literal(arg, expected);
-                                    if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
-                                        self.error(arg.span, format!("argument type {:?} does not match {expected:?}", arg.ty));
+                                    if !expected.is_error()
+                                        && !arg.ty.is_error()
+                                        && !self.is_assignable(arg.ty, expected)
+                                    {
+                                        self.error(
+                                            arg.span,
+                                            format!(
+                                                "argument type {:?} does not match {expected:?}",
+                                                arg.ty
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -802,7 +836,11 @@ impl Checker<'_> {
                             span,
                         };
                         return hir::Expr {
-                            kind: hir::ExprKind::IndirectCall { callee: Box::new(callee_expr), args, func },
+                            kind: hir::ExprKind::IndirectCall {
+                                callee: Box::new(callee_expr),
+                                args,
+                                func,
+                            },
                             ty: return_ty,
                             span,
                         };
@@ -851,15 +889,23 @@ impl Checker<'_> {
                     };
                 }
 
-                let dynamic_property = |checker: &mut Checker<'_>, args: &mut Vec<hir::Expr>, span: Span| {
-                    if args.len() != 2 || args[0].ty != Ty::DynamicObject || args[1].ty != Ty::String {
+                let dynamic_property = |checker: &mut Checker<'_>,
+                                        args: &mut Vec<hir::Expr>,
+                                        span: Span| {
+                    if args.len() != 2
+                        || args[0].ty != Ty::DynamicObject
+                        || args[1].ty != Ty::String
+                    {
                         checker.error(span, "dynamic property access expects (dynamic, string)");
                         return None;
                     }
                     let name = match &args[1].kind {
                         hir::ExprKind::String(name) => name.clone(),
                         _ => {
-                            checker.error(args[1].span, "dynamic property name must be a string literal");
+                            checker.error(
+                                args[1].span,
+                                "dynamic property name must be a string literal",
+                            );
                             return None;
                         }
                     };
@@ -881,14 +927,24 @@ impl Checker<'_> {
                 }
 
                 if name == "dynamic_set" {
-                    if args.len() != 3 || args[0].ty != Ty::DynamicObject || args[1].ty != Ty::String || args[2].ty != Ty::Any {
-                        self.error(span, "dynamic property assignment expects (dynamic, string, any)");
+                    if args.len() != 3
+                        || args[0].ty != Ty::DynamicObject
+                        || args[1].ty != Ty::String
+                        || args[2].ty != Ty::Any
+                    {
+                        self.error(
+                            span,
+                            "dynamic property assignment expects (dynamic, string, any)",
+                        );
                         return self.poison(span);
                     }
                     let property = match &args[1].kind {
                         hir::ExprKind::String(name) => name.clone(),
                         _ => {
-                            self.error(args[1].span, "dynamic property name must be a string literal");
+                            self.error(
+                                args[1].span,
+                                "dynamic property name must be a string literal",
+                            );
                             return self.poison(span);
                         }
                     };
@@ -1034,7 +1090,9 @@ impl Checker<'_> {
                         self.error(span, "Array.pop expects no arguments");
                     }
                     return hir::Expr {
-                        kind: hir::ExprKind::ArrayPop { object: Box::new(receiver) },
+                        kind: hir::ExprKind::ArrayPop {
+                            object: Box::new(receiver),
+                        },
                         ty: Ty::Any,
                         span,
                     };
@@ -1046,7 +1104,10 @@ impl Checker<'_> {
                     }
                     let value = self.check_expr(cx, &args[0]);
                     return hir::Expr {
-                        kind: hir::ExprKind::ArrayPush { object: Box::new(receiver), value: Box::new(value) },
+                        kind: hir::ExprKind::ArrayPush {
+                            object: Box::new(receiver),
+                            value: Box::new(value),
+                        },
                         ty: Ty::Int(IntKind::U64),
                         span,
                     };
@@ -1055,21 +1116,30 @@ impl Checker<'_> {
                     Ty::String => match self.classes_by_name.get("String") {
                         Some(&class) => class,
                         None => {
-                            self.error(receiver.span, "String methods are not available without class String");
+                            self.error(
+                                receiver.span,
+                                "String methods are not available without class String",
+                            );
                             return self.poison(span);
                         }
                     },
                     Ty::F64 => match self.classes_by_name.get("Number") {
                         Some(&class) => class,
                         None => {
-                            self.error(receiver.span, "Number methods are not available without class Number");
+                            self.error(
+                                receiver.span,
+                                "Number methods are not available without class Number",
+                            );
                             return self.poison(span);
                         }
                     },
                     Ty::Array => match self.classes_by_name.get("Array") {
                         Some(&class) => class,
                         None => {
-                            self.error(receiver.span, "Array methods are not available without class Array");
+                            self.error(
+                                receiver.span,
+                                "Array methods are not available without class Array",
+                            );
                             return self.poison(span);
                         }
                     },
@@ -1158,7 +1228,9 @@ impl Checker<'_> {
                         self.error(length.span, "array length must be an integer");
                     }
                     return hir::Expr {
-                        kind: hir::ExprKind::ArrayNew { length: Box::new(length) },
+                        kind: hir::ExprKind::ArrayNew {
+                            length: Box::new(length),
+                        },
                         ty: Ty::Array,
                         span,
                     };
@@ -1214,7 +1286,9 @@ impl Checker<'_> {
                 let fname = self.text(field).to_string();
                 if object.ty == Ty::Array && fname == "length" {
                     return hir::Expr {
-                        kind: hir::ExprKind::ArrayLength { object: Box::new(object) },
+                        kind: hir::ExprKind::ArrayLength {
+                            object: Box::new(object),
+                        },
                         ty: Ty::Int(IntKind::U64),
                         span,
                     };
@@ -1253,12 +1327,20 @@ impl Checker<'_> {
                     self.error(index.span, "array index must be an integer");
                 }
                 hir::Expr {
-                    kind: hir::ExprKind::ArrayGet { object: Box::new(object), index: Box::new(index) },
+                    kind: hir::ExprKind::ArrayGet {
+                        object: Box::new(object),
+                        index: Box::new(index),
+                    },
                     ty: Ty::Any,
                     span,
                 }
             }
-            ast::Expr::IndexAssign { object, index, value, .. } => {
+            ast::Expr::IndexAssign {
+                object,
+                index,
+                value,
+                ..
+            } => {
                 let object = self.check_expr(cx, object);
                 let mut index = self.check_expr(cx, index);
                 let value = self.check_expr(cx, value);
@@ -1271,7 +1353,11 @@ impl Checker<'_> {
                     self.error(index.span, "array index must be an integer");
                 }
                 hir::Expr {
-                    kind: hir::ExprKind::ArraySet { object: Box::new(object), index: Box::new(index), value: Box::new(value) },
+                    kind: hir::ExprKind::ArraySet {
+                        object: Box::new(object),
+                        index: Box::new(index),
+                        value: Box::new(value),
+                    },
                     ty: value_ty,
                     span,
                 }
@@ -1792,7 +1878,10 @@ mod tests {
             "function returns_text(value: number): string { return \"value\"; }\n\
              function apply(f: returns_text, value: number): number { return f(value); }",
         );
-        assert!(msg.contains("return type") || msg.contains("does not match"), "{msg}");
+        assert!(
+            msg.contains("return type") || msg.contains("does not match"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -1856,9 +1945,9 @@ mod tests {
             "class Service { extern missing(): int; }\nfunction main(): int { return 0; }",
         );
         assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains("must be bound to an imported intrinsic")),
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("must be bound to an imported intrinsic")),
             "{diagnostics:?}"
         );
     }

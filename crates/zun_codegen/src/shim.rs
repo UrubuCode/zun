@@ -31,8 +31,12 @@ pub fn define_shim(
 
     // Shim signature: (args_ptr) -> u64.
     let mut shim_sig = cranelift_codegen::ir::Signature::new(conv);
-    shim_sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
-    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    shim_sig
+        .params
+        .push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
+    shim_sig
+        .returns
+        .push(cranelift_codegen::ir::AbiParam::new(types::I64));
     let shim_id = module
         .declare_function(name, Linkage::Local, &shim_sig)
         .map_err(|e| e.to_string())?;
@@ -49,7 +53,9 @@ pub fn define_shim(
         // Load and convert each argument from the buffer (8 bytes per slot).
         let mut args: Vec<Value> = Vec::with_capacity(param_kinds.len());
         for (i, &k) in param_kinds.iter().enumerate() {
-            let raw = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, (i * 8) as i32);
+            let raw = b
+                .ins()
+                .load(types::I64, MemFlags::trusted(), args_ptr, (i * 8) as i32);
             args.push(unpack_arg(&mut b, raw, k));
         }
 
@@ -66,7 +72,9 @@ pub fn define_shim(
         b.finalize();
     }
 
-    module.define_function(shim_id, ctx).map_err(|e| e.to_string())?;
+    module
+        .define_function(shim_id, ctx)
+        .map_err(|e| e.to_string())?;
     module.clear_context(ctx);
     Ok(shim_id)
 }

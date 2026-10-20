@@ -97,7 +97,10 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
 impl<T> core::fmt::Debug for Promise<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Promise")
-            .field("resolved", &(self.state.load(Ordering::Acquire) == RESOLVED))
+            .field(
+                "resolved",
+                &(self.state.load(Ordering::Acquire) == RESOLVED),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -143,7 +146,10 @@ impl<T: Send + 'static> Promise<T> {
         let value = {
             let mut inner = self.inner.lock().expect("promise mutex poisoned");
             if self.state.load(Ordering::Acquire) == PENDING {
-                assert!(inner.continuation.is_none(), "promise already has a continuation");
+                assert!(
+                    inner.continuation.is_none(),
+                    "promise already has a continuation"
+                );
                 inner.continuation = continuation.take();
                 None
             } else {
@@ -151,9 +157,7 @@ impl<T: Send + 'static> Promise<T> {
             }
         };
         if let Some(value) = value {
-            continuation
-                .take()
-                .expect("late continuation missing")(value);
+            continuation.take().expect("late continuation missing")(value);
         }
     }
 

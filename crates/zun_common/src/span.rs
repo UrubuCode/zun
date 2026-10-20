@@ -25,7 +25,10 @@ impl Span {
     /// An empty span at `offset`, used for synthesized nodes with no source text.
     #[inline]
     pub const fn empty_at(offset: u32) -> Self {
-        Self { start: offset, end: offset }
+        Self {
+            start: offset,
+            end: offset,
+        }
     }
 
     /// The number of bytes the span covers.

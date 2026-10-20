@@ -87,9 +87,7 @@ impl Module {
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&FORMAT_MAJOR.to_le_bytes());
         out.extend_from_slice(&FORMAT_MINOR.to_le_bytes());
-        out.extend_from_slice(
-            &self.entry_point.map_or(0, Token::to_raw).to_le_bytes(),
-        );
+        out.extend_from_slice(&self.entry_point.map_or(0, Token::to_raw).to_le_bytes());
         for (off, len) in [
             (code_off, self.code.len() as u32),
             (strings_off, self.strings.as_bytes().len() as u32),

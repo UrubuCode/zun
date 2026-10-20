@@ -81,7 +81,10 @@ fn main() {
     assert_eq!(jit_result, interp_result);
 
     println!("loop body: acc = acc + i*2 - 1   ({N} iterations/call)");
-    println!("result: {jit_result}  (interp == jit: {})", jit_result == interp_result);
+    println!(
+        "result: {jit_result}  (interp == jit: {})",
+        jit_result == interp_result
+    );
     println!();
     println!("interpreter (Tier 0): {interp_ns:8.3} ns/iteration");
     println!("JIT (Tier 1):         {jit_ns:8.3} ns/iteration");

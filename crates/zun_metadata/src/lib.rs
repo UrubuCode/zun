@@ -16,7 +16,5 @@ pub mod tables;
 pub mod token;
 
 pub use heap::{BlobHeap, BlobIndex, StringHeap, StringIndex};
-pub use tables::{
-    FieldDef, MemberRef, MethodDef, ModuleRef, Tables, TypeDef, TypeRef,
-};
+pub use tables::{FieldDef, MemberRef, MethodDef, ModuleRef, Tables, TypeDef, TypeRef};
 pub use token::{TableKind, Token};

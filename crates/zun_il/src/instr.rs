@@ -130,12 +130,12 @@ pub fn decode_one(bytes: &[u8]) -> Result<(Instruction, usize), DecodeError> {
         OperandKind::None => Operand::None,
         OperandKind::Imm32 => Operand::Imm32(i32::from_le_bytes(body[..4].try_into().unwrap())),
         OperandKind::Imm64 => Operand::Imm64(i64::from_le_bytes(body[..8].try_into().unwrap())),
-        OperandKind::Float64 => {
-            Operand::Float64(f64::from_bits(u64::from_le_bytes(body[..8].try_into().unwrap())))
-        }
-        OperandKind::Token => {
-            Operand::Token(Token::from_raw(u32::from_le_bytes(body[..4].try_into().unwrap())))
-        }
+        OperandKind::Float64 => Operand::Float64(f64::from_bits(u64::from_le_bytes(
+            body[..8].try_into().unwrap(),
+        ))),
+        OperandKind::Token => Operand::Token(Token::from_raw(u32::from_le_bytes(
+            body[..4].try_into().unwrap(),
+        ))),
         OperandKind::Local => Operand::Local(u16::from_le_bytes(body[..2].try_into().unwrap())),
         OperandKind::StringRef => {
             Operand::StringRef(u32::from_le_bytes(body[..4].try_into().unwrap()))

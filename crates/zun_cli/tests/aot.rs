@@ -12,7 +12,11 @@ fn build_aot_writes_fallback_module_manifest_and_object() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(source.with_extension("zm").is_file());
     assert!(source.with_extension("zman").is_file());
     assert!(source.with_extension("o").is_file());
@@ -47,7 +51,11 @@ fn build_aot_runs_a_floating_point_entry_point() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let executable = Command::new(source.with_extension("exe"))
         .output()
         .expect("run AOT executable");

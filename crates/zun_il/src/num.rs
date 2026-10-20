@@ -132,7 +132,12 @@ mod tests {
 
     #[test]
     fn jitkind_byte_roundtrip() {
-        for k in [JitKind::Num(NumKind::U8), JitKind::Num(NumKind::F32), JitKind::Bool, JitKind::Other] {
+        for k in [
+            JitKind::Num(NumKind::U8),
+            JitKind::Num(NumKind::F32),
+            JitKind::Bool,
+            JitKind::Other,
+        ] {
             assert_eq!(JitKind::from_byte(k.to_byte()), k);
         }
     }
@@ -140,9 +145,16 @@ mod tests {
     #[test]
     fn imm_roundtrip() {
         for k in [
-            NumKind::I8, NumKind::I16, NumKind::I32, NumKind::I64,
-            NumKind::U8, NumKind::U16, NumKind::U32, NumKind::U64,
-            NumKind::F32, NumKind::F64,
+            NumKind::I8,
+            NumKind::I16,
+            NumKind::I32,
+            NumKind::I64,
+            NumKind::U8,
+            NumKind::U16,
+            NumKind::U32,
+            NumKind::U64,
+            NumKind::F32,
+            NumKind::F64,
         ] {
             assert_eq!(NumKind::from_imm(k.to_imm()), Some(k));
         }

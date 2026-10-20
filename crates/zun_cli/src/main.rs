@@ -19,13 +19,27 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, file] if cmd == "run" => dispatch(file, Action::Run),
-        [cmd, file] if cmd == "build" => dispatch(file, Action::Build { trim: false, aot: false }),
-        [cmd, flag, file] if cmd == "build" && flag == "--trim" => {
-            dispatch(file, Action::Build { trim: true, aot: false })
-        }
-        [cmd, flag, file] if cmd == "build" && flag == "--aot" => {
-            dispatch(file, Action::Build { trim: true, aot: true })
-        }
+        [cmd, file] if cmd == "build" => dispatch(
+            file,
+            Action::Build {
+                trim: false,
+                aot: false,
+            },
+        ),
+        [cmd, flag, file] if cmd == "build" && flag == "--trim" => dispatch(
+            file,
+            Action::Build {
+                trim: true,
+                aot: false,
+            },
+        ),
+        [cmd, flag, file] if cmd == "build" && flag == "--aot" => dispatch(
+            file,
+            Action::Build {
+                trim: true,
+                aot: true,
+            },
+        ),
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
         _ => {
             eprintln!("{USAGE}");
@@ -136,13 +150,18 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                     ExitCode::SUCCESS
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("zun: cannot link AOT executable: {e}");
+                                                    eprintln!(
+                                                        "zun: cannot link AOT executable: {e}"
+                                                    );
                                                     ExitCode::FAILURE
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("zun: cannot write {}: {e}", object_out.display());
+                                            eprintln!(
+                                                "zun: cannot write {}: {e}",
+                                                object_out.display()
+                                            );
                                             ExitCode::FAILURE
                                         }
                                     },

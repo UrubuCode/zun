@@ -373,7 +373,11 @@ impl FnLowerer<'_> {
                 }
             }
             Stmt::Continue => {
-                if let Some(&target) = self.continue_targets.last().and_then(|targets| targets.last()) {
+                if let Some(&target) = self
+                    .continue_targets
+                    .last()
+                    .and_then(|targets| targets.last())
+                {
                     self.emit_branch_back(Opcode::Branch, target);
                 }
             }
@@ -474,7 +478,10 @@ impl FnLowerer<'_> {
                 } else {
                     Token::new(TableKind::MethodDef, *func + 1)
                 };
-                self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
+                self.emit(Instruction::new(
+                    Opcode::CallIndirect,
+                    Operand::Token(token),
+                ));
             }
             ExprKind::CallBuiltin { id, args } => {
                 for a in args {
@@ -491,7 +498,10 @@ impl FnLowerer<'_> {
             ExprKind::DynamicGet { object, name } => {
                 self.expr(object);
                 let property = self.module.strings.intern(name);
-                self.emit(Instruction::new(Opcode::LoadDynamic, Operand::StringRef(property.0)));
+                self.emit(Instruction::new(
+                    Opcode::LoadDynamic,
+                    Operand::StringRef(property.0),
+                ));
             }
             ExprKind::DynamicSet {
                 object,
@@ -501,17 +511,16 @@ impl FnLowerer<'_> {
                 self.expr(object);
                 self.expr(value);
                 let property = self.module.strings.intern(name);
-                self.emit(Instruction::new(Opcode::StoreDynamic, Operand::StringRef(property.0)));
+                self.emit(Instruction::new(
+                    Opcode::StoreDynamic,
+                    Operand::StringRef(property.0),
+                ));
             }
             ExprKind::BoxAny { value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::BoxAny));
             }
-            ExprKind::ExternalCall {
-                module,
-                name,
-                args,
-            } => {
+            ExprKind::ExternalCall { module, name, args } => {
                 for a in args {
                     self.expr(a);
                 }
@@ -577,7 +586,11 @@ impl FnLowerer<'_> {
                 self.expr(index);
                 self.emit(Instruction::simple(Opcode::LoadArray));
             }
-            ExprKind::ArraySet { object, index, value } => {
+            ExprKind::ArraySet {
+                object,
+                index,
+                value,
+            } => {
                 self.expr(object);
                 self.expr(index);
                 self.expr(value);

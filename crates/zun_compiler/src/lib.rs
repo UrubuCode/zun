@@ -417,8 +417,7 @@ mod tests {
                 returns_value: body.returns_value,
             };
             zun_verify::verify(body.code, info, &|opcode, _| {
-                matches!(opcode, zun_il::Opcode::Call | zun_il::Opcode::CallVirt)
-                    .then_some((0, 1))
+                matches!(opcode, zun_il::Opcode::Call | zun_il::Opcode::CallVirt).then_some((0, 1))
             })
             .expect("trimmed module remains verifiable");
         }
@@ -452,7 +451,9 @@ mod tests {
             }],
         )
         .expect_err("mismatched external signatures must be rejected");
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "SEM0001"));
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "SEM0001"));
     }
 
     #[test]

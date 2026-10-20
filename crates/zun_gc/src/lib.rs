@@ -19,8 +19,8 @@
 //! interpreter and JIT must not outlive it. Within that lifetime the heap never
 //! moves or frees a block, so raw access through [`Obj`] is sound.
 
-use std::rc::Rc;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
     bytes.iter().fold(1469598103934665603, |hash, byte| {
@@ -38,8 +38,10 @@ fn any_same_value_zero(a: zun_core::Any, b: zun_core::Any, strings: &[Rc<str>]) 
             let right = b.as_float().unwrap();
             left == right || (left.is_nan() && right.is_nan())
         }
-        zun_core::AnyTag::String => strings.get(a.as_string().unwrap() as usize)
-            == strings.get(b.as_string().unwrap() as usize),
+        zun_core::AnyTag::String => {
+            strings.get(a.as_string().unwrap() as usize)
+                == strings.get(b.as_string().unwrap() as usize)
+        }
         zun_core::AnyTag::Int => a.as_int() == b.as_int(),
         zun_core::AnyTag::Bool => a.as_bool() == b.as_bool(),
         zun_core::AnyTag::Object => a.as_object() == b.as_object(),
@@ -102,7 +104,9 @@ impl Obj {
 pub struct WeakRefId(u32);
 
 impl WeakRefId {
-    pub const fn get(self) -> u32 { self.0 }
+    pub const fn get(self) -> u32 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -241,7 +245,10 @@ impl Heap {
             self.next_identity_hash = 1;
         }
         let hash = self.next_identity_hash;
-        self.next_identity_hash = self.next_identity_hash.checked_add(1).expect("identity hash exhausted");
+        self.next_identity_hash = self
+            .next_identity_hash
+            .checked_add(1)
+            .expect("identity hash exhausted");
         hash
     }
 
@@ -256,20 +263,29 @@ impl Heap {
     /// Allocate an array object with contiguous core-owned storage.
     pub fn alloc_array(&mut self, length: usize) -> Obj {
         let object = self.alloc(0, 0);
-        self.arrays
-            .insert(object.addr() as usize, zun_core::ArrayStorage::with_length(length));
+        self.arrays.insert(
+            object.addr() as usize,
+            zun_core::ArrayStorage::with_length(length),
+        );
         object
     }
 
     pub fn alloc_buffer(&mut self, length: usize) -> Obj {
         let object = self.alloc(0, 0);
-        self.buffers.insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
+        self.buffers
+            .insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
         object
     }
 
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
         let object = self.alloc(0, 0);
-        self.dates.insert(object.addr() as usize, millis.map_or(zun_core::DateValue::invalid(), zun_core::DateValue::from_millis));
+        self.dates.insert(
+            object.addr() as usize,
+            millis.map_or(
+                zun_core::DateValue::invalid(),
+                zun_core::DateValue::from_millis,
+            ),
+        );
         object
     }
 
@@ -291,20 +307,28 @@ impl Heap {
     }
 
     pub fn error_name(&self, object: Obj) -> Option<&str> {
-        self.errors.get(&(object.addr() as usize)).map(zun_core::ErrorValue::name)
+        self.errors
+            .get(&(object.addr() as usize))
+            .map(zun_core::ErrorValue::name)
     }
 
     pub fn error_message(&self, object: Obj) -> Option<&str> {
-        self.errors.get(&(object.addr() as usize)).map(zun_core::ErrorValue::message)
+        self.errors
+            .get(&(object.addr() as usize))
+            .map(zun_core::ErrorValue::message)
     }
 
     pub fn error_set_name(&mut self, object: Obj, name: impl Into<String>) -> Option<()> {
-        self.errors.get_mut(&(object.addr() as usize))?.set_name(name);
+        self.errors
+            .get_mut(&(object.addr() as usize))?
+            .set_name(name);
         Some(())
     }
 
     pub fn error_set_message(&mut self, object: Obj, message: impl Into<String>) -> Option<()> {
-        self.errors.get_mut(&(object.addr() as usize))?.set_message(message);
+        self.errors
+            .get_mut(&(object.addr() as usize))?
+            .set_message(message);
         Some(())
     }
 
@@ -327,7 +351,9 @@ impl Heap {
     }
 
     pub fn date_compare(&self, left: Obj, right: Obj) -> Option<std::cmp::Ordering> {
-        self.dates.get(&(left.addr() as usize))?.compare(*self.dates.get(&(right.addr() as usize))?)
+        self.dates
+            .get(&(left.addr() as usize))?
+            .compare(*self.dates.get(&(right.addr() as usize))?)
     }
 
     pub fn date_utc_date(&self, object: Obj) -> Option<(i32, u32, u32)> {
@@ -355,7 +381,9 @@ impl Heap {
     }
 
     pub fn buffer_len(&self, object: Obj) -> Option<usize> {
-        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::len)
+        self.buffers
+            .get(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::len)
     }
 
     pub fn buffer_get(&self, object: Obj, index: usize) -> Option<u8> {
@@ -363,92 +391,187 @@ impl Heap {
     }
 
     pub fn buffer_set(&mut self, object: Obj, index: usize, value: u8) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.set(index, value))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .set(index, value),
+        )
     }
 
     pub fn buffer_read_u32(&self, object: Obj, offset: usize) -> Option<u32> {
-        self.buffers.get(&(object.addr() as usize))?.read_u32(offset)
+        self.buffers
+            .get(&(object.addr() as usize))?
+            .read_u32(offset)
     }
 
     pub fn buffer_write_u32(&mut self, object: Obj, offset: usize, value: u32) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_u32(offset, value))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .write_u32(offset, value),
+        )
     }
 
     pub fn buffer_read_f64(&self, object: Obj, offset: usize) -> Option<f64> {
-        self.buffers.get(&(object.addr() as usize))?.read_f64(offset)
+        self.buffers
+            .get(&(object.addr() as usize))?
+            .read_f64(offset)
     }
 
     pub fn buffer_write_f64(&mut self, object: Obj, offset: usize, value: f64) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_f64(offset, value))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .write_f64(offset, value),
+        )
     }
 
-    pub fn buffer_view(&self, object: Obj, offset: usize, length: usize) -> Option<zun_core::ByteView> {
+    pub fn buffer_view(
+        &self,
+        object: Obj,
+        offset: usize,
+        length: usize,
+    ) -> Option<zun_core::ByteView> {
         zun_core::ByteView::new(self.buffer_len(object)?, offset, length)
     }
 
-    pub fn buffer_view_read_u32(&self, object: Obj, view: zun_core::ByteView, offset: usize) -> Option<u32> {
+    pub fn buffer_view_read_u32(
+        &self,
+        object: Obj,
+        view: zun_core::ByteView,
+        offset: usize,
+    ) -> Option<u32> {
         view.read_u32(self.buffers.get(&(object.addr() as usize))?, offset)
     }
 
-    pub fn buffer_view_write_u32(&mut self, object: Obj, view: zun_core::ByteView, offset: usize, value: u32) -> Option<bool> {
-        Some(view.write_u32(self.buffers.get_mut(&(object.addr() as usize))?, offset, value))
+    pub fn buffer_view_write_u32(
+        &mut self,
+        object: Obj,
+        view: zun_core::ByteView,
+        offset: usize,
+        value: u32,
+    ) -> Option<bool> {
+        Some(view.write_u32(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+        ))
     }
 
-    pub fn buffer_view_read_u8(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<u8> {
+    pub fn buffer_view_read_u8(
+        &self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+    ) -> Option<u8> {
         view.read_u8(self.buffers.get(&(object.addr() as usize))?, index)
     }
 
-    pub fn buffer_view_write_u8(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: u8) -> Option<bool> {
-        Some(view.write_u8(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    pub fn buffer_view_write_u8(
+        &mut self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+        value: u8,
+    ) -> Option<bool> {
+        Some(view.write_u8(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
-    pub fn buffer_view_read_u16(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<u16> {
+    pub fn buffer_view_read_u16(
+        &self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+    ) -> Option<u16> {
         view.read_u16(self.buffers.get(&(object.addr() as usize))?, index)
     }
 
-    pub fn buffer_view_write_u16(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: u16) -> Option<bool> {
-        Some(view.write_u16(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    pub fn buffer_view_write_u16(
+        &mut self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+        value: u16,
+    ) -> Option<bool> {
+        Some(view.write_u16(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
-    pub fn buffer_view_read_f64(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<f64> {
+    pub fn buffer_view_read_f64(
+        &self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+    ) -> Option<f64> {
         view.read_f64(self.buffers.get(&(object.addr() as usize))?, index)
     }
 
-    pub fn buffer_view_write_f64(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: f64) -> Option<bool> {
-        Some(view.write_f64(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    pub fn buffer_view_write_f64(
+        &mut self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+        value: f64,
+    ) -> Option<bool> {
+        Some(view.write_f64(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
     /// Allocate a runtime-backed Map with insertion-ordered hash storage.
     pub fn alloc_map(&mut self) -> Obj {
         let object = self.alloc(0, 0);
-        self.maps.insert(object.addr() as usize, zun_core::OrderedMap::new());
+        self.maps
+            .insert(object.addr() as usize, zun_core::OrderedMap::new());
         object
     }
 
     /// Insert a key/value pair and return the replaced value, if any.
-    pub fn map_insert(&mut self, object: Obj, key: zun_core::Any, value: zun_core::Any) -> Option<zun_core::Any> {
+    pub fn map_insert(
+        &mut self,
+        object: Obj,
+        key: zun_core::Any,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
-        self.maps.get_mut(&(object.addr() as usize))?.insert(key, value, hash, |candidate| {
-            any_same_value_zero(candidate, key, strings)
-        })
+        self.maps
+            .get_mut(&(object.addr() as usize))?
+            .insert(key, value, hash, |candidate| {
+                any_same_value_zero(candidate, key, strings)
+            })
     }
 
     /// Look up a key using SameValueZero equality.
     pub fn map_get(&self, object: Obj, key: zun_core::Any) -> Option<zun_core::Any> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
-        self.maps.get(&(object.addr() as usize))?.get(hash, |candidate| {
-            any_same_value_zero(candidate, key, strings)
-        })
+        self.maps
+            .get(&(object.addr() as usize))?
+            .get(hash, |candidate| {
+                any_same_value_zero(candidate, key, strings)
+            })
     }
 
     pub fn map_has(&self, object: Obj, key: zun_core::Any) -> Option<bool> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
-        Some(self.maps.get(&(object.addr() as usize))?.contains(hash, |candidate| {
-            any_same_value_zero(candidate, key, strings)
-        }))
+        Some(
+            self.maps
+                .get(&(object.addr() as usize))?
+                .contains(hash, |candidate| {
+                    any_same_value_zero(candidate, key, strings)
+                }),
+        )
     }
 
     pub fn map_clear(&mut self, object: Obj) -> Option<()> {
@@ -457,16 +580,24 @@ impl Heap {
     }
 
     /// Remove a key and return its key/value pair.
-    pub fn map_remove(&mut self, object: Obj, key: zun_core::Any) -> Option<(zun_core::Any, zun_core::Any)> {
+    pub fn map_remove(
+        &mut self,
+        object: Obj,
+        key: zun_core::Any,
+    ) -> Option<(zun_core::Any, zun_core::Any)> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
-        self.maps.get_mut(&(object.addr() as usize))?.remove(hash, |candidate| {
-            any_same_value_zero(candidate, key, strings)
-        })
+        self.maps
+            .get_mut(&(object.addr() as usize))?
+            .remove(hash, |candidate| {
+                any_same_value_zero(candidate, key, strings)
+            })
     }
 
     pub fn map_len(&self, object: Obj) -> Option<usize> {
-        self.maps.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
+        self.maps
+            .get(&(object.addr() as usize))
+            .map(zun_core::OrderedMap::len)
     }
 
     pub fn map_entries(&self, object: Obj) -> Option<Vec<(zun_core::Any, zun_core::Any)>> {
@@ -476,7 +607,8 @@ impl Heap {
     /// Allocate a runtime-backed Set with insertion-ordered hash storage.
     pub fn alloc_set(&mut self) -> Obj {
         let object = self.alloc(0, 0);
-        self.sets.insert(object.addr() as usize, zun_core::OrderedMap::new());
+        self.sets
+            .insert(object.addr() as usize, zun_core::OrderedMap::new());
         object
     }
 
@@ -485,7 +617,11 @@ impl Heap {
         let hash = self.any_hash(value);
         let strings = &self.strings;
         let set = self.sets.get_mut(&(object.addr() as usize))?;
-        let existed = set.get(hash, |candidate| any_same_value_zero(candidate, value, strings)).is_some();
+        let existed = set
+            .get(hash, |candidate| {
+                any_same_value_zero(candidate, value, strings)
+            })
+            .is_some();
         if !existed {
             set.insert(value, zun_core::Any::bool(true), hash, |candidate| {
                 any_same_value_zero(candidate, value, strings)
@@ -497,21 +633,33 @@ impl Heap {
     pub fn set_has(&self, object: Obj, value: zun_core::Any) -> Option<bool> {
         let hash = self.any_hash(value);
         let strings = &self.strings;
-        Some(self.sets.get(&(object.addr() as usize))?.get(hash, |candidate| {
-            any_same_value_zero(candidate, value, strings)
-        }).is_some())
+        Some(
+            self.sets
+                .get(&(object.addr() as usize))?
+                .get(hash, |candidate| {
+                    any_same_value_zero(candidate, value, strings)
+                })
+                .is_some(),
+        )
     }
 
     pub fn set_remove(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
         let hash = self.any_hash(value);
         let strings = &self.strings;
-        Some(self.sets.get_mut(&(object.addr() as usize))?.remove(hash, |candidate| {
-            any_same_value_zero(candidate, value, strings)
-        }).is_some())
+        Some(
+            self.sets
+                .get_mut(&(object.addr() as usize))?
+                .remove(hash, |candidate| {
+                    any_same_value_zero(candidate, value, strings)
+                })
+                .is_some(),
+        )
     }
 
     pub fn set_len(&self, object: Obj) -> Option<usize> {
-        self.sets.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
+        self.sets
+            .get(&(object.addr() as usize))
+            .map(zun_core::OrderedMap::len)
     }
 
     pub fn set_clear(&mut self, object: Obj) -> Option<()> {
@@ -520,7 +668,13 @@ impl Heap {
     }
 
     pub fn set_values(&self, object: Obj) -> Option<Vec<zun_core::Any>> {
-        Some(self.sets.get(&(object.addr() as usize))?.iter().map(|(key, _)| key).collect())
+        Some(
+            self.sets
+                .get(&(object.addr() as usize))?
+                .iter()
+                .map(|(key, _)| key)
+                .collect(),
+        )
     }
 
     fn any_hash(&self, value: zun_core::Any) -> u64 {
@@ -528,14 +682,23 @@ impl Heap {
             zun_core::AnyTag::Int => value.as_int().unwrap() as u64 ^ 0x11,
             zun_core::AnyTag::Float => value.as_float().unwrap().to_bits() ^ 0x22,
             zun_core::AnyTag::Bool => value.as_bool().unwrap() as u64 ^ 0x33,
-            zun_core::AnyTag::Object => unsafe { Obj::from_addr(value.as_object().unwrap() as *mut u64) }.identity_hash() ^ 0x44,
-            zun_core::AnyTag::String => self.try_string(value.as_string().unwrap()).map_or(0, |s| hash_bytes(s.as_bytes())) ^ 0x55,
+            zun_core::AnyTag::Object => {
+                unsafe { Obj::from_addr(value.as_object().unwrap() as *mut u64) }.identity_hash()
+                    ^ 0x44
+            }
+            zun_core::AnyTag::String => {
+                self.try_string(value.as_string().unwrap())
+                    .map_or(0, |s| hash_bytes(s.as_bytes()))
+                    ^ 0x55
+            }
         }
     }
 
     /// Return the length of an array object.
     pub fn array_len(&self, object: Obj) -> Option<usize> {
-        self.arrays.get(&(object.addr() as usize)).map(zun_core::ArrayStorage::len)
+        self.arrays
+            .get(&(object.addr() as usize))
+            .map(zun_core::ArrayStorage::len)
     }
 
     /// Read an array element with bounds checking.
@@ -544,8 +707,15 @@ impl Heap {
     }
 
     /// Write an array element with bounds checking.
-    pub fn array_set(&mut self, object: Obj, index: usize, value: zun_core::Any) -> Option<zun_core::Any> {
-        self.arrays.get_mut(&(object.addr() as usize))?.set(index, value)
+    pub fn array_set(
+        &mut self,
+        object: Obj,
+        index: usize,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
+        self.arrays
+            .get_mut(&(object.addr() as usize))?
+            .set(index, value)
     }
 
     /// Insert an array element with bounds checking.
@@ -557,7 +727,9 @@ impl Heap {
 
     /// Remove an array element with bounds checking.
     pub fn array_remove(&mut self, object: Obj, index: usize) -> Option<zun_core::Any> {
-        self.arrays.get_mut(&(object.addr() as usize))?.remove(index)
+        self.arrays
+            .get_mut(&(object.addr() as usize))?
+            .remove(index)
     }
 
     /// Remove and return an array's last element.
@@ -683,7 +855,8 @@ impl Heap {
             }
             if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
                 for (key, _) in set.iter() {
-                    if let Some(&cidx) = key.as_object().and_then(|child| self.by_addr.get(&child)) {
+                    if let Some(&cidx) = key.as_object().and_then(|child| self.by_addr.get(&child))
+                    {
                         if !self.records[cidx].marked {
                             self.records[cidx].marked = true;
                             work.push(cidx);
@@ -698,9 +871,15 @@ impl Heap {
         loop {
             let mut promoted = false;
             for entry in &self.weak_maps {
-                let (Some(key), Some(value)) = (entry.key, entry.value) else { continue; };
-                let Some(&key_idx) = self.by_addr.get(&key) else { continue; };
-                let Some(&value_idx) = self.by_addr.get(&value) else { continue; };
+                let (Some(key), Some(value)) = (entry.key, entry.value) else {
+                    continue;
+                };
+                let Some(&key_idx) = self.by_addr.get(&key) else {
+                    continue;
+                };
+                let Some(&value_idx) = self.by_addr.get(&value) else {
+                    continue;
+                };
                 if self.records[key_idx].marked && !self.records[value_idx].marked {
                     self.records[value_idx].marked = true;
                     work.push(value_idx);
@@ -752,7 +931,9 @@ impl Heap {
                 }
                 if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
                     for (key, _) in set.iter() {
-                        if let Some(&child_idx) = key.as_object().and_then(|child| self.by_addr.get(&child)) {
+                        if let Some(&child_idx) =
+                            key.as_object().and_then(|child| self.by_addr.get(&child))
+                        {
                             if !self.records[child_idx].marked {
                                 self.records[child_idx].marked = true;
                                 work.push(child_idx);
@@ -761,14 +942,20 @@ impl Heap {
                     }
                 }
             }
-            if !promoted { break; }
+            if !promoted {
+                break;
+            }
         }
 
         // Weak references observe the completed mark set but do not contribute
         // roots. Clear dead targets before sweep removes their addresses.
         for weak in &mut self.weak_refs {
             if let Some(address) = weak.target {
-                if self.by_addr.get(&address).is_none_or(|&idx| !self.records[idx].marked) {
+                if self
+                    .by_addr
+                    .get(&address)
+                    .is_none_or(|&idx| !self.records[idx].marked)
+                {
                     weak.target = None;
                 }
             }
@@ -879,23 +1066,32 @@ impl Heap {
 
     pub fn weak_ref_new(&mut self, target: Obj) -> WeakRefId {
         let id = WeakRefId(self.weak_refs.len() as u32);
-        self.weak_refs.push(WeakSlot { target: Some(target.addr() as usize) });
+        self.weak_refs.push(WeakSlot {
+            target: Some(target.addr() as usize),
+        });
         id
     }
 
     pub fn weak_ref_get(&self, id: WeakRefId) -> Option<Obj> {
         let address = self.weak_refs.get(id.0 as usize)?.target?;
-        self.by_addr.get(&address).map(|&index| Obj(self.records[index].addr))
+        self.by_addr
+            .get(&address)
+            .map(|&index| Obj(self.records[index].addr))
     }
 
     pub fn weak_map_new(&mut self) -> WeakMapId {
         let id = WeakMapId(self.weak_maps.len() as u32);
-        self.weak_maps.push(Ephemeron { key: None, value: None });
+        self.weak_maps.push(Ephemeron {
+            key: None,
+            value: None,
+        });
         id
     }
 
     pub fn weak_map_set(&mut self, id: WeakMapId, key: Obj, value: Obj) -> bool {
-        let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else { return false; };
+        let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else {
+            return false;
+        };
         entry.key = Some(key.addr() as usize);
         entry.value = Some(value.addr() as usize);
         true
@@ -910,7 +1106,11 @@ impl Heap {
 
     pub fn finalization_register(&mut self, target: Obj, token: u64) -> FinalizationId {
         let id = FinalizationId(self.finalizers.len() as u32);
-        self.finalizers.push(FinalizerEntry { target: target.addr() as usize, token, queued: false });
+        self.finalizers.push(FinalizerEntry {
+            target: target.addr() as usize,
+            token,
+            queued: false,
+        });
         id
     }
 
@@ -1114,9 +1314,7 @@ mod tests {
         let garbage = heap.alloc(4, 0);
         let function = zun_core::FunctionHandle::new(11, Some(environment.addr() as usize));
 
-        let freed = unsafe {
-            heap.collect_with_function_roots(&[], &[function], &|_| Vec::new())
-        };
+        let freed = unsafe { heap.collect_with_function_roots(&[], &[function], &|_| Vec::new()) };
         assert_eq!(freed, 1);
         assert_eq!(heap.live_count(), 1);
         assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
@@ -1128,19 +1326,50 @@ mod tests {
         let mut heap = Heap::new();
         let map = heap.alloc_map();
         let one = heap.intern_string(Rc::from("one"));
-        assert_eq!(heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one)), None);
-        assert_eq!(heap.map_insert(map, zun_core::Any::float(f64::NAN), zun_core::Any::bool(true)), None);
-        assert_eq!(heap.map_get(map, zun_core::Any::int(1)).and_then(|v| v.as_string()).and_then(|h| heap.try_string(h)).map(|s| s.as_ref()), Some("one"));
-        assert_eq!(heap.map_get(map, zun_core::Any::float(f64::NAN)).and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one)),
+            None
+        );
+        assert_eq!(
+            heap.map_insert(
+                map,
+                zun_core::Any::float(f64::NAN),
+                zun_core::Any::bool(true)
+            ),
+            None
+        );
+        assert_eq!(
+            heap.map_get(map, zun_core::Any::int(1))
+                .and_then(|v| v.as_string())
+                .and_then(|h| heap.try_string(h))
+                .map(|s| s.as_ref()),
+            Some("one")
+        );
+        assert_eq!(
+            heap.map_get(map, zun_core::Any::float(f64::NAN))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
         assert_eq!(heap.map_len(map), Some(2));
-        assert_eq!(heap.map_entries(map).unwrap().iter().filter_map(|(key, _)| key.as_int()).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(
+            heap.map_entries(map)
+                .unwrap()
+                .iter()
+                .filter_map(|(key, _)| key.as_int())
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
         assert_eq!(heap.map_has(map, zun_core::Any::int(1)), Some(true));
         assert_eq!(heap.map_clear(map), Some(()));
         assert_eq!(heap.map_len(map), Some(0));
         assert_eq!(heap.map_has(map, zun_core::Any::int(1)), Some(false));
         let one = heap.intern_string(Rc::from("one-again"));
         heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one));
-        assert_eq!(heap.map_remove(map, zun_core::Any::int(1)).and_then(|(_, value)| value.as_string()), Some(one));
+        assert_eq!(
+            heap.map_remove(map, zun_core::Any::int(1))
+                .and_then(|(_, value)| value.as_string()),
+            Some(one)
+        );
         assert_eq!(heap.map_len(map), Some(0));
     }
 
@@ -1150,7 +1379,11 @@ mod tests {
         let map = heap.alloc_map();
         let key = heap.alloc(1, 0);
         let value = heap.alloc(2, 0);
-        heap.map_insert(map, zun_core::Any::object(key.addr() as usize), zun_core::Any::object(value.addr() as usize));
+        heap.map_insert(
+            map,
+            zun_core::Any::object(key.addr() as usize),
+            zun_core::Any::object(value.addr() as usize),
+        );
         let no_refs = |_: u32| Vec::<usize>::new();
         let freed = unsafe { heap.collect(&[map], &no_refs) };
         assert_eq!(freed, 0);
@@ -1162,15 +1395,37 @@ mod tests {
         let mut heap = Heap::new();
         let set = heap.alloc_set();
         let key = heap.alloc(1, 0);
-        assert_eq!(heap.set_add(set, zun_core::Any::object(key.addr() as usize)), Some(true));
-        assert_eq!(heap.set_add(set, zun_core::Any::object(key.addr() as usize)), Some(false));
-        assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(true));
+        assert_eq!(
+            heap.set_add(set, zun_core::Any::object(key.addr() as usize)),
+            Some(true)
+        );
+        assert_eq!(
+            heap.set_add(set, zun_core::Any::object(key.addr() as usize)),
+            Some(false)
+        );
+        assert_eq!(
+            heap.set_has(set, zun_core::Any::object(key.addr() as usize)),
+            Some(true)
+        );
         assert_eq!(heap.set_len(set), Some(1));
-        assert_eq!(heap.set_values(set).unwrap().iter().filter_map(|value| value.as_object()).count(), 1);
+        assert_eq!(
+            heap.set_values(set)
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_object())
+                .count(),
+            1
+        );
         assert_eq!(heap.set_clear(set), Some(()));
         assert_eq!(heap.set_len(set), Some(0));
-        assert_eq!(heap.set_remove(set, zun_core::Any::object(key.addr() as usize)), Some(false));
-        assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(false));
+        assert_eq!(
+            heap.set_remove(set, zun_core::Any::object(key.addr() as usize)),
+            Some(false)
+        );
+        assert_eq!(
+            heap.set_has(set, zun_core::Any::object(key.addr() as usize)),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1270,17 +1525,26 @@ mod tests {
         assert_eq!(heap.buffer_read_f64(buffer, 8), Some(2.5));
         assert_eq!(heap.buffer_write_u32(buffer, 14, 1), Some(false));
         let view = heap.buffer_view(buffer, 4, 8).unwrap();
-        assert_eq!(heap.buffer_view_write_u32(buffer, view, 0, 0x1234), Some(true));
+        assert_eq!(
+            heap.buffer_view_write_u32(buffer, view, 0, 0x1234),
+            Some(true)
+        );
         assert_eq!(heap.buffer_view_read_u32(buffer, view, 0), Some(0x1234));
         assert_eq!(heap.buffer_view_write_u32(buffer, view, 5, 1), Some(false));
         let bytes = zun_core::TypedArrayView::new(16, 0, 4, zun_core::TypedElement::U8).unwrap();
         assert_eq!(heap.buffer_view_write_u8(buffer, bytes, 0, 7), Some(true));
         assert_eq!(heap.buffer_view_read_u8(buffer, bytes, 0), Some(7));
         let shorts = zun_core::TypedArrayView::new(16, 0, 4, zun_core::TypedElement::U16).unwrap();
-        assert_eq!(heap.buffer_view_write_u16(buffer, shorts, 1, 0xbeef), Some(true));
+        assert_eq!(
+            heap.buffer_view_write_u16(buffer, shorts, 1, 0xbeef),
+            Some(true)
+        );
         assert_eq!(heap.buffer_view_read_u16(buffer, shorts, 1), Some(0xbeef));
         let floats = zun_core::TypedArrayView::new(16, 8, 8, zun_core::TypedElement::F64).unwrap();
-        assert_eq!(heap.buffer_view_write_f64(buffer, floats, 0, 1.5), Some(true));
+        assert_eq!(
+            heap.buffer_view_write_f64(buffer, floats, 0, 1.5),
+            Some(true)
+        );
         assert_eq!(heap.buffer_view_read_f64(buffer, floats, 0), Some(1.5));
     }
 
@@ -1291,13 +1555,19 @@ mod tests {
         let later = heap.alloc_date(Some(200));
         let invalid = heap.alloc_date(None);
         assert_eq!(heap.date_millis(earlier), Some(100));
-        assert_eq!(heap.date_compare(earlier, later), Some(std::cmp::Ordering::Less));
+        assert_eq!(
+            heap.date_compare(earlier, later),
+            Some(std::cmp::Ordering::Less)
+        );
         assert_eq!(heap.date_utc_date(earlier), Some((1970, 1, 1)));
         assert_eq!(heap.date_utc_time(earlier), Some((0, 0, 0, 100)));
         assert_eq!(heap.date_weekday(earlier), Some(4));
         assert_eq!(heap.date_ordinal(earlier), Some(1));
         assert_eq!(heap.date_iso(earlier).as_deref(), Some("1970-01-01"));
-        assert_eq!(heap.date_iso_datetime(earlier).as_deref(), Some("1970-01-01T00:00:00.100Z"));
+        assert_eq!(
+            heap.date_iso_datetime(earlier).as_deref(),
+            Some("1970-01-01T00:00:00.100Z")
+        );
         assert_eq!(heap.date_set_millis(earlier, 200), Some(()));
         assert_eq!(heap.date_millis(earlier), Some(200));
         assert_eq!(heap.date_invalidate(earlier), Some(()));
@@ -1373,13 +1643,18 @@ mod tests {
         let mut heap = Heap::new();
         let object = heap.alloc_dynamic();
         assert_eq!(object.type_rid(), 0);
-        assert_eq!(heap.dynamic_set(object, "answer", zun_core::Any::int(42)), None);
         assert_eq!(
-            heap.dynamic_get(object, "answer").and_then(zun_core::Any::as_int),
+            heap.dynamic_set(object, "answer", zun_core::Any::int(42)),
+            None
+        );
+        assert_eq!(
+            heap.dynamic_get(object, "answer")
+                .and_then(zun_core::Any::as_int),
             Some(42)
         );
         assert_eq!(
-            heap.dynamic_remove(object, "answer").and_then(zun_core::Any::as_int),
+            heap.dynamic_remove(object, "answer")
+                .and_then(zun_core::Any::as_int),
             Some(42)
         );
     }
@@ -1389,7 +1664,11 @@ mod tests {
         let mut heap = Heap::new();
         let child = heap.alloc(7, 0);
         let dynamic = heap.alloc_dynamic();
-        heap.dynamic_set(dynamic, "child", zun_core::Any::object(child.addr() as usize));
+        heap.dynamic_set(
+            dynamic,
+            "child",
+            zun_core::Any::object(child.addr() as usize),
+        );
         let unreachable = heap.alloc(8, 0);
         let no_refs = |_: u32| Vec::<usize>::new();
 
@@ -1406,10 +1685,19 @@ mod tests {
         let child = heap.alloc(7, 0);
         let array = heap.alloc_array(1);
         assert_eq!(heap.array_len(array), Some(1));
-        assert_eq!(heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)), Some(zun_core::Any::int(0)));
-        assert_eq!(heap.array_get(array, 0).and_then(zun_core::Any::as_object), Some(child.addr() as usize));
+        assert_eq!(
+            heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)),
+            Some(zun_core::Any::int(0))
+        );
+        assert_eq!(
+            heap.array_get(array, 0).and_then(zun_core::Any::as_object),
+            Some(child.addr() as usize)
+        );
         assert!(heap.array_insert(array, 1, zun_core::Any::int(9)));
-        assert_eq!(heap.array_remove(array, 1).and_then(zun_core::Any::as_int), Some(9));
+        assert_eq!(
+            heap.array_remove(array, 1).and_then(zun_core::Any::as_int),
+            Some(9)
+        );
         let unreachable = heap.alloc(8, 0);
         let no_refs = |_: u32| Vec::<usize>::new();
         let freed = unsafe { heap.collect(&[array], &no_refs) };

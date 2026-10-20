@@ -21,7 +21,13 @@ fn concat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
 fn compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1)) {
         (Some(NativeArg::Str(left)), Some(NativeArg::Str(right))) => {
-            let result = if left < right { -1 } else if left > right { 1 } else { 0 };
+            let result = if left < right {
+                -1
+            } else if left > right {
+                1
+            } else {
+                0
+            };
             Ok(NativeValue::Int(result))
         }
         _ => Err(NativeError("compare: expected two strings".to_string())),
@@ -130,7 +136,11 @@ fn last_index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
     };
     let needle = match args.get(1) {
         Some(NativeArg::Str(needle)) => needle,
-        _ => return Err(NativeError("lastIndexOf: expected a search string".to_string())),
+        _ => {
+            return Err(NativeError(
+                "lastIndexOf: expected a search string".to_string(),
+            ))
+        }
     };
     let value_units: Vec<u16> = value.encode_utf16().collect();
     let needle_units: Vec<u16> = needle.encode_utf16().collect();
@@ -148,10 +158,14 @@ fn last_index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
 
 fn replace(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1), args.get(2)) {
-        (Some(NativeArg::Str(value)), Some(NativeArg::Str(needle)), Some(NativeArg::Str(replacement))) => {
-            Ok(NativeValue::Str(value.replacen(needle, replacement, 1)))
-        }
-        _ => Err(NativeError("replace: expected a string, search string, and replacement".to_string())),
+        (
+            Some(NativeArg::Str(value)),
+            Some(NativeArg::Str(needle)),
+            Some(NativeArg::Str(replacement)),
+        ) => Ok(NativeValue::Str(value.replacen(needle, replacement, 1))),
+        _ => Err(NativeError(
+            "replace: expected a string, search string, and replacement".to_string(),
+        )),
     }
 }
 
@@ -162,17 +176,31 @@ fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     };
     let start = match args.get(1) {
         Some(NativeArg::Int(index)) if *index >= 0 => *index as usize,
-        _ => return Err(NativeError("substring: expected a non-negative start".to_string())),
+        _ => {
+            return Err(NativeError(
+                "substring: expected a non-negative start".to_string(),
+            ))
+        }
     };
     let end = match args.get(2) {
         Some(NativeArg::Int(index)) if *index >= 0 => *index as usize,
-        _ => return Err(NativeError("substring: expected a non-negative end".to_string())),
+        _ => {
+            return Err(NativeError(
+                "substring: expected a non-negative end".to_string(),
+            ))
+        }
     };
     let units: Vec<u16> = value.encode_utf16().collect();
     let start = start.min(units.len());
     let end = end.min(units.len());
-    let (start, end) = if start <= end { (start, end) } else { (end, start) };
-    Ok(NativeValue::Str(String::from_utf16_lossy(&units[start..end])))
+    let (start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    Ok(NativeValue::Str(String::from_utf16_lossy(
+        &units[start..end],
+    )))
 }
 
 fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -182,11 +210,19 @@ fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     };
     let target = match args.get(1) {
         Some(NativeArg::Int(target)) if *target >= 0 => *target as usize,
-        _ => return Err(NativeError("padStart: expected a non-negative target length".to_string())),
+        _ => {
+            return Err(NativeError(
+                "padStart: expected a non-negative target length".to_string(),
+            ))
+        }
     };
     let fill = match args.get(2) {
         Some(NativeArg::Str(fill)) if !fill.is_empty() => fill,
-        _ => return Err(NativeError("padStart: expected a non-empty fill string".to_string())),
+        _ => {
+            return Err(NativeError(
+                "padStart: expected a non-empty fill string".to_string(),
+            ))
+        }
     };
     let length = value.encode_utf16().count();
     if target <= length {
@@ -213,11 +249,19 @@ fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     };
     let target = match args.get(1) {
         Some(NativeArg::Int(target)) if *target >= 0 => *target as usize,
-        _ => return Err(NativeError("padEnd: expected a non-negative target length".to_string())),
+        _ => {
+            return Err(NativeError(
+                "padEnd: expected a non-negative target length".to_string(),
+            ))
+        }
     };
     let fill = match args.get(2) {
         Some(NativeArg::Str(fill)) if !fill.is_empty() => fill,
-        _ => return Err(NativeError("padEnd: expected a non-empty fill string".to_string())),
+        _ => {
+            return Err(NativeError(
+                "padEnd: expected a non-empty fill string".to_string(),
+            ))
+        }
     };
     let length = value.encode_utf16().count();
     if target <= length {
@@ -272,7 +316,11 @@ fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
     };
     let index = match args.get(1) {
         Some(NativeArg::Int(index)) if *index >= 0 => *index as usize,
-        _ => return Err(NativeError("charCodeAt: expected a non-negative index".to_string())),
+        _ => {
+            return Err(NativeError(
+                "charCodeAt: expected a non-negative index".to_string(),
+            ))
+        }
     };
     value
         .encode_utf16()
@@ -313,7 +361,11 @@ fn repeat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
     };
     let count = match args.get(1) {
         Some(NativeArg::Int(count)) if *count >= 0 => *count as usize,
-        _ => return Err(NativeError("repeat: expected a non-negative count".to_string())),
+        _ => {
+            return Err(NativeError(
+                "repeat: expected a non-negative count".to_string(),
+            ))
+        }
     };
     Ok(NativeValue::Str(value.repeat(count)))
 }
@@ -332,30 +384,155 @@ fn reverse(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:string",
     functions: &[
-        NativeFn { name: "length", params: &[Str], ret: U64, imp: length },
-        NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
-        NativeFn { name: "compare", params: &[Str, Str], ret: I32, imp: compare },
-        NativeFn { name: "toInt", params: &[Str], ret: I32, imp: to_int },
-        NativeFn { name: "toFloat", params: &[Str], ret: F64, imp: to_float },
-        NativeFn { name: "toBoolean", params: &[Str], ret: Bool, imp: to_boolean },
-        NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
-        NativeFn { name: "count", params: &[Str, Str], ret: I32, imp: count },
-        NativeFn { name: "includes", params: &[Str, Str], ret: Bool, imp: contains },
-        NativeFn { name: "indexOf", params: &[Str, Str], ret: I32, imp: index_of },
-        NativeFn { name: "lastIndexOf", params: &[Str, Str], ret: I32, imp: last_index_of },
-        NativeFn { name: "replace", params: &[Str, Str, Str], ret: Str, imp: replace },
-        NativeFn { name: "substring", params: &[Str, U64, U64], ret: Str, imp: substring },
-        NativeFn { name: "padStart", params: &[Str, U64, Str], ret: Str, imp: pad_start },
-        NativeFn { name: "padEnd", params: &[Str, U64, Str], ret: Str, imp: pad_end },
-        NativeFn { name: "toLowerCase", params: &[Str], ret: Str, imp: to_lower_case },
-        NativeFn { name: "toUpperCase", params: &[Str], ret: Str, imp: to_upper_case },
-        NativeFn { name: "trimStart", params: &[Str], ret: Str, imp: trim_start },
-        NativeFn { name: "trimEnd", params: &[Str], ret: Str, imp: trim_end },
-        NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
-        NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
-        NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },
-        NativeFn { name: "trim", params: &[Str], ret: Str, imp: trim },
-        NativeFn { name: "repeat", params: &[Str, U64], ret: Str, imp: repeat },
-        NativeFn { name: "reverse", params: &[Str], ret: Str, imp: reverse },
+        NativeFn {
+            name: "length",
+            params: &[Str],
+            ret: U64,
+            imp: length,
+        },
+        NativeFn {
+            name: "concat",
+            params: &[Str, Str],
+            ret: Str,
+            imp: concat,
+        },
+        NativeFn {
+            name: "compare",
+            params: &[Str, Str],
+            ret: I32,
+            imp: compare,
+        },
+        NativeFn {
+            name: "toInt",
+            params: &[Str],
+            ret: I32,
+            imp: to_int,
+        },
+        NativeFn {
+            name: "toFloat",
+            params: &[Str],
+            ret: F64,
+            imp: to_float,
+        },
+        NativeFn {
+            name: "toBoolean",
+            params: &[Str],
+            ret: Bool,
+            imp: to_boolean,
+        },
+        NativeFn {
+            name: "contains",
+            params: &[Str, Str],
+            ret: Bool,
+            imp: contains,
+        },
+        NativeFn {
+            name: "count",
+            params: &[Str, Str],
+            ret: I32,
+            imp: count,
+        },
+        NativeFn {
+            name: "includes",
+            params: &[Str, Str],
+            ret: Bool,
+            imp: contains,
+        },
+        NativeFn {
+            name: "indexOf",
+            params: &[Str, Str],
+            ret: I32,
+            imp: index_of,
+        },
+        NativeFn {
+            name: "lastIndexOf",
+            params: &[Str, Str],
+            ret: I32,
+            imp: last_index_of,
+        },
+        NativeFn {
+            name: "replace",
+            params: &[Str, Str, Str],
+            ret: Str,
+            imp: replace,
+        },
+        NativeFn {
+            name: "substring",
+            params: &[Str, U64, U64],
+            ret: Str,
+            imp: substring,
+        },
+        NativeFn {
+            name: "padStart",
+            params: &[Str, U64, Str],
+            ret: Str,
+            imp: pad_start,
+        },
+        NativeFn {
+            name: "padEnd",
+            params: &[Str, U64, Str],
+            ret: Str,
+            imp: pad_end,
+        },
+        NativeFn {
+            name: "toLowerCase",
+            params: &[Str],
+            ret: Str,
+            imp: to_lower_case,
+        },
+        NativeFn {
+            name: "toUpperCase",
+            params: &[Str],
+            ret: Str,
+            imp: to_upper_case,
+        },
+        NativeFn {
+            name: "trimStart",
+            params: &[Str],
+            ret: Str,
+            imp: trim_start,
+        },
+        NativeFn {
+            name: "trimEnd",
+            params: &[Str],
+            ret: Str,
+            imp: trim_end,
+        },
+        NativeFn {
+            name: "charCodeAt",
+            params: &[Str, U64],
+            ret: U32,
+            imp: char_code_at,
+        },
+        NativeFn {
+            name: "startsWith",
+            params: &[Str, Str],
+            ret: Bool,
+            imp: starts_with,
+        },
+        NativeFn {
+            name: "endsWith",
+            params: &[Str, Str],
+            ret: Bool,
+            imp: ends_with,
+        },
+        NativeFn {
+            name: "trim",
+            params: &[Str],
+            ret: Str,
+            imp: trim,
+        },
+        NativeFn {
+            name: "repeat",
+            params: &[Str, U64],
+            ret: Str,
+            imp: repeat,
+        },
+        NativeFn {
+            name: "reverse",
+            params: &[Str],
+            ret: Str,
+            imp: reverse,
+        },
     ],
 };

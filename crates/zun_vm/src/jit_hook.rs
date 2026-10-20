@@ -31,7 +31,9 @@ pub struct JitHook<'a> {
 
 impl core::fmt::Debug for JitHook<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("JitHook").field("threshold", &self.threshold).finish()
+        f.debug_struct("JitHook")
+            .field("threshold", &self.threshold)
+            .finish()
     }
 }
 
@@ -136,7 +138,11 @@ impl CallHook for JitHook<'_> {
         // Keep object arguments visible if a future native safepoint requests
         // collection while this JIT frame is active.
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
-        let packed: Vec<u64> = args.iter().zip(kinds).map(|(v, &k)| pack_value(v, k)).collect();
+        let packed: Vec<u64> = args
+            .iter()
+            .zip(kinds)
+            .map(|(v, &k)| pack_value(v, k))
+            .collect();
         let result = jit.call_packed(method_rid, &packed).ok()?;
         Some(unpack_value(result, jit.return_kind(method_rid)))
     }
@@ -156,7 +162,10 @@ impl CallHook for JitHook<'_> {
             && self.jit.borrow().is_compiled(method_rid)
             && !self.jit.borrow().is_defined(method_rid)
         {
-            let _ = self.jit.borrow_mut().ensure_compiled(self.module, method_rid);
+            let _ = self
+                .jit
+                .borrow_mut()
+                .ensure_compiled(self.module, method_rid);
         }
     }
 }

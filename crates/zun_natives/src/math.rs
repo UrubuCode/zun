@@ -24,7 +24,13 @@ fn cbrt(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
 
 fn sign(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = float_arg(args, "sign")?;
-    let result = if value.is_nan() || value == 0.0 { value } else if value.is_sign_positive() { 1.0 } else { -1.0 };
+    let result = if value.is_nan() || value == 0.0 {
+        value
+    } else if value.is_sign_positive() {
+        1.0
+    } else {
+        -1.0
+    };
     Ok(NativeValue::Float(result))
 }
 
@@ -52,11 +58,17 @@ fn receiver_value(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
     match args.get(1) {
         Some(NativeArg::Float(value)) => Ok(NativeValue::Float(*value)),
         Some(NativeArg::Int(value)) => Ok(NativeValue::Float(*value as f64)),
-        _ => Err(NativeError("receiverValue: expected a numeric value".to_string())),
+        _ => Err(NativeError(
+            "receiverValue: expected a numeric value".to_string(),
+        )),
     }
 }
 
-fn unary_float(args: &[NativeArg], name: &str, operation: fn(f64) -> f64) -> Result<NativeValue, NativeError> {
+fn unary_float(
+    args: &[NativeArg],
+    name: &str,
+    operation: fn(f64) -> f64,
+) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Float(value)) => *value,
         Some(NativeArg::Int(value)) => *value as f64,
@@ -175,40 +187,215 @@ fn hypot(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
     functions: &[
-        NativeFn { name: "abs", params: &[F64], ret: F64, imp: abs },
-        NativeFn { name: "sqrt", params: &[F64], ret: F64, imp: sqrt },
-        NativeFn { name: "min", params: &[F64, F64], ret: F64, imp: min },
-        NativeFn { name: "max", params: &[F64, F64], ret: F64, imp: max },
-        NativeFn { name: "sqrtNumber", params: &[F64], ret: F64, imp: sqrt },
-        NativeFn { name: "cbrtNumber", params: &[F64], ret: F64, imp: cbrt },
-        NativeFn { name: "signNumber", params: &[F64], ret: F64, imp: sign },
-        NativeFn { name: "minNumber", params: &[F64, F64], ret: F64, imp: min },
-        NativeFn { name: "maxNumber", params: &[F64, F64], ret: F64, imp: max },
-        NativeFn { name: "floor", params: &[F64], ret: F64, imp: floor },
-        NativeFn { name: "ceil", params: &[F64], ret: F64, imp: ceil },
-        NativeFn { name: "round", params: &[F64], ret: F64, imp: round },
-        NativeFn { name: "floorNumber", params: &[F64], ret: F64, imp: floor },
-        NativeFn { name: "ceilNumber", params: &[F64], ret: F64, imp: ceil },
-        NativeFn { name: "roundNumber", params: &[F64], ret: F64, imp: round },
-        NativeFn { name: "truncNumber", params: &[F64], ret: F64, imp: trunc },
-        NativeFn { name: "receiverValue", params: &[Opaque, F64], ret: F64, imp: receiver_value },
-        NativeFn { name: "powNumber", params: &[F64, F64], ret: F64, imp: pow },
-        NativeFn { name: "sinNumber", params: &[F64], ret: F64, imp: sin },
-        NativeFn { name: "cosNumber", params: &[F64], ret: F64, imp: cos },
-        NativeFn { name: "expNumber", params: &[F64], ret: F64, imp: exp },
-        NativeFn { name: "logNumber", params: &[F64], ret: F64, imp: log },
-        NativeFn { name: "log10Number", params: &[F64], ret: F64, imp: log10 },
-        NativeFn { name: "log2Number", params: &[F64], ret: F64, imp: log2 },
-        NativeFn { name: "expm1Number", params: &[F64], ret: F64, imp: expm1 },
-        NativeFn { name: "log1pNumber", params: &[F64], ret: F64, imp: log1p },
-        NativeFn { name: "sinhNumber", params: &[F64], ret: F64, imp: sinh },
-        NativeFn { name: "coshNumber", params: &[F64], ret: F64, imp: cosh },
-        NativeFn { name: "tanhNumber", params: &[F64], ret: F64, imp: tanh },
-        NativeFn { name: "asinhNumber", params: &[F64], ret: F64, imp: asinh },
-        NativeFn { name: "acoshNumber", params: &[F64], ret: F64, imp: acosh },
-        NativeFn { name: "atanhNumber", params: &[F64], ret: F64, imp: atanh },
-        NativeFn { name: "tanNumber", params: &[F64], ret: F64, imp: tan },
-        NativeFn { name: "atan2Number", params: &[F64, F64], ret: F64, imp: atan2 },
-        NativeFn { name: "hypotNumber", params: &[F64, F64], ret: F64, imp: hypot },
+        NativeFn {
+            name: "abs",
+            params: &[F64],
+            ret: F64,
+            imp: abs,
+        },
+        NativeFn {
+            name: "sqrt",
+            params: &[F64],
+            ret: F64,
+            imp: sqrt,
+        },
+        NativeFn {
+            name: "min",
+            params: &[F64, F64],
+            ret: F64,
+            imp: min,
+        },
+        NativeFn {
+            name: "max",
+            params: &[F64, F64],
+            ret: F64,
+            imp: max,
+        },
+        NativeFn {
+            name: "sqrtNumber",
+            params: &[F64],
+            ret: F64,
+            imp: sqrt,
+        },
+        NativeFn {
+            name: "cbrtNumber",
+            params: &[F64],
+            ret: F64,
+            imp: cbrt,
+        },
+        NativeFn {
+            name: "signNumber",
+            params: &[F64],
+            ret: F64,
+            imp: sign,
+        },
+        NativeFn {
+            name: "minNumber",
+            params: &[F64, F64],
+            ret: F64,
+            imp: min,
+        },
+        NativeFn {
+            name: "maxNumber",
+            params: &[F64, F64],
+            ret: F64,
+            imp: max,
+        },
+        NativeFn {
+            name: "floor",
+            params: &[F64],
+            ret: F64,
+            imp: floor,
+        },
+        NativeFn {
+            name: "ceil",
+            params: &[F64],
+            ret: F64,
+            imp: ceil,
+        },
+        NativeFn {
+            name: "round",
+            params: &[F64],
+            ret: F64,
+            imp: round,
+        },
+        NativeFn {
+            name: "floorNumber",
+            params: &[F64],
+            ret: F64,
+            imp: floor,
+        },
+        NativeFn {
+            name: "ceilNumber",
+            params: &[F64],
+            ret: F64,
+            imp: ceil,
+        },
+        NativeFn {
+            name: "roundNumber",
+            params: &[F64],
+            ret: F64,
+            imp: round,
+        },
+        NativeFn {
+            name: "truncNumber",
+            params: &[F64],
+            ret: F64,
+            imp: trunc,
+        },
+        NativeFn {
+            name: "receiverValue",
+            params: &[Opaque, F64],
+            ret: F64,
+            imp: receiver_value,
+        },
+        NativeFn {
+            name: "powNumber",
+            params: &[F64, F64],
+            ret: F64,
+            imp: pow,
+        },
+        NativeFn {
+            name: "sinNumber",
+            params: &[F64],
+            ret: F64,
+            imp: sin,
+        },
+        NativeFn {
+            name: "cosNumber",
+            params: &[F64],
+            ret: F64,
+            imp: cos,
+        },
+        NativeFn {
+            name: "expNumber",
+            params: &[F64],
+            ret: F64,
+            imp: exp,
+        },
+        NativeFn {
+            name: "logNumber",
+            params: &[F64],
+            ret: F64,
+            imp: log,
+        },
+        NativeFn {
+            name: "log10Number",
+            params: &[F64],
+            ret: F64,
+            imp: log10,
+        },
+        NativeFn {
+            name: "log2Number",
+            params: &[F64],
+            ret: F64,
+            imp: log2,
+        },
+        NativeFn {
+            name: "expm1Number",
+            params: &[F64],
+            ret: F64,
+            imp: expm1,
+        },
+        NativeFn {
+            name: "log1pNumber",
+            params: &[F64],
+            ret: F64,
+            imp: log1p,
+        },
+        NativeFn {
+            name: "sinhNumber",
+            params: &[F64],
+            ret: F64,
+            imp: sinh,
+        },
+        NativeFn {
+            name: "coshNumber",
+            params: &[F64],
+            ret: F64,
+            imp: cosh,
+        },
+        NativeFn {
+            name: "tanhNumber",
+            params: &[F64],
+            ret: F64,
+            imp: tanh,
+        },
+        NativeFn {
+            name: "asinhNumber",
+            params: &[F64],
+            ret: F64,
+            imp: asinh,
+        },
+        NativeFn {
+            name: "acoshNumber",
+            params: &[F64],
+            ret: F64,
+            imp: acosh,
+        },
+        NativeFn {
+            name: "atanhNumber",
+            params: &[F64],
+            ret: F64,
+            imp: atanh,
+        },
+        NativeFn {
+            name: "tanNumber",
+            params: &[F64],
+            ret: F64,
+            imp: tan,
+        },
+        NativeFn {
+            name: "atan2Number",
+            params: &[F64, F64],
+            ret: F64,
+            imp: atan2,
+        },
+        NativeFn {
+            name: "hypotNumber",
+            params: &[F64, F64],
+            ret: F64,
+            imp: hypot,
+        },
     ],
 };

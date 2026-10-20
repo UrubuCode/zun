@@ -59,8 +59,11 @@ impl Parser<'_> {
     }
 
     fn error_at(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics
-            .push(Diagnostic::error(message).with_code("SYN0003").with_span(span));
+        self.diagnostics.push(
+            Diagnostic::error(message)
+                .with_code("SYN0003")
+                .with_span(span),
+        );
     }
 
     /// Expect `kind`; on mismatch diagnose and leave the token in place.
@@ -187,8 +190,14 @@ impl Parser<'_> {
         self.expect(TokenKind::RParen, "`)`");
         let return_type = self.optional_type_annotation();
         let body = if is_extern {
-            let end = self.expect(TokenKind::Semi, "`;` after extern method").map(|t| t.span).unwrap_or(name.span);
-            Block { statements: Vec::new(), span: name.span.to(end) }
+            let end = self
+                .expect(TokenKind::Semi, "`;` after extern method")
+                .map(|t| t.span)
+                .unwrap_or(name.span);
+            Block {
+                statements: Vec::new(),
+                span: name.span.to(end),
+            }
         } else {
             self.block()
         };
@@ -334,14 +343,18 @@ impl Parser<'_> {
         let start = self.bump().span;
         let end = self.peek().span;
         self.expect(TokenKind::Semi, "`;` after break");
-        Stmt::Break { span: start.to(end) }
+        Stmt::Break {
+            span: start.to(end),
+        }
     }
 
     fn continue_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         let end = self.peek().span;
         self.expect(TokenKind::Semi, "`;` after continue");
-        Stmt::Continue { span: start.to(end) }
+        Stmt::Continue {
+            span: start.to(end),
+        }
     }
 
     fn return_statement(&mut self) -> Stmt {
@@ -507,7 +520,10 @@ impl Parser<'_> {
                 TokenKind::LBracket => {
                     self.bump();
                     let index = self.expression();
-                    let close = self.expect(TokenKind::RBracket, "`]`").map(|t| t.span).unwrap_or(index.span());
+                    let close = self
+                        .expect(TokenKind::RBracket, "`]`")
+                        .map(|t| t.span)
+                        .unwrap_or(index.span());
                     expr = Expr::Index {
                         span: expr.span().to(close),
                         object: Box::new(expr),
@@ -544,7 +560,10 @@ impl Parser<'_> {
                     // in practice; diagnose rather than crash if it ever changes.
                     f64::NAN
                 });
-                Expr::Number { value, span: t.span }
+                Expr::Number {
+                    value,
+                    span: t.span,
+                }
             }
             TokenKind::String => {
                 self.bump();
@@ -555,11 +574,17 @@ impl Parser<'_> {
             }
             TokenKind::KwTrue => {
                 self.bump();
-                Expr::Bool { value: true, span: t.span }
+                Expr::Bool {
+                    value: true,
+                    span: t.span,
+                }
             }
             TokenKind::KwFalse => {
                 self.bump();
-                Expr::Bool { value: false, span: t.span }
+                Expr::Bool {
+                    value: false,
+                    span: t.span,
+                }
             }
             TokenKind::KwNull => {
                 self.bump();
@@ -672,10 +697,21 @@ mod tests {
         let Stmt::Return { value: Some(e), .. } = &p.functions[0].body.statements[0] else {
             panic!("expected return");
         };
-        let Expr::Binary { op: BinaryOp::Add, rhs, .. } = e else {
+        let Expr::Binary {
+            op: BinaryOp::Add,
+            rhs,
+            ..
+        } = e
+        else {
             panic!("expected add at root, got {e:?}");
         };
-        assert!(matches!(**rhs, Expr::Binary { op: BinaryOp::Mul, .. }));
+        assert!(matches!(
+            **rhs,
+            Expr::Binary {
+                op: BinaryOp::Mul,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -685,7 +721,13 @@ mod tests {
         let Stmt::Return { value: Some(e), .. } = &p.functions[0].body.statements[0] else {
             panic!("expected return");
         };
-        assert!(matches!(e, Expr::Binary { op: BinaryOp::Lt, .. }));
+        assert!(matches!(
+            e,
+            Expr::Binary {
+                op: BinaryOp::Lt,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -709,15 +751,23 @@ mod tests {
         let body = &p.functions[0].body.statements;
         assert!(matches!(body[0], Stmt::Let { .. }));
         assert!(matches!(body[2], Stmt::While { .. }));
-        assert!(matches!(body[3], Stmt::If { else_block: Some(_), .. }));
+        assert!(matches!(
+            body[3],
+            Stmt::If {
+                else_block: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]
     fn string_escapes_decode() {
         let src = r#"function f() { let s = "a\nb\"c"; }"#;
         let p = parse_ok(src);
-        let Stmt::Let { init: Expr::String { value, .. }, .. } =
-            &p.functions[0].body.statements[0]
+        let Stmt::Let {
+            init: Expr::String { value, .. },
+            ..
+        } = &p.functions[0].body.statements[0]
         else {
             panic!("expected string let");
         };
@@ -731,10 +781,21 @@ mod tests {
         let Stmt::Return { value: Some(e), .. } = &p.functions[0].body.statements[0] else {
             panic!("expected return");
         };
-        let Expr::Unary { op: UnaryOp::Neg, operand, .. } = e else {
+        let Expr::Unary {
+            op: UnaryOp::Neg,
+            operand,
+            ..
+        } = e
+        else {
             panic!("expected negation, got {e:?}");
         };
-        assert!(matches!(**operand, Expr::Binary { op: BinaryOp::Add, .. }));
+        assert!(matches!(
+            **operand,
+            Expr::Binary {
+                op: BinaryOp::Add,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -749,7 +810,9 @@ mod tests {
     fn invalid_assignment_target_diagnoses() {
         let mut diags = Vec::new();
         parse("function f() { 1 = 2; }", &mut diags);
-        assert!(diags.iter().any(|d| d.message.contains("assignment target")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("assignment target")));
     }
 
     #[test]
@@ -776,7 +839,11 @@ mod tests {
         let src = "function f() { let p = new Point(1, 2); print(p.x); }";
         let p = parse_ok(src);
         let body = &p.functions[0].body.statements;
-        let Stmt::Let { init: Expr::New { args, .. }, .. } = &body[0] else {
+        let Stmt::Let {
+            init: Expr::New { args, .. },
+            ..
+        } = &body[0]
+        else {
             panic!("expected new");
         };
         assert_eq!(args.len(), 2);
@@ -829,8 +896,10 @@ mod tests {
     fn parses_method_call() {
         let src = "function f() { let r = c.add(1, 2); }";
         let p = parse_ok(src);
-        let Stmt::Let { init: Expr::MethodCall { args, .. }, .. } =
-            &p.functions[0].body.statements[0]
+        let Stmt::Let {
+            init: Expr::MethodCall { args, .. },
+            ..
+        } = &p.functions[0].body.statements[0]
         else {
             panic!("expected method call");
         };
@@ -841,8 +910,10 @@ mod tests {
     fn chained_field_access() {
         let src = "function f() { let z = a.b.c; }";
         let p = parse_ok(src);
-        let Stmt::Let { init: Expr::Field { object, .. }, .. } =
-            &p.functions[0].body.statements[0]
+        let Stmt::Let {
+            init: Expr::Field { object, .. },
+            ..
+        } = &p.functions[0].body.statements[0]
         else {
             panic!("expected field access");
         };

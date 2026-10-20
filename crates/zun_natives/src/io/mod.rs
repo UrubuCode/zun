@@ -13,7 +13,17 @@ fn print_line(args: &[NativeArg], sink: &mut dyn Sink) -> Result<NativeValue, Na
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:io",
     functions: &[
-        NativeFn { name: "print", params: &[Str], ret: Void, imp: print_line },
-        NativeFn { name: "println", params: &[Str], ret: Void, imp: print_line },
+        NativeFn {
+            name: "print",
+            params: &[Str],
+            ret: Void,
+            imp: print_line,
+        },
+        NativeFn {
+            name: "println",
+            params: &[Str],
+            ret: Void,
+            imp: print_line,
+        },
     ],
 };

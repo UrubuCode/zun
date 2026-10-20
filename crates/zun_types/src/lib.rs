@@ -268,7 +268,10 @@ impl TypeSystem {
 
     /// Resolve a method RID to its compact virtual slot.
     pub fn virtual_slot(&self, method_rid: u32) -> Option<usize> {
-        self.method_slots.get(method_rid as usize).copied().flatten()
+        self.method_slots
+            .get(method_rid as usize)
+            .copied()
+            .flatten()
     }
 
     /// Number of virtual slots materialized in each type vtable.

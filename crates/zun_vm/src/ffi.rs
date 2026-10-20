@@ -134,12 +134,7 @@ impl NativeLibrary {
     /// # Safety
     /// The symbol must use the C ABI and have the exact signature
     /// `extern "C" fn(f64, f64) -> f64`.
-    pub unsafe fn call_f64_2(
-        &self,
-        name: &[u8],
-        first: f64,
-        second: f64,
-    ) -> Result<f64, FfiError> {
+    pub unsafe fn call_f64_2(&self, name: &[u8], first: f64, second: f64) -> Result<f64, FfiError> {
         // SAFETY: the caller guarantees the symbol ABI described above.
         let symbol = unsafe { self.symbol::<unsafe extern "C" fn(f64, f64) -> f64>(name) }?;
         // SAFETY: the resolved function has the declared ABI and signature.
@@ -164,7 +159,10 @@ mod tests {
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
         let result = unsafe { library.call_i64_1(b"zun_missing_symbol", 1) };
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("failed to resolve"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("failed to resolve"));
     }
 
     #[test]

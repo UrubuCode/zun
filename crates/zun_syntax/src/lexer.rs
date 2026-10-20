@@ -182,7 +182,9 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
             }
             b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$' => {
                 while pos < bytes.len()
-                    && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_' || bytes[pos] == b'$')
+                    && (bytes[pos].is_ascii_alphanumeric()
+                        || bytes[pos] == b'_'
+                        || bytes[pos] == b'$')
                 {
                     pos += 1;
                 }
@@ -352,7 +354,10 @@ mod tests {
     #[test]
     fn leading_bom_is_skipped() {
         use TokenKind::*;
-        assert_eq!(kinds("\u{FEFF}let x = 1;"), vec![KwLet, Ident, Eq, Number, Semi, Eof]);
+        assert_eq!(
+            kinds("\u{FEFF}let x = 1;"),
+            vec![KwLet, Ident, Eq, Number, Semi, Eof]
+        );
     }
 
     #[test]

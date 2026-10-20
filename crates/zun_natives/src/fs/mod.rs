@@ -16,7 +16,9 @@ fn write_text(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nativ
 }
 
 fn exists(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Ok(NativeValue::Bool(std::path::Path::new(args[0].as_str()).exists()))
+    Ok(NativeValue::Bool(
+        std::path::Path::new(args[0].as_str()).exists(),
+    ))
 }
 
 fn remove_file(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -29,9 +31,29 @@ fn remove_file(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nati
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:fs",
     functions: &[
-        NativeFn { name: "readText", params: &[Str], ret: Str, imp: read_text },
-        NativeFn { name: "writeText", params: &[Str, Str], ret: Void, imp: write_text },
-        NativeFn { name: "exists", params: &[Str], ret: Bool, imp: exists },
-        NativeFn { name: "removeFile", params: &[Str], ret: Void, imp: remove_file },
+        NativeFn {
+            name: "readText",
+            params: &[Str],
+            ret: Str,
+            imp: read_text,
+        },
+        NativeFn {
+            name: "writeText",
+            params: &[Str, Str],
+            ret: Void,
+            imp: write_text,
+        },
+        NativeFn {
+            name: "exists",
+            params: &[Str],
+            ret: Bool,
+            imp: exists,
+        },
+        NativeFn {
+            name: "removeFile",
+            params: &[Str],
+            ret: Void,
+            imp: remove_file,
+        },
     ],
 };

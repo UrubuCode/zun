@@ -27,14 +27,15 @@ fn run_source(src: &str) -> Vec<String> {
 
 #[test]
 fn hello_world() {
-    assert_eq!(run_source(r#"function main() { print("hello, zun"); }"#), ["hello, zun"]);
+    assert_eq!(
+        run_source(r#"function main() { print("hello, zun"); }"#),
+        ["hello, zun"]
+    );
 }
 
 #[test]
 fn arithmetic_and_locals() {
-    let out = run_source(
-        "function main() { let a = 6; let b = 7; print(a * b); }",
-    );
+    let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);
 }
 

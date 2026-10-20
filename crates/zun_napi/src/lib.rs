@@ -64,11 +64,7 @@ mod node_api {
             result: *mut NapiValue,
         ) -> NapiStatus;
         fn napi_get_undefined(env: NapiEnv, result: *mut NapiValue) -> NapiStatus;
-        fn napi_throw_type_error(
-            env: NapiEnv,
-            code: *const u8,
-            message: *const u8,
-        ) -> NapiStatus;
+        fn napi_throw_type_error(env: NapiEnv, code: *const u8, message: *const u8) -> NapiStatus;
     }
 
     fn undefined(env: NapiEnv) -> NapiValue {
@@ -82,9 +78,7 @@ mod node_api {
 
     fn invalid_call(env: NapiEnv) -> NapiValue {
         let message = b"expected an ArrayBuffer containing a valid Zun module\0";
-        let _ = unsafe {
-            napi_throw_type_error(env, core::ptr::null(), message.as_ptr())
-        };
+        let _ = unsafe { napi_throw_type_error(env, core::ptr::null(), message.as_ptr()) };
         undefined(env)
     }
 
@@ -134,8 +128,17 @@ mod node_api {
         let mut argc = 1;
         let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
-            napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
-        } != NAPI_OK || argc != 1 {
+            napi_get_cb_info(
+                env,
+                info,
+                &mut argc,
+                argv.as_mut_ptr(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        } != NAPI_OK
+            || argc != 1
+        {
             return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
@@ -166,8 +169,17 @@ mod node_api {
         let mut argc = 1;
         let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
-            napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
-        } != NAPI_OK || argc != 1 {
+            napi_get_cb_info(
+                env,
+                info,
+                &mut argc,
+                argv.as_mut_ptr(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        } != NAPI_OK
+            || argc != 1
+        {
             return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
@@ -198,8 +210,17 @@ mod node_api {
         let mut argc = 1;
         let mut argv = [core::ptr::null_mut(); 1];
         if unsafe {
-            napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut())
-        } != NAPI_OK || argc != 1 {
+            napi_get_cb_info(
+                env,
+                info,
+                &mut argc,
+                argv.as_mut_ptr(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        } != NAPI_OK
+            || argc != 1
+        {
             return invalid_call(env);
         }
         let mut data = core::ptr::null_mut();
@@ -220,7 +241,9 @@ mod node_api {
         };
         let value = value.as_bytes();
         let mut result = core::ptr::null_mut();
-        if unsafe { napi_create_string_utf8(env, value.as_ptr(), value.len(), &mut result) } != NAPI_OK {
+        if unsafe { napi_create_string_utf8(env, value.as_ptr(), value.len(), &mut result) }
+            != NAPI_OK
+        {
             invalid_call(env)
         } else {
             result
@@ -390,7 +413,11 @@ pub unsafe extern "C" fn zun_host_execute_string(
     out_len: usize,
     written: *mut usize,
 ) -> i32 {
-    if host.is_null() || module_ptr.is_null() || written.is_null() || (out.is_null() && out_len != 0) {
+    if host.is_null()
+        || module_ptr.is_null()
+        || written.is_null()
+        || (out.is_null() && out_len != 0)
+    {
         return ZUN_HOST_INVALID_ARGUMENT;
     }
     // SAFETY: caller supplies a valid immutable byte range for this call.
@@ -425,7 +452,17 @@ mod tests {
 
     #[test]
     fn invalid_host_arguments_are_rejected() {
-        assert_eq!(unsafe { zun_host_execute_i64(std::ptr::null_mut(), std::ptr::null(), 0, std::ptr::null_mut()) }, 1);
+        assert_eq!(
+            unsafe {
+                zun_host_execute_i64(
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null_mut(),
+                )
+            },
+            1
+        );
     }
 
     #[test]
@@ -434,9 +471,8 @@ mod tests {
         let bytes = module.write();
         let host = zun_host_create();
         let mut result = 0;
-        let status = unsafe {
-            zun_host_execute_i64(host, bytes.as_ptr(), bytes.len(), &mut result)
-        };
+        let status =
+            unsafe { zun_host_execute_i64(host, bytes.as_ptr(), bytes.len(), &mut result) };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert_eq!(result, 7);
@@ -448,9 +484,8 @@ mod tests {
         let bytes = module.write();
         let host = zun_host_create();
         let mut result = 0.0;
-        let status = unsafe {
-            zun_host_execute_f64(host, bytes.as_ptr(), bytes.len(), &mut result)
-        };
+        let status =
+            unsafe { zun_host_execute_f64(host, bytes.as_ptr(), bytes.len(), &mut result) };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert_eq!(result, 7.5);
@@ -462,9 +497,8 @@ mod tests {
         let bytes = module.write();
         let host = zun_host_create();
         let mut result = false;
-        let status = unsafe {
-            zun_host_execute_bool(host, bytes.as_ptr(), bytes.len(), &mut result)
-        };
+        let status =
+            unsafe { zun_host_execute_bool(host, bytes.as_ptr(), bytes.len(), &mut result) };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert!(result);
@@ -478,7 +512,14 @@ mod tests {
         let mut result = [0u8; 3];
         let mut written = 0;
         let status = unsafe {
-            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), result.as_mut_ptr(), result.len(), &mut written)
+            zun_host_execute_string(
+                host,
+                bytes.as_ptr(),
+                bytes.len(),
+                result.as_mut_ptr(),
+                result.len(),
+                &mut written,
+            )
         };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
@@ -494,7 +535,14 @@ mod tests {
         let mut result = [0u8; 2];
         let mut written = 0;
         let status = unsafe {
-            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), result.as_mut_ptr(), result.len(), &mut written)
+            zun_host_execute_string(
+                host,
+                bytes.as_ptr(),
+                bytes.len(),
+                result.as_mut_ptr(),
+                result.len(),
+                &mut written,
+            )
         };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 3);
@@ -508,13 +556,27 @@ mod tests {
         let host = zun_host_create();
         let mut written = 0;
         let status = unsafe {
-            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), std::ptr::null_mut(), 0, &mut written)
+            zun_host_execute_string(
+                host,
+                bytes.as_ptr(),
+                bytes.len(),
+                std::ptr::null_mut(),
+                0,
+                &mut written,
+            )
         };
         assert_eq!(status, 0);
         assert_eq!(written, 3);
         let mut result = vec![0u8; written];
         let status = unsafe {
-            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), result.as_mut_ptr(), result.len(), &mut written)
+            zun_host_execute_string(
+                host,
+                bytes.as_ptr(),
+                bytes.len(),
+                result.as_mut_ptr(),
+                result.len(),
+                &mut written,
+            )
         };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
@@ -528,7 +590,14 @@ mod tests {
         let host = zun_host_create();
         let mut written = 0;
         let status = unsafe {
-            zun_host_execute_string(host, bytes.as_ptr(), bytes.len(), std::ptr::null_mut(), 1, &mut written)
+            zun_host_execute_string(
+                host,
+                bytes.as_ptr(),
+                bytes.len(),
+                std::ptr::null_mut(),
+                1,
+                &mut written,
+            )
         };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 1);

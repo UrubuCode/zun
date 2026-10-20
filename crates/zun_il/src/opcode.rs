@@ -281,7 +281,11 @@ mod tests {
     fn mnemonics_are_unique() {
         let mut seen = std::collections::HashSet::new();
         for &op in Opcode::ALL {
-            assert!(seen.insert(op.mnemonic()), "duplicate mnemonic {}", op.mnemonic());
+            assert!(
+                seen.insert(op.mnemonic()),
+                "duplicate mnemonic {}",
+                op.mnemonic()
+            );
         }
     }
 

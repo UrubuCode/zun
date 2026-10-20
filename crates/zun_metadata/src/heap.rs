@@ -78,12 +78,18 @@ impl StringHeap {
     ///
     /// [`as_bytes`]: StringHeap::as_bytes
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        assert!(!bytes.is_empty() && bytes[0] == 0, "string heap must start with the empty entry");
+        assert!(
+            !bytes.is_empty() && bytes[0] == 0,
+            "string heap must start with the empty entry"
+        );
         let mut lookup = HashMap::new();
         let mut pos = 1usize;
         while pos < bytes.len() {
             let rest = &bytes[pos..];
-            let end = rest.iter().position(|&b| b == 0).expect("unterminated heap string");
+            let end = rest
+                .iter()
+                .position(|&b| b == 0)
+                .expect("unterminated heap string");
             let s = std::str::from_utf8(&rest[..end]).expect("string heap holds valid UTF-8");
             lookup.insert(s.into(), StringIndex(pos as u32));
             pos += end + 1;
@@ -148,7 +154,10 @@ impl BlobHeap {
     ///
     /// [`as_bytes`]: BlobHeap::as_bytes
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        assert!(!bytes.is_empty() && bytes[0] == 0, "blob heap must start with the empty entry");
+        assert!(
+            !bytes.is_empty() && bytes[0] == 0,
+            "blob heap must start with the empty entry"
+        );
         let mut lookup = HashMap::new();
         let mut pos = 1usize;
         while pos < bytes.len() {

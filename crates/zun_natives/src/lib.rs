@@ -14,6 +14,7 @@
 //! function keeps every existing id stable; nothing is numbered by hand, so ids
 //! can never collide. `zun_node` and `zun_napi` will be organized the same way.
 
+mod date;
 mod env;
 mod fs;
 mod io;
@@ -21,7 +22,6 @@ mod math;
 mod number;
 mod string;
 mod time;
-mod date;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -310,7 +310,14 @@ mod tests {
     fn math_intrinsics_resolve_after_existing_ids() {
         let (id, function) = resolve("zun:math", "sqrt").expect("math intrinsic");
         assert_eq!(function.ret, NativeTy::F64);
-        assert_eq!(id as usize, MODULES[..4].iter().map(|m| m.functions.len()).sum::<usize>() + 1);
+        assert_eq!(
+            id as usize,
+            MODULES[..4]
+                .iter()
+                .map(|m| m.functions.len())
+                .sum::<usize>()
+                + 1
+        );
     }
 
     #[test]
@@ -325,12 +332,7 @@ mod tests {
     fn extern_receiver_is_passed_as_the_first_native_argument() {
         let (id, _) = resolve("zun:math", "receiverValue").unwrap();
         let mut sink = TestSink;
-        let value = dispatch(
-            id,
-            &[NativeArg::Opaque, NativeArg::Float(7.5)],
-            &mut sink,
-        )
-        .unwrap();
+        let value = dispatch(id, &[NativeArg::Opaque, NativeArg::Float(7.5)], &mut sink).unwrap();
         assert!(matches!(value, NativeValue::Float(value) if value == 7.5));
     }
 
@@ -343,22 +345,45 @@ mod tests {
         let (iso_id, _) = resolve("zun:date", "isoDateTime").unwrap();
         let mut sink = TestSink;
         let timestamp = 3_723_004_i64;
-        assert!(matches!(dispatch(minute_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(2)));
-        assert!(matches!(dispatch(second_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(3)));
-        assert!(matches!(dispatch(millisecond_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(4)));
-        assert!(matches!(dispatch(ordinal_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(1)));
-        assert!(matches!(dispatch(iso_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Str(value) if value == "1970-01-01T01:02:03.004Z"));
+        assert!(matches!(
+            dispatch(minute_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(),
+            NativeValue::Int(2)
+        ));
+        assert!(matches!(
+            dispatch(second_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(),
+            NativeValue::Int(3)
+        ));
+        assert!(matches!(
+            dispatch(millisecond_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(),
+            NativeValue::Int(4)
+        ));
+        assert!(matches!(
+            dispatch(ordinal_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(),
+            NativeValue::Int(1)
+        ));
+        assert!(
+            matches!(dispatch(iso_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Str(value) if value == "1970-01-01T01:02:03.004Z")
+        );
         let (parse_id, _) = resolve("zun:date", "parseIsoDateTime").unwrap();
-        assert!(matches!(dispatch(parse_id, &[NativeArg::Str("1970-01-01T01:02:03.004Z")], &mut sink).unwrap(), NativeValue::Int(value) if value == timestamp));
+        assert!(
+            matches!(dispatch(parse_id, &[NativeArg::Str("1970-01-01T01:02:03.004Z")], &mut sink).unwrap(), NativeValue::Int(value) if value == timestamp)
+        );
         let (parse_date_id, _) = resolve("zun:date", "parseIsoDate").unwrap();
-        assert!(matches!(dispatch(parse_date_id, &[NativeArg::Str("1970-01-01")], &mut sink).unwrap(), NativeValue::Int(0)));
+        assert!(matches!(
+            dispatch(parse_date_id, &[NativeArg::Str("1970-01-01")], &mut sink).unwrap(),
+            NativeValue::Int(0)
+        ));
         assert!(dispatch(parse_date_id, &[NativeArg::Str("1970-02-30")], &mut sink).is_err());
         assert!(dispatch(parse_id, &[NativeArg::Str("not-a-date")], &mut sink).is_err());
-        let leap_day = match dispatch(parse_date_id, &[NativeArg::Str("2020-02-29")], &mut sink).unwrap() {
-            NativeValue::Int(value) => value,
-            other => panic!("unexpected parsed leap-day value: {other:?}"),
-        };
-        assert!(matches!(dispatch(ordinal_id, &[NativeArg::Int(leap_day)], &mut sink).unwrap(), NativeValue::Int(60)));
+        let leap_day =
+            match dispatch(parse_date_id, &[NativeArg::Str("2020-02-29")], &mut sink).unwrap() {
+                NativeValue::Int(value) => value,
+                other => panic!("unexpected parsed leap-day value: {other:?}"),
+            };
+        assert!(matches!(
+            dispatch(ordinal_id, &[NativeArg::Int(leap_day)], &mut sink).unwrap(),
+            NativeValue::Int(60)
+        ));
     }
 
     #[test]
@@ -375,7 +400,12 @@ mod tests {
         let (compare_id, compare_fn) = resolve("zun:string", "compare").unwrap();
         assert_eq!(compare_fn.params, &[NativeTy::Str, NativeTy::Str]);
         assert!(matches!(
-            dispatch(compare_id, &[NativeArg::Str("abc"), NativeArg::Str("abd")], &mut sink).unwrap(),
+            dispatch(
+                compare_id,
+                &[NativeArg::Str("abc"), NativeArg::Str("abd")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(-1)
         ));
         let (to_int_id, to_int_fn) = resolve("zun:string", "toInt").unwrap();
@@ -406,52 +436,89 @@ mod tests {
         ));
         let (contains_id, _) = resolve("zun:string", "contains").unwrap();
         assert!(matches!(
-            dispatch(contains_id, &[NativeArg::Str("abc"), NativeArg::Str("bc")], &mut sink).unwrap(),
+            dispatch(
+                contains_id,
+                &[NativeArg::Str("abc"), NativeArg::Str("bc")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(true)
         ));
         let (count_id, count_fn) = resolve("zun:string", "count").unwrap();
         assert_eq!(count_fn.params, &[NativeTy::Str, NativeTy::Str]);
         assert!(matches!(
-            dispatch(count_id, &[NativeArg::Str("aaaa"), NativeArg::Str("aa")], &mut sink).unwrap(),
+            dispatch(
+                count_id,
+                &[NativeArg::Str("aaaa"), NativeArg::Str("aa")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(2)
         ));
         let (includes_id, includes_fn) = resolve("zun:string", "includes").unwrap();
         assert_eq!(includes_fn.params, &[NativeTy::Str, NativeTy::Str]);
         assert!(matches!(
-            dispatch(includes_id, &[NativeArg::Str("abc"), NativeArg::Str("bc")], &mut sink).unwrap(),
+            dispatch(
+                includes_id,
+                &[NativeArg::Str("abc"), NativeArg::Str("bc")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(true)
         ));
         let (index_id, index_fn) = resolve("zun:string", "indexOf").unwrap();
         assert_eq!(index_fn.params, &[NativeTy::Str, NativeTy::Str]);
         assert!(matches!(
-            dispatch(index_id, &[NativeArg::Str("😀zun"), NativeArg::Str("zun")], &mut sink).unwrap(),
+            dispatch(
+                index_id,
+                &[NativeArg::Str("😀zun"), NativeArg::Str("zun")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(2)
         ));
         let (last_index_id, _) = resolve("zun:string", "lastIndexOf").unwrap();
         assert!(matches!(
-            dispatch(last_index_id, &[NativeArg::Str("zunzun"), NativeArg::Str("zun")], &mut sink).unwrap(),
+            dispatch(
+                last_index_id,
+                &[NativeArg::Str("zunzun"), NativeArg::Str("zun")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(3)
         ));
         let (replace_id, replace_fn) = resolve("zun:string", "replace").unwrap();
-        assert_eq!(replace_fn.params, &[NativeTy::Str, NativeTy::Str, NativeTy::Str]);
+        assert_eq!(
+            replace_fn.params,
+            &[NativeTy::Str, NativeTy::Str, NativeTy::Str]
+        );
         assert!(matches!(
             dispatch(replace_id, &[NativeArg::Str("zun vm"), NativeArg::Str("vm"), NativeArg::Str("runtime")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun runtime"
         ));
         let (substring_id, substring_fn) = resolve("zun:string", "substring").unwrap();
-        assert_eq!(substring_fn.params, &[NativeTy::Str, NativeTy::U64, NativeTy::U64]);
+        assert_eq!(
+            substring_fn.params,
+            &[NativeTy::Str, NativeTy::U64, NativeTy::U64]
+        );
         assert!(matches!(
             dispatch(substring_id, &[NativeArg::Str("😀zun"), NativeArg::Int(2), NativeArg::Int(5)], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun"
         ));
         let (pad_id, pad_fn) = resolve("zun:string", "padStart").unwrap();
-        assert_eq!(pad_fn.params, &[NativeTy::Str, NativeTy::U64, NativeTy::Str]);
+        assert_eq!(
+            pad_fn.params,
+            &[NativeTy::Str, NativeTy::U64, NativeTy::Str]
+        );
         assert!(matches!(
             dispatch(pad_id, &[NativeArg::Str("zun"), NativeArg::Int(5), NativeArg::Str("0")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "00zun"
         ));
         let (pad_end_id, pad_end_fn) = resolve("zun:string", "padEnd").unwrap();
-        assert_eq!(pad_end_fn.params, &[NativeTy::Str, NativeTy::U64, NativeTy::Str]);
+        assert_eq!(
+            pad_end_fn.params,
+            &[NativeTy::Str, NativeTy::U64, NativeTy::Str]
+        );
         assert!(matches!(
             dispatch(pad_end_id, &[NativeArg::Str("zun"), NativeArg::Int(5), NativeArg::Str("0")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun00"
@@ -478,21 +545,41 @@ mod tests {
         ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
-            dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),
+            dispatch(
+                char_code_id,
+                &[NativeArg::Str("hé"), NativeArg::Int(1)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(0xE9)
         ));
         assert!(matches!(
-            dispatch(char_code_id, &[NativeArg::Str("😀"), NativeArg::Int(0)], &mut sink).unwrap(),
+            dispatch(
+                char_code_id,
+                &[NativeArg::Str("😀"), NativeArg::Int(0)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(0xD83D)
         ));
         let (starts_id, _) = resolve("zun:string", "startsWith").unwrap();
         assert!(matches!(
-            dispatch(starts_id, &[NativeArg::Str("zun"), NativeArg::Str("zu")], &mut sink).unwrap(),
+            dispatch(
+                starts_id,
+                &[NativeArg::Str("zun"), NativeArg::Str("zu")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(true)
         ));
         let (ends_id, _) = resolve("zun:string", "endsWith").unwrap();
         assert!(matches!(
-            dispatch(ends_id, &[NativeArg::Str("zun"), NativeArg::Str("un")], &mut sink).unwrap(),
+            dispatch(
+                ends_id,
+                &[NativeArg::Str("zun"), NativeArg::Str("un")],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(true)
         ));
         let (trim_id, _) = resolve("zun:string", "trim").unwrap();
@@ -560,7 +647,12 @@ mod tests {
             NativeValue::Bool(false)
         ));
         assert!(matches!(
-            dispatch(safe_integer_id, &[NativeArg::Float(9_007_199_254_740_991.0)], &mut sink).unwrap(),
+            dispatch(
+                safe_integer_id,
+                &[NativeArg::Float(9_007_199_254_740_991.0)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(true)
         ));
         assert!(matches!(
@@ -568,7 +660,12 @@ mod tests {
             NativeValue::Bool(false)
         ));
         assert!(matches!(
-            dispatch(safe_integer_id, &[NativeArg::Float(f64::INFINITY)], &mut sink).unwrap(),
+            dispatch(
+                safe_integer_id,
+                &[NativeArg::Float(f64::INFINITY)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(false)
         ));
     }
@@ -579,16 +676,27 @@ mod tests {
         let (floor_id, _) = resolve("zun:math", "floor").unwrap();
         let (ceil_id, _) = resolve("zun:math", "ceil").unwrap();
         let (round_id, _) = resolve("zun:math", "round").unwrap();
-        assert!(matches!(dispatch(floor_id, &[NativeArg::Float(-1.2)], &mut sink).unwrap(), NativeValue::Float(v) if v == -2.0));
-        assert!(matches!(dispatch(ceil_id, &[NativeArg::Float(-1.2)], &mut sink).unwrap(), NativeValue::Float(v) if v == -1.0));
-        assert!(matches!(dispatch(round_id, &[NativeArg::Float(1.6)], &mut sink).unwrap(), NativeValue::Float(v) if v == 2.0));
+        assert!(
+            matches!(dispatch(floor_id, &[NativeArg::Float(-1.2)], &mut sink).unwrap(), NativeValue::Float(v) if v == -2.0)
+        );
+        assert!(
+            matches!(dispatch(ceil_id, &[NativeArg::Float(-1.2)], &mut sink).unwrap(), NativeValue::Float(v) if v == -1.0)
+        );
+        assert!(
+            matches!(dispatch(round_id, &[NativeArg::Float(1.6)], &mut sink).unwrap(), NativeValue::Float(v) if v == 2.0)
+        );
     }
 
     #[test]
     fn math_power_matches_numeric_expectations() {
         let (id, _) = resolve("zun:math", "powNumber").expect("powNumber intrinsic");
         let mut sink = TestSink;
-        let value = dispatch(id, &[NativeArg::Float(2.0), NativeArg::Float(3.0)], &mut sink).unwrap();
+        let value = dispatch(
+            id,
+            &[NativeArg::Float(2.0), NativeArg::Float(3.0)],
+            &mut sink,
+        )
+        .unwrap();
         assert!(matches!(value, NativeValue::Float(value) if value == 8.0));
     }
 
@@ -597,8 +705,12 @@ mod tests {
         let mut sink = TestSink;
         let (sin_id, _) = resolve("zun:math", "sinNumber").unwrap();
         let (cos_id, _) = resolve("zun:math", "cosNumber").unwrap();
-        assert!(matches!(dispatch(sin_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
-        assert!(matches!(dispatch(cos_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0));
+        assert!(
+            matches!(dispatch(sin_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0)
+        );
+        assert!(
+            matches!(dispatch(cos_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0)
+        );
     }
 
     #[test]
@@ -606,8 +718,12 @@ mod tests {
         let mut sink = TestSink;
         let (exp_id, _) = resolve("zun:math", "expNumber").unwrap();
         let (log_id, _) = resolve("zun:math", "logNumber").unwrap();
-        assert!(matches!(dispatch(exp_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0));
-        assert!(matches!(dispatch(log_id, &[NativeArg::Float(1.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
+        assert!(
+            matches!(dispatch(exp_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 1.0)
+        );
+        assert!(
+            matches!(dispatch(log_id, &[NativeArg::Float(1.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0)
+        );
     }
 
     #[test]
@@ -615,15 +731,21 @@ mod tests {
         let mut sink = TestSink;
         let (tan_id, _) = resolve("zun:math", "tanNumber").unwrap();
         let (atan2_id, _) = resolve("zun:math", "atan2Number").unwrap();
-        assert!(matches!(dispatch(tan_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0));
-        assert!(matches!(dispatch(atan2_id, &[NativeArg::Float(1.0), NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if (value - std::f64::consts::FRAC_PI_2).abs() < 1e-12));
+        assert!(
+            matches!(dispatch(tan_id, &[NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 0.0)
+        );
+        assert!(
+            matches!(dispatch(atan2_id, &[NativeArg::Float(1.0), NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if (value - std::f64::consts::FRAC_PI_2).abs() < 1e-12)
+        );
     }
 
     #[test]
     fn math_hypot_matches_numeric_expectations() {
         let (id, _) = resolve("zun:math", "hypotNumber").unwrap();
         let mut sink = TestSink;
-        assert!(matches!(dispatch(id, &[NativeArg::Float(3.0), NativeArg::Float(4.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 5.0));
+        assert!(
+            matches!(dispatch(id, &[NativeArg::Float(3.0), NativeArg::Float(4.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 5.0)
+        );
     }
 
     struct TestSink;

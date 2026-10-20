@@ -73,7 +73,10 @@ fn fixture_valid_any_box_and_unbox() {
 #[test]
 fn fixture_valid_load_function() {
     let code = asm(&[
-        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(
+            Opcode::LoadFunction,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
         Instruction::simple(Opcode::Pop),
         Instruction::simple(Opcode::Ret),
     ]);
@@ -99,7 +102,10 @@ fn fixture_valid_indirect_call() {
     let code = asm(&[
         Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(35)),
-        Instruction::new(Opcode::CallIndirect, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(
+            Opcode::CallIndirect,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
         Instruction::simple(Opcode::Pop),
         Instruction::simple(Opcode::Ret),
     ]);
@@ -161,7 +167,10 @@ fn fixture_invalid_array_load_underflow() {
     ]);
     assert!(matches!(
         check(&code, VOID),
-        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
     ));
 }
 
@@ -238,9 +247,15 @@ fn fixture_valid_if_else_joins_consistently() {
     encode(&Instruction::simple(Opcode::ConstTrue), &mut code);
     // br.false to else: skip the then-branch and the trailing `br`.
     let to_else = (then_branch.len() + br_over_else_len) as i32;
-    encode(&Instruction::new(Opcode::BranchFalse, Operand::Branch(to_else)), &mut code);
+    encode(
+        &Instruction::new(Opcode::BranchFalse, Operand::Branch(to_else)),
+        &mut code,
+    );
     code.extend_from_slice(&then_branch);
-    encode(&Instruction::new(Opcode::Branch, Operand::Branch(else_branch.len() as i32)), &mut code);
+    encode(
+        &Instruction::new(Opcode::Branch, Operand::Branch(else_branch.len() as i32)),
+        &mut code,
+    );
     code.extend_from_slice(&else_branch);
     encode(&Instruction::simple(Opcode::Ret), &mut code);
 
@@ -253,16 +268,34 @@ fn fixture_valid_backward_loop() {
     // br -start; [exit] ret
     let mut code = Vec::new();
     let start = code.len();
-    encode(&Instruction::new(Opcode::LoadLocal, Operand::Local(0)), &mut code);
-    encode(&Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)), &mut code);
+    encode(
+        &Instruction::new(Opcode::LoadLocal, Operand::Local(0)),
+        &mut code,
+    );
+    encode(
+        &Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)),
+        &mut code,
+    );
     encode(&Instruction::simple(Opcode::CmpGt), &mut code);
     // Reserve the br.false; patch after we know the body length.
     let brfalse_at = code.len();
-    encode(&Instruction::new(Opcode::BranchFalse, Operand::Branch(0)), &mut code);
-    encode(&Instruction::new(Opcode::LoadLocal, Operand::Local(0)), &mut code);
-    encode(&Instruction::new(Opcode::StoreLocal, Operand::Local(0)), &mut code);
+    encode(
+        &Instruction::new(Opcode::BranchFalse, Operand::Branch(0)),
+        &mut code,
+    );
+    encode(
+        &Instruction::new(Opcode::LoadLocal, Operand::Local(0)),
+        &mut code,
+    );
+    encode(
+        &Instruction::new(Opcode::StoreLocal, Operand::Local(0)),
+        &mut code,
+    );
     let back = start as i32 - (code.len() as i32 + 5);
-    encode(&Instruction::new(Opcode::Branch, Operand::Branch(back)), &mut code);
+    encode(
+        &Instruction::new(Opcode::Branch, Operand::Branch(back)),
+        &mut code,
+    );
     let exit = code.len();
     encode(&Instruction::simple(Opcode::Ret), &mut code);
     // Patch br.false to jump to `exit`.
@@ -275,8 +308,14 @@ fn fixture_valid_backward_loop() {
 #[test]
 fn fixture_invalid_underflow() {
     // add.f64 with an empty stack.
-    let code = asm(&[Instruction::simple(Opcode::AddF64), Instruction::simple(Opcode::Ret)]);
-    assert_eq!(check(&code, VOID).unwrap_err().kind, ErrorKind::StackUnderflow);
+    let code = asm(&[
+        Instruction::simple(Opcode::AddF64),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::StackUnderflow
+    );
 }
 
 #[test]
@@ -288,7 +327,10 @@ fn fixture_invalid_bad_return_height() {
     ]);
     assert_eq!(
         check(&code, VOID).unwrap_err().kind,
-        ErrorKind::BadReturnHeight { expected: 0, found: 1 }
+        ErrorKind::BadReturnHeight {
+            expected: 0,
+            found: 1
+        }
     );
 }
 
@@ -314,8 +356,14 @@ fn fixture_invalid_stack_mismatch_at_join() {
     let mut code = Vec::new();
     encode(&Instruction::simple(Opcode::ConstTrue), &mut code);
     let const_len = 9; // const.f64 is 9 bytes; jump over it to the nop
-    encode(&Instruction::new(Opcode::BranchFalse, Operand::Branch(const_len)), &mut code);
-    encode(&Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)), &mut code);
+    encode(
+        &Instruction::new(Opcode::BranchFalse, Operand::Branch(const_len)),
+        &mut code,
+    );
+    encode(
+        &Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        &mut code,
+    );
     encode(&Instruction::simple(Opcode::Nop), &mut code);
     encode(&Instruction::simple(Opcode::Ret), &mut code);
     // RETURNS so the tall (height-1) path satisfies `ret`; the short path then
@@ -331,8 +379,14 @@ fn fixture_invalid_branch_into_middle_of_instruction() {
     // br with a displacement that lands inside the const.f64 operand bytes.
     let mut code = Vec::new();
     // br +1 : target offset = end(5) + 1 = 6, which is inside the const.f64.
-    encode(&Instruction::new(Opcode::Branch, Operand::Branch(1)), &mut code);
-    encode(&Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)), &mut code);
+    encode(
+        &Instruction::new(Opcode::Branch, Operand::Branch(1)),
+        &mut code,
+    );
+    encode(
+        &Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+        &mut code,
+    );
     encode(&Instruction::simple(Opcode::Ret), &mut code);
     assert!(matches!(
         check(&code, VOID).unwrap_err().kind,
@@ -343,7 +397,10 @@ fn fixture_invalid_branch_into_middle_of_instruction() {
 #[test]
 fn fixture_invalid_branch_out_of_range() {
     let mut code = Vec::new();
-    encode(&Instruction::new(Opcode::Branch, Operand::Branch(9999)), &mut code);
+    encode(
+        &Instruction::new(Opcode::Branch, Operand::Branch(9999)),
+        &mut code,
+    );
     assert!(matches!(
         check(&code, VOID).unwrap_err().kind,
         ErrorKind::BadBranchTarget(_)
@@ -363,7 +420,10 @@ fn fixture_invalid_falls_off_end() {
 #[test]
 fn fixture_invalid_bad_encoding() {
     // 0xFF is not an opcode.
-    assert_eq!(check(&[0xFF], VOID).unwrap_err().kind, ErrorKind::BadEncoding);
+    assert_eq!(
+        check(&[0xFF], VOID).unwrap_err().kind,
+        ErrorKind::BadEncoding
+    );
 }
 
 #[test]

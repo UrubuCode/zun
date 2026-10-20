@@ -20,7 +20,11 @@ fn to_fixed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
     };
     let digits = match args.get(1) {
         Some(NativeArg::Int(value)) if (0..=100).contains(value) => *value as usize,
-        _ => return Err(NativeError("toFixed: expected digits from 0 through 100".to_string())),
+        _ => {
+            return Err(NativeError(
+                "toFixed: expected digits from 0 through 100".to_string(),
+            ))
+        }
     };
     Ok(NativeValue::Str(format!("{value:.digits$}")))
 }
@@ -77,12 +81,47 @@ fn is_safe_integer(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, 
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:number",
     functions: &[
-        NativeFn { name: "parseFloat", params: &[Str], ret: F64, imp: parse_float },
-        NativeFn { name: "toFixed", params: &[F64, I32], ret: Str, imp: to_fixed },
-        NativeFn { name: "toString", params: &[F64], ret: Str, imp: to_string },
-        NativeFn { name: "isFinite", params: &[F64], ret: Bool, imp: is_finite },
-        NativeFn { name: "isNaN", params: &[F64], ret: Bool, imp: is_nan },
-        NativeFn { name: "isNegativeZero", params: &[F64], ret: Bool, imp: is_negative_zero },
-        NativeFn { name: "isSafeInteger", params: &[F64], ret: Bool, imp: is_safe_integer },
+        NativeFn {
+            name: "parseFloat",
+            params: &[Str],
+            ret: F64,
+            imp: parse_float,
+        },
+        NativeFn {
+            name: "toFixed",
+            params: &[F64, I32],
+            ret: Str,
+            imp: to_fixed,
+        },
+        NativeFn {
+            name: "toString",
+            params: &[F64],
+            ret: Str,
+            imp: to_string,
+        },
+        NativeFn {
+            name: "isFinite",
+            params: &[F64],
+            ret: Bool,
+            imp: is_finite,
+        },
+        NativeFn {
+            name: "isNaN",
+            params: &[F64],
+            ret: Bool,
+            imp: is_nan,
+        },
+        NativeFn {
+            name: "isNegativeZero",
+            params: &[F64],
+            ret: Bool,
+            imp: is_negative_zero,
+        },
+        NativeFn {
+            name: "isSafeInteger",
+            params: &[F64],
+            ret: Bool,
+            imp: is_safe_integer,
+        },
     ],
 };

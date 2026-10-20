@@ -58,20 +58,73 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
 }
 
 fn date_builtin(instr: &zun_il::Instruction) -> bool {
-    let Operand::Imm32(id) = instr.operand else { return false; };
-    matches!(zun_natives::by_id(id as u32).map(|f| f.name),
-        Some("isValid" | "year" | "month" | "day" | "hour" | "minute" | "second" | "millisecond" | "weekday" | "dayOfYear"))
+    let Operand::Imm32(id) = instr.operand else {
+        return false;
+    };
+    matches!(
+        zun_natives::by_id(id as u32).map(|f| f.name),
+        Some(
+            "isValid"
+                | "year"
+                | "month"
+                | "day"
+                | "hour"
+                | "minute"
+                | "second"
+                | "millisecond"
+                | "weekday"
+                | "dayOfYear"
+        )
+    )
 }
 
 fn math_builtin(instr: &zun_il::Instruction) -> bool {
-    let Operand::Imm32(id) = instr.operand else { return false; };
-    matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some(
-        "abs" | "sqrt" | "cbrtNumber" | "min" | "max" | "sqrtNumber" | "minNumber" | "maxNumber"
-        | "floor" | "ceil" | "round" | "truncNumber" | "floorNumber" | "ceilNumber" | "roundNumber"
-    | "powNumber" | "sinNumber" | "cosNumber" | "expNumber" | "logNumber" | "log10Number" | "log2Number" | "expm1Number" | "log1pNumber" | "sinhNumber" | "coshNumber" | "tanhNumber"
-        | "tanNumber" | "atan2Number" | "hypotNumber" | "signNumber" | "isFinite" | "isNaN"
-    | "isNegativeZero" | "isSafeInteger" | "asinhNumber" | "acoshNumber" | "atanhNumber"
-    ))
+    let Operand::Imm32(id) = instr.operand else {
+        return false;
+    };
+    matches!(
+        zun_natives::by_id(id as u32).map(|f| f.name),
+        Some(
+            "abs"
+                | "sqrt"
+                | "cbrtNumber"
+                | "min"
+                | "max"
+                | "sqrtNumber"
+                | "minNumber"
+                | "maxNumber"
+                | "floor"
+                | "ceil"
+                | "round"
+                | "truncNumber"
+                | "floorNumber"
+                | "ceilNumber"
+                | "roundNumber"
+                | "powNumber"
+                | "sinNumber"
+                | "cosNumber"
+                | "expNumber"
+                | "logNumber"
+                | "log10Number"
+                | "log2Number"
+                | "expm1Number"
+                | "log1pNumber"
+                | "sinhNumber"
+                | "coshNumber"
+                | "tanhNumber"
+                | "tanNumber"
+                | "atan2Number"
+                | "hypotNumber"
+                | "signNumber"
+                | "isFinite"
+                | "isNaN"
+                | "isNegativeZero"
+                | "isSafeInteger"
+                | "asinhNumber"
+                | "acoshNumber"
+                | "atanhNumber"
+        )
+    )
 }
 
 /// Whether a field (by FieldDef token RID) has a JIT-representable type, i.e.

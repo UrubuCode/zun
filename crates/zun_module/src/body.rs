@@ -129,6 +129,9 @@ mod tests {
         write_body(&mut section, 0, 1, false, 2, &[2], &[0x00, 0x00, 0x00]);
         section.truncate(section.len() - 1);
         assert!(matches!(read_body(&section, 0), Err(ReadError::Truncated)));
-        assert!(matches!(read_body(&section, 999), Err(ReadError::Truncated)));
+        assert!(matches!(
+            read_body(&section, 999),
+            Err(ReadError::Truncated)
+        ));
     }
 }

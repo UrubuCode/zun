@@ -221,22 +221,44 @@ impl Interp<'_> {
                 Opcode::ConstFalse => stack.push(Value::Bool(false)),
                 Opcode::LoadFunction => {
                     let token = match instr.operand {
-                        Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MethodDef) => token,
+                        Operand::Token(token)
+                            if token.table() == Some(zun_metadata::TableKind::MethodDef) =>
+                        {
+                            token
+                        }
                         _ => return Err(RunError::BadToken),
                     };
                     let rid = token.rid();
-                    if rid == 0 || self.module.tables.method_defs.get(rid as usize - 1).is_none() {
+                    if rid == 0
+                        || self
+                            .module
+                            .tables
+                            .method_defs
+                            .get(rid as usize - 1)
+                            .is_none()
+                    {
                         return Err(RunError::BadToken);
                     }
                     stack.push(Value::Function(zun_core::FunctionHandle::new(rid, None)));
                 }
                 Opcode::MakeClosure => {
                     let token = match instr.operand {
-                        Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MethodDef) => token,
+                        Operand::Token(token)
+                            if token.table() == Some(zun_metadata::TableKind::MethodDef) =>
+                        {
+                            token
+                        }
                         _ => return Err(RunError::BadToken),
                     };
                     let rid = token.rid();
-                    if rid == 0 || self.module.tables.method_defs.get(rid as usize - 1).is_none() {
+                    if rid == 0
+                        || self
+                            .module
+                            .tables
+                            .method_defs
+                            .get(rid as usize - 1)
+                            .is_none()
+                    {
                         return Err(RunError::BadToken);
                     }
                     let environment = pop(&mut stack)?;
@@ -257,8 +279,9 @@ impl Interp<'_> {
                 Opcode::UnboxAny => {
                     let value = pop(&mut stack)?;
                     if let Value::Any(any) = value {
-                        let value = zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
-                            .ok_or(RunError::BadToken)?;
+                        let value =
+                            zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
+                                .ok_or(RunError::BadToken)?;
                         stack.push(value);
                     } else {
                         // Array slots retain the tagged runtime value directly;
@@ -275,7 +298,9 @@ impl Interp<'_> {
                     let name = self.dynamic_name(&instr.operand)?;
                     let object = pop(&mut stack)?.as_object();
                     let value = zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_get(object, name).map(Value::Any).unwrap_or(Value::Void)
+                        heap.dynamic_get(object, name)
+                            .map(Value::Any)
+                            .unwrap_or(Value::Void)
                     });
                     stack.push(value);
                 }
@@ -296,7 +321,8 @@ impl Interp<'_> {
                     if length < 0 {
                         return Err(RunError::Malformed("negative array length".into()));
                     }
-                    let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length as usize));
+                    let array =
+                        zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length as usize));
                     stack.push(Value::Object(array));
                 }
                 Opcode::LoadArray => {
@@ -321,8 +347,10 @@ impl Interp<'_> {
                     }
                     let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .ok_or(RunError::BadToken)?;
-                    zun_gc::with_current_heap_mut(|heap| heap.array_set(array, index as usize, any))
-                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(array, index as usize, any)
+                    })
+                    .ok_or(RunError::BadToken)?;
                     stack.push(value);
                 }
                 Opcode::ArrayLength => {
@@ -334,7 +362,8 @@ impl Interp<'_> {
                 Opcode::ArrayPop => {
                     let array = pop(&mut stack)?.as_object();
                     let value = zun_gc::with_current_heap_mut(|heap| {
-                        heap.array_pop(array).and_then(|any| value::Value::unbox_any(any, heap))
+                        heap.array_pop(array)
+                            .and_then(|any| value::Value::unbox_any(any, heap))
                     })
                     .ok_or(RunError::BadToken)?;
                     stack.push(value);
@@ -492,13 +521,20 @@ impl Interp<'_> {
                 }
                 Opcode::CallIndirect => {
                     let token = operand_token(&instr.operand);
-                    if !matches!(token.table(), Some(TableKind::MethodDef | TableKind::MemberRef)) {
+                    if !matches!(
+                        token.table(),
+                        Some(TableKind::MethodDef | TableKind::MemberRef)
+                    ) {
                         return Err(RunError::BadToken);
                     }
                     let dynamic = token.rid() == 0;
                     let reducer = dynamic && token.table() == Some(TableKind::MemberRef);
                     let expected_params = if dynamic {
-                        if reducer { 2 } else { 1 }
+                        if reducer {
+                            2
+                        } else {
+                            1
+                        }
                     } else {
                         let signature = self
                             .module
@@ -515,12 +551,14 @@ impl Interp<'_> {
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
-                    if !dynamic && (handle.environment().is_some() || handle.method_rid() != token.rid()) {
+                    if !dynamic
+                        && (handle.environment().is_some() || handle.method_rid() != token.rid())
+                    {
                         return Err(RunError::BadToken);
                     }
-                    let environment = handle.environment().map(|address| unsafe {
-                        zun_gc::Obj::from_addr(address as *mut u64)
-                    });
+                    let environment = handle
+                        .environment()
+                        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
                     let target = self
                         .module
                         .tables
@@ -629,8 +667,9 @@ impl Interp<'_> {
                     // Primitive-backed classes use static method binding: the
                     // receiver is still passed as `this`, but has no heap type
                     // to consult for virtual dispatch.
-                    let primitive_receiver = matches!(args.first(), Some(Value::Str(_) | Value::Float(_, _)))
-                        || matches!(args.first(), Some(Value::Object(object))
+                    let primitive_receiver =
+                        matches!(args.first(), Some(Value::Str(_) | Value::Float(_, _)))
+                            || matches!(args.first(), Some(Value::Object(object))
                             if zun_gc::with_current_heap(|heap| heap.array_len(*object).is_some()));
                     let target = if primitive_receiver {
                         token.rid()
@@ -746,7 +785,9 @@ fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
         Value::Float(n, _) => zun_natives::NativeArg::Float(*n),
         Value::Bool(b) => zun_natives::NativeArg::Bool(*b),
         Value::Str(s) => zun_natives::NativeArg::Str(s),
-        Value::Object(object) => zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize)),
+        Value::Object(object) => {
+            zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize))
+        }
         Value::Any(value) => zun_natives::NativeArg::Any(*value),
         Value::Function(_) => panic!("function values cannot be passed to native calls yet"),
         Value::Void => zun_natives::NativeArg::Void,
@@ -820,11 +861,17 @@ mod method_tests {
             Instruction::simple(Opcode::Ret),
         ];
         let mut add_code = Vec::new();
-        for instruction in add_body { encode(&instruction, &mut add_code); }
+        for instruction in add_body {
+            encode(&instruction, &mut add_code);
+        }
         let add_offset = write_body(
-            &mut module.code, 1, 1, true,
+            &mut module.code,
+            1,
+            1,
+            true,
             zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
-            &[zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte()], &add_code,
+            &[zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte()],
+            &add_code,
         );
         module.tables.add_method_def(MethodDef {
             name: module.strings.intern("add_one"),
@@ -832,16 +879,29 @@ mod method_tests {
             body_offset: add_offset,
         });
         let main_body = [
-            Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+            Instruction::new(
+                Opcode::LoadFunction,
+                Operand::Token(Token::new(TableKind::MethodDef, 1)),
+            ),
             Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
-            Instruction::new(Opcode::CallIndirect, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+            Instruction::new(
+                Opcode::CallIndirect,
+                Operand::Token(Token::new(TableKind::MethodDef, 1)),
+            ),
             Instruction::simple(Opcode::Ret),
         ];
         let mut main_code = Vec::new();
-        for instruction in main_body { encode(&instruction, &mut main_code); }
+        for instruction in main_body {
+            encode(&instruction, &mut main_code);
+        }
         let main_offset = write_body(
-            &mut module.code, 0, 0, true,
-            zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(), &[], &main_code,
+            &mut module.code,
+            0,
+            0,
+            true,
+            zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+            &[],
+            &main_code,
         );
         module.tables.add_method_def(MethodDef {
             name: module.strings.intern("main"),
@@ -890,7 +950,9 @@ mod method_tests {
             Instruction::simple(Opcode::Ret),
         ];
         let mut code = Vec::new();
-        for instruction in body { encode(&instruction, &mut code); }
+        for instruction in body {
+            encode(&instruction, &mut code);
+        }
         let target_offset = write_body(
             &mut module.code,
             2,
@@ -911,19 +973,30 @@ mod method_tests {
         let mut main_body = vec![
             Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
             Instruction::new(Opcode::NewObj, Operand::Token(environment_type)),
-            Instruction::new(Opcode::MakeClosure, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+            Instruction::new(
+                Opcode::MakeClosure,
+                Operand::Token(Token::new(TableKind::MethodDef, 1)),
+            ),
         ];
         for _ in 0..300 {
-            main_body.push(Instruction::new(Opcode::NewObj, Operand::Token(scratch_type)));
+            main_body.push(Instruction::new(
+                Opcode::NewObj,
+                Operand::Token(scratch_type),
+            ));
             main_body.push(Instruction::simple(Opcode::Pop));
         }
         main_body.extend([
             Instruction::new(Opcode::ConstF64, Operand::Float64(0.0)),
-            Instruction::new(Opcode::CallIndirect, Operand::Token(Token::null(TableKind::MethodDef))),
+            Instruction::new(
+                Opcode::CallIndirect,
+                Operand::Token(Token::null(TableKind::MethodDef)),
+            ),
             Instruction::simple(Opcode::Ret),
         ]);
         let mut main_code = Vec::new();
-        for instruction in main_body { encode(&instruction, &mut main_code); }
+        for instruction in main_body {
+            encode(&instruction, &mut main_code);
+        }
         let main_offset = write_body(
             &mut module.code,
             0,
@@ -1112,10 +1185,8 @@ mod method_tests {
 
     #[test]
     fn executes_source_array_constructor() {
-        let module = zun_compiler::compile(
-            "function main(): Array { return new Array(2); }",
-        )
-        .expect("compile array constructor");
+        let module = zun_compiler::compile("function main(): Array { return new Array(2); }")
+            .expect("compile array constructor");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array constructor");
         assert!(matches!(result, Value::Object(_)));
@@ -1140,7 +1211,10 @@ mod method_tests {
         .expect("compile array assignment");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array assignment");
-        assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)), "{result:?}");
+        assert!(
+            matches!(result, Value::Float(41.0, zun_il::NumKind::F64)),
+            "{result:?}"
+        );
     }
 
     #[test]
