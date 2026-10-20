@@ -284,6 +284,42 @@ impl ByteBuffer {
         true
     }
     pub fn as_slice(&self) -> &[u8] { &self.bytes }
+
+    pub fn read_u16(&self, offset: usize) -> Option<u16> {
+        let bytes = self.bytes.get(offset..offset.checked_add(2)?)?;
+        Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    pub fn write_u16(&mut self, offset: usize, value: u16) -> bool {
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(2)) else { return false; };
+        if bytes.len() != 2 { return false; }
+        bytes.copy_from_slice(&value.to_le_bytes());
+        true
+    }
+
+    pub fn read_u32(&self, offset: usize) -> Option<u32> {
+        let bytes = self.bytes.get(offset..offset.checked_add(4)?)?;
+        Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    pub fn write_u32(&mut self, offset: usize, value: u32) -> bool {
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(4)) else { return false; };
+        if bytes.len() != 4 { return false; }
+        bytes.copy_from_slice(&value.to_le_bytes());
+        true
+    }
+
+    pub fn read_f64(&self, offset: usize) -> Option<f64> {
+        let bytes = self.bytes.get(offset..offset.checked_add(8)?)?;
+        Some(f64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    pub fn write_f64(&mut self, offset: usize, value: f64) -> bool {
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(8)) else { return false; };
+        if bytes.len() != 8 { return false; }
+        bytes.copy_from_slice(&value.to_le_bytes());
+        true
+    }
 }
 
 impl ArrayStorage {
@@ -545,6 +581,14 @@ mod tests {
         assert!(!buffer.set(3, 1));
         assert_eq!(buffer.get(3), None);
         assert_eq!(buffer.as_slice(), &[0, 0xab, 0]);
+        let mut typed = ByteBuffer::new(16);
+        assert!(typed.write_u16(0, 0x1234));
+        assert_eq!(typed.read_u16(0), Some(0x1234));
+        assert!(typed.write_u32(2, 0xdead_beef));
+        assert_eq!(typed.read_u32(2), Some(0xdead_beef));
+        assert!(typed.write_f64(8, 3.5));
+        assert_eq!(typed.read_f64(8), Some(3.5));
+        assert!(!typed.write_u32(14, 1));
     }
 
     #[test]

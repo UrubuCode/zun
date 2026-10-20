@@ -380,7 +380,9 @@ The following runtime contracts are implemented and covered by tests:
   queues are now exposed as a post-sweep token queue; source-level bindings and
   callback scheduling remain separate follow-up gates.
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
-  intrinsic substrate for `ArrayBuffer` and typed-array views.
+  intrinsic substrate for `ArrayBuffer` and typed-array views. Little-endian
+  `u16`, `u32`, and `f64` view operations are covered; source-level view
+  classes remain the next integration gate.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

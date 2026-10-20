@@ -275,6 +275,22 @@ impl Heap {
         Some(self.buffers.get_mut(&(object.addr() as usize))?.set(index, value))
     }
 
+    pub fn buffer_read_u32(&self, object: Obj, offset: usize) -> Option<u32> {
+        self.buffers.get(&(object.addr() as usize))?.read_u32(offset)
+    }
+
+    pub fn buffer_write_u32(&mut self, object: Obj, offset: usize, value: u32) -> Option<bool> {
+        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_u32(offset, value))
+    }
+
+    pub fn buffer_read_f64(&self, object: Obj, offset: usize) -> Option<f64> {
+        self.buffers.get(&(object.addr() as usize))?.read_f64(offset)
+    }
+
+    pub fn buffer_write_f64(&mut self, object: Obj, offset: usize, value: f64) -> Option<bool> {
+        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_f64(offset, value))
+    }
+
     /// Allocate a runtime-backed Map with insertion-ordered hash storage.
     pub fn alloc_map(&mut self) -> Obj {
         let object = self.alloc(0, 0);
@@ -974,6 +990,17 @@ mod tests {
         assert_eq!(heap.buffer_set(buffer, 4, 1), Some(false));
         assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
         assert_eq!(heap.buffer_len(buffer), None);
+    }
+
+    #[test]
+    fn typed_buffer_views_roundtrip_through_the_heap() {
+        let mut heap = Heap::new();
+        let buffer = heap.alloc_buffer(16);
+        assert_eq!(heap.buffer_write_u32(buffer, 0, 0xfeed_beef), Some(true));
+        assert_eq!(heap.buffer_read_u32(buffer, 0), Some(0xfeed_beef));
+        assert_eq!(heap.buffer_write_f64(buffer, 8, 2.5), Some(true));
+        assert_eq!(heap.buffer_read_f64(buffer, 8), Some(2.5));
+        assert_eq!(heap.buffer_write_u32(buffer, 14, 1), Some(false));
     }
 
     #[test]
