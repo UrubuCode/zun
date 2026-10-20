@@ -15,9 +15,13 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "mapGet", params: &[Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "mapHas", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "mapSize", params: &[Opaque], ret: U64, imp: unavailable },
+        NativeFn { name: "mapDelete", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapClear", params: &[Opaque], ret: Void, imp: unavailable },
         NativeFn { name: "setNew", params: &[], ret: Opaque, imp: unavailable },
         NativeFn { name: "setAdd", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "setHas", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "setSize", params: &[Opaque], ret: U64, imp: unavailable },
+        NativeFn { name: "setDelete", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "setClear", params: &[Opaque], ret: Void, imp: unavailable },
     ],
 };

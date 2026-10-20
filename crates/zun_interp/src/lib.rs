@@ -957,6 +957,16 @@ impl Interp<'_> {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.map_len(object)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
             }
+            "mapDelete" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, key)).is_some()))
+            }
+            "mapClear" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.map_clear(object)).ok_or(RunError::BadToken)?;
+                Ok(Value::Void)
+            }
             "setNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -975,13 +985,23 @@ impl Interp<'_> {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.set_len(object)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
             }
+            "setDelete" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, value)).ok_or(RunError::BadToken)?))
+            }
+            "setClear" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.set_clear(object)).ok_or(RunError::BadToken)?;
+                Ok(Value::Void)
+            }
             _ => Err(RunError::BadToken),
         }
     }
 }
 
 fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "setNew", "setAdd", "setHas", "setSize"] {
+    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear"] {
         if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1451,6 +1471,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run collection intrinsics");
         assert!(matches!(result, Value::Int(2, _)));
+    }
+
+    #[test]
+    fn removes_and_clears_runtime_backed_collections() {
+        let module = zun_compiler::compile(
+            "import { mapNew, mapSet, mapHas, mapDelete, mapClear, setNew, setAdd, setHas, setDelete, setClear } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 1.0, 2.0); mapDelete(map, 1.0); if (mapHas(map, 1.0)) { return 1; } mapSet(map, 1.0, 2.0); mapClear(map); let set = setNew(); setAdd(set, 1.0); setDelete(set, 1.0); if (setHas(set, 1.0)) { return 2; } setAdd(set, 1.0); setClear(set); if (setHas(set, 1.0)) { return 3; } return 0; }",
+        )
+        .expect("compile collection removal intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run collection removal intrinsics");
+        assert!(matches!(result, Value::Int(0, _)));
     }
 
     #[test]
