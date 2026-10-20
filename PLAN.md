@@ -392,6 +392,9 @@ The following runtime contracts are implemented and covered by tests:
   shared windows without copying the underlying storage, and `TypedArrayView`
   enforces element alignment and indexed `u8`, `u16`, `u32`, and `f64` access
   over those windows.
+- Managed millisecond `DateValue` storage with invalid-date propagation and
+  comparison semantics; calendar formatting and source-level constructors
+  remain follow-up work.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

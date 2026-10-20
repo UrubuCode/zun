@@ -298,6 +298,25 @@ pub struct ByteBuffer {
     bytes: Vec<u8>,
 }
 
+/// Millisecond-precision date value. Invalid dates carry no usable timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateValue {
+    millis: i64,
+    valid: bool,
+}
+
+impl DateValue {
+    pub const fn from_millis(millis: i64) -> Self { Self { millis, valid: true } }
+    pub const fn invalid() -> Self { Self { millis: 0, valid: false } }
+    pub const fn is_valid(self) -> bool { self.valid }
+    pub const fn millis(self) -> Option<i64> {
+        if self.valid { Some(self.millis) } else { None }
+    }
+    pub fn compare(self, other: Self) -> Option<std::cmp::Ordering> {
+        Some(self.millis()?.cmp(&other.millis()?))
+    }
+}
+
 /// Bounds-checked view into a shared byte buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteView {
@@ -718,6 +737,11 @@ mod tests {
         assert!(typed.write_f64(8, 3.5));
         assert_eq!(typed.read_f64(8), Some(3.5));
         assert!(!typed.write_u32(14, 1));
+        let date = DateValue::from_millis(1_700_000_000_123);
+        assert!(date.is_valid());
+        assert_eq!(date.millis(), Some(1_700_000_000_123));
+        assert_eq!(date.compare(DateValue::from_millis(1_700_000_000_124)), Some(std::cmp::Ordering::Less));
+        assert_eq!(DateValue::invalid().compare(date), None);
         let view = ByteView::new(typed.len(), 2, 8).unwrap();
         assert_eq!(view.read_u32(&typed, 0), Some(0xdead_beef));
         assert!(view.write_u32(&mut typed, 4, 7));

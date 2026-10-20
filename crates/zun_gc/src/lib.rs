@@ -167,6 +167,8 @@ pub struct Heap {
     arrays: HashMap<usize, zun_core::ArrayStorage>,
     /// Contiguous byte storage associated with ArrayBuffer objects.
     buffers: HashMap<usize, zun_core::ByteBuffer>,
+    /// Date values associated with Date objects.
+    dates: HashMap<usize, zun_core::DateValue>,
     /// Ordered hash tables associated with Map objects.
     maps: HashMap<usize, zun_core::OrderedMap>,
     /// Ordered hash tables associated with Set objects.
@@ -261,6 +263,20 @@ impl Heap {
         let object = self.alloc(0, 0);
         self.buffers.insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
         object
+    }
+
+    pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
+        let object = self.alloc(0, 0);
+        self.dates.insert(object.addr() as usize, millis.map_or(zun_core::DateValue::invalid(), zun_core::DateValue::from_millis));
+        object
+    }
+
+    pub fn date_millis(&self, object: Obj) -> Option<i64> {
+        self.dates.get(&(object.addr() as usize))?.millis()
+    }
+
+    pub fn date_compare(&self, left: Obj, right: Obj) -> Option<std::cmp::Ordering> {
+        self.dates.get(&(left.addr() as usize))?.compare(*self.dates.get(&(right.addr() as usize))?)
     }
 
     pub fn buffer_len(&self, object: Obj) -> Option<usize> {
@@ -693,6 +709,7 @@ impl Heap {
                 self.dynamic_objects.remove(&(r.addr as usize));
                 self.arrays.remove(&(r.addr as usize));
                 self.buffers.remove(&(r.addr as usize));
+                self.dates.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
                 self.sets.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
@@ -1141,6 +1158,18 @@ mod tests {
         let floats = zun_core::TypedArrayView::new(16, 8, 8, zun_core::TypedElement::F64).unwrap();
         assert_eq!(heap.buffer_view_write_f64(buffer, floats, 0, 1.5), Some(true));
         assert_eq!(heap.buffer_view_read_f64(buffer, floats, 0), Some(1.5));
+    }
+
+    #[test]
+    fn date_values_roundtrip_and_invalid_dates_do_not_compare() {
+        let mut heap = Heap::new();
+        let earlier = heap.alloc_date(Some(100));
+        let later = heap.alloc_date(Some(200));
+        let invalid = heap.alloc_date(None);
+        assert_eq!(heap.date_millis(earlier), Some(100));
+        assert_eq!(heap.date_compare(earlier, later), Some(std::cmp::Ordering::Less));
+        assert_eq!(heap.date_millis(invalid), None);
+        assert_eq!(heap.date_compare(earlier, invalid), None);
     }
 
     #[test]
