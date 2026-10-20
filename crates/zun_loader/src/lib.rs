@@ -69,6 +69,8 @@ pub enum LoadError {
     Types(TypeError),
     /// A module reference token is invalid or unresolved.
     UnresolvedModule(String),
+    /// A module identity was registered more than once.
+    DuplicateModule(String),
 }
 
 impl core::fmt::Display for LoadError {
@@ -78,6 +80,7 @@ impl core::fmt::Display for LoadError {
             Self::Format(error) => write!(f, "invalid module: {error}"),
             Self::Types(error) => write!(f, "invalid type metadata: {error}"),
             Self::UnresolvedModule(name) => write!(f, "unresolved module reference: {name}"),
+            Self::DuplicateModule(name) => write!(f, "duplicate module identity: {name}"),
         }
     }
 }
@@ -120,14 +123,21 @@ impl ModuleLoader {
     pub fn load_bytes(&mut self, name: impl Into<String>, bytes: &[u8]) -> Result<(), LoadError> {
         let name = name.into();
         let scope = ModuleScope::from_bytes(name.clone(), bytes)?;
-        self.modules.insert(name, scope);
-        Ok(())
+        self.insert(scope)
     }
 
     /// Load and register a module using its path as identity.
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<(), LoadError> {
         let scope = ModuleScope::from_file(path)?;
+        self.insert(scope)
+    }
+
+    /// Register an already loaded scope, rejecting duplicate identities.
+    pub fn insert(&mut self, scope: ModuleScope) -> Result<(), LoadError> {
         let name = scope.name().to_owned();
+        if self.modules.contains_key(&name) {
+            return Err(LoadError::DuplicateModule(name));
+        }
         self.modules.insert(name, scope);
         Ok(())
     }

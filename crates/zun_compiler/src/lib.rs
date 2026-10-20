@@ -23,6 +23,26 @@ pub fn compile(source: &str) -> Result<Module, Vec<Diagnostic>> {
     Ok(zun_ilgen::lower(&hir))
 }
 
+/// Compile one named source into a loadable module scope.
+pub fn compile_scope(name: impl Into<String>, source: &str) -> Result<zun_loader::ModuleScope, Vec<Diagnostic>> {
+    let module = compile(source)?;
+    zun_loader::ModuleScope::from_bytes(name, &module.write())
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])
+}
+
+/// Compile and register a set of named source modules.
+pub fn compile_modules<'a, I>(sources: I) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut loader = zun_loader::ModuleLoader::new();
+    for (name, source) in sources {
+        let scope = compile_scope(name, source)?;
+        loader.insert(scope).map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    }
+    Ok(loader)
+}
+
 fn is_error(diagnostic: &Diagnostic) -> bool {
     diagnostic.severity == Severity::Error
 }
@@ -42,5 +62,17 @@ mod tests {
     fn returns_frontend_diagnostics() {
         let diagnostics = compile("function main( { }").expect_err("must reject malformed source");
         assert!(diagnostics.iter().any(|d| d.severity == Severity::Error));
+    }
+
+    #[test]
+    fn compiles_named_modules_into_one_registry() {
+        let loader = compile_modules([
+            ("core", "function core(): int { return 1; }"),
+            ("app", "function main(): int { return 0; }"),
+        ])
+        .expect("compile modules");
+        assert_eq!(loader.len(), 2);
+        assert!(loader.get("core").is_some());
+        assert!(loader.get("app").is_some());
     }
 }
