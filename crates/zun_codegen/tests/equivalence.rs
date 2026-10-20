@@ -1688,6 +1688,13 @@ fn math_trunc_is_jit_equivalent_for_both_signs() {
 }
 
 #[test]
+fn math_log_bases_are_jit_equivalent() {
+    assert_equivalent(
+        "import { log10Number, log2Number } from \"zun:math\"; function main(): number { return log10Number(100.0) + log2Number(8.0); }",
+    );
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

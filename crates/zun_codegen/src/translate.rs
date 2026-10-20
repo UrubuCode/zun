@@ -393,6 +393,8 @@ impl Translator<'_> {
                         Some("cosNumber") => ("zun_jit_math_cos", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("expNumber") => ("zun_jit_math_exp", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("logNumber") => ("zun_jit_math_log", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("log10Number") => ("zun_jit_math_log10", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("log2Number") => ("zun_jit_math_log2", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("tanNumber") => ("zun_jit_math_tan", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("min" | "minNumber") => ("zun_jit_math_min", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         Some("max" | "maxNumber") => ("zun_jit_math_max", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
