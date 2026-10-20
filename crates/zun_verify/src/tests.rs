@@ -421,6 +421,37 @@ fn fixture_invalid_dynamic_store_underflow() {
 }
 
 #[test]
+fn fixture_valid_dynamic_value_access() {
+    let code = asm(&[
+        Instruction::simple(Opcode::NewDynamic),
+        Instruction::simple(Opcode::Dup),
+        Instruction::new(Opcode::ConstStr, Operand::StringRef(0)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(7)),
+        Instruction::simple(Opcode::BoxAny),
+        Instruction::simple(Opcode::StoreDynamicValue),
+        Instruction::simple(Opcode::Pop),
+        Instruction::new(Opcode::ConstStr, Operand::StringRef(0)),
+        Instruction::simple(Opcode::LoadDynamicValue),
+        Instruction::simple(Opcode::UnboxAny),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_dynamic_value_load_underflow() {
+    let code = asm(&[
+        Instruction::simple(Opcode::LoadDynamicValue),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+    ));
+}
+
+#[test]
 fn fixture_valid_return_value_leaves_one() {
     let code = asm(&[
         Instruction::new(Opcode::ConstF64, Operand::Float64(42.0)),

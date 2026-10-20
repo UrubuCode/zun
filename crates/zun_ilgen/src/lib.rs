@@ -1000,6 +1000,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::StringRef(property.0),
                 ));
             }
+            ExprKind::DynamicGetValue { object, key } => {
+                self.expr(object);
+                self.expr(key);
+                self.emit(Instruction::simple(Opcode::LoadDynamicValue));
+            }
             ExprKind::OptionalDynamicGet { object, name } => {
                 self.expr(object);
                 self.emit(Instruction::simple(Opcode::Dup));
@@ -1048,6 +1053,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Opcode::StoreDynamic,
                     Operand::StringRef(property.0),
                 ));
+            }
+            ExprKind::DynamicSetValue { object, key, value } => {
+                self.expr(object);
+                self.expr(key);
+                self.expr(value);
+                self.emit(Instruction::simple(Opcode::StoreDynamicValue));
             }
             ExprKind::BoxAny { value } => {
                 self.expr(value);

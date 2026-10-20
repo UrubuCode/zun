@@ -588,6 +588,8 @@ pub enum ExprKind {
         /// The property name.
         name: String,
     },
+    /// Read a dynamic property whose name is evaluated at runtime.
+    DynamicGetValue { object: Box<Expr>, key: Box<Expr> },
     /// Read a dynamic property, returning null when the receiver is null.
     OptionalDynamicGet { object: Box<Expr>, name: String },
     /// Null-safe call to a runtime-managed method. The receiver is args[0].
@@ -601,6 +603,8 @@ pub enum ExprKind {
         /// The dynamic value.
         value: Box<Expr>,
     },
+    /// Write an Any value using a runtime-evaluated property name.
+    DynamicSetValue { object: Box<Expr>, key: Box<Expr>, value: Box<Expr> },
     /// Explicitly box a statically typed value as Any.
     BoxAny {
         /// The value to box.

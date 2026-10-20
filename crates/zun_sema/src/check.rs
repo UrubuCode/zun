@@ -1319,6 +1319,23 @@ impl Checker<'_> {
                 };
 
                 if name == "dynamic_get" || name == "reflect_get" {
+                    if name == "reflect_get"
+                        && args.len() == 2
+                        && args[0].ty == Ty::DynamicObject
+                        && args[1].ty == Ty::String
+                        && !matches!(args[1].kind, hir::ExprKind::String(_))
+                    {
+                        let key = args.pop().unwrap();
+                        let object = args.pop().unwrap();
+                        return hir::Expr {
+                            kind: hir::ExprKind::DynamicGetValue {
+                                object: Box::new(object),
+                                key: Box::new(key),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
                     let Some((object, property)) = dynamic_property(self, &mut args, span) else {
                         return self.poison(span);
                     };
@@ -1333,6 +1350,26 @@ impl Checker<'_> {
                 }
 
                 if name == "dynamic_set" || name == "reflect_set" {
+                    if name == "reflect_set"
+                        && args.len() == 3
+                        && args[0].ty == Ty::DynamicObject
+                        && args[1].ty == Ty::String
+                        && args[2].ty == Ty::Any
+                        && !matches!(args[1].kind, hir::ExprKind::String(_))
+                    {
+                        let value = args.pop().unwrap();
+                        let key = args.pop().unwrap();
+                        let object = args.pop().unwrap();
+                        return hir::Expr {
+                            kind: hir::ExprKind::DynamicSetValue {
+                                object: Box::new(object),
+                                key: Box::new(key),
+                                value: Box::new(value),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
                     if args.len() != 3
                         || args[0].ty != Ty::DynamicObject
                         || args[1].ty != Ty::String

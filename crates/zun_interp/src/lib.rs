@@ -291,6 +291,34 @@ impl Interp<'_> {
                     });
                     stack.push(Value::Any(any));
                 }
+                Opcode::LoadDynamicValue => {
+                    let key = match pop(&mut stack)? {
+                        Value::Str(key) => key,
+                        _ => return Err(RunError::BadToken),
+                    };
+                    let object = pop(&mut stack)?.as_object();
+                    let value = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get(object, &key)
+                            .map(Value::Any)
+                            .unwrap_or(Value::Void)
+                    });
+                    stack.push(value);
+                }
+                Opcode::StoreDynamicValue => {
+                    let value = pop(&mut stack)?;
+                    let Value::Any(any) = value else {
+                        return Err(RunError::BadToken);
+                    };
+                    let key = match pop(&mut stack)? {
+                        Value::Str(key) => key,
+                        _ => return Err(RunError::BadToken),
+                    };
+                    let object = pop(&mut stack)?.as_object();
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(object, key.as_ref().to_owned(), any);
+                    });
+                    stack.push(Value::Any(any));
+                }
                 Opcode::NewArray => {
                     let length = pop(&mut stack)?.as_int();
                     if length < 0 {
@@ -1884,7 +1912,7 @@ mod method_tests {
     #[test]
     fn reflect_aliases_use_dynamic_object_storage() {
         let module = zun_compiler::compile(
-            "function main(): any { let object = dynamic_new(); reflect_set(object, \"answer\", box_any(41)); return reflect_get(object, \"answer\"); }",
+            "function main(): any { let object = dynamic_new(); let key = \"answer\"; reflect_set(object, key, box_any(41)); return reflect_get(object, key); }",
         )
         .expect("compile reflect aliases");
         let mut output = CaptureOutput::default();
