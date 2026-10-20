@@ -801,6 +801,30 @@ impl Heap {
         freed
     }
 
+    /// Collect while treating captured environments of function values as
+    /// additional roots.
+    ///
+    /// # Safety
+    /// The same root validity requirements as [`Heap::collect`] apply. Every
+    /// non-zero environment address in `functions` must identify a live object
+    /// in this heap.
+    pub unsafe fn collect_with_function_roots(
+        &mut self,
+        roots: &[Obj],
+        functions: &[zun_core::FunctionHandle],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        let mut all_roots = roots.to_vec();
+        all_roots.extend(functions.iter().filter_map(|function| {
+            function
+                .environment()
+                .map(|address| Obj::from_addr(address as *mut u64))
+        }));
+        // SAFETY: the caller guarantees all explicit and captured roots are
+        // valid objects in this heap.
+        unsafe { self.collect(&all_roots, ref_slots) }
+    }
+
     /// Collect using the roots registered by active native frames in addition
     /// to the explicitly supplied interpreter roots.
     ///
@@ -1081,6 +1105,22 @@ mod tests {
         assert_eq!(o.field(0), 0);
         assert_eq!(o.field(1), 0);
         assert_eq!(o.field(2), 0);
+    }
+
+    #[test]
+    fn function_environment_is_kept_as_a_gc_root() {
+        let mut heap = Heap::new();
+        let environment = heap.alloc(3, 0);
+        let garbage = heap.alloc(4, 0);
+        let function = zun_core::FunctionHandle::new(11, Some(environment.addr() as usize));
+
+        let freed = unsafe {
+            heap.collect_with_function_roots(&[], &[function], &|_| Vec::new())
+        };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.live_count(), 1);
+        assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
+        assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
     }
 
     #[test]
