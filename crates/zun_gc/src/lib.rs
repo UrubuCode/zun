@@ -188,6 +188,11 @@ impl Heap {
         self.arrays.get_mut(&(object.addr() as usize))?.remove(index)
     }
 
+    /// Remove and return an array's last element.
+    pub fn array_pop(&mut self, object: Obj) -> Option<zun_core::Any> {
+        self.arrays.get_mut(&(object.addr() as usize))?.pop()
+    }
+
     /// Read a dynamic property from an object allocated by [`Self::alloc_dynamic`].
     pub fn dynamic_get(&self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects

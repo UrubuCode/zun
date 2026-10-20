@@ -246,6 +246,8 @@ define_opcodes! {
     StoreArray = 0x7D, None, "stelem", StackEffect::Fixed { pops: 3, pushes: 1 };
     /// Read the length of a managed array.
     ArrayLength = 0x7E, None, "arraylen", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Remove and return the last element of a managed array.
+    ArrayPop = 0x7F, None, "arraypop", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]

@@ -362,6 +362,11 @@ pub enum ExprKind {
         /// The array expression.
         object: Box<Expr>,
     },
+    /// Remove and return the last element of a managed array.
+    ArrayPop {
+        /// The array expression.
+        object: Box<Expr>,
+    },
     /// A numeric conversion (`as`). The target type is the expression's `ty`.
     Convert {
         /// The value being converted.

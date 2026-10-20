@@ -297,6 +297,14 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     stack.push(Value::Int(length as i64, zun_il::NumKind::U64));
                 }
+                Opcode::ArrayPop => {
+                    let array = pop(&mut stack)?.as_object();
+                    let value = zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_pop(array).and_then(|any| value::Value::unbox_any(any, heap))
+                    })
+                    .ok_or(RunError::BadToken)?;
+                    stack.push(value);
+                }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
                     let v = pop(&mut stack)?;
@@ -830,6 +838,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array length");
         assert!(matches!(result, Value::Int(2, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn executes_source_array_pop() {
+        let module = zun_compiler::compile(
+            "function main(): any { let values = new Array(1); values[0] = 41.0; return values.pop(); }",
+        )
+        .expect("compile array pop");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array pop");
+        assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
     }
 }
 

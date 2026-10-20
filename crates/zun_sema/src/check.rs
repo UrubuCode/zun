@@ -935,6 +935,16 @@ impl Checker<'_> {
             } => {
                 let receiver = self.check_expr(cx, receiver);
                 let mname = self.text(method).to_string();
+                if receiver.ty == Ty::Array && mname == "pop" {
+                    if !args.is_empty() {
+                        self.error(span, "Array.pop expects no arguments");
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::ArrayPop { object: Box::new(receiver) },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 let class = match receiver.ty {
                     Ty::Instance(c) => c,
                     Ty::Error => return self.poison(span),
