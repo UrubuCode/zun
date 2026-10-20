@@ -4,6 +4,7 @@
 //! implemented by Zun, while this API loads third-party native libraries.
 
 use std::ffi::OsStr;
+use std::path::Path;
 
 /// Return the platform library-name candidates for a logical native library.
 ///
@@ -86,6 +87,22 @@ impl NativeLibrary {
             library,
             path: path_ref.to_string_lossy().into_owned(),
         })
+    }
+
+    /// Load an explicit native-library path after requiring it to be absolute.
+    ///
+    /// Keeping this check separate from [`NativeLibrary::open`] preserves the
+    /// low-level unsafe API while giving language/runtime callers a safe policy
+    /// boundary against relative-path DLL planting.
+    pub unsafe fn open_path(path: impl AsRef<Path>) -> Result<Self, FfiError> {
+        let path = path.as_ref();
+        if !path.is_absolute() {
+            return Err(FfiError {
+                message: format!("native library path must be absolute: {}", path.display()),
+            });
+        }
+        // SAFETY: the caller accepts loading the explicitly selected path.
+        unsafe { Self::open(path.as_os_str()) }
     }
 
     /// Load a logical library name using platform filename variants.
@@ -215,6 +232,13 @@ mod tests {
     fn explicit_library_names_are_not_rewritten() {
         assert_eq!(library_name_variants("./native/libzun.so"), vec!["./native/libzun.so"]);
         assert_eq!(library_name_variants("zun.so.1"), vec!["zun.so.1"]);
+    }
+
+    #[test]
+    fn explicit_loader_rejects_relative_paths() {
+        let result = unsafe { NativeLibrary::open_path("./native/libzun.so") };
+        let error = result.expect_err("relative native path must be rejected");
+        assert!(error.to_string().contains("must be absolute"));
     }
 
     #[test]
