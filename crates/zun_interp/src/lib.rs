@@ -23,7 +23,6 @@ mod unwind;
 pub mod value;
 
 use gc_policy::next_gc_interval;
-use roots::collect_frame_roots;
 use operands::{
     branch_target, operand_f64, operand_i32, operand_i64, operand_local, operand_strref,
     operand_token, operand_token_imm32,
@@ -1104,20 +1103,7 @@ impl Interp<'_> {
     /// the current frame's stack and locals, plus every ancestor frame in the
     /// `parent` chain. Reference fields are traced via the module's type layout.
     fn collect(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>) -> usize {
-        let mut roots: Vec<zun_gc::Obj> = Vec::new();
-        collect_frame_roots(stack, locals, &mut roots);
-        let mut link = parent;
-        while let Some(l) = link {
-            collect_frame_roots(l.stack, l.locals, &mut roots);
-            link = l.parent;
-        }
-        zun_gc::append_native_roots(&mut roots);
-        let types = &self.types;
-        let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
-        // SAFETY: `roots` holds every live object reference reachable by the
-        // running program at this safepoint (no JIT frame is active here), so
-        // only genuinely-unreachable objects are reclaimed.
-        zun_gc::with_current_heap_mut(|h| unsafe { h.collect(&roots, &ref_fn) })
+        roots::collect(&self.types, stack, locals, parent)
     }
 
 }
@@ -1125,6 +1111,7 @@ impl Interp<'_> {
 #[cfg(test)]
 mod method_tests {
     use super::*;
+    use crate::roots::collect_frame_roots;
 
     #[test]
     fn executes_do_while_at_least_once() {
