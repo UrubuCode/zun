@@ -3,6 +3,32 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn return_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let value = if self.at(TokenKind::Semi) {
+            None
+        } else {
+            Some(self.expression())
+        };
+        let end = self.peek().span;
+        self.expect(TokenKind::Semi, "`;`");
+        Stmt::Return {
+            value,
+            span: start.to(end),
+        }
+    }
+
+    pub(crate) fn throw_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let value = self.expression();
+        let end = self.peek().span;
+        self.expect(TokenKind::Semi, "`;` after throw");
+        Stmt::Throw {
+            value,
+            span: start.to(end),
+        }
+    }
+
     pub(crate) fn break_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         let label = if self.at(TokenKind::Ident) {

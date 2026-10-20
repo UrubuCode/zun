@@ -512,32 +512,6 @@ impl Parser<'_> {
         }
     }
 
-    fn return_statement(&mut self) -> Stmt {
-        let start = self.bump().span; // `return`
-        let value = if self.at(TokenKind::Semi) {
-            None
-        } else {
-            Some(self.expression())
-        };
-        let end = self.peek().span;
-        self.expect(TokenKind::Semi, "`;`");
-        Stmt::Return {
-            value,
-            span: start.to(end),
-        }
-    }
-
-    fn throw_statement(&mut self) -> Stmt {
-        let start = self.bump().span;
-        let value = self.expression();
-        let end = self.peek().span;
-        self.expect(TokenKind::Semi, "`;` after throw");
-        Stmt::Throw {
-            value,
-            span: start.to(end),
-        }
-    }
-
     fn try_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         let body = self.block();
