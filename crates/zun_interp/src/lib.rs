@@ -41,21 +41,7 @@ use zun_module::{read_body, Module};
 pub use zun_natives::Sink as Output;
 pub use output::{CaptureOutput, StdoutOutput};
 pub use hooks::CallHook;
-
-/// Errors the interpreter can raise at runtime.
-#[derive(Debug, Clone)]
-pub enum RunError {
-    /// The module has no entry point to run.
-    NoEntryPoint,
-    /// A call or token did not resolve to a method body.
-    BadToken,
-    /// The bytecode stream was malformed (should not happen for verified code).
-    Malformed(String),
-    /// A runtime intrinsic (e.g. a `zun:fs` operation) failed.
-    Native(String),
-    /// An exception escaped the current method because no handler matched.
-    Thrown(Value),
-}
+pub use errors::RunError;
 
 /// A hook the interpreter consults before interpreting a call, so a faster
 /// backend (the JIT) can execute an eligible method instead. Returning `None`

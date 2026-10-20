@@ -1,4 +1,13 @@
-use super::RunError;
+use super::Value;
+
+#[derive(Debug, Clone)]
+pub enum RunError {
+    NoEntryPoint,
+    BadToken,
+    Malformed(String),
+    Native(String),
+    Thrown(Value),
+}
 
 impl core::fmt::Display for RunError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
