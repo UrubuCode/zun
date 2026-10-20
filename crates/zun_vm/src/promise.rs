@@ -7,6 +7,15 @@ use std::sync::{Arc, Mutex};
 const PENDING: u8 = 0;
 const RESOLVED: u8 = 1;
 
+/// Result of advancing a stackless asynchronous state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Poll<T> {
+    /// The machine suspended and must be resumed later.
+    Pending,
+    /// The machine completed with a value.
+    Ready(T),
+}
+
 struct Inner<T> {
     value: Option<T>,
     continuation: Option<Box<dyn FnOnce(T) + Send + 'static>>,
@@ -17,6 +26,64 @@ struct Inner<T> {
 pub struct Promise<T> {
     state: Arc<AtomicU8>,
     inner: Arc<Mutex<Inner<T>>>,
+}
+
+/// A stackless state machine whose suspension point is represented by `state`.
+///
+/// Compiler-generated async bodies can store locals in the closure and update
+/// the state number before returning [`Poll::Pending`]. Completion is published
+/// once through the associated Promise.
+pub struct AsyncStateMachine<T, F> {
+    state: usize,
+    poller: F,
+    completion: Promise<T>,
+    completed: bool,
+}
+
+impl<T, F> core::fmt::Debug for AsyncStateMachine<T, F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AsyncStateMachine")
+            .field("state", &self.state)
+            .field("completed", &self.completed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachine<T, F> {
+    /// Construct a state machine starting at state zero.
+    pub fn new(poller: F) -> Self {
+        Self {
+            state: 0,
+            poller,
+            completion: Promise::new(),
+            completed: false,
+        }
+    }
+
+    /// Advance the machine once.
+    pub fn poll(&mut self) -> Poll<T> {
+        if self.completed {
+            return Poll::Pending;
+        }
+        match (self.poller)(&mut self.state) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(value) => {
+                self.completed = true;
+                self.completion.resolve(value.clone());
+                Poll::Ready(value)
+            }
+        }
+    }
+
+    /// The current compiler-visible suspension state.
+    pub fn state(&self) -> usize {
+        self.state
+    }
+
+    /// Observe completion through the machine's Promise.
+    pub fn promise(&self) -> &Promise<T> {
+        &self.completion
+    }
 }
 
 impl<T> core::fmt::Debug for Promise<T> {
@@ -304,6 +371,22 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), None);
         assert_eq!(queue.lock().unwrap().run_one(), true);
         assert_eq!(*seen.lock().unwrap(), Some(5));
+    }
+
+    #[test]
+    fn state_machine_preserves_state_across_suspension() {
+        let mut machine = AsyncStateMachine::new(|state| match *state {
+            0 => {
+                *state = 1;
+                Poll::Pending
+            }
+            1 => Poll::Ready(42),
+            _ => unreachable!(),
+        });
+        assert_eq!(machine.poll(), Poll::Pending);
+        assert_eq!(machine.state(), 1);
+        assert_eq!(machine.poll(), Poll::Ready(42));
+        assert!(machine.promise().is_resolved());
     }
 
     #[test]
