@@ -930,6 +930,20 @@ mod method_tests {
     }
 
     #[test]
+    fn closure_environment_is_an_interpreter_gc_root() {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let environment = heap.alloc(1, 0);
+        let function = Value::Function(zun_core::FunctionHandle::new(
+            1,
+            Some(environment.addr() as usize),
+        ));
+        let mut roots = Vec::new();
+        collect_frame_roots(&[function], &[], &mut roots);
+        assert_eq!(roots, vec![environment]);
+    }
+
+    #[test]
     fn compiles_named_function_reference_and_indirect_call() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
@@ -2667,8 +2681,14 @@ mod method_tests {
 /// Add the object references found in a frame's stack and locals to `roots`.
 fn collect_frame_roots(stack: &[Value], locals: &[Value], roots: &mut Vec<zun_gc::Obj>) {
     for v in stack.iter().chain(locals.iter()) {
-        if let Value::Object(o) = v {
-            roots.push(*o);
+        match v {
+            Value::Object(o) => roots.push(*o),
+            Value::Function(handle) => {
+                if let Some(address) = handle.environment() {
+                    roots.push(unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                }
+            }
+            _ => {}
         }
     }
 }
