@@ -50,6 +50,17 @@ fn assert_equivalent(src: &str) {
 }
 
 #[test]
+fn array_for_of_preserves_interpreter_fallback_boundary() {
+    let module = compile(
+        "function main(): number { let values = new Array(2); values[0] = 20.0; values[1] = 22.0; for (let value of values) { print(value); } return 42.0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "array iteration requires Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Float(42.0, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\
