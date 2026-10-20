@@ -66,13 +66,27 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
     };
 
     let module = match action {
-        Action::Build { trim: true, .. } => match zun_compiler::trim_module(&module) {
-            Ok(module) => module,
-            Err(error) => {
-                eprintln!("zun: cannot trim module: {error}");
-                return ExitCode::FAILURE;
+        Action::Build { trim: true, .. } => {
+            let report = match zun_compiler::trim_report(&module) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("zun: cannot analyze trim: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!(
+                "trim: retaining {} methods, removing {} method bodies",
+                report.reachable_methods.len(),
+                report.removed_methods.len()
+            );
+            match zun_compiler::trim_module(&module) {
+                Ok(module) => module,
+                Err(error) => {
+                    eprintln!("zun: cannot trim module: {error}");
+                    return ExitCode::FAILURE;
+                }
             }
-        },
+        }
         _ => module,
     };
 

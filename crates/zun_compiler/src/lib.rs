@@ -63,13 +63,36 @@ pub fn reachable_methods(module: &Module) -> Result<HashSet<u32>, String> {
     Ok(reachable)
 }
 
+/// Deterministic reachability information produced by the trimmer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrimReport {
+    /// Method definition RIDs whose bodies are retained.
+    pub reachable_methods: Vec<u32>,
+    /// Method definition RIDs whose bodies are removed.
+    pub removed_methods: Vec<u32>,
+}
+
+/// Analyze a module without changing it, returning the trimmer's decisions.
+pub fn trim_report(module: &Module) -> Result<TrimReport, String> {
+    let reachable = reachable_methods(module)?;
+    let mut reachable_methods: Vec<_> = reachable.iter().copied().collect();
+    reachable_methods.sort_unstable();
+    let removed_methods: Vec<_> = (1..=module.tables.method_defs.len() as u32)
+        .filter(|rid| !reachable.contains(rid))
+        .collect();
+    Ok(TrimReport {
+        reachable_methods,
+        removed_methods,
+    })
+}
+
 /// Remove unreachable method bodies while preserving metadata RIDs.
 ///
 /// Keeping definition rows stable means existing tokens and cross-module
 /// references remain valid. An unreachable row becomes an abstract/no-body
 /// row, while reachable bodies are copied into a compact code section.
 pub fn trim_module(module: &Module) -> Result<Module, String> {
-    let reachable = reachable_methods(module)?;
+    let reachable: HashSet<u32> = trim_report(module)?.reachable_methods.into_iter().collect();
     let mut tables = module.tables.clone();
     let mut code = Vec::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
@@ -358,6 +381,12 @@ mod tests {
         assert!(reachable.contains(&1));
         assert!(reachable.contains(&3));
         assert!(!reachable.contains(&2));
+        let report = trim_report(&module).expect("trim report");
+        assert!(report.reachable_methods.contains(&1));
+        assert!(report.reachable_methods.contains(&3));
+        assert!(report.removed_methods.contains(&2));
+        assert!(!report.removed_methods.contains(&1));
+        assert!(!report.removed_methods.contains(&3));
     }
 
     #[test]
