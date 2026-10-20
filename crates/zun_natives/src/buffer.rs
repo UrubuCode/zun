@@ -26,5 +26,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "u32ArrayNew", params: &[Opaque, U64, U64], ret: Opaque, imp: unavailable },
         NativeFn { name: "u32ArrayGet", params: &[Opaque, U64], ret: U32, imp: unavailable },
         NativeFn { name: "u32ArraySet", params: &[Opaque, U64, U32], ret: Bool, imp: unavailable },
+        NativeFn { name: "u8ArrayNew", params: &[Opaque, U64, U64], ret: Opaque, imp: unavailable },
+        NativeFn { name: "u8ArrayGet", params: &[Opaque, U64], ret: U8, imp: unavailable },
+        NativeFn { name: "u8ArraySet", params: &[Opaque, U64, U8], ret: Bool, imp: unavailable },
     ],
 };

@@ -1050,6 +1050,25 @@ impl Interp<'_> {
                 let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u32, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.u32_array_set(array, index, value)).ok_or(RunError::BadToken)?))
             }
+            "u8ArrayNew" => {
+                let buffer = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let number = |value: &Value| match value { Value::Int(value, _) => Ok(*value as usize), _ => Err(RunError::BadToken) };
+                let offset = number(args.get(1).ok_or(RunError::BadToken)?)?;
+                let length = number(args.get(2).ok_or(RunError::BadToken)?)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_u8_array(buffer, offset, length)).ok_or(RunError::BadToken)?;
+                Ok(Value::Object(array))
+            }
+            "u8ArrayGet" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.u8_array_get(array, index)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U8))
+            }
+            "u8ArraySet" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u8, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.u8_array_set(array, index, value)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1167,7 +1186,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1693,6 +1712,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run typed-array intrinsics");
         assert!(matches!(result, Value::Int(16909060, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn accesses_gc_backed_u8_typed_arrays_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, u8ArrayNew, u8ArraySet, u8ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = u8ArrayNew(buffer, 0, 4); u8ArraySet(values, 1, 255); return u8ArrayGet(values, 1) as u64; }",
+        )
+        .expect("compile Uint8Array intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Uint8Array intrinsics");
+        assert!(matches!(result, Value::Int(255, zun_il::NumKind::U64)));
     }
 
     #[test]
