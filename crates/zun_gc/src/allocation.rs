@@ -63,6 +63,30 @@ impl Heap {
         object
     }
 
+    /// Allocate a managed Promise object with pending settlement.
+    pub fn alloc_promise(&mut self) -> Obj {
+        let object = self.alloc(zun_core::CoreTypeId::Promise.get() as u32, 0);
+        self.promises
+            .insert(object.addr() as usize, zun_core::ManagedPromise::new());
+        object
+    }
+
+    pub fn promise_state(&self, object: Obj) -> Option<zun_core::ManagedPromiseState> {
+        self.promises.get(&(object.addr() as usize)).map(|promise| promise.state())
+    }
+
+    pub fn promise_resolve(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
+        self.promises
+            .get_mut(&(object.addr() as usize))
+            .map(|promise| promise.resolve(value))
+    }
+
+    pub fn promise_reject(&mut self, object: Obj, error: impl Into<String>) -> Option<bool> {
+        self.promises
+            .get_mut(&(object.addr() as usize))
+            .map(|promise| promise.reject(error))
+    }
+
     pub fn alloc_array(&mut self, length: usize) -> Obj {
         let object = self.alloc(0, 0);
         self.arrays.insert(

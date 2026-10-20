@@ -114,6 +114,8 @@ pub struct Heap {
     sets: HashMap<usize, zun_core::OrderedMap>,
     /// WeakMap handles owned by managed WeakMap objects.
     weak_map_objects: HashMap<usize, WeakMapId>,
+    /// Promise state associated with managed Promise objects.
+    promises: HashMap<usize, zun_core::ManagedPromise>,
     /// Record index by object address, for tracing child references.
     by_addr: HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
@@ -183,6 +185,23 @@ mod tests {
         assert_eq!(heap.live_count(), 1);
         assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
         assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
+    }
+
+    #[test]
+    fn promise_result_keeps_managed_object_alive() {
+        let mut heap = Heap::new();
+        let promise = heap.alloc_promise();
+        let result = heap.alloc(9, 0);
+        assert_eq!(
+            heap.promise_resolve(promise, zun_core::Any::object(result.addr() as usize)),
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { heap.collect(&[promise], &|_| Vec::new()) },
+            0
+        );
+        assert_eq!(heap.promise_state(promise), Some(zun_core::ManagedPromiseState::Resolved));
+        assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
     }
 
     #[test]

@@ -81,6 +81,16 @@ impl Heap {
                     }
                 }
             }
+            if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
+                if let Some(child) = promise.result().and_then(|value| value.as_object()) {
+                    if let Some(&cidx) = self.by_addr.get(&child) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
         }
 
         // Ephemeron fixed point: a marked key promotes its value, while strong
@@ -157,6 +167,16 @@ impl Heap {
                         }
                     }
                 }
+                if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
+                    if let Some(child) = promise.result().and_then(|value| value.as_object()) {
+                        if let Some(&child_idx) = self.by_addr.get(&child) {
+                            if !self.records[child_idx].marked {
+                                self.records[child_idx].marked = true;
+                                work.push(child_idx);
+                            }
+                        }
+                    }
+                }
             }
             if !promoted {
                 break;
@@ -208,6 +228,7 @@ impl Heap {
                 self.maps.remove(&(r.addr as usize));
                 self.sets.remove(&(r.addr as usize));
                 self.weak_map_objects.remove(&(r.addr as usize));
+                self.promises.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }

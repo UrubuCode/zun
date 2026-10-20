@@ -17,6 +17,7 @@ mod ids;
 mod any_value;
 mod function_handle;
 mod symbols;
+mod promise_value;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
@@ -29,6 +30,7 @@ pub use ids::{CoreTypeId, IntrinsicId};
 pub use any_value::{Any, AnyTag};
 pub use function_handle::FunctionHandle;
 pub use symbols::{SymbolId, SymbolRegistry};
+pub use promise_value::{ManagedPromise, ManagedPromiseState};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -80,6 +82,16 @@ mod tests {
         assert_eq!(CoreTypeId::new(2), Some(CoreTypeId::Number));
         assert_eq!(CoreTypeId::Promise.get(), 6);
         assert_eq!(CoreTypeId::new(6), Some(CoreTypeId::Promise));
+    }
+
+    #[test]
+    fn managed_promise_is_single_assignment() {
+        let mut promise = ManagedPromise::new();
+        assert_eq!(promise.state(), ManagedPromiseState::Pending);
+        assert!(promise.resolve(Any::object(0x1000)));
+        assert_eq!(promise.state(), ManagedPromiseState::Resolved);
+        assert_eq!(promise.result().and_then(|value| value.as_object()), Some(0x1000));
+        assert!(!promise.reject("late failure"));
     }
 
     #[test]
