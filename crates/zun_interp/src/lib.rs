@@ -1199,6 +1199,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array concat");
         assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn executes_array_copy_within_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { slice(start: u64, end: u64): Array { let count: u64 = end - start; let result = new Array(count); let index: u64 = 0; while (index < count) { result[index] = this[start + index]; index = index + 1; } return result; } copyWithin(target: u64, start: u64, end: u64): Array { let copied = this.slice(start, end); let index: u64 = 0; while (index < copied.length) { this[target + index] = copied[index]; index = index + 1; } return this; } }\n\
+             function main(): number { let values = new Array(3); values[0] = 1.0; values[1] = 7.0; values[2] = 9.0; values.copyWithin(0, 1, 3); return values[0] as number; }",
+        )
+        .expect("compile Array copyWithin");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array copyWithin");
+        assert!(matches!(result, Value::Float(7.0, zun_il::NumKind::F64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.
