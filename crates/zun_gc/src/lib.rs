@@ -41,6 +41,7 @@ mod weak;
 mod strings;
 mod diagnostics;
 mod dynamic;
+mod arrays;
 mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
@@ -784,56 +785,6 @@ impl Heap {
             }
             zun_core::AnyTag::Null => 0x66,
         }
-    }
-
-    /// Return the length of an array object.
-    pub fn array_len(&self, object: Obj) -> Option<usize> {
-        self.arrays
-            .get(&(object.addr() as usize))
-            .map(zun_core::ArrayStorage::len)
-    }
-
-    /// Read an array element with bounds checking.
-    pub fn array_get(&self, object: Obj, index: usize) -> Option<zun_core::Any> {
-        self.arrays.get(&(object.addr() as usize))?.get(index)
-    }
-
-    /// Write an array element with bounds checking.
-    pub fn array_set(
-        &mut self,
-        object: Obj,
-        index: usize,
-        value: zun_core::Any,
-    ) -> Option<zun_core::Any> {
-        self.arrays
-            .get_mut(&(object.addr() as usize))?
-            .set(index, value)
-    }
-
-    /// Insert an array element with bounds checking.
-    pub fn array_insert(&mut self, object: Obj, index: usize, value: zun_core::Any) -> bool {
-        self.arrays
-            .get_mut(&(object.addr() as usize))
-            .is_some_and(|array| array.insert(index, value))
-    }
-
-    /// Remove an array element with bounds checking.
-    pub fn array_remove(&mut self, object: Obj, index: usize) -> Option<zun_core::Any> {
-        self.arrays
-            .get_mut(&(object.addr() as usize))?
-            .remove(index)
-    }
-
-    /// Remove and return an array's last element.
-    pub fn array_pop(&mut self, object: Obj) -> Option<zun_core::Any> {
-        self.arrays.get_mut(&(object.addr() as usize))?.pop()
-    }
-
-    /// Append an element and return the resulting array length.
-    pub fn array_push(&mut self, object: Obj, value: zun_core::Any) -> Option<usize> {
-        let array = self.arrays.get_mut(&(object.addr() as usize))?;
-        array.push(value);
-        Some(array.len())
     }
 
 }
