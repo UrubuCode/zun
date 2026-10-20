@@ -344,6 +344,12 @@ mod tests {
             dispatch(compare_id, &[NativeArg::Str("abc"), NativeArg::Str("abd")], &mut sink).unwrap(),
             NativeValue::Int(-1)
         ));
+        let (to_int_id, to_int_fn) = resolve("zun:string", "toInt").unwrap();
+        assert_eq!(to_int_fn.params, &[NativeTy::Str]);
+        assert!(matches!(
+            dispatch(to_int_id, &[NativeArg::Str(" -42 ")], &mut sink).unwrap(),
+            NativeValue::Int(-42)
+        ));
         assert!(matches!(
             dispatch(length_id, &[NativeArg::Str("😀")], &mut sink).unwrap(),
             NativeValue::Int(2)

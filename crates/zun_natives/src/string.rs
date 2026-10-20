@@ -28,6 +28,18 @@ fn compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     }
 }
 
+fn to_int(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("toInt: expected a string".to_string())),
+    };
+    value
+        .trim()
+        .parse::<i64>()
+        .map(NativeValue::Int)
+        .map_err(|_| NativeError("toInt: invalid integer string".to_string()))
+}
+
 fn contains(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1)) {
         (Some(NativeArg::Str(value)), Some(NativeArg::Str(needle))) => {
@@ -299,6 +311,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "length", params: &[Str], ret: U64, imp: length },
         NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
         NativeFn { name: "compare", params: &[Str, Str], ret: I32, imp: compare },
+        NativeFn { name: "toInt", params: &[Str], ret: I32, imp: to_int },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "count", params: &[Str, Str], ret: I32, imp: count },
         NativeFn { name: "includes", params: &[Str, Str], ret: Bool, imp: contains },

@@ -1299,6 +1299,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_to_int_native_method() {
+        let module = zun_compiler::compile(
+            "import { toInt } from \"zun:string\";\n\
+             class String { extern toInt(): int; }\n\
+             function main(): int { let value: string = \" -42 \"; return value.toInt(); }",
+        )
+        .expect("compile String toInt");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String toInt");
+        assert!(matches!(result, Value::Int(value, _) if value == -42));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
