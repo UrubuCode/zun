@@ -61,6 +61,17 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn managed_collections_preserve_interpreter_fallback_boundary() {
+    let module = compile(
+        "import { mapNew, mapSet, mapHas } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 7.0, 42.0); if (mapHas(map, 7.0)) { return 1; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "managed collections require Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\
