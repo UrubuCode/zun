@@ -85,7 +85,7 @@ fn managed_collection_constructors_preserve_interpreter_fallback_boundary() {
 #[test]
 fn weak_map_class_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "class Key {} function main(): int { let key = new Key(); let value = new Key(); let weak = new WeakMap(); weak.set(key, value); if (weak.has(key)) { return 1; } return 0; }",
+        "class Key {} function main(): int { let key = new Key(); let value = new Key(); let weak = new WeakMap(); weak.set(key, value); if (weak.has(key)) { let fetched: any = weak.get(key); if (weak.delete(key)) { if (!weak.has(key)) { return 1; } } } return 0; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");

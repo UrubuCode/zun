@@ -1454,12 +1454,31 @@ impl Heap {
     }
 
     pub fn weak_map_has_object(&self, object: Obj, key: Obj) -> bool {
+        self.weak_map_get_value_object(object, key).is_some()
+    }
+
+    /// Read the value associated with a live object key from a managed WeakMap.
+    pub fn weak_map_get_value_object(&self, object: Obj, key: Obj) -> Option<Obj> {
+        let id = self.weak_map_objects.get(&(object.addr() as usize)).copied()?;
+        let entry = self.weak_maps.get(id.0 as usize)?;
+        let key_address = key.addr() as usize;
+        let (_, value_address) = entry.entries.iter().find(|(candidate, _)| *candidate == key_address)?;
+        let value = self.by_addr.get(value_address)?;
+        Some(Obj(self.records[*value].addr))
+    }
+
+    /// Remove the value associated with an object key from a managed WeakMap.
+    pub fn weak_map_delete_object(&mut self, object: Obj, key: Obj) -> bool {
         let Some(id) = self.weak_map_objects.get(&(object.addr() as usize)).copied() else {
             return false;
         };
-        self.weak_map_entries(id)
-            .iter()
-            .any(|(candidate, _)| *candidate == key)
+        let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else {
+            return false;
+        };
+        let key_address = key.addr() as usize;
+        let before = entry.entries.len();
+        entry.entries.retain(|(candidate, _)| *candidate != key_address);
+        entry.entries.len() != before
     }
 
     pub fn weak_map_set(&mut self, id: WeakMapId, key: Obj, value: Obj) -> bool {

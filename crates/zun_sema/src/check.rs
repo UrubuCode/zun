@@ -1734,7 +1734,9 @@ impl Checker<'_> {
                     (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "clear") => Some(("setClear", Ty::Void, vec![])),
                     (Ty::WeakMap, "set") => Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any])),
+                    (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
                     _ => None,
                 };
                 if let Some((native_name, return_ty, expected)) = managed_method {

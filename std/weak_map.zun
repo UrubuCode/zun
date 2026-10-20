@@ -1,7 +1,9 @@
 // Thin class wrapper over the GC ephemeron-backed WeakMap floor.
-import { weakMapSet, weakMapHas } from "zun:collections";
+import { weakMapSet, weakMapGet, weakMapHas, weakMapDelete } from "zun:collections";
 
 class WeakMap {
     set(key: any, value: any): boolean { return weakMapSet(this, key, value); }
+    get(key: any): any { return weakMapGet(this, key); }
     has(key: any): boolean { return weakMapHas(this, key); }
+    delete(key: any): boolean { return weakMapDelete(this, key); }
 }

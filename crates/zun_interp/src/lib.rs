@@ -1249,10 +1249,22 @@ impl Interp<'_> {
                 let value = object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.weak_map_set_object(map_object, key, value))))
             }
+            "weakMapGet" => {
+                let map_object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(zun_gc::with_current_heap(|heap| heap.weak_map_get_value_object(map_object, key))
+                    .map(|value| Value::Any(zun_core::Any::object(value.addr() as usize)))
+                    .unwrap_or(Value::Void))
+            }
             "weakMapHas" => {
                 let map_object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.weak_map_has_object(map_object, key))))
+            }
+            "weakMapDelete" => {
+                let map_object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.weak_map_delete_object(map_object, key))))
             }
             _ => Err(RunError::BadToken),
         }
@@ -1260,7 +1272,7 @@ impl Interp<'_> {
 }
 
 fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "mapValues", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "setValues", "weakMapNew", "weakMapSet", "weakMapHas"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "mapValues", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "setValues", "weakMapNew", "weakMapSet", "weakMapGet", "weakMapHas", "weakMapDelete"] {
         if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
