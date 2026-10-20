@@ -991,6 +991,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_is_disjoint_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { isDisjoint(other: Array): boolean { let left: u64 = 0; while (left < this.length) { let right: u64 = 0; while (right < other.length) { if (this[left] == other[right]) { return false; } right = right + 1; } left = left + 1; } return true; } } function main(): boolean { let left = new Array(2); left[0] = 1.0; left[1] = 2.0; let right = new Array(2); right[0] = 3.0; right[1] = 4.0; return left.isDisjoint(right); }",
+        )
+        .expect("compile Array isDisjoint");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array isDisjoint");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_swap_source_method() {
         let module = zun_compiler::compile(
             "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\

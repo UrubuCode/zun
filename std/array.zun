@@ -348,6 +348,19 @@ class Array {
         return true;
     }
 
+    isDisjoint(other: Array): boolean {
+        let left: u64 = 0;
+        while (left < this.length) {
+            let right: u64 = 0;
+            while (right < other.length) {
+                if (this[left] == other[right]) { return false; }
+                right = right + 1;
+            }
+            left = left + 1;
+        }
+        return true;
+    }
+
     count(value: any): u64 {
         let total: u64 = 0;
         let index: u64 = 0;
