@@ -1005,6 +1005,32 @@ impl Interp<'_> {
                 let little_endian = match args.get(3).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.data_view_set_u32(view, relative, value, little_endian)).ok_or(RunError::BadToken)?))
             }
+            "dataViewGetU16" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let little_endian = match args.get(2).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_get_u16(view, relative, little_endian)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U16))
+            }
+            "dataViewSetU16" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as u16, _ => return Err(RunError::BadToken) };
+                let little_endian = match args.get(3).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.data_view_set_u16(view, relative, value, little_endian)).ok_or(RunError::BadToken)?))
+            }
+            "dataViewGetF64" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let little_endian = match args.get(2).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Float(zun_gc::with_current_heap(|heap| heap.data_view_get_f64(view, relative, little_endian)).ok_or(RunError::BadToken)?, zun_il::NumKind::F64))
+            }
+            "dataViewSetF64" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value as usize, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
+                let little_endian = match args.get(3).ok_or(RunError::BadToken)? { Value::Bool(value) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.data_view_set_f64(view, relative, value, little_endian)).ok_or(RunError::BadToken)?))
+            }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1122,7 +1148,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1626,6 +1652,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run DataView intrinsics");
         assert!(matches!(result, Value::Int(16909060, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn accesses_data_view_u16_and_f64_operations_from_source() {
+        let module = zun_compiler::compile(
+            "import { bufferNew, dataViewNew, dataViewSetU16, dataViewGetU16, dataViewSetF64, dataViewGetF64 } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); let view = dataViewNew(buffer, 0, 16); dataViewSetU16(view, 0, 4660, false); dataViewSetF64(view, 8, 2.5, true); if (dataViewGetU16(view, 0, false) == 4660) { return dataViewGetF64(view, 8, true); } return 0.0; }",
+        )
+        .expect("compile extended DataView intrinsics");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run extended DataView intrinsics");
+        assert!(matches!(result, Value::Float(2.5, zun_il::NumKind::F64)));
     }
 
     #[test]
