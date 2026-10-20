@@ -169,6 +169,8 @@ pub struct Heap {
     buffers: HashMap<usize, zun_core::ByteBuffer>,
     /// Date values associated with Date objects.
     dates: HashMap<usize, zun_core::DateValue>,
+    /// Error values associated with Error objects.
+    errors: HashMap<usize, zun_core::ErrorValue>,
     /// Ordered hash tables associated with Map objects.
     maps: HashMap<usize, zun_core::OrderedMap>,
     /// Ordered hash tables associated with Set objects.
@@ -277,6 +279,28 @@ impl Heap {
             .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
             .ok();
         self.alloc_date(millis)
+    }
+
+    pub fn alloc_error(&mut self, name: impl Into<String>, message: impl Into<String>) -> Obj {
+        let object = self.alloc(0, 0);
+        self.errors.insert(
+            object.addr() as usize,
+            zun_core::ErrorValue::new(name, message),
+        );
+        object
+    }
+
+    pub fn error_name(&self, object: Obj) -> Option<&str> {
+        self.errors.get(&(object.addr() as usize)).map(zun_core::ErrorValue::name)
+    }
+
+    pub fn error_message(&self, object: Obj) -> Option<&str> {
+        self.errors.get(&(object.addr() as usize)).map(zun_core::ErrorValue::message)
+    }
+
+    pub fn error_set_message(&mut self, object: Obj, message: impl Into<String>) -> Option<()> {
+        self.errors.get_mut(&(object.addr() as usize))?.set_message(message);
+        Some(())
     }
 
     pub fn date_millis(&self, object: Obj) -> Option<i64> {
@@ -756,6 +780,7 @@ impl Heap {
                 self.arrays.remove(&(r.addr as usize));
                 self.buffers.remove(&(r.addr as usize));
                 self.dates.remove(&(r.addr as usize));
+                self.errors.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
                 self.sets.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
@@ -1230,6 +1255,18 @@ mod tests {
         assert_eq!(heap.date_is_valid(now), Some(true));
         assert!(heap.date_millis(now).is_some());
         assert_eq!(heap.date_compare(earlier, invalid), None);
+    }
+
+    #[test]
+    fn error_values_roundtrip_through_the_heap() {
+        let mut heap = Heap::new();
+        let error = heap.alloc_error("TypeError", "bad value");
+        assert_eq!(heap.error_name(error), Some("TypeError"));
+        assert_eq!(heap.error_message(error), Some("bad value"));
+        assert_eq!(heap.error_set_message(error, "fixed"), Some(()));
+        assert_eq!(heap.error_message(error), Some("fixed"));
+        assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+        assert_eq!(heap.error_message(error), None);
     }
 
     #[test]

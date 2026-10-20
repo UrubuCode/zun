@@ -412,7 +412,9 @@ verifier support, interpreter dispatch, and equivalent JIT lowering.
 
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
-constructor lowering remain runtime/compiler gates.
+constructor lowering remain runtime/compiler gates. The heap now also stores
+managed `ErrorValue` name/message pairs with mutation and sweep cleanup,
+providing the runtime backing for those source-level error objects.
 
 The release benchmark rerun on 2026-10-20 measured 454.657 ns/iteration for
 the integer Tier 0 loop and 0.480 ns/iteration for the equivalent JIT loop
