@@ -173,16 +173,16 @@ mod node_api {
         exports: NapiValue,
     ) -> NapiValue {
         for (name, callback) in [
-            (b"runI64".as_slice(), run_i64 as NapiCallback),
-            (b"runF64".as_slice(), run_f64 as NapiCallback),
-            (b"runBool".as_slice(), run_bool as NapiCallback),
+            (b"runI64\0".as_slice(), run_i64 as NapiCallback),
+            (b"runF64\0".as_slice(), run_f64 as NapiCallback),
+            (b"runBool\0".as_slice(), run_bool as NapiCallback),
         ] {
             let mut function = core::ptr::null_mut();
             if unsafe {
                 napi_create_function(
                     env,
                     name.as_ptr(),
-                    name.len(),
+                    name.len() - 1,
                     callback,
                     core::ptr::null_mut(),
                     &mut function,
