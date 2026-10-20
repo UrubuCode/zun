@@ -1192,6 +1192,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_is_strictly_decreasing_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { isStrictlyDecreasing(): boolean { if (this.length < 2) { return true; } let index: u64 = 1; while (index < this.length) { let previous: number = this[index - 1] as number; let current: number = this[index] as number; if (current >= previous) { return false; } index = index + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 3.0; values[1] = 2.0; values[2] = 1.0; return values.isStrictlyDecreasing(); }",
+        )
+        .expect("compile Array isStrictlyDecreasing");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array isStrictlyDecreasing");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_is_descending_source_method() {
         let module = zun_compiler::compile(
             "class Array { isDescending(): boolean { if (this.length < 2) { return true; } let index: u64 = 1; while (index < this.length) { let previous: number = this[index - 1] as number; let current: number = this[index] as number; if (current > previous) { return false; } index = index + 1; } return true; } } function main(): boolean { let values = new Array(3); values[0] = 3.0; values[1] = 2.0; values[2] = 2.0; return values.isDescending(); }",
