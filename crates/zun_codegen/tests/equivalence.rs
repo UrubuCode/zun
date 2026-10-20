@@ -176,6 +176,14 @@ fn labeled_loop_control_is_interpreter_jit_equivalent() {
 }
 
 #[test]
+fn labeled_break_exits_the_named_loop() {
+    let module = compile(
+        "function main(): int { let total: int = 0; outer: for (let i: int = 0; i < 4; i = i + 1) { for (let j: int = 0; j < 4; j = j + 1) { total = total + 1; if (i == 1) { if (j == 1) { break outer; } } } } return total; }",
+    );
+    assert!(matches!(interp_entry(&module), Value::Int(6, _)));
+}
+
+#[test]
 fn virtual_rest_methods_match_interpreter_and_jit_fallback() {
     let module = compile(
         "class Counter { count(first: int, ...rest: Array): int { return first + (rest[0] as int); } } function main(): int { let counter = new Counter(); return counter.count(7, 1, 2); }",
