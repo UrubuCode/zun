@@ -15,6 +15,10 @@ class String {
         return this.length() == 0;
     }
 
+    isNotEmpty(): boolean {
+        return this.length() != 0;
+    }
+
     toString(): string {
         return this;
     }
