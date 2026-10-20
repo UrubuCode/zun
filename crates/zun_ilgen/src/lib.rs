@@ -499,6 +499,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::Token(Token::new(TableKind::MethodDef, *func + 1)),
                 ));
             }
+            ExprKind::Closure { .. } => {
+                unreachable!("closure HIR is not lowered until closure sema is enabled")
+            }
             ExprKind::Assign { slot, value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Dup));

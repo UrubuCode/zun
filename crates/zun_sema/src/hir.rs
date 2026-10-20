@@ -150,6 +150,48 @@ pub struct Program {
     pub classes: Vec<Class>,
     /// Index of `main`, if the program declares one.
     pub main: Option<FuncIndex>,
+    /// Synthetic closure functions kept separate until closure lowering is enabled.
+    pub closures: Vec<ClosureFunction>,
+}
+
+/// How a closure obtains a captured binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureMode {
+    /// Copy the captured value into the closure environment.
+    ByValue,
+    /// Share a heap cell because the binding is mutated.
+    ByCell,
+}
+
+/// One binding stored in a closure environment, in declaration order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capture {
+    /// Local slot in the defining function.
+    pub outer_slot: LocalSlot,
+    /// Slot in the synthetic function's environment layout.
+    pub environment_slot: u16,
+    /// Static type of the binding.
+    pub ty: Ty,
+    /// Binding or snapshot semantics.
+    pub mode: CaptureMode,
+}
+
+/// A closure body represented as a synthetic function with an explicit hidden
+/// environment parameter. It is not produced until closure sema is enabled.
+#[derive(Debug)]
+pub struct ClosureFunction {
+    /// Stable diagnostic/debug name.
+    pub name: String,
+    /// Number of user-visible parameters; the environment is lowered first.
+    pub param_count: u16,
+    /// Types of parameters and locals in the synthetic body.
+    pub locals: Vec<Ty>,
+    /// Checked return type.
+    pub return_ty: Ty,
+    /// Captured environment layout.
+    pub captures: Vec<Capture>,
+    /// Checked body.
+    pub body: Vec<Stmt>,
 }
 
 /// A checked class: its base, full field layout, and methods.
@@ -267,6 +309,13 @@ pub enum ExprKind {
     Local(LocalSlot),
     /// Load a top-level function value.
     FunctionRef { func: FuncIndex },
+    /// Construct a closure value from a synthetic function and environment.
+    Closure {
+        /// Index into [`Program::closures`].
+        function: u32,
+        /// Bindings copied/shared into the environment.
+        captures: Vec<Capture>,
+    },
     /// Write a local slot; the expression's value is the stored value.
     Assign {
         /// Destination slot.

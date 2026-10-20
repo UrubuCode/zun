@@ -94,6 +94,7 @@ fn check_impl(
         functions,
         classes,
         main,
+        closures: Vec::new(),
     }
 }
 
