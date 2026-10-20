@@ -374,6 +374,12 @@ mod tests {
             dispatch(substring_id, &[NativeArg::Str("😀zun"), NativeArg::Int(2), NativeArg::Int(5)], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun"
         ));
+        let (pad_id, pad_fn) = resolve("zun:string", "padStart").unwrap();
+        assert_eq!(pad_fn.params, &[NativeTy::Str, NativeTy::U64, NativeTy::Str]);
+        assert!(matches!(
+            dispatch(pad_id, &[NativeArg::Str("zun"), NativeArg::Int(5), NativeArg::Str("0")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "00zun"
+        ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),

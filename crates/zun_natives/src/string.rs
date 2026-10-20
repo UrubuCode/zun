@@ -102,6 +102,37 @@ fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     Ok(NativeValue::Str(String::from_utf16_lossy(&units[start..end])))
 }
 
+fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("padStart: expected a string".to_string())),
+    };
+    let target = match args.get(1) {
+        Some(NativeArg::Int(target)) if *target >= 0 => *target as usize,
+        _ => return Err(NativeError("padStart: expected a non-negative target length".to_string())),
+    };
+    let fill = match args.get(2) {
+        Some(NativeArg::Str(fill)) if !fill.is_empty() => fill,
+        _ => return Err(NativeError("padStart: expected a non-empty fill string".to_string())),
+    };
+    let length = value.encode_utf16().count();
+    if target <= length {
+        return Ok(NativeValue::Str(value.to_string()));
+    }
+    let padding_units = target - length;
+    let mut padding = String::new();
+    while padding.encode_utf16().count() < padding_units {
+        padding.push_str(fill);
+    }
+    let padding = padding
+        .encode_utf16()
+        .take(padding_units)
+        .collect::<Vec<_>>();
+    let mut result = String::from_utf16_lossy(&padding);
+    result.push_str(value);
+    Ok(NativeValue::Str(result))
+}
+
 fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -166,6 +197,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "lastIndexOf", params: &[Str, Str], ret: I32, imp: last_index_of },
         NativeFn { name: "replace", params: &[Str, Str, Str], ret: Str, imp: replace },
         NativeFn { name: "substring", params: &[Str, U64, U64], ret: Str, imp: substring },
+        NativeFn { name: "padStart", params: &[Str, U64, Str], ret: Str, imp: pad_start },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },
