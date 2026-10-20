@@ -641,19 +641,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
 }
 
 impl DataView {
-    pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
-        Some(Self {
-            view: ByteView::new(buffer_length, offset, length)?,
-        })
-    }
-
-    pub fn offset(self) -> usize {
-        self.view.offset()
-    }
-    pub fn len(self) -> usize {
-        self.view.len()
-    }
-
     fn bytes(self, relative: usize, width: usize) -> Option<usize> {
         relative
             .checked_add(width)

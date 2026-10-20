@@ -84,3 +84,19 @@ impl ByteView {
         end <= self.length && buffer.write_u32(self.offset + relative, value)
     }
 }
+
+impl DataView {
+    pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
+        Some(Self {
+            view: ByteView::new(buffer_length, offset, length)?,
+        })
+    }
+
+    pub fn offset(self) -> usize {
+        self.view.offset()
+    }
+
+    pub fn len(self) -> usize {
+        self.view.len()
+    }
+}
