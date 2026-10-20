@@ -14,6 +14,7 @@ mod arrays;
 mod byte_buffer;
 mod dynamic_object;
 mod error_value;
+mod date_value;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
@@ -21,6 +22,7 @@ pub use arrays::{ArrayIterator, ArrayStorage};
 pub use byte_buffer::ByteBuffer;
 pub use dynamic_object::DynamicObject;
 pub use error_value::ErrorValue;
+pub use date_value::DateValue;
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -258,154 +260,6 @@ impl Any {
             _ => None,
         }
     }
-}
-
-/// Millisecond-precision date value. Invalid dates carry no usable timestamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DateValue {
-    millis: i64,
-    valid: bool,
-}
-
-impl DateValue {
-    pub const fn from_millis(millis: i64) -> Self {
-        Self {
-            millis,
-            valid: true,
-        }
-    }
-    pub const fn invalid() -> Self {
-        Self {
-            millis: 0,
-            valid: false,
-        }
-    }
-    pub const fn is_valid(self) -> bool {
-        self.valid
-    }
-    pub const fn millis(self) -> Option<i64> {
-        if self.valid {
-            Some(self.millis)
-        } else {
-            None
-        }
-    }
-    pub fn compare(self, other: Self) -> Option<std::cmp::Ordering> {
-        Some(self.millis()?.cmp(&other.millis()?))
-    }
-
-    /// Return UTC calendar components using the proleptic Gregorian calendar.
-    pub fn utc_date(self) -> Option<(i32, u32, u32)> {
-        let days = self.millis()?.div_euclid(86_400_000);
-        let z = days + 719_468;
-        let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
-        let day_of_era = z - era * 146_097;
-        let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
-            - day_of_era / 146_096)
-            .div_euclid(365);
-        let year = year_of_era + era * 400;
-        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-        let month_part = (5 * day_of_year + 2).div_euclid(153);
-        let day = day_of_year - (153 * month_part + 2).div_euclid(5) + 1;
-        let month = month_part + if month_part < 10 { 3 } else { -9 };
-        let year = year + if month <= 2 { 1 } else { 0 };
-        Some((year as i32, month as u32, day as u32))
-    }
-
-    pub fn iso_date(self) -> Option<String> {
-        let (year, month, day) = self.utc_date()?;
-        Some(format!("{year:04}-{month:02}-{day:02}"))
-    }
-
-    pub fn utc_time(self) -> Option<(u32, u32, u32, u32)> {
-        let millis = self.millis()?.rem_euclid(86_400_000);
-        let hour = (millis / 3_600_000) as u32;
-        let minute = ((millis % 3_600_000) / 60_000) as u32;
-        let second = ((millis % 60_000) / 1_000) as u32;
-        let millisecond = (millis % 1_000) as u32;
-        Some((hour, minute, second, millisecond))
-    }
-
-    /// ISO weekday where Monday is 1 and Sunday is 7.
-    pub fn weekday(self) -> Option<u32> {
-        let days = self.millis()?.div_euclid(86_400_000);
-        Some((days + 3).rem_euclid(7) as u32 + 1)
-    }
-
-    pub fn ordinal(self) -> Option<u32> {
-        let (year, month, day) = self.utc_date()?;
-        let before = (1..month).map(|m| days_in_month(year, m)).sum::<u32>();
-        Some(before + day)
-    }
-
-    pub fn iso_datetime(self) -> Option<String> {
-        let (year, month, day) = self.utc_date()?;
-        let (hour, minute, second, millisecond) = self.utc_time()?;
-        Some(format!(
-            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}Z"
-        ))
-    }
-
-    pub fn parse_iso_datetime(value: &str) -> Option<Self> {
-        let (date, time) = value.strip_suffix('Z')?.split_once('T')?;
-        let date = Self::parse_iso_date(date)?;
-        let mut fields = time.split([':', '.']);
-        let hour: i64 = fields.next()?.parse().ok()?;
-        let minute: i64 = fields.next()?.parse().ok()?;
-        let second: i64 = fields.next()?.parse().ok()?;
-        let millisecond: i64 = fields.next()?.parse().ok()?;
-        if fields.next().is_some()
-            || hour < 0
-            || hour > 23
-            || minute < 0
-            || minute > 59
-            || second < 0
-            || second > 59
-            || millisecond < 0
-            || millisecond > 999
-        {
-            return None;
-        }
-        let day = date.millis()?;
-        let time = hour * 3_600_000 + minute * 60_000 + second * 1_000 + millisecond;
-        Some(Self::from_millis(day.checked_add(time)?))
-    }
-
-    pub fn parse_iso_date(value: &str) -> Option<Self> {
-        let mut parts = value.split('-');
-        let year: i32 = parts.next()?.parse().ok()?;
-        let month: u32 = parts.next()?.parse().ok()?;
-        let day: u32 = parts.next()?.parse().ok()?;
-        if parts.next().is_some()
-            || !(1..=12).contains(&month)
-            || day == 0
-            || day > days_in_month(year, month)
-        {
-            return None;
-        }
-        let days = days_from_civil(year, month, day)?;
-        Some(Self::from_millis(days.checked_mul(86_400_000)?))
-    }
-}
-
-fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
-
-fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
-    let y = i64::from(year) - i64::from(month <= 2);
-    let era = if y >= 0 { y } else { y - 399 }.div_euclid(400);
-    let year_of_era = y - era * 400;
-    let month = i64::from(month);
-    let day_of_year =
-        (153 * (month + if month > 2 { -3 } else { 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    Some(era * 146_097 + day_of_era - 719_468)
 }
 
 /// Stable identifier for a runtime intrinsic.
