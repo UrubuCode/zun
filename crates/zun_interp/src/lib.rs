@@ -935,6 +935,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_replace_primitive_method() {
+        let module = zun_compiler::compile(
+            "import { replace } from \"zun:string\";\n\
+             class String { extern replace(needle: string, replacement: string): string; }\n\
+             function main(): string { let value: string = \"zun vm\"; return value.replace(\"vm\", \"runtime\"); }",
+        )
+        .expect("compile String replace");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String replace");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zun runtime"));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

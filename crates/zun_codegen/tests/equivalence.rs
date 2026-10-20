@@ -129,6 +129,20 @@ fn string_last_index_of_uses_interpreter_fallback() {
 }
 
 #[test]
+fn string_replace_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { replace } from \"zun:string\";\n\
+         class String { extern replace(needle: string, replacement: string): string; }\n\
+         function main(): string { let value: string = \"zun vm\"; return value.replace(\"vm\", \"runtime\"); }",
+    )
+    .expect("compile String replace");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "zun runtime"));
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\

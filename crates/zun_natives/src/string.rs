@@ -73,6 +73,15 @@ fn last_index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
     Ok(NativeValue::Int(index))
 }
 
+fn replace(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match (args.first(), args.get(1), args.get(2)) {
+        (Some(NativeArg::Str(value)), Some(NativeArg::Str(needle)), Some(NativeArg::Str(replacement))) => {
+            Ok(NativeValue::Str(value.replacen(needle, replacement, 1)))
+        }
+        _ => Err(NativeError("replace: expected a string, search string, and replacement".to_string())),
+    }
+}
+
 fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -135,6 +144,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "indexOf", params: &[Str, Str], ret: I32, imp: index_of },
         NativeFn { name: "lastIndexOf", params: &[Str, Str], ret: I32, imp: last_index_of },
+        NativeFn { name: "replace", params: &[Str, Str, Str], ret: Str, imp: replace },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },
