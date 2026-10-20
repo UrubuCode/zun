@@ -305,6 +305,17 @@ fn finalization_registry_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn reflect_dynamic_keys_preserve_interpreter_fallback_boundary() {
+    let module = compile(
+        "function main(): any { let object = dynamic_new(); let key = \"answer\"; reflect_set(object, key, box_any(41)); return reflect_get(object, key); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "dynamic property keys require Tier 0 fallback");
+    assert!(matches!(interp_entry(&module), Value::Any(value) if value.as_float() == Some(41.0)));
+}
+
+#[test]
 fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): number { let map = new Map(); map.set(1.0, 10.0); let set = new Set(); set.add(2.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",
