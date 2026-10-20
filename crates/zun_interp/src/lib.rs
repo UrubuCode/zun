@@ -1072,17 +1072,6 @@ impl Interp<'_> {
         Ok(Value::Void)
     }
 
-    fn route_exception(
-        &self,
-        body: &zun_module::MethodBody<'_>,
-        stack: &mut Vec<Value>,
-        pc: &mut usize,
-        throw_pc: usize,
-        exception: &Value,
-    ) -> bool {
-        unwind::route_exception(&self.types, body, stack, pc, throw_pc, exception)
-    }
-
     /// Run a mark-sweep collection with precise roots: the object references in
     /// the current frame's stack and locals, plus every ancestor frame in the
     /// `parent` chain. Reference fields are traced via the module's type layout.

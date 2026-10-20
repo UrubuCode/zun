@@ -1,6 +1,20 @@
 //! Exception-region routing for the Tier 0 interpreter.
 
 use crate::value::Value;
+use super::Interp;
+
+impl Interp<'_> {
+    pub(super) fn route_exception(
+        &self,
+        body: &zun_module::MethodBody<'_>,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
+        throw_pc: usize,
+        exception: &Value,
+    ) -> bool {
+        route_exception(&self.types, body, stack, pc, throw_pc, exception)
+    }
+}
 
 /// Route a thrown value to the innermost matching catch or finally clause.
 pub(crate) fn route_exception(
