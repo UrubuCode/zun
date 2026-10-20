@@ -1250,6 +1250,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_case_predicates_source_methods() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\";\n\
+             class String { extern length(): u64; extern charCodeAt(index: u64): u32; isLowerCase(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code >= 65) { if (code <= 90) { return false; } if (code >= 97) { if (code <= 122) { hasLetter = true; } } } index = index + 1; } return hasLetter; } isUpperCase(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code >= 97) { if (code <= 122) { return false; } } if (code >= 65) { if (code <= 90) { hasLetter = true; } } index = index + 1; } return hasLetter; } }\n\
+             function main(): boolean { let lower: string = \"hello\"; let upper: string = \"WORLD\"; if (!lower.isLowerCase()) { return false; } return upper.isUpperCase(); }",
+        )
+        .expect("compile String case predicates");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String case predicates");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

@@ -78,6 +78,40 @@ class String {
         return true;
     }
 
+    isLowerCase(): boolean {
+        if (this.isEmpty()) { return false; }
+        let index: u64 = 0;
+        let hasLetter: boolean = false;
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            if (code >= 65) {
+                if (code <= 90) { return false; }
+                if (code >= 97) {
+                    if (code <= 122) { hasLetter = true; }
+                }
+            }
+            index = index + 1;
+        }
+        return hasLetter;
+    }
+
+    isUpperCase(): boolean {
+        if (this.isEmpty()) { return false; }
+        let index: u64 = 0;
+        let hasLetter: boolean = false;
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            if (code >= 97) {
+                if (code <= 122) { return false; }
+            }
+            if (code >= 65) {
+                if (code <= 90) { hasLetter = true; }
+            }
+            index = index + 1;
+        }
+        return hasLetter;
+    }
+
     toString(): string {
         return this;
     }
