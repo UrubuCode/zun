@@ -270,6 +270,25 @@ class Array {
         return result;
     }
 
+    windowed(size: u64): Array {
+        if (size == 0) { return new Array(0); }
+        if (size > this.length) { return new Array(0); }
+        let count: u64 = this.length - size + 1;
+        let result = new Array(count);
+        let start: u64 = 0;
+        while (start < count) {
+            let window = new Array(size);
+            let index: u64 = 0;
+            while (index < size) {
+                window[index] = this[start + index];
+                index = index + 1;
+            }
+            result[start] = window;
+            start = start + 1;
+        }
+        return result;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {
