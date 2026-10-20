@@ -435,6 +435,106 @@ impl Heap {
         zun_core::ByteView::new(self.buffer_len(object)?, offset, length)
     }
 
+    /// Create an endian-aware, unaligned view over a managed byte buffer.
+    pub fn data_view(
+        &self,
+        object: Obj,
+        offset: usize,
+        length: usize,
+    ) -> Option<zun_core::DataView> {
+        zun_core::DataView::new(self.buffer_len(object)?, offset, length)
+    }
+
+    pub fn data_view_read_u16(
+        &self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        little_endian: bool,
+    ) -> Option<u16> {
+        view.get_u16(
+            self.buffers.get(&(object.addr() as usize))?,
+            offset,
+            little_endian,
+        )
+    }
+
+    pub fn data_view_write_u16(
+        &mut self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        value: u16,
+        little_endian: bool,
+    ) -> Option<bool> {
+        Some(view.set_u16(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+            little_endian,
+        ))
+    }
+
+    pub fn data_view_read_u32(
+        &self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        little_endian: bool,
+    ) -> Option<u32> {
+        view.get_u32(
+            self.buffers.get(&(object.addr() as usize))?,
+            offset,
+            little_endian,
+        )
+    }
+
+    pub fn data_view_write_u32(
+        &mut self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        value: u32,
+        little_endian: bool,
+    ) -> Option<bool> {
+        Some(view.set_u32(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+            little_endian,
+        ))
+    }
+
+    pub fn data_view_read_f64(
+        &self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        little_endian: bool,
+    ) -> Option<f64> {
+        view.get_f64(
+            self.buffers.get(&(object.addr() as usize))?,
+            offset,
+            little_endian,
+        )
+    }
+
+    pub fn data_view_write_f64(
+        &mut self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> Option<bool> {
+        Some(view.set_f64(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+            little_endian,
+        ))
+    }
+
     pub fn buffer_view_read_u32(
         &self,
         object: Obj,
@@ -1546,6 +1646,33 @@ mod tests {
             Some(true)
         );
         assert_eq!(heap.buffer_view_read_f64(buffer, floats, 0), Some(1.5));
+        let data = heap.data_view(buffer, 1, 10).unwrap();
+        assert_eq!(
+            heap.data_view_write_u16(buffer, data, 1, 0x1234, true),
+            Some(true)
+        );
+        assert_eq!(heap.data_view_read_u16(buffer, data, 1, true), Some(0x1234));
+        assert_eq!(
+            heap.data_view_read_u16(buffer, data, 1, false),
+            Some(0x3412)
+        );
+        assert_eq!(
+            heap.data_view_write_u32(buffer, data, 3, 0xdead_beef, false),
+            Some(true)
+        );
+        assert_eq!(
+            heap.data_view_read_u32(buffer, data, 3, false),
+            Some(0xdead_beef)
+        );
+        assert_eq!(
+            heap.data_view_write_f64(buffer, data, 2, -3.5, true),
+            Some(true)
+        );
+        assert_eq!(heap.data_view_read_f64(buffer, data, 2, true), Some(-3.5));
+        assert_eq!(
+            heap.data_view_write_u32(buffer, data, 7, 1, true),
+            Some(false)
+        );
     }
 
     #[test]
