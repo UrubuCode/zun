@@ -74,7 +74,10 @@ impl<'a> ResumableSession<'a> {
             )
         };
         match outcome {
-            ExecutionOutcome::Complete(value) => Ok(ResumeResult::Complete(value)),
+            ExecutionOutcome::Complete(value) => {
+                self.interp.deliver_finalization_callbacks()?;
+                Ok(ResumeResult::Complete(value))
+            }
             ExecutionOutcome::Suspended(frame) => {
                 self.pending = Some(frame);
                 Ok(ResumeResult::Suspended)
