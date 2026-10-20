@@ -79,7 +79,7 @@ pub fn execute_manifest(
     manifest: &zun_loader::ModuleManifest,
     output: &mut dyn Output,
 ) -> Result<Value, VmError> {
-    manifest.validate(loader).map_err(VmError::Load)?;
+    verify_manifest(loader, manifest)?;
     let scope = loader.get(&manifest.entry).ok_or_else(|| {
         VmError::Load(zun_loader::LoadError::UnresolvedModule(
             manifest.entry.clone(),
@@ -94,6 +94,20 @@ pub fn execute_manifest(
         }
         Err(_) => run_with(module, output, None).map_err(VmError::Run),
     }
+}
+
+/// Validate every module selected by a manifest before any code executes.
+pub fn verify_manifest(
+    loader: &zun_loader::ModuleLoader,
+    manifest: &zun_loader::ModuleManifest,
+) -> Result<(), VmError> {
+    for name in manifest.load_order(loader).map_err(VmError::Load)? {
+        let scope = loader
+            .get(name)
+            .ok_or_else(|| VmError::Load(zun_loader::LoadError::UnresolvedModule(name.into())))?;
+        verify_module(scope.module()).map_err(VmError::Verify)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -112,5 +126,18 @@ mod tests {
             execute_manifest(&loader, &manifest, &mut output).unwrap(),
             zun_interp::value::Value::Int(23, zun_il::NumKind::I32)
         ));
+    }
+
+    #[test]
+    fn verifies_all_manifest_scopes_before_execution() {
+        let dependency = zun_module::Module::new();
+        let entry = zun_compiler::compile("function main(): int { return 23; }").unwrap();
+        let dependency = zun_loader::ModuleScope::from_bytes("core", &dependency.write()).unwrap();
+        let entry = zun_loader::ModuleScope::from_bytes("app", &entry.write()).unwrap();
+        let mut loader = zun_loader::ModuleLoader::new();
+        loader.insert(dependency).unwrap();
+        loader.insert(entry).unwrap();
+        let manifest = zun_loader::ModuleManifest::new("app", vec!["core".into()]);
+        verify_manifest(&loader, &manifest).expect("all modules verify");
     }
 }
