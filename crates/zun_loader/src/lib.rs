@@ -16,6 +16,16 @@ pub struct ModuleScope {
     name: String,
     module: Module,
     types: TypeSystem,
+    exports: HashMap<String, Export>,
+}
+
+/// A definition exported by a loaded module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Export {
+    /// A top-level or instance method definition.
+    Method(Token),
+    /// A type definition.
+    Type(Token),
 }
 
 impl ModuleScope {
@@ -23,10 +33,24 @@ impl ModuleScope {
     pub fn from_bytes(name: impl Into<String>, bytes: &[u8]) -> Result<Self, LoadError> {
         let module = Module::read(bytes).map_err(LoadError::Format)?;
         let types = TypeSystem::from_module(&module).map_err(LoadError::Types)?;
+        let mut exports = HashMap::new();
+        for (rid, method) in module.tables.method_defs.iter().enumerate() {
+            exports.insert(
+                module.strings.get(method.name).to_owned(),
+                Export::Method(Token::new(TableKind::MethodDef, rid as u32 + 1)),
+            );
+        }
+        for (rid, ty) in module.tables.type_defs.iter().enumerate() {
+            exports.insert(
+                module.strings.get(ty.name).to_owned(),
+                Export::Type(Token::new(TableKind::TypeDef, rid as u32 + 1)),
+            );
+        }
         Ok(Self {
             name: name.into(),
             module,
             types,
+            exports,
         })
     }
 
@@ -50,6 +74,11 @@ impl ModuleScope {
     /// Access the reified runtime types built for this module.
     pub fn types(&self) -> &TypeSystem {
         &self.types
+    }
+
+    /// Resolve an exported definition by its source-level name in O(1).
+    pub fn export(&self, name: &str) -> Option<Export> {
+        self.exports.get(name).copied()
     }
 
     /// Consume the scope and return its decoded module.
@@ -330,6 +359,31 @@ mod tests {
         let module = Module::new();
         let scope = ModuleScope::from_bytes("demo", &module.write()).expect("load");
         assert_eq!(scope.name(), "demo");
+    }
+
+    #[test]
+    fn indexes_module_exports_by_name() {
+        let mut module = Module::new();
+        let point = module.strings.intern("Point");
+        let main = module.strings.intern("main");
+        module.tables.add_type_def(zun_metadata::TypeDef {
+            name: point,
+            namespace: zun_metadata::StringIndex(0),
+            base: Token::null(TableKind::TypeDef),
+            field_start: 1,
+            field_end: 1,
+            method_start: 1,
+            method_end: 1,
+        });
+        module.tables.add_method_def(zun_metadata::MethodDef {
+            name: main,
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: u32::MAX,
+        });
+        let scope = ModuleScope::from_bytes("demo", &module.write()).expect("load");
+        assert!(matches!(scope.export("Point"), Some(Export::Type(_))));
+        assert!(matches!(scope.export("main"), Some(Export::Method(_))));
+        assert_eq!(scope.export("missing"), None);
     }
 
     #[test]
