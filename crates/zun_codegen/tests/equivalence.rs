@@ -105,6 +105,16 @@ fn symbol_iterator_calls_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn switch_lowering_is_jit_equivalent() {
+    let module = compile(
+        "function main(): u64 { let value: u64 = 2; switch (value) { case 1: return 10; case 2: return 20; default: return 30; } }",
+    );
+    let jit = zun_codegen::Jit::compile(&module);
+    assert!(jit.is_err(), "switch must remain on the interpreter fallback until verifier joins are lowered");
+    assert!(matches!(interp_entry(&module), Value::Int(20, _)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\

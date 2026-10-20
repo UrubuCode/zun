@@ -26,6 +26,12 @@ pub enum TokenKind {
     KwIf,
     /// `else`
     KwElse,
+    /// `switch`
+    KwSwitch,
+    /// `case`
+    KwCase,
+    /// `default`
+    KwDefault,
     /// `while`
     KwWhile,
     /// `for`
@@ -294,6 +300,9 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "let" => TokenKind::KwLet,
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
+        "switch" => TokenKind::KwSwitch,
+        "case" => TokenKind::KwCase,
+        "default" => TokenKind::KwDefault,
         "while" => TokenKind::KwWhile,
         "for" => TokenKind::KwFor,
         "of" => TokenKind::KwOf,

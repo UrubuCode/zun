@@ -310,6 +310,7 @@ impl Parser<'_> {
         match self.peek().kind {
             TokenKind::KwLet => self.let_statement(),
             TokenKind::KwIf => self.if_statement(),
+            TokenKind::KwSwitch => self.switch_statement(),
             TokenKind::KwWhile => self.while_statement(),
             TokenKind::KwFor => self.for_statement(),
             TokenKind::KwBreak => self.break_statement(),
@@ -361,6 +362,76 @@ impl Parser<'_> {
             else_block,
             span,
         }
+    }
+
+    /// Parse switch cases and reduce them to the existing if/else AST.
+    /// Cases are deliberately non-fallthrough; `break` is consumed as the
+    /// natural end of a case because the generated chain exits after a match.
+    fn switch_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        self.expect(TokenKind::LParen, "`(` after switch");
+        let value = self.expression();
+        self.expect(TokenKind::RParen, "`)` after switch expression");
+        self.expect(TokenKind::LBrace, "`{` after switch");
+        let mut cases = Vec::new();
+        let mut default_body = None;
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            if self.eat(TokenKind::KwCase) {
+                let case_value = self.expression();
+                self.expect(TokenKind::Colon, "`:` after case value");
+                let mut statements = Vec::new();
+                while !self.at(TokenKind::KwCase)
+                    && !self.at(TokenKind::KwDefault)
+                    && !self.at(TokenKind::RBrace)
+                    && !self.at(TokenKind::Eof)
+                {
+                    let statement = self.statement();
+                    if !matches!(statement, Stmt::Break { .. }) {
+                        statements.push(statement);
+                    }
+                }
+                let case_span = case_value.span();
+                cases.push((case_value, Block { statements, span: case_span }));
+            } else if self.eat(TokenKind::KwDefault) {
+                self.expect(TokenKind::Colon, "`:` after default");
+                let mut statements = Vec::new();
+                while !self.at(TokenKind::KwCase)
+                    && !self.at(TokenKind::RBrace)
+                    && !self.at(TokenKind::Eof)
+                {
+                    let statement = self.statement();
+                    if !matches!(statement, Stmt::Break { .. }) {
+                        statements.push(statement);
+                    }
+                }
+                default_body = Some(Block { statements, span: self.peek().span });
+            } else {
+                self.error_at(self.peek().span, "expected `case` or `default`");
+                self.bump();
+            }
+        }
+        let close = self.peek().span;
+        self.expect(TokenKind::RBrace, "`}` after switch");
+        let mut chain = default_body;
+        for (case_value, body) in cases.into_iter().rev() {
+            let cond = Expr::Binary {
+                op: BinaryOp::Eq,
+                lhs: Box::new(value.clone()),
+                rhs: Box::new(case_value),
+                span: value.span().to(body.span),
+            };
+            chain = Some(Block {
+                span: start.to(close),
+                statements: vec![Stmt::If {
+                    cond,
+                    then_block: body,
+                    else_block: chain,
+                    span: start.to(close),
+                }],
+            });
+        }
+        chain.map(|block| block.statements.into_iter().next().unwrap_or(Stmt::Expr(Expr::Null { span: start })))
+            .unwrap_or(Stmt::Expr(Expr::Null { span: start }))
     }
 
     fn while_statement(&mut self) -> Stmt {

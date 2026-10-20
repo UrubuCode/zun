@@ -8,7 +8,7 @@
 use zun_common::Span;
 
 /// A parsed source file.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     /// Top-level function declarations, in source order.
     pub functions: Vec<Function>,
@@ -19,7 +19,7 @@ pub struct Program {
 }
 
 /// `import { a, b } from "module";`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Import {
     /// The imported names.
     pub names: Vec<Name>,
@@ -32,7 +32,7 @@ pub struct Import {
 /// `class Name { field: type; method(...) {...} ... }`. Fields are initialized
 /// positionally by `new`; methods receive an implicit `this`. Inheritance and
 /// virtual dispatch arrive in a later step.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Class {
     /// The class name.
     pub name: Name,
@@ -47,7 +47,7 @@ pub struct Class {
 }
 
 /// A class field declaration: `name: type;`.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClassField {
     /// The field name.
     pub name: Name,
@@ -56,7 +56,7 @@ pub struct ClassField {
 }
 
 /// `function name(params): ret { body }`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     /// The function name.
     pub name: Name,
@@ -73,7 +73,7 @@ pub struct Function {
 }
 
 /// An anonymous function expression or arrow function.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionExpr {
     /// Parameters in declaration order.
     pub params: Vec<Param>,
@@ -89,7 +89,7 @@ pub struct FunctionExpr {
 }
 
 /// A parameter: `name: type`.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     /// The parameter name.
     pub name: Name,
@@ -99,7 +99,7 @@ pub struct Param {
 
 /// A type annotation. Phase 1 only knows named types (`number`, `string`,
 /// `boolean`, `void`, user names).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeAnnotation {
     /// The type name.
     pub name: Name,
@@ -113,7 +113,7 @@ pub struct Name {
 }
 
 /// `{ statements }`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     /// Statements in order.
     pub statements: Vec<Stmt>,
@@ -122,7 +122,7 @@ pub struct Block {
 }
 
 /// A typed catch clause attached to a try statement.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CatchClause {
     /// The local receiving the thrown value.
     pub binding: Name,
@@ -133,7 +133,7 @@ pub struct CatchClause {
 }
 
 /// A statement.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     /// `let name: ty = init;`
     Let {
@@ -253,7 +253,7 @@ pub enum UnaryOp {
 }
 
 /// An expression.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// An anonymous `function` or arrow function expression.
     Function(FunctionExpr),

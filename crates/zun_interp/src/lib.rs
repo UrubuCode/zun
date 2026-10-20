@@ -1753,6 +1753,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_switch_cases_and_default() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let value: u64 = 2; switch (value) { case 1: return 10; case 2: return 20; default: return 30; } }",
+        )
+        .expect("compile switch");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run switch");
+        assert!(matches!(result, Value::Int(20, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn iterates_map_and_set_values_in_insertion_order() {
         let module = zun_compiler::compile(
             "function main(): any { let map = new Map(); map.set(1.0, 10.0); map.set(2.0, 20.0); let set = new Set(); set.add(3.0); set.add(4.0); for (let value of map) { let pair: Array = value as Array; print(pair[1]); } for (let value of set) { print(value); } return 42.0; }",
