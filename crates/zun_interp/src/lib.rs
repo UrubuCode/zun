@@ -1207,7 +1207,7 @@ impl Interp<'_> {
             "weakMapHas" => {
                 let map_object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.weak_map_get_object(map_object).is_some_and(|(candidate, _)| candidate == key))))
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.weak_map_has_object(map_object, key))))
             }
             _ => Err(RunError::BadToken),
         }
@@ -1832,7 +1832,7 @@ mod method_tests {
     #[test]
     fn uses_gc_backed_weak_map_handles() {
         let module = zun_compiler::compile(
-            "import { weakMapNew, weakMapSet, weakMapHas } from \"zun:collections\"; class Key {} function main(): int { let key = new Key(); let value = new Key(); let map = weakMapNew(); weakMapSet(map, key, value); if (weakMapHas(map, key)) { return 1; } return 0; }",
+            "import { weakMapNew, weakMapSet, weakMapHas } from \"zun:collections\"; class Key {} function main(): int { let key = new Key(); let value = new Key(); let key2 = new Key(); let value2 = new Key(); let map = weakMapNew(); weakMapSet(map, key, value); weakMapSet(map, key2, value2); if (weakMapHas(map, key)) { if (weakMapHas(map, key2)) { return 1; } } return 0; }",
         )
         .expect("compile weak map intrinsics");
         let mut output = CaptureOutput::default();

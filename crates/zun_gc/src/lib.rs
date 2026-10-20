@@ -1337,6 +1337,15 @@ impl Heap {
         self.weak_map_get(id)
     }
 
+    pub fn weak_map_has_object(&self, object: Obj, key: Obj) -> bool {
+        let Some(id) = self.weak_map_objects.get(&(object.addr() as usize)).copied() else {
+            return false;
+        };
+        self.weak_map_entries(id)
+            .iter()
+            .any(|(candidate, _)| *candidate == key)
+    }
+
     pub fn weak_map_set(&mut self, id: WeakMapId, key: Obj, value: Obj) -> bool {
         let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else {
             return false;
