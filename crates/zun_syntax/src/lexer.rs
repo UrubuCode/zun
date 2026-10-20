@@ -98,6 +98,8 @@ pub enum TokenKind {
     Question,
     /// `??`
     Nullish,
+    /// `?.`
+    QuestionDot,
     /// `.`
     Dot,
 
@@ -236,6 +238,9 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                         if bytes.get(pos) == Some(&b'?') {
                             pos += 1;
                             TokenKind::Nullish
+                        } else if bytes.get(pos) == Some(&b'.') {
+                            pos += 1;
+                            TokenKind::QuestionDot
                         } else {
                             TokenKind::Question
                         }

@@ -382,6 +382,12 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `object?.field` — a null-safe dynamic property read.
+    OptionalField {
+        object: Box<Expr>,
+        field: Name,
+        span: Span,
+    },
     /// `expr as Type` — a numeric conversion.
     Cast {
         /// The value being converted.
@@ -457,6 +463,7 @@ impl Expr {
             | Expr::Call { span, .. }
             | Expr::ComputedCall { span, .. }
             | Expr::MethodCall { span, .. }
+            | Expr::OptionalField { span, .. }
             | Expr::Cast { span, .. }
             | Expr::New { span, .. }
             | Expr::Field { span, .. }

@@ -317,6 +317,7 @@ impl Checker<'_> {
             ast::Expr::Field { object, .. } | ast::Expr::Index { object, .. } => {
                 self.collect_mutated_expr(object, names)
             }
+            ast::Expr::OptionalField { object, .. } => self.collect_mutated_expr(object, names),
             ast::Expr::FieldAssign { object, value, .. } => {
                 self.collect_mutated_expr(object, names);
                 self.collect_mutated_expr(value, names);
@@ -647,6 +648,9 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Field { object, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses)
+            }
+            ast::Expr::OptionalField { object, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses)
             }
             ast::Expr::FieldAssign { object, value, .. } => {
@@ -2162,6 +2166,20 @@ impl Checker<'_> {
                         self.error(object.span, format!("type {other:?} has no fields"));
                         self.poison(span)
                     }
+                }
+            }
+            ast::Expr::OptionalField { object, field, .. } => {
+                let object = self.check_expr(cx, object);
+                if object.ty != Ty::Any && !object.ty.is_error() {
+                    self.error(object.span, "optional property access requires an any receiver");
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::OptionalDynamicGet {
+                        object: Box::new(object),
+                        name: self.text(field).to_string(),
+                    },
+                    ty: Ty::Any,
+                    span,
                 }
             }
             ast::Expr::Index { object, index, .. } => {

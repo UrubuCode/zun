@@ -754,6 +754,16 @@ impl Parser<'_> {
                         };
                     }
                 }
+                TokenKind::QuestionDot => {
+                    self.bump();
+                    let field = self.name("an optional field name");
+                    let span = expr.span().to(field.span);
+                    expr = Expr::OptionalField {
+                        object: Box::new(expr),
+                        field,
+                        span,
+                    };
+                }
                 TokenKind::LBracket => {
                     self.bump();
                     let index = self.expression();

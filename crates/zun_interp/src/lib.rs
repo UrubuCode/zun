@@ -1414,6 +1414,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run nullish coalescing");
         assert!(matches!(value, Value::Float(42.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn optional_dynamic_access_short_circuits_null() {
+        let module = zun_compiler::compile(
+            "function main(): any { let value: any = null; return value?.answer; }",
+        )
+        .expect("compile optional access");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run optional access");
+        assert!(matches!(value, Value::Null));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;

@@ -879,6 +879,23 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::StringRef(property.0),
                 ));
             }
+            ExprKind::OptionalDynamicGet { object, name } => {
+                self.expr(object);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_null = self.emit_branch(Opcode::BranchTrue);
+                let property = self.module.strings.intern(name);
+                self.emit(Instruction::new(
+                    Opcode::LoadDynamic,
+                    Operand::StringRef(property.0),
+                ));
+                let end = self.emit_branch(Opcode::Branch);
+                self.patch_to_here(use_null);
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.patch_to_here(end);
+            }
             ExprKind::DynamicSet {
                 object,
                 name,
