@@ -1052,6 +1052,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_sign_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { sign(): number { if (this < 0.0) { return -1.0; } if (this > 0.0) { return 1.0; } return 0.0; } }\n\
+             function main(): number { let value: number = -42.0; return value.sign(); }",
+        )
+        .expect("compile Number sign");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number sign");
+        assert!(matches!(result, Value::Float(value, _) if value == -1.0));
+    }
+
+    #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
             "import { toString } from \"zun:number\";\n\

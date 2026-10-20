@@ -16,6 +16,12 @@ class Number {
         return this < 0.0;
     }
 
+    sign(): number {
+        if (this < 0.0) { return -1.0; }
+        if (this > 0.0) { return 1.0; }
+        return 0.0;
+    }
+
     clamp(low: number, high: number): number {
         if (this < low) { return low; }
         if (this > high) { return high; }
