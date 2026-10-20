@@ -92,6 +92,17 @@ fn managed_collection_constructors_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn map_and_set_values_are_exposed_as_instance_methods() {
+    let module = compile(
+        "function main(): int { let map = new Map(); map.set(7.0, 42.0); let set = new Set(); set.add(9.0); let map_values: Array = map.values(); let set_values: Array = set.values(); if ((map_values[0] as number) == 42.0) { if ((set_values[0] as number) == 9.0) { return 1; } } return 0; }",
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn weak_map_class_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "class Key {} function main(): int { let key = new Key(); let value = new Key(); let weak = new WeakMap(); weak.set(key, value); if (weak.has(key)) { let fetched: any = weak.get(key); if (weak.delete(key)) { if (!weak.has(key)) { return 1; } } } return 0; }",
