@@ -12,10 +12,12 @@
 //! identical results — the contract the plan sets for Tier 0 vs Tier 1.
 
 mod eligible;
+mod any_abi;
 mod shim;
 mod translate;
 
 pub use eligible::eligible_methods;
+pub use any_abi::JitAnyAbi;
 pub use zun_il::{JitKind, NumKind};
 
 #[inline]
