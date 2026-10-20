@@ -180,4 +180,38 @@ impl DataView {
             .enumerate()
             .all(|(index, byte)| buffer.set(offset + index, byte))
     }
+
+    pub fn get_f64(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<f64> {
+        let offset = self.bytes(relative, 8)?;
+        let mut bytes = [0; 8];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = buffer.get(offset + index)?;
+        }
+        Some(f64::from_bits(if little_endian {
+            u64::from_le_bytes(bytes)
+        } else {
+            u64::from_be_bytes(bytes)
+        }))
+    }
+
+    pub fn set_f64(
+        &self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> bool {
+        let Some(offset) = (*self).bytes(relative, 8) else {
+            return false;
+        };
+        let bytes = if little_endian {
+            value.to_bits().to_le_bytes()
+        } else {
+            value.to_bits().to_be_bytes()
+        };
+        bytes
+            .into_iter()
+            .enumerate()
+            .all(|(index, byte)| buffer.set(offset + index, byte))
+    }
 }
