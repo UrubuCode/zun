@@ -1126,9 +1126,12 @@ impl Interp<'_> {
                 Opcode::Await => {
                     let promise = pop(&mut stack)?.as_object();
                     let Some(value) = settled_await_value(promise) else {
-                        return Err(RunError::Malformed(
-                            "pending await requires async state-machine lowering".into(),
-                        ));
+                        let mut suspended = ExecutionFrame::new(method_rid, locals.to_vec());
+                        suspended.stack = stack.to_vec();
+                        suspended.pc = *pc;
+                        suspended.suspend(promise, *pc);
+                        self.suspended = Some(suspended);
+                        return Err(RunError::Suspended);
                     };
                     stack.push(value);
                 }

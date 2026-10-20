@@ -7,6 +7,9 @@ pub enum RunError {
     Malformed(String),
     Native(String),
     Thrown(Value),
+    /// Internal control flow used to transfer a suspended frame to the
+    /// resumable interpreter boundary.
+    Suspended,
 }
 
 impl core::fmt::Display for RunError {
@@ -17,6 +20,7 @@ impl core::fmt::Display for RunError {
             RunError::Malformed(m) => write!(f, "malformed bytecode: {m}"),
             RunError::Native(m) => write!(f, "{m}"),
             RunError::Thrown(value) => write!(f, "unhandled exception: {value:?}"),
+            RunError::Suspended => write!(f, "execution suspended"),
         }
     }
 }

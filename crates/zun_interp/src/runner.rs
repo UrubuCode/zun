@@ -22,6 +22,7 @@ pub(super) fn run_method_with(
         allocs: 0,
         gc_interval: GC_INTERVAL,
         types,
+        suspended: None,
     }
     .call(method_rid, args, None)
 }
@@ -33,7 +34,18 @@ impl Interp<'_> {
         args: Vec<Value>,
         parent: Option<&super::RootLink>,
     ) -> ExecutionOutcome {
-        ExecutionOutcome::from_result(self.dispatch(method_rid, args, parent))
+        match self.dispatch(method_rid, args, parent) {
+            Err(RunError::Suspended) => self
+                .suspended
+                .take()
+                .map(ExecutionOutcome::Suspended)
+                .unwrap_or_else(|| {
+                    ExecutionOutcome::Fault(RunError::Malformed(
+                        "suspended execution did not provide a frame".into(),
+                    ))
+                }),
+            result => ExecutionOutcome::from_result(result),
+        }
     }
 
     /// Route a call to the JIT hook when it handles the method, otherwise
