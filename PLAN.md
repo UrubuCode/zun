@@ -567,7 +567,9 @@ The following runtime contracts are implemented and covered by tests:
   Linking the shared library requires the host's N-API import library through
   `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
 - Typed scalar FFI calls are exercised against a real Windows system library;
-  compiler/IL declarations for external symbols remain a separate gate.
+  logical-library candidate resolution, aggregated load errors, and an
+  absolute-path policy are implemented. Compiler/IL declarations and
+  marshalling for external symbols remain separate gates.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
@@ -579,7 +581,8 @@ The following runtime contracts are implemented and covered by tests:
   completion fast path, propagates rejection, resumes nested caller frames, and
   rejects suspension inside exception handlers. The interpreter remains the
   correct fallback; Cranelift compilation of methods containing `await` is an
-  explicit eligibility boundary. Generator lowering remains a separate gate.
+  explicit eligibility boundary. Broader Cranelift support for async and
+  generator state machines remains a separate optimization gate.
 - Generator preparation now has an explicit frontend/HIR boundary: `yield` and
   `function*` are represented, yield/state counts and conservatively hoisted
   locals are planned, the VM exposes a persistent `GeneratorStateMachine`, and
