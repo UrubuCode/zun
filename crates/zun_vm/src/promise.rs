@@ -262,6 +262,18 @@ impl<T: Send + 'static> Promise<T> {
         });
     }
 
+    /// Register a rejection continuation delivered through the microtask queue.
+    pub fn catch_scheduled(
+        &self,
+        queue: Arc<Mutex<MicrotaskQueue>>,
+        rejection: impl FnOnce(String) + Send + 'static,
+    ) {
+        self.catch(move |error| {
+            let mut queue = queue.lock().expect("microtask mutex poisoned");
+            queue.schedule(move || rejection(error));
+        });
+    }
+
     /// Whether the promise has already been resolved.
     pub fn is_resolved(&self) -> bool {
         self.state.load(Ordering::Acquire) == RESOLVED
@@ -492,6 +504,21 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), None);
         assert_eq!(queue.lock().unwrap().run_one(), true);
         assert_eq!(*seen.lock().unwrap(), Some(5));
+    }
+
+    #[test]
+    fn scheduled_rejection_waits_for_the_microtask_turn() {
+        let queue = Arc::new(Mutex::new(MicrotaskQueue::default()));
+        let promise = Promise::<u32>::new();
+        let seen = Arc::new(Mutex::new(None));
+        let target = Arc::clone(&seen);
+        promise.catch_scheduled(Arc::clone(&queue), move |error| {
+            *target.lock().unwrap() = Some(error)
+        });
+        assert!(promise.reject("boom"));
+        assert_eq!(*seen.lock().unwrap(), None);
+        assert!(queue.lock().unwrap().run_one());
+        assert_eq!(seen.lock().unwrap().as_deref(), Some("boom"));
     }
 
     #[test]
