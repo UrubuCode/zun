@@ -22,7 +22,7 @@ pub struct Promise<T> {
 impl<T> core::fmt::Debug for Promise<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Promise")
-            .field("resolved", &self.is_resolved())
+            .field("resolved", &(self.state.load(Ordering::Acquire) == RESOLVED))
             .finish_non_exhaustive()
     }
 }
