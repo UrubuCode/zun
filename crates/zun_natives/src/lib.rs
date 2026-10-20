@@ -18,6 +18,7 @@ mod env;
 mod fs;
 mod io;
 mod math;
+mod number;
 mod string;
 mod time;
 
@@ -168,6 +169,7 @@ pub static MODULES: &[Module] = &[
     env::MODULE,
     time::MODULE,
     math::MODULE,
+    number::MODULE,
     string::MODULE,
 ];
 
@@ -339,6 +341,21 @@ mod tests {
         assert!(matches!(
             dispatch(concat_id, &[NativeArg::Str("a"), NativeArg::Str("b")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "ab"
+        ));
+    }
+
+    #[test]
+    fn number_primitives_parse_and_format() {
+        let (parse_id, _) = resolve("zun:number", "parseFloat").unwrap();
+        let (fixed_id, _) = resolve("zun:number", "toFixed").unwrap();
+        let mut sink = TestSink;
+        assert!(matches!(
+            dispatch(parse_id, &[NativeArg::Str(" 3.50 ")], &mut sink).unwrap(),
+            NativeValue::Float(value) if value == 3.5
+        ));
+        assert!(matches!(
+            dispatch(fixed_id, &[NativeArg::Float(3.5), NativeArg::Int(2)], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "3.50"
         ));
     }
 
