@@ -6,12 +6,14 @@
 //! the `print` builtin writes through a pluggable [`Output`] sink so tests can
 //! capture it.
 
-pub mod value;
+mod builtins;
 mod native;
+pub mod value;
 
+use builtins::{managed_buffer_builtin, managed_collection_builtin};
+use native::{from_native_value, to_native_arg};
 use std::rc::Rc;
 use value::Value;
-use native::{from_native_value, to_native_arg};
 use zun_il::{decode_one, Opcode, Operand};
 use zun_metadata::TableKind;
 use zun_module::{read_body, Module};
@@ -618,21 +620,25 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let callee_body = read_body(&self.module.code, callee.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                    let rest_index = callee_body.param_count.checked_sub(1).ok_or(RunError::BadToken)?;
+                    let rest_index = callee_body
+                        .param_count
+                        .checked_sub(1)
+                        .ok_or(RunError::BadToken)?;
                     let argument_count = argument_count as usize;
                     if argument_count < rest_index as usize {
                         return Err(RunError::BadToken);
                     }
                     let values = pop_n(&mut stack, argument_count)?;
                     let rest_values = &values[rest_index as usize..];
-                    let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
-                        let array = heap.alloc_array(rest_values.len());
-                        for (index, value) in rest_values.iter().enumerate() {
-                            let any = value.box_any(heap).ok_or(RunError::BadToken)?;
-                            let _ = heap.array_set(array, index, any);
-                        }
-                        Ok(array)
-                    })?;
+                    let rest_array =
+                        zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
+                            let array = heap.alloc_array(rest_values.len());
+                            for (index, value) in rest_values.iter().enumerate() {
+                                let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                                let _ = heap.array_set(array, index, any);
+                            }
+                            Ok(array)
+                        })?;
                     let mut args = values[..rest_index as usize].to_vec();
                     args.push(Value::Object(rest_array));
                     let link = RootLink {
@@ -878,11 +884,21 @@ impl Interp<'_> {
                     }
                     call_args.extend(values[..rest_index].iter().cloned());
                     call_args.push(Value::Object(rest_array));
-                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
                     let result = match self.dispatch(handle.method_rid(), call_args, Some(&link)) {
                         Ok(value) => value,
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1047,14 +1063,15 @@ impl Interp<'_> {
                             .ok_or(RunError::BadToken)?
                     };
                     let rest_values = &values[rest_index..];
-                    let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
-                        let array = heap.alloc_array(rest_values.len());
-                        for (index, value) in rest_values.iter().enumerate() {
-                            let any = value.box_any(heap).ok_or(RunError::BadToken)?;
-                            let _ = heap.array_set(array, index, any);
-                        }
-                        Ok(array)
-                    })?;
+                    let rest_array =
+                        zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
+                            let array = heap.alloc_array(rest_values.len());
+                            for (index, value) in rest_values.iter().enumerate() {
+                                let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                                let _ = heap.array_set(array, index, any);
+                            }
+                            Ok(array)
+                        })?;
                     let mut args = values[..rest_index].to_vec();
                     args.push(Value::Object(rest_array));
                     let link = RootLink {
@@ -1118,11 +1135,21 @@ impl Interp<'_> {
                             .ok_or(RunError::BadToken)?
                     };
                     values.push(Value::Object(rest_array));
-                    let link = RootLink { stack: &stack, locals: &locals, parent };
+                    let link = RootLink {
+                        stack: &stack,
+                        locals: &locals,
+                        parent,
+                    };
                     let result = match self.dispatch(target, values, Some(&link)) {
                         Ok(value) => value,
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1985,90 +2012,6 @@ impl Interp<'_> {
             _ => Err(RunError::BadToken),
         }
     }
-}
-
-fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in [
-        "bufferNew",
-        "bufferLength",
-        "bufferGetU8",
-        "bufferSetU8",
-        "mapNew",
-        "mapSet",
-        "mapGet",
-        "mapHas",
-        "mapSize",
-        "mapDelete",
-        "mapClear",
-        "mapValues",
-        "mapKeys",
-        "mapEntries",
-        "setNew",
-        "setAdd",
-        "setHas",
-        "setSize",
-        "setDelete",
-        "setClear",
-        "setValues",
-        "setEntries",
-        "weakMapNew",
-        "weakMapSet",
-        "weakMapGet",
-        "weakMapHas",
-        "weakMapDelete",
-    ] {
-        if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id)
-        {
-            return Some(name);
-        }
-    }
-    None
-}
-
-fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in [
-        "bufferNew",
-        "bufferLength",
-        "bufferGetU8",
-        "bufferSetU8",
-        "bufferReadU32",
-        "bufferWriteU32",
-        "bufferReadF64",
-        "bufferWriteF64",
-        "dataViewNew",
-        "dataViewGetU32",
-        "dataViewSetU32",
-        "dataViewGetU16",
-        "dataViewSetU16",
-        "dataViewGetF64",
-        "dataViewSetF64",
-        "u32ArrayNew",
-        "u32ArrayGet",
-        "u32ArraySet",
-        "u8ArrayNew",
-        "u8ArrayGet",
-        "u8ArraySet",
-        "f64ArrayNew",
-        "f64ArrayGet",
-        "f64ArraySet",
-        "u16ArrayNew",
-        "u16ArrayGet",
-        "u16ArraySet",
-        "arrayIteratorNew",
-        "arrayIteratorNext",
-        "arrayIteratorDone",
-        "setIteratorNew",
-        "setIteratorNext",
-        "setIteratorDone",
-        "mapIteratorNew",
-        "mapIteratorNext",
-        "mapIteratorDone",
-    ] {
-        if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
 }
 
 #[cfg(test)]
