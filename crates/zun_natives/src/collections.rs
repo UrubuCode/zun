@@ -195,5 +195,11 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Opaque,
             imp: unavailable,
         },
+        NativeFn {
+            name: "proxySet",
+            params: &[Proxy, Str, Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
     ],
 };

@@ -1954,6 +1954,17 @@ mod method_tests {
     }
 
     #[test]
+    fn proxy_set_falls_back_to_target_dynamic_properties() {
+        let module = zun_compiler::compile(
+            "import { proxySet, proxyGet } from \"zun:collections\"; function main(): any { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyGet(proxy, \"answer\"); }",
+        )
+        .expect("compile proxy set");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy set");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(41.0)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\

@@ -852,6 +852,37 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Any(any(&result).unwrap_or_else(zun_core::Any::null)))
             }
+            "proxySet" => {
+                let proxy = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(key) => key.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = any(args.get(2).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                    return Err(RunError::BadToken);
+                };
+                let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "set"));
+                if let Some(callback) = trap {
+                    let mut call_args = Vec::with_capacity(4);
+                    if let Some(address) = callback.environment() {
+                        call_args.push(Value::Object(unsafe {
+                            zun_gc::Obj::from_addr(address as *mut u64)
+                        }));
+                    }
+                    call_args.push(Value::Object(target));
+                    call_args.push(Value::Str(key.into()));
+                    call_args.push(Value::Any(value));
+                    let result = self.call(callback.method_rid(), call_args, None)?;
+                    return Ok(Value::Bool(matches!(result, Value::Bool(true))));
+                }
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_set(target, key.to_string(), value);
+                });
+                Ok(Value::Bool(true))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))
