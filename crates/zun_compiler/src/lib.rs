@@ -545,6 +545,8 @@ mod tests {
         assert!(loader.get("zun:std:string").is_some());
         assert!(loader.get("zun:std:number").is_some());
         assert!(loader.get("zun:std:array").is_some());
+        assert!(loader.get("zun:std:map").is_some());
+        assert!(loader.get("zun:std:set").is_some());
         assert!(loader.get("zun:std:date").is_some());
         assert!(loader.get("zun:std:error").is_some());
     }
