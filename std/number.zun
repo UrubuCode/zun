@@ -38,6 +38,10 @@ class Number {
         return (this as int) % 2 != 0;
     }
 
+    toInt(): int {
+        return this as int;
+    }
+
     sign(): number {
         if (this < 0.0) { return -1.0; }
         if (this > 0.0) { return 1.0; }

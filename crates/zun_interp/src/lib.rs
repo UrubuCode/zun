@@ -1399,6 +1399,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_to_int_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { toInt(): int { return this as int; } }\n\
+             function main(): int { let value: number = 12.75; return value.toInt(); }",
+        )
+        .expect("compile Number toInt");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number toInt");
+        assert!(matches!(result, Value::Int(value, _) if value == 12));
+    }
+
+    #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
             "import { toString } from \"zun:number\";\n\
