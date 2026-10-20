@@ -175,7 +175,9 @@ contrato observável no código e um teste que o exercite.
   manifesto binário e geração do manifesto pelo compiler.
 - **Entregue parcialmente:** Tier 1 Cranelift para valores numéricos, booleanos
   e objetos com fields numéricos; equivalência interp↔JIT coberta por testes.
-  Chamadas virtuais com override ainda ficam no Tier 0.
+  Intrinsics numÃ©ricos de `zun:date` e `zun:math` usam uma ABI C estÃ¡vel e
+  lowering direto para imports do JIT. Chamadas virtuais com override ainda
+  ficam no Tier 0.
 - **Entregue parcialmente:** resolução de exports e `MemberRef` entre escopos
   carregados. Imports de módulos de usuário são validados no build, mas ainda
   não são baixados para uma chamada executável no VM.

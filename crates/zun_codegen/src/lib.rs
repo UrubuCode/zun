@@ -37,6 +37,22 @@ pub extern "C" fn zun_jit_date_weekday(millis: i64) -> i32 { zun_core::DateValue
 #[inline]
 pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).ordinal().unwrap() as i32 }
 
+#[inline] pub extern "C" fn zun_jit_math_abs(value: f64) -> f64 { value.abs() }
+#[inline] pub extern "C" fn zun_jit_math_sqrt(value: f64) -> f64 { value.sqrt() }
+#[inline] pub extern "C" fn zun_jit_math_floor(value: f64) -> f64 { value.floor() }
+#[inline] pub extern "C" fn zun_jit_math_ceil(value: f64) -> f64 { value.ceil() }
+#[inline] pub extern "C" fn zun_jit_math_round(value: f64) -> f64 { value.round() }
+#[inline] pub extern "C" fn zun_jit_math_sin(value: f64) -> f64 { value.sin() }
+#[inline] pub extern "C" fn zun_jit_math_cos(value: f64) -> f64 { value.cos() }
+#[inline] pub extern "C" fn zun_jit_math_exp(value: f64) -> f64 { value.exp() }
+#[inline] pub extern "C" fn zun_jit_math_log(value: f64) -> f64 { value.ln() }
+#[inline] pub extern "C" fn zun_jit_math_tan(value: f64) -> f64 { value.tan() }
+#[inline] pub extern "C" fn zun_jit_math_min(left: f64, right: f64) -> f64 { left.min(right) }
+#[inline] pub extern "C" fn zun_jit_math_max(left: f64, right: f64) -> f64 { left.max(right) }
+#[inline] pub extern "C" fn zun_jit_math_pow(left: f64, right: f64) -> f64 { left.powf(right) }
+#[inline] pub extern "C" fn zun_jit_math_atan2(left: f64, right: f64) -> f64 { left.atan2(right) }
+#[inline] pub extern "C" fn zun_jit_math_hypot(left: f64, right: f64) -> f64 { left.hypot(right) }
+
 use std::collections::{HashMap, HashSet};
 
 use cranelift_codegen::ir::AbiParam;
@@ -178,6 +194,21 @@ impl Jit {
         builder.symbol("zun_jit_date_millisecond", zun_jit_date_millisecond as *const u8);
         builder.symbol("zun_jit_date_weekday", zun_jit_date_weekday as *const u8);
         builder.symbol("zun_jit_date_day_of_year", zun_jit_date_day_of_year as *const u8);
+        builder.symbol("zun_jit_math_abs", zun_jit_math_abs as *const u8);
+        builder.symbol("zun_jit_math_sqrt", zun_jit_math_sqrt as *const u8);
+        builder.symbol("zun_jit_math_floor", zun_jit_math_floor as *const u8);
+        builder.symbol("zun_jit_math_ceil", zun_jit_math_ceil as *const u8);
+        builder.symbol("zun_jit_math_round", zun_jit_math_round as *const u8);
+        builder.symbol("zun_jit_math_sin", zun_jit_math_sin as *const u8);
+        builder.symbol("zun_jit_math_cos", zun_jit_math_cos as *const u8);
+        builder.symbol("zun_jit_math_exp", zun_jit_math_exp as *const u8);
+        builder.symbol("zun_jit_math_log", zun_jit_math_log as *const u8);
+        builder.symbol("zun_jit_math_tan", zun_jit_math_tan as *const u8);
+        builder.symbol("zun_jit_math_min", zun_jit_math_min as *const u8);
+        builder.symbol("zun_jit_math_max", zun_jit_math_max as *const u8);
+        builder.symbol("zun_jit_math_pow", zun_jit_math_pow as *const u8);
+        builder.symbol("zun_jit_math_atan2", zun_jit_math_atan2 as *const u8);
+        builder.symbol("zun_jit_math_hypot", zun_jit_math_hypot as *const u8);
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);

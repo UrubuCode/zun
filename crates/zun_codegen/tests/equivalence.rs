@@ -1557,62 +1557,67 @@ fn number_remap_keeps_interpreter_fallback() {
 }
 
 #[test]
-fn math_power_keeps_interpreter_fallback() {
+fn math_power_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
     )
     .expect("compile math power");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
-    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 8.0));
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 8.0));
 }
 
 #[test]
-fn math_trigonometry_keeps_interpreter_fallback() {
+fn math_trigonometry_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { sinNumber, cosNumber } from \"zun:math\"; function main(): number { return sinNumber(0.0) + cosNumber(0.0); }",
     )
     .expect("compile math trigonometry");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
-    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 1.0));
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 1.0));
 }
 
 #[test]
-fn math_exponential_and_logarithm_keep_interpreter_fallback() {
+fn math_exponential_and_logarithm_are_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { expNumber, logNumber } from \"zun:math\"; function main(): number { return expNumber(0.0) + logNumber(1.0); }",
     )
     .expect("compile math exponential and logarithm");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
-    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 1.0));
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 1.0));
 }
 
 #[test]
-fn math_tangent_and_atan2_keep_interpreter_fallback() {
+fn math_tangent_and_atan2_are_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { tanNumber, atan2Number } from \"zun:math\"; function main(): number { return tanNumber(0.0) + atan2Number(0.0, 1.0); }",
     )
     .expect("compile math tangent and atan2");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
-    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 0.0));
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 0.0));
 }
 
 #[test]
-fn math_hypot_keeps_interpreter_fallback() {
+fn math_hypot_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { hypotNumber } from \"zun:math\"; function main(): number { return hypotNumber(3.0, 4.0); }",
     )
     .expect("compile math hypot");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
-    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT math"), RetVal::Float(value) if value == 5.0));
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 5.0));
 }
 

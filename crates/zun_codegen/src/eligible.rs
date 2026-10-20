@@ -54,13 +54,23 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::LoadField
             | Opcode::StoreField
     );
-    supported || (op == Opcode::CallBuiltin && date_builtin(instr))
+    supported || (op == Opcode::CallBuiltin && (date_builtin(instr) || math_builtin(instr)))
 }
 
 fn date_builtin(instr: &zun_il::Instruction) -> bool {
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(zun_natives::by_id(id as u32).map(|f| f.name),
         Some("year" | "month" | "day" | "hour" | "minute" | "second" | "millisecond" | "weekday" | "dayOfYear"))
+}
+
+fn math_builtin(instr: &zun_il::Instruction) -> bool {
+    let Operand::Imm32(id) = instr.operand else { return false; };
+    matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some(
+        "abs" | "sqrt" | "min" | "max" | "sqrtNumber" | "minNumber" | "maxNumber"
+        | "floor" | "ceil" | "round" | "floorNumber" | "ceilNumber" | "roundNumber"
+        | "powNumber" | "sinNumber" | "cosNumber" | "expNumber" | "logNumber"
+        | "tanNumber" | "atan2Number" | "hypotNumber"
+    ))
 }
 
 /// Whether a field (by FieldDef token RID) has a JIT-representable type, i.e.

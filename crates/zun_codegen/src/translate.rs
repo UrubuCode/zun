@@ -372,31 +372,48 @@ impl Translator<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = match instr.operand { Operand::Imm32(id) => id as u32, _ => return Err("builtin operand".into()) };
-                    let name = match zun_natives::by_id(id).map(|f| f.name) {
-                        Some("year") => "zun_jit_date_year",
-                        Some("month") => "zun_jit_date_month",
-                        Some("day") => "zun_jit_date_day",
-                        Some("hour") => "zun_jit_date_hour",
-                        Some("minute") => "zun_jit_date_minute",
-                        Some("second") => "zun_jit_date_second",
-                        Some("millisecond") => "zun_jit_date_millisecond",
-                        Some("weekday") => "zun_jit_date_weekday",
-                        Some("dayOfYear") => "zun_jit_date_day_of_year",
+                    let (name, arg_count, arg_type, result_kind, result_type) = match zun_natives::by_id(id).map(|f| f.name) {
+                        Some("year") => ("zun_jit_date_year", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("month") => ("zun_jit_date_month", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("day") => ("zun_jit_date_day", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("hour") => ("zun_jit_date_hour", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("minute") => ("zun_jit_date_minute", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("second") => ("zun_jit_date_second", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("millisecond") => ("zun_jit_date_millisecond", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("weekday") => ("zun_jit_date_weekday", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("dayOfYear") => ("zun_jit_date_day_of_year", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
+                        Some("abs") => ("zun_jit_math_abs", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("sqrt" | "sqrtNumber") => ("zun_jit_math_sqrt", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("floor" | "floorNumber") => ("zun_jit_math_floor", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("ceil" | "ceilNumber") => ("zun_jit_math_ceil", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("round" | "roundNumber") => ("zun_jit_math_round", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("sinNumber") => ("zun_jit_math_sin", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("cosNumber") => ("zun_jit_math_cos", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("expNumber") => ("zun_jit_math_exp", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("logNumber") => ("zun_jit_math_log", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("tanNumber") => ("zun_jit_math_tan", 1, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("min" | "minNumber") => ("zun_jit_math_min", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("max" | "maxNumber") => ("zun_jit_math_max", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("powNumber") => ("zun_jit_math_pow", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("atan2Number") => ("zun_jit_math_atan2", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
+                        Some("hypotNumber") => ("zun_jit_math_hypot", 2, types::F64, JitKind::Num(NumKind::F64), types::F64),
                         _ => return Err("unsupported builtin".into()),
                     };
-                    let (arg, _) = stack.pop().ok_or("builtin stack underflow")?;
+                    if stack.len() < arg_count { return Err("builtin stack underflow".into()); }
+                    let args: Vec<Slot> = stack.split_off(stack.len() - arg_count);
                     let fid = if let Some(&fid) = builtin_ids.get(name) { fid } else {
                         let mut sig = Signature::new(self.builder.func.signature.call_conv);
-                        sig.params.push(AbiParam::new(types::I64));
-                        sig.returns.push(AbiParam::new(types::I32));
+                        for _ in 0..arg_count { sig.params.push(AbiParam::new(arg_type)); }
+                        sig.returns.push(AbiParam::new(result_type));
                         let fid = self.module.declare_function(name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
                         builtin_ids.insert(name, fid);
                         fid
                     };
                     let fref = self.module.declare_func_in_func(fid, self.builder.func);
-                    let inst = self.builder.ins().call(fref, &[arg]);
+                    let values: Vec<Value> = args.iter().map(|(value, _)| *value).collect();
+                    let inst = self.builder.ins().call(fref, &values);
                     let result = self.builder.inst_results(inst)[0];
-                    stack.push((result, JitKind::Num(NumKind::I32)));
+                    stack.push((result, result_kind));
                 }
                 Opcode::NewObj => {
                     let type_rid = match instr.operand {
