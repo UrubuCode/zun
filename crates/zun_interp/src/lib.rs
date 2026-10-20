@@ -1398,6 +1398,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_sign_predicates_source_methods() {
+        let module = zun_compiler::compile(
+            "class Number { isPositive(): boolean { return this > 0.0; } isNonZero(): boolean { return this != 0.0; } } function main(): boolean { let value: number = 3.0; if (!value.isPositive()) { return false; } return value.isNonZero(); }",
+        )
+        .expect("compile Number sign predicates");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number sign predicates");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_finiteness_source_methods() {
         let module = zun_compiler::compile(
             "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\

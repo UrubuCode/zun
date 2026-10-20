@@ -16,6 +16,14 @@ class Number {
         return this < 0.0;
     }
 
+    isPositive(): boolean {
+        return this > 0.0;
+    }
+
+    isNonZero(): boolean {
+        return this != 0.0;
+    }
+
     isNaN(): boolean {
         return this != this;
     }
