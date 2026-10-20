@@ -16,13 +16,14 @@ mod metadata;
 mod output;
 mod operands;
 mod roots;
+mod runner;
 mod stack;
 mod state;
 mod unwind;
 pub mod value;
 
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
-use gc_policy::{next_gc_interval, GC_INTERVAL};
+use gc_policy::next_gc_interval;
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
 use operands::{
@@ -34,6 +35,7 @@ use stack::{
     Ordering,
 };
 use state::{Interp, RootLink};
+use runner::run_method_with;
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -89,31 +91,6 @@ pub fn run_method_loaded(
     output: &mut dyn Output,
 ) -> Result<Value, RunError> {
     run_method_with(scope.module(), method_rid, args, output, None, Some(loader))
-}
-
-fn run_method_with(
-    module: &Module,
-    method_rid: u32,
-    args: Vec<Value>,
-    output: &mut dyn Output,
-    hook: Option<&dyn CallHook>,
-    loader: Option<&zun_loader::ModuleLoader>,
-) -> Result<Value, RunError> {
-    // Own the heap for the run and register it as the thread's current heap so
-    // the interpreter and any JIT code allocate into the same one.
-    let mut heap = zun_gc::Heap::new();
-    let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
-    let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
-    Interp {
-        module,
-        output,
-        hook,
-        loader,
-        allocs: 0,
-        gc_interval: GC_INTERVAL,
-        types,
-    }
-    .call(method_rid, args, None)
 }
 
 impl Interp<'_> {
