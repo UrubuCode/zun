@@ -338,6 +338,17 @@ The following runtime contracts are implemented and covered by tests:
   compiler/IL declarations for external symbols remain a separate gate.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, and Promise integration.
+- Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
+  `zun:core`, with O(1) access to the frozen core-type anchors.
+- Explicit `extern` method declarations bound to imported native functions;
+  sema validates receiver/parameter/return signatures and lowers the method
+  body to the existing `call.builtin` instruction.
+- Machine-facing `zun:string` primitives (`length`, `concat`, `contains`, and
+  `charCodeAt`) and `zun:number` conversion primitives (`parseFloat` and
+  `toFixed`), all covered by native dispatch tests.
+- Contiguous `ArrayStorage` with bounds-checked access and growth operations,
+  integrated with heap allocation and precise object-reference tracing. The
+  source-level Array API and compiler lowering are still pending.
 
 The release benchmark baseline on 2026-10-20 is 402.555 ns/iteration for the
 integer Tier 0 loop and 0.486 ns/iteration for the equivalent JIT loop
@@ -346,10 +357,11 @@ for field load/store and 523.990 ns/iteration for virtual dispatch. These
 figures are machine-specific and should be re-run after interpreter or OSR
 changes; the benchmark source is `crates/zun_codegen/examples/bench.rs`.
 
-The remaining completion gates are full async state-machine lowering, complete
-typed FFI/ABI integration, Node N-API bindings, AOT/R2R support for the full
-runtime surface, true OSR frame replacement, and production-grade trimming
-diagnostics/metadata removal. Each gate requires a
+The remaining completion gates are source-level Array lowering and the
+complete String/Number/Array TypeScript core library, full async state-machine
+lowering, complete typed FFI/ABI integration, production Node N-API bindings,
+AOT/R2R support for the full runtime surface, true OSR frame replacement, and
+production-grade trimming diagnostics/metadata removal. Each gate requires a
 runtime test and an interpreter/JIT equivalence test where JIT execution is
 applicable.
 
