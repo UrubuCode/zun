@@ -774,6 +774,12 @@ impl Checker<'_> {
                     .iter()
                     .map(|catch| {
                         let ty = self.resolve_annotation(&catch.ty);
+                        if count_awaits_in_block(&catch.body) != 0 {
+                            self.error(
+                                catch.body.span,
+                                "await is not allowed inside a catch handler",
+                            );
+                        }
                         cx.scopes.push(Scope::new());
                         let slot = cx.declare(self.text(&catch.binding), ty);
                         let body = self.check_block(cx, &catch.body);
@@ -781,7 +787,15 @@ impl Checker<'_> {
                         hir::CatchClause { slot, ty, body }
                     })
                     .collect();
-                let finally_body = finally.as_ref().map(|block| self.check_block(cx, block));
+                let finally_body = finally.as_ref().map(|block| {
+                    if count_awaits_in_block(block) != 0 {
+                        self.error(
+                            block.span,
+                            "await is not allowed inside a finally handler",
+                        );
+                    }
+                    self.check_block(cx, block)
+                });
                 hir::Stmt::Try {
                     body,
                     catches,

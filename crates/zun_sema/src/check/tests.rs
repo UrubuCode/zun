@@ -75,6 +75,18 @@
     }
 
     #[test]
+    fn async_await_is_rejected_inside_handlers() {
+        let catch_error = first_error(
+            "async function main(): Promise { try { return new Promise(); } catch (e: any) { await new Promise(); return new Promise(); } }",
+        );
+        assert!(catch_error.contains("catch handler"), "{catch_error}");
+        let finally_error = first_error(
+            "async function main(): Promise { try { return new Promise(); } finally { await new Promise(); } }",
+        );
+        assert!(finally_error.contains("finally handler"), "{finally_error}");
+    }
+
+    #[test]
     fn let_infers_type_from_initializer() {
         let hir = check_ok("function f() { let x = 1; let s = \"hi\"; }");
         assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);
