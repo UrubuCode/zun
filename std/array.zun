@@ -35,6 +35,20 @@ class Array {
         return this[this.length - 1];
     }
 
+    reverse(): Array {
+        let left: u64 = 0;
+        if (this.length == 0) { return this; }
+        let right: u64 = this.length - 1;
+        while (left < right) {
+            let temporary: any = this[left];
+            this[left] = this[right];
+            this[right] = temporary;
+            left = left + 1;
+            right = right - 1;
+        }
+        return this;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {

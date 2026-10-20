@@ -186,6 +186,19 @@ fn array_access_methods_keep_interpreter_fallback() {
 }
 
 #[test]
+fn array_reverse_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { reverse(): Array { let left: u64 = 0; if (this.length == 0) { return this; } let right: u64 = this.length - 1; while (left < right) { let temporary: any = this[left]; this[left] = this[right]; this[right] = temporary; left = left + 1; right = right - 1; } return this; } first(): any { return this[0]; } }\n\
+         function main(): number { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; values.reverse(); return values.first() as number; }",
+    )
+    .expect("compile Array reverse");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

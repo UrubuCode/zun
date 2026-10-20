@@ -986,6 +986,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array access methods");
         assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn executes_array_reverse_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { reverse(): Array { let left: u64 = 0; if (this.length == 0) { return this; } let right: u64 = this.length - 1; while (left < right) { let temporary: any = this[left]; this[left] = this[right]; this[right] = temporary; left = left + 1; right = right - 1; } return this; } first(): any { return this[0]; } }\n\
+             function main(): number { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; values.reverse(); return values.first() as number; }",
+        )
+        .expect("compile Array reverse");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array reverse");
+        assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.
