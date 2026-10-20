@@ -47,6 +47,11 @@ class Number {
         return (this - low) / (high - low);
     }
 
+    smoothStep(edge0: number, edge1: number): number {
+        let amount: number = this.inverseLerp(edge0, edge1).clamp(0.0, 1.0);
+        return amount * amount * (3.0 - 2.0 * amount);
+    }
+
     isApproximately(other: number, epsilon: number): boolean {
         let difference: number = this - other;
         if (difference < 0.0) { difference = -difference; }

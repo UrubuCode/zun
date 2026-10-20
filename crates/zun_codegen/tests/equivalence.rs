@@ -1259,6 +1259,18 @@ fn number_inverse_lerp_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn number_smooth_step_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { clamp(low: number, high: number): number { if (this < low) { return low; } if (this > high) { return high; } return this; } inverseLerp(low: number, high: number): number { if (low == high) { return 0.0; } return (this - low) / (high - low); } smoothStep(edge0: number, edge1: number): number { let amount: number = this.inverseLerp(edge0, edge1).clamp(0.0, 1.0); return amount * amount * (3.0 - 2.0 * amount); } } function main(): number { let value: number = 50.0; return value.smoothStep(0.0, 100.0); }",
+    )
+    .expect("compile Number smoothStep");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 0.5));
+}
+
+#[test]
 fn number_is_approximately_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",

@@ -1794,6 +1794,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_smooth_step_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { clamp(low: number, high: number): number { if (this < low) { return low; } if (this > high) { return high; } return this; } inverseLerp(low: number, high: number): number { if (low == high) { return 0.0; } return (this - low) / (high - low); } smoothStep(edge0: number, edge1: number): number { let amount: number = this.inverseLerp(edge0, edge1).clamp(0.0, 1.0); return amount * amount * (3.0 - 2.0 * amount); } } function main(): number { let value: number = 50.0; return value.smoothStep(0.0, 100.0); }",
+        )
+        .expect("compile Number smoothStep");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number smoothStep");
+        assert!(matches!(result, Value::Float(0.5, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn executes_number_is_approximately_source_method() {
         let module = zun_compiler::compile(
             "class Number { isApproximately(other: number, epsilon: number): boolean { let difference: number = this - other; if (difference < 0.0) { difference = -difference; } return difference <= epsilon; } } function main(): boolean { let value: number = 1.001; return value.isApproximately(1.0, 0.01); }",
