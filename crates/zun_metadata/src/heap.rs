@@ -22,7 +22,7 @@ pub struct BlobIndex(pub u32);
 ///
 /// Layout: a leading NUL byte (the empty entry at offset 0), then each distinct
 /// string stored as its UTF-8 bytes followed by a NUL terminator.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StringHeap {
     bytes: Vec<u8>,
     lookup: HashMap<Box<str>, StringIndex>,
@@ -96,7 +96,7 @@ impl StringHeap {
 ///
 /// Layout: an empty blob at offset 0 (a single `0` length byte), then each
 /// distinct blob stored as a compressed length followed by its bytes.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlobHeap {
     bytes: Vec<u8>,
     lookup: HashMap<Box<[u8]>, BlobIndex>,

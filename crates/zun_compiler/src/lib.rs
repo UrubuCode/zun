@@ -63,6 +63,44 @@ pub fn reachable_methods(module: &Module) -> Result<HashSet<u32>, String> {
     Ok(reachable)
 }
 
+/// Remove unreachable method bodies while preserving metadata RIDs.
+///
+/// Keeping definition rows stable means existing tokens and cross-module
+/// references remain valid. An unreachable row becomes an abstract/no-body
+/// row, while reachable bodies are copied into a compact code section.
+pub fn trim_module(module: &Module) -> Result<Module, String> {
+    let reachable = reachable_methods(module)?;
+    let mut tables = module.tables.clone();
+    let mut code = Vec::new();
+    for (index, method) in module.tables.method_defs.iter().enumerate() {
+        let rid = index as u32 + 1;
+        let Some(body_offset) = reachable.contains(&rid).then_some(method.body_offset) else {
+            tables.method_defs[index].body_offset = u32::MAX;
+            continue;
+        };
+        let body = read_body(&module.code, body_offset).map_err(|e| e.to_string())?;
+        let body_code = body.code.to_vec();
+        let local_kinds = body.local_kinds.to_vec();
+        let new_offset = zun_module::write_body(
+            &mut code,
+            body.param_count,
+            body.local_count,
+            body.returns_value,
+            body.return_kind,
+            &local_kinds,
+            &body_code,
+        );
+        tables.method_defs[index].body_offset = new_offset;
+    }
+    Ok(Module {
+        entry_point: module.entry_point,
+        code,
+        strings: module.strings.clone(),
+        blobs: module.blobs.clone(),
+        tables,
+    })
+}
+
 /// Compile source text with the standard prelude into a `.zm` module.
 pub fn compile(source: &str) -> Result<Module, Vec<Diagnostic>> {
     compile_with_externals(source, &[])
@@ -320,6 +358,22 @@ mod tests {
         assert!(reachable.contains(&1));
         assert!(reachable.contains(&3));
         assert!(!reachable.contains(&2));
+    }
+
+    #[test]
+    fn trimming_removes_unreachable_bodies_and_preserves_tokens() {
+        let module = compile(
+            "function used(): int { return 7; }\n\
+             function unused(): int { return 9; }\n\
+             function main(): int { return used(); }",
+        )
+        .expect("compile");
+        let trimmed = trim_module(&module).expect("trim");
+        assert!(trimmed.code.len() < module.code.len());
+        assert_ne!(trimmed.tables.method_defs[0].body_offset, u32::MAX);
+        assert_eq!(trimmed.tables.method_defs[1].body_offset, u32::MAX);
+        assert_ne!(trimmed.tables.method_defs[2].body_offset, u32::MAX);
+        assert_eq!(trimmed.entry_point, module.entry_point);
     }
 
     #[test]

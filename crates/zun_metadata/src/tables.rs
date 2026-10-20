@@ -86,7 +86,7 @@ pub struct ModuleRef {
 }
 
 /// The full set of metadata tables for one module.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Tables {
     /// Type definitions.
     pub type_defs: Vec<TypeDef>,
