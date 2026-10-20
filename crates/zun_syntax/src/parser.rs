@@ -273,24 +273,6 @@ impl Parser<'_> {
         }
     }
 
-    fn function_expression(&mut self) -> Expr {
-        let start = self.bump().span; // `function`
-                                      // A name is deliberately not accepted here: named declarations are
-                                      // parsed at the program/class level, while this form is anonymous.
-        self.expect(TokenKind::LParen, "`(` after anonymous function");
-        let params = self.parameters();
-        self.expect(TokenKind::RParen, "`)`");
-        let return_type = self.optional_type_annotation();
-        let body = self.block();
-        Expr::Function(FunctionExpr {
-            params,
-            return_type,
-            span: start.to(body.span),
-            body,
-            is_arrow: false,
-        })
-    }
-
     fn let_statement(&mut self) -> Stmt {
         let start = self.bump().span; // `let`
         if self.eat(TokenKind::LBracket) {

@@ -3,6 +3,22 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn function_expression(&mut self) -> Expr {
+        let start = self.bump().span;
+        self.expect(TokenKind::LParen, "`(` after anonymous function");
+        let params = self.parameters();
+        self.expect(TokenKind::RParen, "`)`");
+        let return_type = self.optional_type_annotation();
+        let body = self.block();
+        Expr::Function(FunctionExpr {
+            params,
+            return_type,
+            span: start.to(body.span),
+            body,
+            is_arrow: false,
+        })
+    }
+
     pub(crate) fn call(&mut self) -> Expr {
         let mut expr = self.primary();
         loop {
