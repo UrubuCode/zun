@@ -17,7 +17,7 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
-use stack::{bin_float, bin_int, pop, pop_n, underflow};
+use stack::{bin_float, bin_int, bin_int_signed_aware, pop, pop_n, underflow};
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3815,32 +3815,6 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
-}
-
-/// Integer divide (`is_div`) or remainder, choosing signed vs unsigned by the
-/// operand kind so `u32` division behaves unsigned.
-fn bin_int_signed_aware(stack: &mut Vec<Value>, is_div: bool) -> Result<(), RunError> {
-    let b = pop(stack)?;
-    let a = pop(stack)?;
-    let kind = a.int_kind();
-    let (_, signed) = kind.int_parts().expect("int kind");
-    let (x, y) = (a.as_int(), b.as_int());
-    if y == 0 {
-        return Err(RunError::Malformed("integer division by zero".into()));
-    }
-    let r = if signed {
-        if is_div {
-            x.wrapping_div(y)
-        } else {
-            x.wrapping_rem(y)
-        }
-    } else {
-        let (ux, uy) = (x as u64, y as u64);
-        let ur = if is_div { ux / uy } else { ux % uy };
-        ur as i64
-    };
-    stack.push(Value::Int(value::wrap_int(r, kind), kind));
-    Ok(())
 }
 
 /// Convert a numeric value to `target`, following the lattice rules: int↔int

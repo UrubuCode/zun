@@ -44,3 +44,31 @@ pub(crate) fn bin_int(
     ));
     Ok(())
 }
+
+/// Integer divide or remainder, choosing signed versus unsigned by kind.
+pub(crate) fn bin_int_signed_aware(
+    stack: &mut Vec<Value>,
+    is_div: bool,
+) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (_, signed) = kind.int_parts().expect("int kind");
+    let (x, y) = (a.as_int(), b.as_int());
+    if y == 0 {
+        return Err(RunError::Malformed("integer division by zero".into()));
+    }
+    let result = if signed {
+        if is_div {
+            x.wrapping_div(y)
+        } else {
+            x.wrapping_rem(y)
+        }
+    } else {
+        let (ux, uy) = (x as u64, y as u64);
+        let unsigned_result = if is_div { ux / uy } else { ux % uy };
+        unsigned_result as i64
+    };
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
