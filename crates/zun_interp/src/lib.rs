@@ -1987,6 +1987,17 @@ mod method_tests {
     }
 
     #[test]
+    fn proxy_property_traps_invoke_named_handlers() {
+        let module = zun_compiler::compile(
+            "import { dynamicSetFunction, proxySet, proxyHas, proxyDelete } from \"zun:collections\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function hasTrap(target: any, key: string): boolean { return true; } function deleteTrap(target: any, key: string): boolean { return true; } function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); dynamicSetFunction(handler, \"has\", hasTrap); dynamicSetFunction(handler, \"deleteProperty\", deleteTrap); let proxy = new Proxy(target, handler); return proxySet(proxy, \"answer\", box_any(41)) && proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\"); }",
+        )
+        .expect("compile proxy property traps");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy property traps");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
