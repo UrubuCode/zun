@@ -164,6 +164,20 @@ fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     Ok(NativeValue::Str(result))
 }
 
+fn to_lower_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.to_lowercase())),
+        _ => Err(NativeError("toLowerCase: expected a string".to_string())),
+    }
+}
+
+fn to_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.to_uppercase())),
+        _ => Err(NativeError("toUpperCase: expected a string".to_string())),
+    }
+}
+
 fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -230,6 +244,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "substring", params: &[Str, U64, U64], ret: Str, imp: substring },
         NativeFn { name: "padStart", params: &[Str, U64, Str], ret: Str, imp: pad_start },
         NativeFn { name: "padEnd", params: &[Str, U64, Str], ret: Str, imp: pad_end },
+        NativeFn { name: "toLowerCase", params: &[Str], ret: Str, imp: to_lower_case },
+        NativeFn { name: "toUpperCase", params: &[Str], ret: Str, imp: to_upper_case },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },

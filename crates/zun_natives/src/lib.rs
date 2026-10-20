@@ -386,6 +386,16 @@ mod tests {
             dispatch(pad_end_id, &[NativeArg::Str("zun"), NativeArg::Int(5), NativeArg::Str("0")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zun00"
         ));
+        let (lower_id, _) = resolve("zun:string", "toLowerCase").unwrap();
+        assert!(matches!(
+            dispatch(lower_id, &[NativeArg::Str("ZuN")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "zun"
+        ));
+        let (upper_id, _) = resolve("zun:string", "toUpperCase").unwrap();
+        assert!(matches!(
+            dispatch(upper_id, &[NativeArg::Str("ZuN")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "ZUN"
+        ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),

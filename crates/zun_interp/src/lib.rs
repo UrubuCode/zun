@@ -987,6 +987,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_case_conversion_methods() {
+        let module = zun_compiler::compile(
+            "import { toLowerCase, toUpperCase } from \"zun:string\";\n\
+             class String { extern toLowerCase(): string; extern toUpperCase(): string; }\n\
+             function main(): string { let value: string = \"ZuN\"; return value.toLowerCase() + value.toUpperCase(); }",
+        )
+        .expect("compile String case methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String case methods");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zunZUN"));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
