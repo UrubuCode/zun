@@ -23,7 +23,7 @@ pub const fn field_offset(slot: usize) -> usize {
 /// managed object address containing captured locals, or zero for a non-
 /// capturing function. The handle is intentionally a plain frozen value;
 /// allocation and tracing belong to the GC/runtime layers built on top of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(C)]
 pub struct FunctionHandle {
     method_rid: u32,
@@ -89,7 +89,7 @@ pub struct Any {
 
 /// Runtime identity for a Symbol. Symbols with the same description are still
 /// distinct unless obtained through the global registry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct SymbolId(u64);
 
@@ -240,6 +240,7 @@ impl Any {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DynamicObject {
     properties: BTreeMap<String, Any>,
+    symbol_properties: BTreeMap<SymbolId, Any>,
 }
 
 /// An insertion-ordered hash table used by the runtime-backed Map/Set types.
@@ -1102,6 +1103,16 @@ impl DynamicObject {
         self.properties.insert(name.into(), value)
     }
 
+    /// Read a property keyed by a runtime symbol.
+    pub fn get_symbol(&self, symbol: SymbolId) -> Option<Any> {
+        self.symbol_properties.get(&symbol).copied()
+    }
+
+    /// Insert or replace a symbol-keyed property.
+    pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
+        self.symbol_properties.insert(symbol, value)
+    }
+
     /// Remove a property and return its value, if present.
     pub fn remove(&mut self, name: &str) -> Option<Any> {
         self.properties.remove(name)
@@ -1127,6 +1138,7 @@ impl DynamicObject {
         self.properties
             .values()
             .filter_map(|value| value.as_object())
+            .chain(self.symbol_properties.values().filter_map(|value| value.as_object()))
     }
 }
 
@@ -1265,6 +1277,19 @@ mod tests {
         assert!(object.contains("answer"));
         assert_eq!(object.remove("answer").and_then(Any::as_int), Some(42));
         assert_eq!(object.len(), 0);
+    }
+
+    #[test]
+    fn dynamic_object_keeps_symbol_properties_separate_from_string_properties() {
+        let mut symbols = SymbolRegistry::new();
+        let iterator = symbols.iterator();
+        let mut object = DynamicObject::new();
+        object.set("Symbol.iterator", Any::int(1));
+        object.set_symbol(iterator, Any::int(2));
+
+        assert_eq!(object.get("Symbol.iterator").and_then(Any::as_int), Some(1));
+        assert_eq!(object.get_symbol(iterator).and_then(Any::as_int), Some(2));
+        assert_eq!(object.len(), 1);
     }
 
     #[test]
