@@ -174,6 +174,8 @@ pub struct Heap {
     data_views: HashMap<usize, zun_core::DataView>,
     /// Typed-array descriptors associated with managed view objects.
     typed_views: HashMap<usize, (Obj, zun_core::TypedArrayView)>,
+    /// Array iterator state associated with managed iterator objects.
+    array_iterators: HashMap<usize, (Obj, zun_core::ArrayIterator)>,
     /// Date values associated with Date objects.
     dates: HashMap<usize, zun_core::DateValue>,
     /// Error values associated with Error objects.
@@ -399,6 +401,20 @@ impl Heap {
     pub fn u16_array_set(&mut self, object: Obj, index: usize, value: u16) -> Option<bool> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
         Some(view.write_u16(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
+    }
+
+    pub fn alloc_array_iterator(&mut self, array: Obj) -> Option<Obj> {
+        self.array_len(array)?;
+        let iterator = self.alloc(0, 1);
+        iterator.set_field(0, array.addr() as u64);
+        self.array_iterators.insert(iterator.addr() as usize, (array, zun_core::ArrayIterator::new()));
+        Some(iterator)
+    }
+
+    pub fn array_iterator_next(&mut self, iterator: Obj) -> Option<zun_core::Any> {
+        let (array, state) = self.array_iterators.get_mut(&(iterator.addr() as usize))?;
+        let storage = self.arrays.get(&(array.addr() as usize))?;
+        state.next(storage)
     }
 
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
@@ -1202,6 +1218,7 @@ impl Heap {
                 self.buffers.remove(&(r.addr as usize));
                 self.data_views.remove(&(r.addr as usize));
                 self.typed_views.remove(&(r.addr as usize));
+                self.array_iterators.remove(&(r.addr as usize));
                 self.dates.remove(&(r.addr as usize));
                 self.errors.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
