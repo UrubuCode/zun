@@ -1,5 +1,6 @@
 use super::{CallHook, Output, Value};
 use zun_module::Module;
+use zun_gc::Obj;
 
 pub(super) struct Interp<'a> {
     pub(super) module: &'a Module,
@@ -27,6 +28,13 @@ pub(super) struct ExecutionFrame {
     pub(super) pc: usize,
     pub(super) stack: Vec<Value>,
     pub(super) locals: Vec<Value>,
+    pub(super) state: FrameState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FrameState {
+    Runnable,
+    Suspended { promise: Obj, resume_pc: usize },
 }
 
 impl ExecutionFrame {
@@ -36,6 +44,36 @@ impl ExecutionFrame {
             pc: 0,
             stack: Vec::new(),
             locals,
+            state: FrameState::Runnable,
         }
+    }
+
+    pub(super) fn suspend(&mut self, promise: Obj, resume_pc: usize) {
+        self.state = FrameState::Suspended { promise, resume_pc };
+    }
+
+    pub(super) fn resume(&mut self) -> Option<Obj> {
+        let FrameState::Suspended { promise, resume_pc } = self.state else {
+            return None;
+        };
+        self.pc = resume_pc;
+        self.state = FrameState::Runnable;
+        Some(promise)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_preserves_resume_pc_and_promise_identity() {
+        let promise = unsafe { Obj::from_addr(0x1000usize as *mut u64) };
+        let mut frame = ExecutionFrame::new(7, vec![Value::Void]);
+        frame.suspend(promise, 42);
+        assert_eq!(frame.state, FrameState::Suspended { promise, resume_pc: 42 });
+        assert_eq!(frame.resume(), Some(promise));
+        assert_eq!(frame.pc, 42);
+        assert_eq!(frame.state, FrameState::Runnable);
     }
 }
