@@ -169,6 +169,15 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_object_stores_callable_string_properties() {
+        let mut object = DynamicObject::new();
+        let function = FunctionHandle::new(18, Some(0x3000));
+        assert_eq!(object.set_function("get", function), None);
+        assert_eq!(object.get_function("get"), Some(function));
+        assert_eq!(object.object_references().collect::<Vec<_>>(), vec![0x3000]);
+    }
+
+    #[test]
     fn array_storage_is_contiguous_and_bounds_checked() {
         let mut array = ArrayStorage::with_length(2);
         assert_eq!(array.len(), 2);

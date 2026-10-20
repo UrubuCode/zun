@@ -26,9 +26,19 @@ impl Heap {
     pub fn dynamic_get_symbol_function(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_function(symbol))
     }
+    pub fn dynamic_get_function(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_function(name))
+    }
 
     pub fn dynamic_set_symbol_function(&mut self, object: Obj, symbol: zun_core::SymbolId, function: zun_core::FunctionHandle) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol_function(symbol, function)
+    }
+    pub fn dynamic_set_function(&mut self, object: Obj, name: impl Into<String>, function: zun_core::FunctionHandle) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .and_then(|properties| properties.set_function(name, function))
     }
 
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {

@@ -7,6 +7,7 @@ pub struct DynamicObject {
     properties: BTreeMap<String, Any>,
     symbol_properties: BTreeMap<SymbolId, Any>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
+    string_functions: BTreeMap<String, FunctionHandle>,
 }
 
 impl DynamicObject {
@@ -24,6 +25,12 @@ impl DynamicObject {
     pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
         self.symbol_functions.get(&symbol).copied()
     }
+    pub fn get_function(&self, name: &str) -> Option<FunctionHandle> {
+        self.string_functions.get(name).copied()
+    }
+    pub fn set_function(&mut self, name: impl Into<String>, function: FunctionHandle) -> Option<FunctionHandle> {
+        self.string_functions.insert(name.into(), function)
+    }
     pub fn set_symbol_function(&mut self, symbol: SymbolId, function: FunctionHandle) -> Option<FunctionHandle> {
         self.symbol_functions.insert(symbol, function)
     }
@@ -35,5 +42,6 @@ impl DynamicObject {
         self.properties.values().filter_map(|value| value.as_object())
             .chain(self.symbol_properties.values().filter_map(|value| value.as_object()))
             .chain(self.symbol_functions.values().filter_map(|value| value.environment()))
+            .chain(self.string_functions.values().filter_map(|value| value.environment()))
     }
 }
