@@ -429,6 +429,19 @@ fn array_copy_within_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_flat_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { flat(): Array { let total: u64 = 0; let outer: u64 = 0; while (outer < this.length) { let nested: Array = this[outer] as Array; total = total + nested.length; outer = outer + 1; } let result = new Array(total); let output: u64 = 0; outer = 0; while (outer < this.length) { let nested: Array = this[outer] as Array; let inner: u64 = 0; while (inner < nested.length) { result[output] = nested[inner]; output = output + 1; inner = inner + 1; } outer = outer + 1; } return result; } }\n\
+         function main(): number { let left = new Array(1); left[0] = 7.0; let right = new Array(1); right[0] = 9.0; let outer = new Array(2); outer[0] = left; outer[1] = right; let flattened = outer.flat(); return flattened[1] as number; }",
+    )
+    .expect("compile Array flat");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array instructions must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(9.0, zun_il::NumKind::F64)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

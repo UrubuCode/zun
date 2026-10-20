@@ -1211,6 +1211,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array copyWithin");
         assert!(matches!(result, Value::Float(7.0, zun_il::NumKind::F64)));
     }
+
+    #[test]
+    fn executes_array_flat_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { flat(): Array { let total: u64 = 0; let outer: u64 = 0; while (outer < this.length) { let nested: Array = this[outer] as Array; total = total + nested.length; outer = outer + 1; } let result = new Array(total); let output: u64 = 0; outer = 0; while (outer < this.length) { let nested: Array = this[outer] as Array; let inner: u64 = 0; while (inner < nested.length) { result[output] = nested[inner]; output = output + 1; inner = inner + 1; } outer = outer + 1; } return result; } }\n\
+             function main(): number { let left = new Array(1); left[0] = 7.0; let right = new Array(1); right[0] = 9.0; let outer = new Array(2); outer[0] = left; outer[1] = right; let flattened = outer.flat(); return flattened[1] as number; }",
+        )
+        .expect("compile Array flat");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array flat");
+        assert!(matches!(result, Value::Float(9.0, zun_il::NumKind::F64)));
+    }
 }
 
 /// Add the object references found in a frame's stack and locals to `roots`.

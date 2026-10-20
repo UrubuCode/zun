@@ -94,6 +94,30 @@ class Array {
         return this;
     }
 
+    flat(): Array {
+        let total: u64 = 0;
+        let outer: u64 = 0;
+        while (outer < this.length) {
+            let nested: Array = this[outer] as Array;
+            total = total + nested.length;
+            outer = outer + 1;
+        }
+        let result = new Array(total);
+        let output: u64 = 0;
+        outer = 0;
+        while (outer < this.length) {
+            let nested: Array = this[outer] as Array;
+            let inner: u64 = 0;
+            while (inner < nested.length) {
+                result[output] = nested[inner];
+                output = output + 1;
+                inner = inner + 1;
+            }
+            outer = outer + 1;
+        }
+        return result;
+    }
+
     contains(value: any): boolean {
     let index: u64 = 0;
     while (index < this.length) {
