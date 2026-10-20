@@ -98,6 +98,8 @@ pub enum TokenKind {
     Percent,
     /// `=`
     Eq,
+    /// `=>`
+    Arrow,
     /// `==` (lexed from `===` too; strictness is a later concern)
     EqEq,
     /// `!=`
@@ -224,6 +226,9 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                                 pos += 1;
                             }
                             TokenKind::EqEq
+                        } else if bytes.get(pos) == Some(&b'>') {
+                            pos += 1;
+                            TokenKind::Arrow
                         } else {
                             TokenKind::Eq
                         }
@@ -349,8 +354,8 @@ mod tests {
     fn multi_char_operators() {
         use TokenKind::*;
         assert_eq!(
-            kinds("== === != <= >= = < >"),
-            vec![EqEq, EqEq, BangEq, LtEq, GtEq, Eq, Lt, Gt, Eof]
+            kinds("== === != <= >= = => < >"),
+            vec![EqEq, EqEq, BangEq, LtEq, GtEq, Eq, Arrow, Lt, Gt, Eof]
         );
     }
 
