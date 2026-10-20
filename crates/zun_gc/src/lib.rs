@@ -806,8 +806,8 @@ mod tests {
     fn stack_map_lookup_matches_the_registered_span() {
         let mut registry = StackMapRegistry::new();
         registry.replace([
-            NativeStackMap { pc: 200, span: 8 },
-            NativeStackMap { pc: 100, span: 16 },
+            NativeStackMap { pc: 200, span: 8, reference_slots: Vec::new() },
+            NativeStackMap { pc: 100, span: 16, reference_slots: Vec::new() },
         ]);
         assert_eq!(registry.lookup(100).unwrap().pc, 100);
         assert_eq!(registry.lookup(115).unwrap().pc, 100);
@@ -815,5 +815,22 @@ mod tests {
         assert!(registry.lookup(99).is_none());
         assert_eq!(registry.lookup(203).unwrap().pc, 200);
         assert!(registry.lookup(208).is_none());
+    }
+
+    #[test]
+    fn stack_map_reads_reference_slots_from_a_stopped_frame() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut frame = [0u64; 2];
+        frame[1] = object.addr() as u64;
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap {
+            pc: 100,
+            span: 4,
+            reference_slots: vec![8],
+        }]);
+
+        let roots = unsafe { registry.roots_at(101, frame.as_ptr() as *const u8) };
+        assert_eq!(roots, vec![object]);
     }
 }

@@ -294,12 +294,15 @@ pub enum RetVal {
 }
 
 /// A machine-code safepoint carrying a user stack map.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackMapInfo {
     /// Offset of the safepoint from the method's native entry point.
     pub code_offset: u32,
     /// Number of bytes covered by the map in the native frame.
     pub span: u32,
+    /// Frame offsets, relative to the native stack pointer, containing managed
+    /// references at this safepoint.
+    pub reference_slots: Vec<u32>,
     /// Absolute address of the safepoint after JIT finalization.
     pub pc: usize,
 }
@@ -604,10 +607,14 @@ impl Jit {
                 code.buffer
                     .user_stack_maps()
                     .iter()
-                    .map(|&(code_offset, span, _)| StackMapInfo {
+                    .map(|&(code_offset, span, ref stack_map)| StackMapInfo {
                         code_offset,
                         span,
                         pc: 0,
+                        reference_slots: stack_map
+                            .entries()
+                            .map(|(_, offset)| offset)
+                            .collect(),
                     })
                     .collect()
             })
@@ -669,6 +676,7 @@ impl Jit {
                 maps.iter().map(|map| zun_gc::NativeStackMap {
                     pc: map.pc,
                     span: map.span,
+                    reference_slots: map.reference_slots.clone(),
                 })
             }));
     }
