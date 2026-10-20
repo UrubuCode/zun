@@ -104,6 +104,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Array,
             imp: unavailable,
         },
+        NativeFn { name: "setEntries", params: &[Set], ret: Array, imp: unavailable },
         NativeFn {
             name: "weakMapNew",
             params: &[],

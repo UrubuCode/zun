@@ -1,5 +1,5 @@
 // Thin class wrapper over the runtime-owned ordered hash table.
-import { setAdd, setHas, setSize, setDelete, setClear, setValues } from "zun:collections";
+import { setAdd, setHas, setSize, setDelete, setClear, setValues, setEntries } from "zun:collections";
 
 class Set {
     add(value: any): boolean { return setAdd(this, value); }
@@ -8,4 +8,5 @@ class Set {
     delete(value: any): boolean { return setDelete(this, value); }
     clear(): void { setClear(this); }
     values(): Array { return setValues(this); }
+    entries(): Array { return setEntries(this); }
 }

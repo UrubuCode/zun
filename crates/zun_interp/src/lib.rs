@@ -1852,6 +1852,29 @@ impl Interp<'_> {
                 }
                 Ok(Value::Object(array))
             }
+            "setEntries" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let values = zun_gc::with_current_heap(|heap| heap.set_values(object))
+                    .ok_or(RunError::BadToken)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(values.len()));
+                for (index, value) in values.into_iter().enumerate() {
+                    let pair = zun_gc::with_current_heap_mut(|heap| {
+                        let pair = heap.alloc_array(2);
+                        let _ = heap.array_set(pair, 0, value);
+                        let _ = heap.array_set(pair, 1, value);
+                        pair
+                    });
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let _ = heap.array_set(
+                            array,
+                            index,
+                            zun_core::Any::object(pair.addr() as usize),
+                        );
+                    });
+                }
+                Ok(Value::Object(array))
+            }
             "weakMapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1924,6 +1947,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "setDelete",
         "setClear",
         "setValues",
+        "setEntries",
         "weakMapNew",
         "weakMapSet",
         "weakMapGet",
