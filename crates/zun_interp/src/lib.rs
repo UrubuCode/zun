@@ -515,9 +515,12 @@ impl Interp<'_> {
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
-                    if handle.environment().is_some() || (!dynamic && handle.method_rid() != token.rid()) {
+                    if !dynamic && (handle.environment().is_some() || handle.method_rid() != token.rid()) {
                         return Err(RunError::BadToken);
                     }
+                    let environment = handle.environment().map(|address| unsafe {
+                        zun_gc::Obj::from_addr(address as *mut u64)
+                    });
                     let target = self
                         .module
                         .tables
@@ -526,9 +529,21 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let target_body = read_body(&self.module.code, target.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                    if dynamic && target_body.param_count != expected_params as u16 {
+                    let hidden_environment = environment.is_some();
+                    if dynamic
+                        && target_body.param_count
+                            != (expected_params + if hidden_environment { 1 } else { 0 }) as u16
+                    {
                         return Err(RunError::BadToken);
                     }
+                    let args = if let Some(environment) = environment {
+                        let mut closure_args = Vec::with_capacity(args.len() + 1);
+                        closure_args.push(Value::Object(environment));
+                        closure_args.extend(args);
+                        closure_args
+                    } else {
+                        args
+                    };
                     let link = RootLink {
                         stack: &stack,
                         locals: &locals,
