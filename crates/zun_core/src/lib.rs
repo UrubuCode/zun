@@ -17,6 +17,42 @@ pub const fn field_offset(slot: usize) -> usize {
     (OBJECT_HEADER_SLOTS + slot) * SLOT_SIZE
 }
 
+/// Stable identity of a callable Zun function value.
+///
+/// The method RID identifies the code/signature metadata. `environment` is a
+/// managed object address containing captured locals, or zero for a non-
+/// capturing function. The handle is intentionally a plain frozen value;
+/// allocation and tracing belong to the GC/runtime layers built on top of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub struct FunctionHandle {
+    method_rid: u32,
+    reserved: u32,
+    environment: usize,
+}
+
+impl FunctionHandle {
+    /// Construct a function value for a method and optional closure object.
+    pub const fn new(method_rid: u32, environment: Option<usize>) -> Self {
+        Self {
+            method_rid,
+            reserved: 0,
+            environment: match environment {
+                Some(address) => address,
+                None => 0,
+            },
+        }
+    }
+
+    /// Metadata method RID targeted by this function value.
+    pub const fn method_rid(self) -> u32 { self.method_rid }
+
+    /// Captured environment address, if this value is a closure.
+    pub const fn environment(self) -> Option<usize> {
+        if self.environment == 0 { None } else { Some(self.environment) }
+    }
+}
+
 /// Runtime tag carried by a dynamically typed [`Any`] value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -759,6 +795,18 @@ mod tests {
     fn object_layout_offsets_are_stable() {
         assert_eq!(field_offset(0), 16);
         assert_eq!(field_offset(3), 40);
+    }
+
+    #[test]
+    fn function_handle_keeps_code_and_environment_identity() {
+        let plain = FunctionHandle::new(7, None);
+        assert_eq!(plain.method_rid(), 7);
+        assert_eq!(plain.environment(), None);
+
+        let closure = FunctionHandle::new(9, Some(0x1000));
+        assert_eq!(closure.method_rid(), 9);
+        assert_eq!(closure.environment(), Some(0x1000));
+        assert_eq!(FunctionHandle::new(9, Some(0x1000)), closure);
     }
 
     #[test]
