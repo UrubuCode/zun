@@ -318,10 +318,18 @@ fn date_surface_converts_iso_weekday_to_ecmascript_day() {
 
 #[test]
 fn int_recursion() {
-    assert_equivalent(
-        "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\
-         function main(): int { return sumTo(100); }",
-    );
+    std::thread::Builder::new()
+        .name("int-recursion-equivalence".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            assert_equivalent(
+                "function sumTo(n: int): int { if (n == 0) { return 0; } return n + sumTo(n - 1); }\n\
+                 function main(): int { return sumTo(100); }",
+            );
+        })
+        .expect("spawn recursion test thread")
+        .join()
+        .expect("recursion test thread completed");
 }
 
 #[test]
