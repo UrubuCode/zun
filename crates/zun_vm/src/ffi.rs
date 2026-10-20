@@ -345,4 +345,19 @@ mod tests {
         };
         assert!(process_id > 0);
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolver_reuses_a_successfully_loaded_library() {
+        let mut resolver = NativeLibraryResolver::new();
+        let first_path = {
+            let first = unsafe { resolver.load("kernel32") }.expect("load kernel32");
+            first.path().to_owned()
+        };
+        assert!(first_path.ends_with("kernel32.dll"));
+        assert_eq!(resolver.len(), 1);
+        let second = unsafe { resolver.load("kernel32") }.expect("reuse kernel32");
+        assert_eq!(first_path, second.path());
+        assert_eq!(resolver.len(), 1);
+    }
 }
