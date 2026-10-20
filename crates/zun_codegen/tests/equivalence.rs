@@ -142,6 +142,19 @@ fn number_source_methods_use_interpreter_fallback() {
 }
 
 #[test]
+fn number_clamp_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { clamp(low: number, high: number): number { if (this < low) { return low; } if (this > high) { return high; } return this; } }\n\
+         function main(): number { let value: number = 12.0; return value.clamp(0.0, 10.0); }",
+    )
+    .expect("compile Number clamp");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number method calls must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(10.0, zun_il::NumKind::F64)));
+}
+
+#[test]
 fn string_source_methods_use_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class String { concat(other: string): string { return this + other; } withSeparator(separator: string, other: string): string { return this + separator + other; } }\n\
