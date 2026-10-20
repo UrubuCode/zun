@@ -235,15 +235,22 @@ de implementação:
    §21). Compactação (mover objetos) fica para depois, pois exige reescrever
    referências e stack maps mais ricos.
 
-Estado: passos 1–4 feitos; o algoritmo do passo 5 está pronto e testado, e só a
-integração de raízes precisas (safepoints + stack maps) permanece — é o maior
-risco de memória e é feita isolada, com sua própria suíte.
+Estado: alocação, layout, acesso a fields e coleta mark-sweep estão implementados
+e testados. O JIT já suporta `newobj`, `ldfld` e `stfld` para campos numéricos e
+mantém equivalência com o interpretador. `callvirt` ainda é executado no Tier 0;
+o próximo passo de execução de objetos no JIT é introduzir dispatch virtual por
+slot, preservando a resolução de tokens e a tabela de métodos como contrato.
 
-O benchmark de Tier 0 também cobre agora loops de leitura/escrita de campos e
-dispatch virtual. Os lookups de metadata desses caminhos são pré-resolvidos na
-carga do módulo para indexação O(1); o próximo trabalho de performance é medir
-e reduzir o custo de execução dos próprios objetos no JIT, sem misturar isso com
-OSR ou a integração de stack maps.
+Depois do dispatch virtual, permanece a integração de raízes precisas
+(safepoints no interpretador e stack maps do Cranelift para frames nativos).
+Esse é o maior risco de memória e deve ser implementado isoladamente, com sua
+própria suíte de equivalência e testes de coleta durante chamadas JIT.
+
+O benchmark de Tier 0 também cobre loops de leitura/escrita de campos e dispatch
+virtual. Os lookups de metadata desses caminhos são pré-resolvidos na carga do
+módulo para indexação O(1). O próximo trabalho de performance é medir e reduzir
+o custo de execução de chamadas virtuais no JIT, sem misturar isso com OSR ou a
+integração de stack maps.
 
 ## 4.4 Biblioteca padrão, intrinsics e FFI (design)
 
