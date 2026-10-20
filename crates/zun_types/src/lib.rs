@@ -59,6 +59,33 @@ pub struct TypeSystem {
     fields: Vec<Option<FieldLayout>>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vtable_resolves_an_override_for_a_derived_type() {
+        let module = zun_compiler::compile(
+            "class Base { speak(): int { return 1; } }\n\
+             class Derived extends Base { speak(): int { return 2; } }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        let base_method = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "speak")
+            .map(|index| index as u32 + 1)
+            .expect("base method");
+        let derived_method = types
+            .resolve_virtual(2, base_method)
+            .expect("derived implementation");
+        assert_ne!(base_method, derived_method);
+    }
+}
+
 impl TypeSystem {
     /// Build descriptors and virtual dispatch tables from module metadata.
     pub fn from_module(module: &Module) -> Result<Self, TypeError> {

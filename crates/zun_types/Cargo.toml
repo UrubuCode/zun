@@ -13,3 +13,6 @@ zun_module = { path = "../zun_module" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+zun_compiler = { path = "../zun_compiler" }
