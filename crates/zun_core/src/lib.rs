@@ -394,6 +394,11 @@ impl MapIterator {
         self.next_index += 1;
         Some(entry)
     }
+
+    /// Whether all currently live entries have been consumed.
+    pub fn is_done(&self, map: &OrderedMap) -> bool {
+        self.next_index >= map.len()
+    }
 }
 
 impl Default for MapIterator {
@@ -417,6 +422,11 @@ impl SetIterator {
         let (value, _) = set.entry_at(self.next_index)?;
         self.next_index += 1;
         Some(value)
+    }
+
+    /// Whether all currently live values have been consumed.
+    pub fn is_done(&self, set: &OrderedMap) -> bool {
+        self.next_index >= set.len()
     }
 }
 

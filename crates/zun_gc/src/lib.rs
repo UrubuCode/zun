@@ -421,6 +421,11 @@ impl Heap {
         state.next(storage)
     }
 
+    pub fn array_iterator_done(&self, iterator: Obj) -> Option<bool> {
+        let (array, state) = self.array_iterators.get(&(iterator.addr() as usize))?;
+        Some(state.is_done(self.arrays.get(&(array.addr() as usize))?))
+    }
+
     pub fn alloc_set_iterator(&mut self, set: Obj) -> Option<Obj> {
         self.set_len(set)?;
         let iterator = self.alloc(0, 1);
@@ -433,6 +438,11 @@ impl Heap {
         let (set, state) = self.set_iterators.get_mut(&(iterator.addr() as usize))?;
         let storage = self.sets.get(&(set.addr() as usize))?;
         state.next(storage)
+    }
+
+    pub fn set_iterator_done(&self, iterator: Obj) -> Option<bool> {
+        let (set, state) = self.set_iterators.get(&(iterator.addr() as usize))?;
+        Some(state.is_done(self.sets.get(&(set.addr() as usize))?))
     }
 
     pub fn alloc_map_iterator(&mut self, map: Obj) -> Option<Obj> {
@@ -451,6 +461,11 @@ impl Heap {
         self.array_set(pair, 0, key);
         self.array_set(pair, 1, value);
         Some(pair)
+    }
+
+    pub fn map_iterator_done(&self, iterator: Obj) -> Option<bool> {
+        let (map, state) = self.map_iterators.get(&(iterator.addr() as usize))?;
+        Some(state.is_done(self.maps.get(&(map.addr() as usize))?))
     }
 
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {

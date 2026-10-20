@@ -1118,6 +1118,10 @@ impl Interp<'_> {
                     .map(Value::Any)
                     .unwrap_or(Value::Void))
             }
+            "arrayIteratorDone" => {
+                let iterator = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.array_iterator_done(iterator)).ok_or(RunError::BadToken)?))
+            }
             "setIteratorNew" => {
                 let set = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(set)).ok_or(RunError::BadToken)?;
@@ -1129,6 +1133,10 @@ impl Interp<'_> {
                     .map(Value::Any)
                     .unwrap_or(Value::Void))
             }
+            "setIteratorDone" => {
+                let iterator = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_iterator_done(iterator)).ok_or(RunError::BadToken)?))
+            }
             "mapIteratorNew" => {
                 let map = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(map)).ok_or(RunError::BadToken)?;
@@ -1139,6 +1147,10 @@ impl Interp<'_> {
                 Ok(zun_gc::with_current_heap_mut(|heap| heap.map_iterator_next(iterator))
                     .map(Value::Object)
                     .unwrap_or(Value::Void))
+            }
+            "mapIteratorDone" => {
+                let iterator = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_iterator_done(iterator)).ok_or(RunError::BadToken)?))
             }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
@@ -1257,7 +1269,7 @@ fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 }
 
 fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet", "f64ArrayNew", "f64ArrayGet", "f64ArraySet", "u16ArrayNew", "u16ArrayGet", "u16ArraySet", "arrayIteratorNew", "arrayIteratorNext", "setIteratorNew", "setIteratorNext", "mapIteratorNew", "mapIteratorNext"] {
+    for name in ["bufferNew", "bufferLength", "bufferGetU8", "bufferSetU8", "bufferReadU32", "bufferWriteU32", "bufferReadF64", "bufferWriteF64", "dataViewNew", "dataViewGetU32", "dataViewSetU32", "dataViewGetU16", "dataViewSetU16", "dataViewGetF64", "dataViewSetF64", "u32ArrayNew", "u32ArrayGet", "u32ArraySet", "u8ArrayNew", "u8ArrayGet", "u8ArraySet", "f64ArrayNew", "f64ArrayGet", "f64ArraySet", "u16ArrayNew", "u16ArrayGet", "u16ArraySet", "arrayIteratorNew", "arrayIteratorNext", "arrayIteratorDone", "setIteratorNew", "setIteratorNext", "setIteratorDone", "mapIteratorNew", "mapIteratorNext", "mapIteratorDone"] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
