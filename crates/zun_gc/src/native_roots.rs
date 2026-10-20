@@ -10,7 +10,8 @@ thread_local! {
 /// Guard that exposes object references held by a native/JIT frame to GC.
 #[derive(Debug)]
 pub struct NativeRootScope {
-    _private: (),
+    roots: *const Obj,
+    len: usize,
 }
 
 impl NativeRootScope {
@@ -23,14 +24,20 @@ impl NativeRootScope {
         NATIVE_ROOTS.with(|registered| {
             registered.borrow_mut().push((roots.as_ptr(), roots.len()));
         });
-        Self { _private: () }
+        Self { roots: roots.as_ptr(), len: roots.len() }
     }
 }
 
 impl Drop for NativeRootScope {
     fn drop(&mut self) {
         NATIVE_ROOTS.with(|registered| {
-            registered.borrow_mut().pop();
+            let mut registered = registered.borrow_mut();
+            if let Some(index) = registered
+                .iter()
+                .rposition(|&(ptr, len)| ptr == self.roots && len == self.len)
+            {
+                registered.remove(index);
+            }
         });
     }
 }

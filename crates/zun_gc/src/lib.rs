@@ -838,6 +838,27 @@ mod tests {
     }
 
     #[test]
+    fn native_root_scopes_can_unwind_out_of_order() {
+        let mut heap = Heap::new();
+        let outer_object = heap.alloc(1, 0);
+        let inner_object = heap.alloc(2, 0);
+        let outer = [outer_object];
+        let inner = [inner_object];
+        let outer_scope = unsafe { NativeRootScope::enter(&outer) };
+        let inner_scope = unsafe { NativeRootScope::enter(&inner) };
+
+        drop(outer_scope);
+        let mut roots = Vec::new();
+        append_native_roots(&mut roots);
+        assert_eq!(roots, inner);
+
+        drop(inner_scope);
+        roots.clear();
+        append_native_roots(&mut roots);
+        assert!(roots.is_empty());
+    }
+
+    #[test]
     fn stack_map_lookup_matches_the_registered_span() {
         let mut registry = StackMapRegistry::new();
         registry.replace([
