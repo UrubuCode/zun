@@ -9,11 +9,13 @@
 mod builtins;
 mod collections;
 mod native;
+mod roots;
 mod unwind;
 pub mod value;
 
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
+use roots::collect_frame_roots;
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3810,21 +3812,6 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
-    }
-}
-
-/// Add the object references found in a frame's stack and locals to `roots`.
-fn collect_frame_roots(stack: &[Value], locals: &[Value], roots: &mut Vec<zun_gc::Obj>) {
-    for v in stack.iter().chain(locals.iter()) {
-        match v {
-            Value::Object(o) => roots.push(*o),
-            Value::Function(handle) => {
-                if let Some(address) = handle.environment() {
-                    roots.push(unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
-                }
-            }
-            _ => {}
-        }
     }
 }
 
