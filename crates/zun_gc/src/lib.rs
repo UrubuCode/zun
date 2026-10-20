@@ -293,35 +293,6 @@ impl Heap {
         Some(state.is_done(self.maps.get(&(map.addr() as usize))?))
     }
 
-    pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
-        let object = self.alloc(0, 0);
-        self.dates.insert(
-            object.addr() as usize,
-            millis.map_or(
-                zun_core::DateValue::invalid(),
-                zun_core::DateValue::from_millis,
-            ),
-        );
-        object
-    }
-
-    pub fn alloc_date_now(&mut self) -> Obj {
-        let millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-            .ok();
-        self.alloc_date(millis)
-    }
-
-    pub fn alloc_error(&mut self, name: impl Into<String>, message: impl Into<String>) -> Obj {
-        let object = self.alloc(0, 0);
-        self.errors.insert(
-            object.addr() as usize,
-            zun_core::ErrorValue::new(name, message),
-        );
-        object
-    }
-
     pub fn error_name(&self, object: Obj) -> Option<&str> {
         self.errors
             .get(&(object.addr() as usize))
