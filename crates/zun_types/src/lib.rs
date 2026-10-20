@@ -239,7 +239,11 @@ impl TypeSystem {
 
     /// Number of virtual slots materialized in each type vtable.
     pub fn virtual_slot_count(&self) -> usize {
-        self.method_slots.iter().filter(|slot| slot.is_some()).count()
+        self.method_slots
+            .iter()
+            .filter_map(|slot| *slot)
+            .max()
+            .map_or(0, |slot| slot + 1)
     }
 
     /// Number of local type descriptors.
