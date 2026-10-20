@@ -16,6 +16,14 @@ class Number {
         return this < 0.0;
     }
 
+    isNaN(): boolean {
+        return this != this;
+    }
+
+    isFinite(): boolean {
+        return this == this;
+    }
+
     sign(): number {
         if (this < 0.0) { return -1.0; }
         if (this > 0.0) { return 1.0; }

@@ -1076,6 +1076,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_finiteness_source_methods() {
+        let module = zun_compiler::compile(
+            "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\
+             function main(): boolean { let value: number = 42.0; if (!value.isFinite()) { return false; } return !value.isNaN(); }",
+        )
+        .expect("compile Number finiteness methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number finiteness methods");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
             "import { toString } from \"zun:number\";\n\
