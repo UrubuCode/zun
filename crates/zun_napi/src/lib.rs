@@ -5,6 +5,26 @@
 
 use std::slice;
 
+#[cfg(feature = "node-api")]
+mod node_api {
+    use core::ffi::c_void;
+
+    /// Opaque N-API environment handle.
+    type NapiEnv = *mut c_void;
+    /// Opaque N-API JavaScript value handle.
+    type NapiValue = *mut c_void;
+
+    /// Minimal N-API module entry point. The full JavaScript surface is built
+    /// on top of the stable `zun_host_*` ABI in a later adapter layer.
+    #[no_mangle]
+    pub unsafe extern "C" fn napi_register_module_v1(
+        _env: NapiEnv,
+        exports: NapiValue,
+    ) -> NapiValue {
+        exports
+    }
+}
+
 /// Opaque host state reserved for scheduler and module-loader state.
 #[repr(C)]
 #[derive(Debug)]

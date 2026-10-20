@@ -330,6 +330,8 @@ The following runtime contracts are implemented and covered by tests:
   `.zm` module retained as the fallback for ineligible methods.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
+- An optional `node-api` feature exporting the standard
+  `napi_register_module_v1` entry point over that host boundary.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, and Promise integration.
 

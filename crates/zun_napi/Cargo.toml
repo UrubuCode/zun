@@ -9,6 +9,10 @@ description = "C ABI host boundary for embedding the Zun VM."
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[features]
+default = []
+node-api = []
+
 [dependencies]
 zun_interp = { path = "../zun_interp" }
 zun_vm = { path = "../zun_vm" }
