@@ -360,6 +360,21 @@ mod tests {
             dispatch(char_code_id, &[NativeArg::Str("😀"), NativeArg::Int(0)], &mut sink).unwrap(),
             NativeValue::Int(0xD83D)
         ));
+        let (starts_id, _) = resolve("zun:string", "startsWith").unwrap();
+        assert!(matches!(
+            dispatch(starts_id, &[NativeArg::Str("zun"), NativeArg::Str("zu")], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        let (ends_id, _) = resolve("zun:string", "endsWith").unwrap();
+        assert!(matches!(
+            dispatch(ends_id, &[NativeArg::Str("zun"), NativeArg::Str("un")], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        let (trim_id, _) = resolve("zun:string", "trim").unwrap();
+        assert!(matches!(
+            dispatch(trim_id, &[NativeArg::Str("  zun  ")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "zun"
+        ));
     }
 
     #[test]

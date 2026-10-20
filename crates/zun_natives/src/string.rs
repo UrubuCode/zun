@@ -43,6 +43,31 @@ fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
         .ok_or_else(|| NativeError(format!("charCodeAt: index {index} is out of bounds")))
 }
 
+fn starts_with(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match (args.first(), args.get(1)) {
+        (Some(NativeArg::Str(value)), Some(NativeArg::Str(prefix))) => {
+            Ok(NativeValue::Bool(value.starts_with(prefix)))
+        }
+        _ => Err(NativeError("startsWith: expected two strings".to_string())),
+    }
+}
+
+fn ends_with(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match (args.first(), args.get(1)) {
+        (Some(NativeArg::Str(value)), Some(NativeArg::Str(suffix))) => {
+            Ok(NativeValue::Bool(value.ends_with(suffix)))
+        }
+        _ => Err(NativeError("endsWith: expected two strings".to_string())),
+    }
+}
+
+fn trim(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.trim().to_string())),
+        _ => Err(NativeError("trim: expected a string".to_string())),
+    }
+}
+
 /// The machine-facing string primitives used by `zun:core`.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:string",
@@ -51,5 +76,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "concat", params: &[Str, Str], ret: Str, imp: concat },
         NativeFn { name: "contains", params: &[Str, Str], ret: Bool, imp: contains },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
+        NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
+        NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },
+        NativeFn { name: "trim", params: &[Str], ret: Str, imp: trim },
     ],
 };
