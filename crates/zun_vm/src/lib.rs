@@ -101,6 +101,9 @@ pub fn verify_manifest(
     loader: &zun_loader::ModuleLoader,
     manifest: &zun_loader::ModuleManifest,
 ) -> Result<(), VmError> {
+    loader
+        .validate_member_refs(manifest)
+        .map_err(VmError::Load)?;
     for name in manifest.load_order(loader).map_err(VmError::Load)? {
         let scope = loader
             .get(name)

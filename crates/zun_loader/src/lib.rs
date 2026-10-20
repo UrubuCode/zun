@@ -526,6 +526,19 @@ impl ModuleLoader {
         Ok((resolved.scope, resolved.token))
     }
 
+    /// Validate every member reference declared by the modules in a manifest.
+    pub fn validate_member_refs(&self, manifest: &ModuleManifest) -> Result<(), LoadError> {
+        for name in manifest.load_order(self)? {
+            let requester = self
+                .get(name)
+                .ok_or_else(|| LoadError::UnresolvedModule(name.to_owned()))?;
+            for rid in 1..=requester.module.tables.member_refs.len() as u32 {
+                self.resolve_member_ref(requester, Token::new(TableKind::MemberRef, rid))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Number of registered modules.
     pub fn len(&self) -> usize {
         self.modules.len()
