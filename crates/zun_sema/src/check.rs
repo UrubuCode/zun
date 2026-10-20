@@ -17,7 +17,7 @@ pub fn check(
     program: &ast::Program,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> hir::Program {
-    check_with_externals(source, program, diagnostics, &[])
+    check_impl(source, program, diagnostics, &[], false)
 }
 
 /// A source-level function signature imported from another module.
@@ -40,6 +40,16 @@ pub fn check_with_externals(
     diagnostics: &mut Vec<Diagnostic>,
     external_functions: &[ExternalFunction],
 ) -> hir::Program {
+    check_impl(source, program, diagnostics, external_functions, true)
+}
+
+fn check_impl(
+    source: &str,
+    program: &ast::Program,
+    diagnostics: &mut Vec<Diagnostic>,
+    external_functions: &[ExternalFunction],
+    allow_external_modules: bool,
+) -> hir::Program {
     let external_by_name: HashMap<_, _> = external_functions
         .iter()
         .map(|function| (function.name.clone(), function.clone()))
@@ -55,7 +65,7 @@ pub fn check_with_externals(
         imports: HashMap::new(),
         external_functions: external_by_name,
     };
-    checker.resolve_imports(program);
+    checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
     // function and method signatures so calls can be forward references, then
     // bodies. Methods are checked as functions with an implicit `this` param.
@@ -184,9 +194,12 @@ impl Checker<'_> {
 
     /// Resolve `import { ... } from "zun:..."` declarations to intrinsics,
     /// binding each imported name to its signature and dispatch id.
-    fn resolve_imports(&mut self, program: &ast::Program) {
+    fn resolve_imports(&mut self, program: &ast::Program, allow_external_modules: bool) {
         for import in &program.imports {
             let Some(module) = zun_natives::module(&import.module) else {
+                if allow_external_modules && !import.module.starts_with("zun:") {
+                    continue;
+                }
                 self.error(import.span, format!("unknown module `{}`", import.module));
                 continue;
             };
@@ -1420,6 +1433,34 @@ mod tests {
             "function inc(n: int): int { return n + 1; }\n\
              function main() { print(inc(41)); }",
         );
+    }
+
+    #[test]
+    fn checks_external_function_call_from_linker_signature() {
+        let source = "import { answer } from \"core\"; function main(): int { return answer(41); }";
+        let mut diagnostics = Vec::new();
+        let ast = parse(source, &mut diagnostics);
+        let hir = check_with_externals(
+            source,
+            &ast,
+            &mut diagnostics,
+            &[ExternalFunction {
+                module: "core".into(),
+                name: "answer".into(),
+                params: vec![Ty::INT],
+                return_ty: Ty::INT,
+            }],
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let hir::Stmt::Return(Some(expr)) = &hir.functions[0].body[0] else {
+            panic!("expected return statement")
+        };
+        assert!(matches!(
+            expr.kind,
+            hir::ExprKind::ExternalCall { ref module, ref name, .. }
+                if module == "core" && name == "answer"
+        ));
+        assert_eq!(expr.ty, Ty::INT);
     }
 
     #[test]
