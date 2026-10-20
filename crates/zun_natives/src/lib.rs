@@ -17,6 +17,7 @@
 mod env;
 mod fs;
 mod io;
+mod math;
 mod time;
 
 use std::collections::HashMap;
@@ -158,7 +159,7 @@ pub struct Module {
 
 /// Every built-in native module, in id order. A function's id is its global
 /// index across this list; `print` is the very first entry, so its id is 0.
-pub static MODULES: &[Module] = &[io::MODULE, fs::MODULE, env::MODULE, time::MODULE];
+pub static MODULES: &[Module] = &[io::MODULE, fs::MODULE, env::MODULE, time::MODULE, math::MODULE];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
 pub const PRINT: u32 = 0;
@@ -284,5 +285,26 @@ mod tests {
                 assert_eq!(resolved.name, function.name);
             }
         }
+    }
+
+    #[test]
+    fn math_intrinsics_resolve_after_existing_ids() {
+        let (id, function) = resolve("zun:math", "sqrt").expect("math intrinsic");
+        assert_eq!(function.ret, NativeTy::F64);
+        assert_eq!(id as usize, MODULES[..4].iter().map(|m| m.functions.len()).sum::<usize>() + 1);
+    }
+
+    #[test]
+    fn math_intrinsics_execute_with_numeric_values() {
+        let (id, _) = resolve("zun:math", "sqrt").unwrap();
+        let mut sink = TestSink;
+        let value = dispatch(id, &[NativeArg::Float(81.0)], &mut sink).unwrap();
+        assert!(matches!(value, NativeValue::Float(value) if value == 9.0));
+    }
+
+    struct TestSink;
+
+    impl Sink for TestSink {
+        fn println(&mut self, _: &str) {}
     }
 }
