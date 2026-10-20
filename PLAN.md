@@ -658,10 +658,12 @@ second. The cost is the **interpreter garbage collector**, not the collection:
 mark-sweep fires every `GC_INTERVAL` (256) allocations and scans the whole live
 set each time, so a program that keeps O(n) objects live pays roughly
 O(n^2 / 256) in GC over the run. For large live sets this dominates everything.
-**Fix directions:** a generational / incremental collector, or at minimum an
-adaptive GC interval that scales with live-set size (so collections stay
-proportional to garbage, not to total live objects); revisit the deferred
-JIT-frame stack maps so hot code can leave Tier 0. This is the real performance
+The adaptive GC interval is implemented: it scales the next safepoint with the
+live-set and increases the interval when a collection reclaims nothing. This
+removes the fixed-256 policy, but does not eliminate the underlying whole-heap
+scan. A generational/incremental collector remains the long-term fix; precise
+JIT-frame stack maps and safe native-frame scanning are also still required
+before hot managed code can leave Tier 0. This remains the real performance
 ceiling for large programs today, independent of any individual data structure.
 
 ## 5. Riscos e pontos de atenção
