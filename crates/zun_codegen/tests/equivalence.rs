@@ -620,6 +620,19 @@ fn array_sort_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_find_index_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { indexOf(value: any): int { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return index as int; } index = index + 1; } return -1; } findIndex(value: any): int { return this.indexOf(value); } }\n\
+         function main(): int { let values = new Array(3); values[0] = 4; values[1] = 8; values[2] = 15; let needle: any = values[1]; return values.findIndex(needle); }",
+    )
+    .expect("compile Array findIndex");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 1));
+}
+
+#[test]
 fn array_product_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\

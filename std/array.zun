@@ -156,6 +156,10 @@ class Array {
         return -1;
     }
 
+    findIndex(value: any): int {
+        return this.indexOf(value);
+    }
+
     isEmpty(): boolean {
         return this.length == 0;
     }
