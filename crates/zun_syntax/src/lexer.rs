@@ -407,6 +407,15 @@ mod tests {
     }
 
     #[test]
+    fn nullish_and_optional_chaining_are_distinct_tokens() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("value ?? fallback; value?.field"),
+            vec![Ident, Nullish, Ident, Semi, Ident, QuestionDot, Ident, Eof]
+        );
+    }
+
+    #[test]
     fn unterminated_string_diagnoses() {
         let mut diags = Vec::new();
         let toks = lex("\"oops", &mut diags);
