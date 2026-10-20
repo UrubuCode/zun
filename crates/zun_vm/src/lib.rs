@@ -178,6 +178,21 @@ mod tests {
     }
 
     #[test]
+    fn verifies_loaded_binary_callback_tokens() {
+        let module = zun_compiler::compile(
+            "class Array { reduce(callback: Reducer, initial: any): any { let accumulator: any = initial; let index: u64 = 0; while (index < this.length) { accumulator = callback(accumulator, this[index]); index = index + 1; } return accumulator; } }\n\
+             function add(accumulator: any, value: any): any { return (accumulator as number) + (value as number); }\n\
+             function main(): any { let values = new Array(1); values[0] = 41.0; return values.reduce(add, 1.0); }",
+        )
+        .expect("compile binary callback module");
+        let scope = zun_loader::ModuleScope::from_bytes("app", &module.write()).unwrap();
+        let mut loader = zun_loader::ModuleLoader::new();
+        loader.insert(scope).unwrap();
+        let manifest = zun_loader::ModuleManifest::new("app", Vec::<String>::new());
+        verify_manifest(&loader, &manifest).expect("binary callback token verifies");
+    }
+
+    #[test]
     fn invokes_exported_method_from_loaded_module() {
         let module = zun_compiler::compile(
             "function answer(value: int): int { return value + 1; } function main(): int { return 0; }",

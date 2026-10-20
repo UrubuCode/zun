@@ -95,6 +95,12 @@ fn resolve_loaded_call(
         Operand::Token(token) => *token,
         _ => return None,
     };
+    if opcode == Opcode::CallIndirect
+        && token.table() == Some(zun_metadata::TableKind::MemberRef)
+        && token.rid() == 0
+    {
+        return Some((3, 1));
+    }
     if token.table() != Some(zun_metadata::TableKind::MemberRef) {
         return resolve_call(requester.module(), opcode, operand);
     }
