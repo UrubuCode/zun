@@ -657,6 +657,7 @@ fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
         Value::Str(s) => zun_natives::NativeArg::Str(s),
         Value::Object(object) => zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize)),
         Value::Any(value) => zun_natives::NativeArg::Any(*value),
+        Value::Function(_) => panic!("function values cannot be passed to native calls yet"),
         Value::Void => zun_natives::NativeArg::Void,
     }
 }

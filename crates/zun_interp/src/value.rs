@@ -24,6 +24,8 @@ pub enum Value {
     /// A reference to an object in the runtime [`Heap`](zun_gc::Heap). Reference
     /// semantics (shared, mutable) come from the shared raw pointer.
     Object(zun_gc::Obj),
+    /// A callable method plus its optional captured environment.
+    Function(zun_core::FunctionHandle),
     /// The absence of a value (a void call's result).
     Void,
 }
@@ -36,6 +38,9 @@ impl Value {
             Value::Float(value, _) => Some(zun_core::Any::float(*value)),
             Value::Bool(value) => Some(zun_core::Any::bool(*value)),
             Value::Object(object) => Some(zun_core::Any::object(object.addr() as usize)),
+            // Function values are kept out of Any so their environment stays
+            // visible to precise managed-root handling.
+            Value::Function(_) => None,
             Value::Str(value) => Some(zun_core::Any::string(heap.intern_string(value.clone()))),
             Value::Void => None,
             Value::Any(value) => Some(*value),
@@ -116,6 +121,7 @@ impl Value {
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => s.to_string(),
             Value::Object(_) => "[object]".to_string(),
+            Value::Function(_) => "[function]".to_string(),
             Value::Void => "undefined".to_string(),
             Value::Any(_) => "[any]".to_string(),
         }
@@ -240,6 +246,14 @@ mod tests {
         assert_eq!(Value::Bool(true).display(), "true");
         assert_eq!(Value::Str("hi".into()).display(), "hi");
         assert_eq!(Value::Void.display(), "undefined");
+    }
+
+    #[test]
+    fn function_values_keep_their_handle_without_dynamic_boxing() {
+        let value = Value::Function(zun_core::FunctionHandle::new(4, Some(0x2000)));
+        assert_eq!(value.display(), "[function]");
+        let mut heap = zun_gc::Heap::new();
+        assert!(value.box_any(&mut heap).is_none());
     }
 
     #[test]
