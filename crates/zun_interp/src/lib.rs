@@ -101,6 +101,26 @@ pub fn run_method(
     run_method_with(module, method_rid, args, output, None, None)
 }
 
+/// Execute a callable function handle with its captured environment.
+///
+/// Closure environments are represented as the hidden first argument, exactly
+/// as they are for `CallIndirect`; hosts and schedulers can therefore invoke a
+/// queued callback without reconstructing its capture layout.
+pub fn run_function(
+    module: &Module,
+    handle: zun_core::FunctionHandle,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    if let Some(address) = handle.environment() {
+        let environment = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+        call_args.push(Value::Object(environment));
+    }
+    call_args.extend(args);
+    run_method(module, handle.method_rid(), call_args, output)
+}
+
 /// Execute a method from a loaded module set, allowing top-level MemberRef calls.
 pub fn run_method_loaded(
     scope: &zun_loader::ModuleScope,
@@ -1845,6 +1865,31 @@ mod method_tests {
         .expect("compile generic function callback");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run generic function callback");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn host_function_entry_reuses_callable_handle_dispatch() {
+        let module = zun_compiler::compile(
+            "function add_one(value: number): number { return value + 1.0; }\n\
+             function main(): number { return 0.0; }",
+        )
+        .expect("compile host function callback");
+        let rid = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "add_one")
+            .map(|index| index as u32 + 1)
+            .expect("add_one method");
+        let mut output = CaptureOutput::default();
+        let result = run_function(
+            &module,
+            zun_core::FunctionHandle::new(rid, None),
+            vec![Value::Float(41.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .expect("run host callback");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 
