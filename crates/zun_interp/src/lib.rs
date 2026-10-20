@@ -1010,6 +1010,17 @@ mod method_tests {
     }
 
     #[test]
+    fn nested_catch_can_rethrow_to_an_outer_handler() {
+        let module = zun_compiler::compile(
+            "class Error {} function main(): int { try { try { throw new Error(); } catch (inner: Error) { throw inner; } } catch (outer: Error) { return 9; } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("outer catch should handle rethrow");
+        assert_eq!(value.as_int(), 9);
+    }
+
+    #[test]
     fn runs_non_entry_method_with_arguments() {
         let module = zun_compiler::compile(
             "function add_one(value: int): int { return value + 1; } function main(): int { return 0; }",
