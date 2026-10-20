@@ -617,8 +617,9 @@ The following runtime contracts are implemented and covered by tests:
 - GC weak-reference slots with post-mark clearing; `WeakMap` ephemeron
   fixed-point marking is now implemented for managed object values and their
   dynamic/collection children; finalization
-  queues are now exposed as a post-sweep token queue; source-level `WeakMap`
-  bindings are available while callback scheduling remains a separate gate.
+queues are now exposed as a post-sweep token queue with stable registration IDs
+and cancellation before enqueue; source-level `WeakMap` bindings are available
+while callback scheduling remains a separate gate.
 - adaptive interpreter GC intervals that increase when a collection reclaims
   nothing, with weak-collection stress coverage at repeated safepoints;
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
