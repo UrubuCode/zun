@@ -148,6 +148,19 @@ class String {
         return true;
     }
 
+    isControl(): boolean {
+        if (this.isEmpty()) { return false; }
+        let index: u64 = 0;
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            if (code > 31) {
+                if (code != 127) { return false; }
+            }
+            index = index + 1;
+        }
+        return true;
+    }
+
     isSignedInteger(): boolean {
         if (this.isEmpty()) { return false; }
         let start: u64 = 0;

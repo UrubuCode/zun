@@ -1862,6 +1862,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_control_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isControl(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code > 31) { if (code != 127) { return false; } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"\\n\\t\"; return value.isControl(); }",
+        )
+        .expect("compile String isControl");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isControl");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_is_signed_integer_source_method() {
         let module = zun_compiler::compile(
             "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
