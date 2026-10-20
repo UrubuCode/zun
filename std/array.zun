@@ -336,6 +336,18 @@ class Array {
         return true;
     }
 
+    isPalindrome(): boolean {
+        if (this.length < 2) { return true; }
+        let left: u64 = 0;
+        let right: u64 = this.length - 1;
+        while (left < right) {
+            if (this[left] != this[right]) { return false; }
+            left = left + 1;
+            right = right - 1;
+        }
+        return true;
+    }
+
     count(value: any): u64 {
         let total: u64 = 0;
         let index: u64 = 0;

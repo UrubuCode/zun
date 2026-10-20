@@ -980,6 +980,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_is_palindrome_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { isPalindrome(): boolean { if (this.length < 2) { return true; } let left: u64 = 0; let right: u64 = this.length - 1; while (left < right) { if (this[left] != this[right]) { return false; } left = left + 1; right = right - 1; } return true; } } function main(): boolean { let values = new Array(5); values[0] = 1.0; values[1] = 2.0; values[2] = 3.0; values[3] = 2.0; values[4] = 1.0; return values.isPalindrome(); }",
+        )
+        .expect("compile Array isPalindrome");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array isPalindrome");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_swap_source_method() {
         let module = zun_compiler::compile(
             "class Array { swap(first: u64, second: u64): Array { let temporary: any = this[first]; this[first] = this[second]; this[second] = temporary; return this; } }\n\
