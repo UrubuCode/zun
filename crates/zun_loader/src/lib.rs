@@ -267,4 +267,15 @@ mod tests {
         assert_eq!(loader.len(), 2);
         assert_eq!(loader.get("app").unwrap().name(), "app");
     }
+
+    #[test]
+    fn registry_rejects_duplicate_identities() {
+        let bytes = Module::new().write();
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("core", &bytes).expect("first load");
+        assert!(matches!(
+            loader.load_bytes("core", &bytes),
+            Err(LoadError::DuplicateModule(name)) if name == "core"
+        ));
+    }
 }
