@@ -151,25 +151,6 @@ impl Heap {
         ))
     }
 
-    pub fn buffer_view(
-        &self,
-        object: Obj,
-        offset: usize,
-        length: usize,
-    ) -> Option<zun_core::ByteView> {
-        zun_core::ByteView::new(self.buffer_len(object)?, offset, length)
-    }
-
-    /// Create an endian-aware, unaligned view over a managed byte buffer.
-    pub fn data_view(
-        &self,
-        object: Obj,
-        offset: usize,
-        length: usize,
-    ) -> Option<zun_core::DataView> {
-        zun_core::DataView::new(self.buffer_len(object)?, offset, length)
-    }
-
     pub fn data_view_read_u16(
         &self,
         object: Obj,
