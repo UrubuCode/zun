@@ -271,8 +271,20 @@ impl Heap {
         object
     }
 
+    pub fn alloc_date_now(&mut self) -> Obj {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+            .ok();
+        self.alloc_date(millis)
+    }
+
     pub fn date_millis(&self, object: Obj) -> Option<i64> {
         self.dates.get(&(object.addr() as usize))?.millis()
+    }
+
+    pub fn date_is_valid(&self, object: Obj) -> Option<bool> {
+        Some(self.dates.get(&(object.addr() as usize))?.is_valid())
     }
 
     pub fn date_set_millis(&mut self, object: Obj, millis: i64) -> Option<()> {
@@ -1213,6 +1225,10 @@ mod tests {
         assert_eq!(heap.date_invalidate(earlier), Some(()));
         assert_eq!(heap.date_millis(earlier), None);
         assert_eq!(heap.date_millis(invalid), None);
+        assert_eq!(heap.date_is_valid(invalid), Some(false));
+        let now = heap.alloc_date_now();
+        assert_eq!(heap.date_is_valid(now), Some(true));
+        assert!(heap.date_millis(now).is_some());
         assert_eq!(heap.date_compare(earlier, invalid), None);
     }
 
