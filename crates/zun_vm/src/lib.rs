@@ -113,6 +113,31 @@ pub fn verify_manifest(
     Ok(())
 }
 
+/// Invoke an exported method from a loaded module by source-level name.
+///
+/// This is the host-side cross-module call path. Compiler-emitted `MemberRef`
+/// calls will be routed through the same resolution contract once module-aware
+/// frames are enabled in the interpreter.
+pub fn invoke_export(
+    loader: &zun_loader::ModuleLoader,
+    manifest: &zun_loader::ModuleManifest,
+    module: &str,
+    export: &str,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, VmError> {
+    verify_manifest(loader, manifest)?;
+    let (scope, token) = loader
+        .resolve_export(module, export)
+        .map_err(VmError::Load)?;
+    let zun_loader::Export::Method(token) = token else {
+        return Err(VmError::Load(zun_loader::LoadError::UnresolvedModule(
+            format!("{module}::{export} is not a method"),
+        )));
+    };
+    zun_interp::run_method(scope.module(), token.rid(), args, output).map_err(VmError::Run)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +167,31 @@ mod tests {
         loader.insert(entry).unwrap();
         let manifest = zun_loader::ModuleManifest::new("app", vec!["core".into()]);
         verify_manifest(&loader, &manifest).expect("all modules verify");
+    }
+
+    #[test]
+    fn invokes_exported_method_from_loaded_module() {
+        let module = zun_compiler::compile(
+            "function answer(value: int): int { return value + 1; } function main(): int { return 0; }",
+        )
+        .unwrap();
+        let scope = zun_loader::ModuleScope::from_bytes("core", &module.write()).unwrap();
+        let mut loader = zun_loader::ModuleLoader::new();
+        loader.insert(scope).unwrap();
+        let manifest = zun_loader::ModuleManifest::new("core", Vec::<String>::new());
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = invoke_export(
+            &loader,
+            &manifest,
+            "core",
+            "answer",
+            vec![zun_interp::value::Value::Int(41, zun_il::NumKind::I32)],
+            &mut output,
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            zun_interp::value::Value::Int(42, zun_il::NumKind::I32)
+        ));
     }
 }
