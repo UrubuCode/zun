@@ -37,6 +37,13 @@ pub(super) enum FrameState {
     Suspended { promise: Obj, resume_pc: usize },
 }
 
+/// Internal outcome used by the resumable interpreter boundary.
+pub(super) enum ExecutionOutcome {
+    Complete(Value),
+    Suspended(ExecutionFrame),
+    Thrown(Value),
+}
+
 impl ExecutionFrame {
     pub(super) fn new(method_rid: u32, locals: Vec<Value>) -> Self {
         Self {
@@ -75,5 +82,12 @@ mod tests {
         assert_eq!(frame.resume(), Some(promise));
         assert_eq!(frame.pc, 42);
         assert_eq!(frame.state, FrameState::Runnable);
+    }
+
+    #[test]
+    fn execution_outcome_can_own_a_suspended_frame() {
+        let frame = ExecutionFrame::new(3, vec![Value::Void]);
+        let outcome = ExecutionOutcome::Suspended(frame);
+        assert!(matches!(outcome, ExecutionOutcome::Suspended(_)));
     }
 }
