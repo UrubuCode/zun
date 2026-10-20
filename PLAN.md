@@ -400,6 +400,10 @@ The following runtime contracts are implemented and covered by tests:
   heap-level Date accessors, including timestamp mutation and invalidation.
   UTC weekday and ordinal-day accessors are also available, including
   runtime-clock construction through `alloc_date_now`.
+  A `zun:date` native surface now exposes deterministic UTC year, month, day,
+  hour, weekday, and ISO-date operations over millisecond timestamps, with a
+  source-level `Date` class for the interpreter path; JIT lowering remains a
+  separate gate for these new intrinsics.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

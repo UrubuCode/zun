@@ -21,6 +21,7 @@ mod math;
 mod number;
 mod string;
 mod time;
+mod date;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -176,6 +177,7 @@ pub static MODULES: &[Module] = &[
     math::MODULE,
     number::MODULE,
     string::MODULE,
+    date::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
