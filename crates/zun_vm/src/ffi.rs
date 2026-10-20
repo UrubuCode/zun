@@ -222,6 +222,32 @@ impl NativeLibrary {
         Ok(unsafe { symbol(first, second) })
     }
 
+    /// Call a C symbol with three `i64` arguments and an `i64` result.
+    ///
+    /// # Safety
+    /// The symbol must use the C ABI and have the exact signature
+    /// `extern "C" fn(i64, i64, i64) -> i64`.
+    pub unsafe fn call_i64_3(
+        &self,
+        name: &[u8],
+        first: i64,
+        second: i64,
+        third: i64,
+    ) -> Result<i64, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i64, i64, i64) -> i64>(name) }?;
+        Ok(unsafe { symbol(first, second, third) })
+    }
+
+    /// Call a C symbol with no arguments and a C integer-style boolean result.
+    ///
+    /// # Safety
+    /// The symbol must use the C ABI and have the exact signature
+    /// `extern "C" fn() -> i32`.
+    pub unsafe fn call_bool_0(&self, name: &[u8]) -> Result<bool, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn() -> i32>(name) }?;
+        Ok(unsafe { symbol() } != 0)
+    }
+
     /// Call a C symbol with no arguments and an `f64` result.
     ///
     /// # Safety
@@ -328,9 +354,13 @@ mod tests {
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
         let result = unsafe { library.call_i64_2(b"zun_missing_symbol", 1, 2) };
         assert!(result.is_err());
+        let result = unsafe { library.call_i64_3(b"zun_missing_symbol", 1, 2, 3) };
+        assert!(result.is_err());
         let result = unsafe { library.call_f64_0(b"zun_missing_symbol") };
         assert!(result.is_err());
         let result = unsafe { library.call_f64_2(b"zun_missing_symbol", 1.0, 2.0) };
+        assert!(result.is_err());
+        let result = unsafe { library.call_bool_0(b"zun_missing_symbol") };
         assert!(result.is_err());
     }
 
