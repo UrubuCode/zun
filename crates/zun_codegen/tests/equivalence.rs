@@ -2657,13 +2657,14 @@ fn named_function_values_remain_on_interpreter_fallback() {
 
 #[test]
 fn object_alloc_and_field_access_in_jit() {
-    // A helper that builds a Point, writes/reads fields, and returns a number.
-    // It uses newobj/ldfld/stfld with numeric fields, so it is JIT-eligible;
-    // the result must match the interpreter.
+    // Helpers that build a Point, pass it through a JIT call, and read/write
+    // fields. They use object references in parameters and return values, so
+    // the precise stack maps must retain those references at call safepoints.
     let src = "class Point { x: int; y: int; }\n\
+               function make(): Point { return new Point(3, 4); }\n\
                function observe(p: Point): int { return p.x; }\n\
                function dist2(): int {\n\
-                   let p: Point = new Point(3, 4);\n\
+                   let p: Point = make();\n\
                    p.x = p.x + 1;\n\
                    return observe(p) + p.y * p.y;\n\
                }\n\
@@ -2678,7 +2679,15 @@ fn object_alloc_and_field_access_in_jit() {
         .position(|method| module.strings.get(method.name) == "dist2")
         .map(|index| index as u32 + 1)
         .expect("dist2 method");
+    let make_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "make")
+        .map(|index| index as u32 + 1)
+        .expect("make method");
     assert!(jit.is_compiled(dist2_rid), "object method should be eligible");
+    assert!(jit.is_compiled(make_rid), "object-returning method should be eligible");
     let maps = jit.stack_maps(dist2_rid).expect("object method stack maps");
     assert!(
         maps.iter().any(|map| !map.reference_slots.is_empty()),
@@ -2705,6 +2714,11 @@ fn object_alloc_and_field_access_in_jit() {
             .position(|method| module.strings.get(method.name) == "observe")
             .map(|index| index as u32 + 1)
             .expect("observe method");
+        let made = jit
+            .call_packed(make_rid, &[])
+            .expect("direct packed object-returning call");
+        let made = unsafe { zun_gc::Obj::from_addr(made as *mut u64) };
+        assert_eq!(made.field(0), 3);
         let point = heap.alloc(1, 2);
         point.set_field(0, 3);
         let observed = jit
