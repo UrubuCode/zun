@@ -106,6 +106,16 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                 &object_out,
                                                 &executable_out,
                                                 module.entry_point.map(|token| token.rid()),
+                                                module.entry_point.and_then(|token| {
+                                                    zun_module::read_body(
+                                                        &module.code,
+                                                        module.tables.method_defs
+                                                            [token.rid() as usize - 1]
+                                                            .body_offset,
+                                                    )
+                                                    .ok()
+                                                    .map(|body| body.return_kind)
+                                                }),
                                             ) {
                                                 Ok(()) => {
                                                     println!("wrote {}", executable_out.display());
@@ -175,11 +185,20 @@ fn link_aot_executable(
     object: &Path,
     executable: &Path,
     entry: Option<u32>,
+    return_kind: Option<u8>,
 ) -> Result<(), String> {
     let entry = entry.ok_or_else(|| "module has no entry point".to_string())?;
+    let kind = return_kind.ok_or_else(|| "entry point has no readable body".to_string())?;
+    let return_type = match zun_il::JitKind::from_byte(kind) {
+        zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64) => "f64",
+        zun_il::JitKind::Num(_) | zun_il::JitKind::Bool => "i64",
+        zun_il::JitKind::Object | zun_il::JitKind::Other => {
+            return Err("AOT launcher supports only scalar numeric returns".to_string())
+        }
+    };
     let launcher = object.with_extension("aot.rs");
     let source = format!(
-        "extern \"C\" {{ fn m{entry}() -> i64; }}\nfn main() {{ println!(\"{{}}\", unsafe {{ m{entry}() }}); }}\n"
+        "extern \"C\" {{ fn m{entry}() -> {return_type}; }}\nfn main() {{ println!(\"{{}}\", unsafe {{ m{entry}() }}); }}\n"
     );
     std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
     let result = std::process::Command::new("rustc")
