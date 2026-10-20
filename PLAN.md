@@ -297,6 +297,9 @@ fronteiras separadas, preservando a resolução de tokens e a tabela de métodos
 Depois do dispatch virtual, permanece a integração operacional de raízes precisas:
 safepoints automáticos no interpretador/JIT e a captura de `(PC, SP)` nos pontos
 em que uma coleta pode ocorrer (a metadata de slots do Cranelift já está pronta).
+O runtime já publica o registry da chamada JIT no thread atual e oferece uma
+entrada de coleta que o consome; ainda falta ligar essa entrada a um safepoint
+de polling que pare o frame no PC/SP correspondente.
 Esse é o maior risco de memória e deve ser implementado isoladamente, com sua
 própria suíte de equivalência e testes de coleta durante chamadas JIT.
 
