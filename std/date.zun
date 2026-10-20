@@ -2,6 +2,7 @@
 
 import { year, month, day, hour, minute, second, millisecond, weekday, isoDate, isoDateTime } from "zun:date";
 import { parseIsoDateTime } from "zun:date";
+import { parseIsoDate } from "zun:date";
 import { nowMillis } from "zun:time";
 
 class Date {
@@ -53,4 +54,8 @@ function dateNow(): Date {
 
 function dateParse(value: string): Date {
     return new Date(parseIsoDateTime(value));
+}
+
+function dateParseDate(value: string): Date {
+    return new Date(parseIsoDate(value));
 }

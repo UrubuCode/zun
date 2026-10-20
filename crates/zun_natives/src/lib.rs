@@ -348,6 +348,8 @@ mod tests {
         assert!(matches!(dispatch(iso_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Str(value) if value == "1970-01-01T01:02:03.004Z"));
         let (parse_id, _) = resolve("zun:date", "parseIsoDateTime").unwrap();
         assert!(matches!(dispatch(parse_id, &[NativeArg::Str("1970-01-01T01:02:03.004Z")], &mut sink).unwrap(), NativeValue::Int(value) if value == timestamp));
+        let (parse_date_id, _) = resolve("zun:date", "parseIsoDate").unwrap();
+        assert!(matches!(dispatch(parse_date_id, &[NativeArg::Str("1970-01-01")], &mut sink).unwrap(), NativeValue::Int(0)));
     }
 
     #[test]
