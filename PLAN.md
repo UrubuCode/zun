@@ -564,8 +564,8 @@ and an interpreter/JIT equivalence test where JIT execution is applicable.
 
 Behavior-preserving parser concern splits now cover helper extraction for
 function expressions, control-flow statements, expression precedence, calls,
-arguments, and member/index access; the parser test module and remaining
-primary-expression cases are still part of the hygiene backlog.
+arguments, member/index access, primary expressions, and template processing;
+the parser unit tests now live in `crates/zun_syntax/src/tests.rs`.
 
 ## 6. Execution backlog and rules (active goal — 2026-10-20)
 
