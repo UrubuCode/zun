@@ -811,6 +811,13 @@ impl Jit {
         let id = self.func_ids[&method_rid];
         let ptr = self.module.get_finalized_function(id);
 
+        // Publish the finalized stack-map registry for the complete native
+        // entry call. This keeps direct JIT entry points on the same precise
+        // GC boundary as packed calls when a runtime safepoint is reached.
+        let _stack_maps = unsafe {
+            zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry)
+        };
+
         // Transmute the entry point to a nullary fn of its concrete return type,
         // then box the native result into a kind-tagged RetVal.
         use zun_il::NumKind::*;
