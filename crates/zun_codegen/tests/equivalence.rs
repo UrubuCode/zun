@@ -577,6 +577,19 @@ fn break_keeps_interpreter_and_jit_paths_equivalent() {
 }
 
 #[test]
+fn continue_keeps_interpreter_and_jit_paths_equivalent() {
+    let module = zun_compiler::compile(
+        "function main(): u64 { let index: u64 = 0; let total: u64 = 0; while (index < 5) { index = index + 1; if (index == 3) { continue; } total = total + index; } return total; }",
+    )
+    .expect("compile continue");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds continue module");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 12));
+    assert!(matches!(jit.call_entry(entry).expect("run JIT continue"), RetVal::Int(12)));
+}
+
+#[test]
 fn array_search_methods_keep_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array {\n\

@@ -935,6 +935,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_continue_inside_loop() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let index: u64 = 0; let total: u64 = 0; while (index < 5) { index = index + 1; if (index == 3) { continue; } total = total + index; } return total; }",
+        )
+        .expect("compile continue");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run continue");
+        assert!(matches!(result, Value::Int(value, _) if value == 12));
+    }
+
+    #[test]
     fn executes_source_array_length() {
         let module = zun_compiler::compile(
             "function main(): u64 { let values = new Array(2); return values.length; }",

@@ -214,6 +214,7 @@ fn lower_function(f: &hir::Function, layout: &Layout, module: &mut Module) -> Ve
         layout,
         module,
         break_patches: Vec::new(),
+        continue_targets: Vec::new(),
     };
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
@@ -236,6 +237,7 @@ struct FnLowerer<'a> {
     layout: &'a Layout,
     module: &'a mut Module,
     break_patches: Vec<Vec<BranchPatch>>,
+    continue_targets: Vec<Vec<usize>>,
 }
 
 impl FnLowerer<'_> {
@@ -355,9 +357,11 @@ impl FnLowerer<'_> {
                 self.expr(cond);
                 let to_exit = self.emit_branch(Opcode::BranchFalse);
                 self.break_patches.push(Vec::new());
+                self.continue_targets.push(vec![loop_start]);
                 self.stmts(body);
                 self.emit_branch_back(Opcode::Branch, loop_start);
                 self.patch_to_here(to_exit);
+                self.continue_targets.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -366,6 +370,11 @@ impl FnLowerer<'_> {
                 let patch = self.emit_branch(Opcode::Branch);
                 if let Some(patches) = self.break_patches.last_mut() {
                     patches.push(patch);
+                }
+            }
+            Stmt::Continue => {
+                if let Some(&target) = self.continue_targets.last().and_then(|targets| targets.last()) {
+                    self.emit_branch_back(Opcode::Branch, target);
                 }
             }
             Stmt::Return(value) => {

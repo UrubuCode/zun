@@ -571,6 +571,12 @@ impl Checker<'_> {
                 }
                 hir::Stmt::Break
             }
+            ast::Stmt::Continue { span } => {
+                if cx.loop_depth == 0 {
+                    self.error(*span, "`continue` is only valid inside a loop");
+                }
+                hir::Stmt::Continue
+            }
             ast::Stmt::Return { value, span } => {
                 let value = value.as_ref().map(|v| {
                     let mut e = self.check_expr(cx, v);

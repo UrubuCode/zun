@@ -207,6 +207,8 @@ pub enum Stmt {
     },
     /// Exit the innermost enclosing loop.
     Break,
+    /// Continue with the next iteration of the innermost enclosing loop.
+    Continue,
     /// Return, with a value unless the function returns `void`.
     Return(Option<Expr>),
 }

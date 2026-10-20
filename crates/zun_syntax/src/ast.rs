@@ -146,6 +146,11 @@ pub enum Stmt {
         /// Source location of the statement.
         span: Span,
     },
+    /// `continue;`
+    Continue {
+        /// Source location of the statement.
+        span: Span,
+    },
     /// `return expr;` / `return;`
     Return {
         /// The returned value, if any.
