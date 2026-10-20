@@ -9,6 +9,7 @@
 mod builtins;
 mod collections;
 mod errors;
+mod gc_policy;
 mod hooks;
 mod native;
 mod metadata;
@@ -20,6 +21,7 @@ mod unwind;
 pub mod value;
 
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
+use gc_policy::{next_gc_interval, GC_INTERVAL};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
 use operands::{
@@ -110,18 +112,6 @@ fn run_method_with(
         types,
     }
     .call(method_rid, args, None)
-}
-
-/// How many object allocations trigger a collection attempt.
-const GC_INTERVAL: u32 = 256;
-const MAX_GC_INTERVAL: u32 = 16 * 1024;
-
-fn next_gc_interval(current: u32, reclaimed: usize) -> u32 {
-    if reclaimed == 0 {
-        current.saturating_mul(2).min(MAX_GC_INTERVAL)
-    } else {
-        GC_INTERVAL
-    }
 }
 
 struct Interp<'a> {
