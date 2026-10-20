@@ -386,10 +386,11 @@ the checker and emit no new code except `enum`. *Status: separate checker
 track.*
 
 Managed `Map`/`Set`/`WeakMap` constructors and receiver bindings are now
-available from source, and `for...of` covers Array plus insertion-ordered
-Map/Set values through the interpreter fallback. The complete `Symbol.iterator`
-protocol and typed-array/DataView source bindings remain pending. `DataView` is
-integrated with the managed
+available from source as thin classes over the runtime floors, and `for...of`
+covers Array plus insertion-ordered Map/Set values through the interpreter
+fallback. Source-level `Symbol.iterator` calls now resolve to canonical
+iterator handles, and typed-array/DataView source constructors are available
+through the interpreter path. `DataView` is integrated with the managed
 buffers; `RegExp` needs a regex engine (deferred); `Proxy`/`Reflect` go through
 the dynamic `Any`/`DynamicObject` path (Phase 4); `BigInt` needs a bignum
 (deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
@@ -439,26 +440,26 @@ The following runtime contracts are implemented and covered by tests:
   test while Cranelift lowering for array storage remains pending.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
-  tracing of managed keys and values. Source-level constructors and intrinsic
-  bindings remain the next integration gate.
+  tracing of managed keys and values. Source-level `Map` and `Set` classes
+  delegate to these intrinsic bindings.
 - Per-isolate `SymbolRegistry` with unique symbols and canonical
-  `Symbol.for`-style keys; iterator protocol bindings remain a source/compiler
-  integration gate.
+  `Symbol.for`-style keys; source-level `Symbol.iterator` calls resolve to
+  managed Array, Map, and Set iterator handles.
 - GC weak-reference slots with post-mark clearing; `WeakMap` ephemeron
   fixed-point marking is now implemented for managed object values and their
   dynamic/collection children; finalization
-  queues are now exposed as a post-sweep token queue; source-level bindings and
-  callback scheduling remain separate follow-up gates.
+  queues are now exposed as a post-sweep token queue; source-level `WeakMap`
+  bindings are available while callback scheduling remains a separate gate.
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
   intrinsic substrate for `ArrayBuffer` and typed-array views. Little-endian
   `u16`, `u32`, and `f64` view operations are covered; source-level view
-  classes remain the next integration gate. `ByteView` now enforces bounded
+  constructor bindings are available through the interpreter path. `ByteView` now enforces bounded
   shared windows without copying the underlying storage, and `TypedArrayView`
   enforces element alignment and indexed `u8`, `u16`, `u32`, and `f64` access
   over those windows. `DataView` now provides mixed-width, unaligned,
   little- or big-endian `u8`, `u16`, `u32`, and `f64` access over the same
-  bounded storage; source-level view classes remain a separate integration
-  gate.
+  bounded storage; broader typed-array method classes remain a separate
+  integration gate.
 - Managed millisecond `DateValue` storage with invalid-date propagation and
   comparison semantics, plus UTC Gregorian date decomposition; calendar
   formatting/parsing are now covered for `YYYY-MM-DD`; source-level
@@ -579,10 +580,10 @@ an optimization gate.
 
 2. **Iteration protocol**: Array `for...of` is implemented; managed iterator
    handles now exist for Array, Map, and Set, preserving insertion order and
-   Map entry-pair semantics. First-class `Symbol.iterator` syntax/dispatch
-   remains pending.
+   Map entry-pair semantics. First-class source `Symbol.iterator` calls now
+   dispatch to those managed handles through the interpreter fallback.
 3. **Built-in class surface**: `Map`, `Set`, and `WeakMap` constructors plus
-   intrinsic receiver bindings are implemented. Source bindings now cover
+   thin source classes and intrinsic receiver bindings are implemented. Source bindings now cover
    managed `DataView` and `Uint8Array`, `Uint16Array`, `Uint32Array`, and
    `Float64Array` views over GC-owned buffers.
 4. **Weak-GC hardening**: multi-entry ephemerons, address-index restoration
