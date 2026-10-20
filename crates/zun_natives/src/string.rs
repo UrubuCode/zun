@@ -178,6 +178,20 @@ fn to_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
     }
 }
 
+fn trim_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.trim_start().to_string())),
+        _ => Err(NativeError("trimStart: expected a string".to_string())),
+    }
+}
+
+fn trim_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.trim_end().to_string())),
+        _ => Err(NativeError("trimEnd: expected a string".to_string())),
+    }
+}
+
 fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -246,6 +260,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "padEnd", params: &[Str, U64, Str], ret: Str, imp: pad_end },
         NativeFn { name: "toLowerCase", params: &[Str], ret: Str, imp: to_lower_case },
         NativeFn { name: "toUpperCase", params: &[Str], ret: Str, imp: to_upper_case },
+        NativeFn { name: "trimStart", params: &[Str], ret: Str, imp: trim_start },
+        NativeFn { name: "trimEnd", params: &[Str], ret: Str, imp: trim_end },
         NativeFn { name: "charCodeAt", params: &[Str, U64], ret: U32, imp: char_code_at },
         NativeFn { name: "startsWith", params: &[Str, Str], ret: Bool, imp: starts_with },
         NativeFn { name: "endsWith", params: &[Str, Str], ret: Bool, imp: ends_with },

@@ -1000,6 +1000,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_trim_boundary_methods() {
+        let module = zun_compiler::compile(
+            "import { trimStart, trimEnd } from \"zun:string\";\n\
+             class String { extern trimStart(): string; extern trimEnd(): string; }\n\
+             function main(): string { let value: string = \"  zun  \"; return value.trimStart().trimEnd(); }",
+        )
+        .expect("compile String trim boundary methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String trim boundary methods");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "zun"));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\

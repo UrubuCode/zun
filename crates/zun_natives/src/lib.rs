@@ -396,6 +396,16 @@ mod tests {
             dispatch(upper_id, &[NativeArg::Str("ZuN")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "ZUN"
         ));
+        let (trim_start_id, _) = resolve("zun:string", "trimStart").unwrap();
+        assert!(matches!(
+            dispatch(trim_start_id, &[NativeArg::Str("  zun  ")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "zun  "
+        ));
+        let (trim_end_id, _) = resolve("zun:string", "trimEnd").unwrap();
+        assert!(matches!(
+            dispatch(trim_end_id, &[NativeArg::Str("  zun  ")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "  zun"
+        ));
         let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
         assert!(matches!(
             dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),
