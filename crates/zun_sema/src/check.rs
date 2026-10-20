@@ -181,6 +181,7 @@ impl Checker<'_> {
             "u64" => Ty::Int(IntKind::U64),
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
+            "any" => Ty::Any,
             "void" => Ty::Void,
             other => match self.classes_by_name.get(other) {
                 Some(&index) => Ty::Instance(index),
@@ -1433,6 +1434,19 @@ mod tests {
             "function inc(n: int): int { return n + 1; }\n\
              function main() { print(inc(41)); }",
         );
+    }
+
+    #[test]
+    fn any_is_an_explicit_dynamic_type() {
+        let hir = check_ok("function identity(value: any): any { return value; }");
+        assert_eq!(hir.functions[0].param_count, 1);
+        assert_eq!(hir.functions[0].return_ty, Ty::Any);
+    }
+
+    #[test]
+    fn any_does_not_implicitly_enable_arithmetic() {
+        let msg = first_error("function f(value: any) { let result = value + 1; }");
+        assert!(msg.contains("cannot add"), "{msg}");
     }
 
     #[test]

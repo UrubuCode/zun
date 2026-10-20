@@ -83,6 +83,8 @@ pub enum Ty {
     String,
     /// `boolean`.
     Boolean,
+    /// A dynamically tagged value.
+    Any,
     /// `void` — only valid as a return type.
     Void,
     /// An instance of a user-declared class.
