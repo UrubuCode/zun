@@ -196,6 +196,35 @@ class String {
         return true;
     }
 
+    isTitleCase(): boolean {
+        if (this.isEmpty()) { return false; }
+        let index: u64 = 0;
+        let expectUpper: boolean = true;
+        let hasLetter: boolean = false;
+        while (index < this.length()) {
+            let code: u32 = this.charCodeAt(index);
+            if (code == 32) {
+                expectUpper = true;
+            } else {
+                if (expectUpper) {
+                    if (code < 65) { return false; }
+                    if (code > 90) { return false; }
+                    expectUpper = false;
+                    hasLetter = true;
+                } else {
+                    if (code >= 65) {
+                        if (code <= 90) { return false; }
+                    }
+                    if (code < 97) { return false; }
+                    if (code > 122) { return false; }
+                }
+            }
+            index = index + 1;
+        }
+        if (!hasLetter) { return false; }
+        return !expectUpper;
+    }
+
     isLowerCase(): boolean {
         if (this.isEmpty()) { return false; }
         let index: u64 = 0;
