@@ -1109,9 +1109,21 @@ impl Interp<'_> {
                     stack.push(result);
                 }
                 Opcode::Await => {
-                    return Err(RunError::Malformed(
-                        "await requires async state-machine lowering".into(),
-                    ));
+                    let promise = pop(&mut stack)?.as_object();
+                    let settled = zun_gc::with_current_heap(|heap| {
+                        heap.promise_is_ready(promise).and_then(|ready| {
+                            ready.then(|| {
+                                heap.promise_result(promise)
+                                    .and_then(|value| value::Value::unbox_any(value, heap))
+                            })
+                        })
+                    });
+                    let Some(Some(value)) = settled else {
+                        return Err(RunError::Malformed(
+                            "pending await requires async state-machine lowering".into(),
+                        ));
+                    };
+                    stack.push(value);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
