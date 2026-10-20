@@ -1840,6 +1840,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_kebab_case_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isKebabCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 45) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun-runtime2\"; return value.isKebabCase(); }",
+        )
+        .expect("compile String isKebabCase");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isKebabCase");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_to_string_source_method() {
         let module = zun_compiler::compile(
             "class String { toString(): string { return this; } }\n\
