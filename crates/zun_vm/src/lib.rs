@@ -68,3 +68,49 @@ pub fn execute_with(bytes: &[u8], output: &mut dyn Output) -> Result<Value, VmEr
         Err(_) => run_with(&module, output, None).map_err(VmError::Run),
     }
 }
+
+/// Execute the entry module selected by a validated flattened manifest.
+///
+/// The loader owns all dependency scopes for the lifetime of the call. The
+/// current execution engine starts at the entry scope; imported member calls
+/// will use this same hosting boundary when multi-module dispatch is enabled.
+pub fn execute_manifest(
+    loader: &zun_loader::ModuleLoader,
+    manifest: &zun_loader::ModuleManifest,
+    output: &mut dyn Output,
+) -> Result<Value, VmError> {
+    manifest.validate(loader).map_err(VmError::Load)?;
+    let scope = loader.get(&manifest.entry).ok_or_else(|| {
+        VmError::Load(zun_loader::LoadError::UnresolvedModule(
+            manifest.entry.clone(),
+        ))
+    })?;
+    let module = scope.module();
+    verify_module(module).map_err(VmError::Verify)?;
+    match zun_codegen::Jit::new(module) {
+        Ok(jit) => {
+            let hook = JitHook::new(jit, module);
+            run_with(module, output, Some(&hook)).map_err(VmError::Run)
+        }
+        Err(_) => run_with(module, output, None).map_err(VmError::Run),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executes_manifest_entry_scope() {
+        let module = zun_compiler::compile("function main(): int { return 23; }").unwrap();
+        let scope = zun_loader::ModuleScope::from_bytes("app", &module.write()).unwrap();
+        let mut loader = zun_loader::ModuleLoader::new();
+        loader.insert(scope).unwrap();
+        let manifest = zun_loader::ModuleManifest::new("app", Vec::<String>::new());
+        let mut output = zun_interp::CaptureOutput::default();
+        assert!(matches!(
+            execute_manifest(&loader, &manifest, &mut output).unwrap(),
+            zun_interp::value::Value::Int(23, zun_il::NumKind::I32)
+        ));
+    }
+}
