@@ -512,36 +512,6 @@ impl Parser<'_> {
         }
     }
 
-    fn break_statement(&mut self) -> Stmt {
-        let start = self.bump().span;
-        let label = if self.at(TokenKind::Ident) {
-            Some(self.name("a break label"))
-        } else {
-            None
-        };
-        let end = self.peek().span;
-        self.expect(TokenKind::Semi, "`;` after break");
-        Stmt::Break {
-            label,
-            span: start.to(end),
-        }
-    }
-
-    fn continue_statement(&mut self) -> Stmt {
-        let start = self.bump().span;
-        let label = if self.at(TokenKind::Ident) {
-            Some(self.name("a continue label"))
-        } else {
-            None
-        };
-        let end = self.peek().span;
-        self.expect(TokenKind::Semi, "`;` after continue");
-        Stmt::Continue {
-            label,
-            span: start.to(end),
-        }
-    }
-
     fn return_statement(&mut self) -> Stmt {
         let start = self.bump().span; // `return`
         let value = if self.at(TokenKind::Semi) {

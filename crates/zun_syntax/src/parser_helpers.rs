@@ -3,6 +3,36 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn break_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let label = if self.at(TokenKind::Ident) {
+            Some(self.name("a break label"))
+        } else {
+            None
+        };
+        let end = self.peek().span;
+        self.expect(TokenKind::Semi, "`;` after break");
+        Stmt::Break {
+            label,
+            span: start.to(end),
+        }
+    }
+
+    pub(crate) fn continue_statement(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let label = if self.at(TokenKind::Ident) {
+            Some(self.name("a continue label"))
+        } else {
+            None
+        };
+        let end = self.peek().span;
+        self.expect(TokenKind::Semi, "`;` after continue");
+        Stmt::Continue {
+            label,
+            span: start.to(end),
+        }
+    }
+
     pub(crate) fn if_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         self.expect(TokenKind::LParen, "`(`");
