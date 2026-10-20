@@ -1709,6 +1709,11 @@ fn math_cbrt_is_jit_equivalent() {
 }
 
 #[test]
+fn math_expm1_and_log1p_are_jit_equivalent() {
+    assert_equivalent("import { expm1Number, log1pNumber } from \"zun:math\"; function main(): number { return expm1Number(log1pNumber(2.0)); }");
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",

@@ -7,6 +7,7 @@ import { powNumber } from "zun:math";
 import { sinNumber, cosNumber } from "zun:math";
 import { expNumber, logNumber } from "zun:math";
 import { log10Number, log2Number } from "zun:math";
+import { expm1Number, log1pNumber } from "zun:math";
 import { tanNumber, atan2Number } from "zun:math";
 import { hypotNumber } from "zun:math";
 import { signNumber } from "zun:math";
@@ -78,6 +79,14 @@ function mathLog10(value: number): number {
 
 function mathLog2(value: number): number {
     return log2Number(value);
+}
+
+function mathExpm1(value: number): number {
+    return expm1Number(value);
+}
+
+function mathLog1p(value: number): number {
+    return log1pNumber(value);
 }
 
 function mathTan(value: number): number {

@@ -115,6 +115,14 @@ fn log2(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
     unary_float(args, "log2", f64::log2)
 }
 
+fn expm1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "expm1", f64::exp_m1)
+}
+
+fn log1p(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "log1p", f64::ln_1p)
+}
+
 fn tan(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     unary_float(args, "tan", f64::tan)
 }
@@ -167,6 +175,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "logNumber", params: &[F64], ret: F64, imp: log },
         NativeFn { name: "log10Number", params: &[F64], ret: F64, imp: log10 },
         NativeFn { name: "log2Number", params: &[F64], ret: F64, imp: log2 },
+        NativeFn { name: "expm1Number", params: &[F64], ret: F64, imp: expm1 },
+        NativeFn { name: "log1pNumber", params: &[F64], ret: F64, imp: log1p },
         NativeFn { name: "tanNumber", params: &[F64], ret: F64, imp: tan },
         NativeFn { name: "atan2Number", params: &[F64, F64], ret: F64, imp: atan2 },
         NativeFn { name: "hypotNumber", params: &[F64, F64], ret: F64, imp: hypot },
