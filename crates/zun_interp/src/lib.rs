@@ -1262,6 +1262,32 @@ mod method_tests {
     }
 
     #[test]
+    fn resumable_session_resumes_nested_async_callers() {
+        let module = zun_compiler::compile(
+            "async function child(): Promise { let p = new Promise(); await p; return p; } async function main(): Promise { let q = child(); await q; return q; }",
+        )
+        .expect("compile nested async functions");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session = ResumableSession::new(
+            &module,
+            entry.rid(),
+            Vec::new(),
+            &mut output,
+            None,
+            None,
+        )
+        .expect("create resumable session");
+        assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
+        let promise = session.awaited_promise().expect("child awaited promise");
+        let boxed = Value::Int(7, zun_il::NumKind::I32)
+            .box_any(session.heap_mut())
+            .expect("box child result");
+        assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
+        assert!(matches!(session.poll().expect("resume nested call"), ResumeResult::Complete(Value::Object(_))));
+    }
+
+    #[test]
     fn settled_await_reads_the_managed_promise_result() {
         let mut heap = zun_gc::Heap::new();
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
