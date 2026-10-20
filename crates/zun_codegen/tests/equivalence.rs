@@ -502,6 +502,19 @@ fn number_to_int_uses_interpreter_fallback() {
 }
 
 #[test]
+fn number_to_boolean_uses_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Number { toBoolean(): boolean { return this != 0.0; } }\n\
+         function main(): boolean { let value: number = 1.0; return value.toBoolean(); }",
+    )
+    .expect("compile Number toBoolean");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Number fallback");
+    assert!(!jit.is_compiled(entry), "Number methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn number_to_string_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { toString } from \"zun:number\";\n\

@@ -1411,6 +1411,18 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_number_to_boolean_source_method() {
+        let module = zun_compiler::compile(
+            "class Number { toBoolean(): boolean { return this != 0.0; } }\n\
+             function main(): boolean { let value: number = 1.0; return value.toBoolean(); }",
+        )
+        .expect("compile Number toBoolean");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Number toBoolean");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
             "import { toString } from \"zun:number\";\n\
