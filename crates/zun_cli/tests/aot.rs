@@ -16,12 +16,19 @@ fn build_aot_writes_fallback_module_manifest_and_object() {
     assert!(source.with_extension("zm").is_file());
     assert!(source.with_extension("zman").is_file());
     assert!(source.with_extension("o").is_file());
+    assert!(source.with_extension("exe").is_file());
+    let executable = Command::new(source.with_extension("exe"))
+        .output()
+        .expect("run AOT executable");
+    assert!(executable.status.success());
+    assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "7");
 
     for path in [
         source.clone(),
         source.with_extension("zm"),
         source.with_extension("zman"),
         source.with_extension("o"),
+        source.with_extension("exe"),
     ] {
         let _ = std::fs::remove_file(path);
     }

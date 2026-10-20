@@ -540,8 +540,13 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
             detail: e.to_string(),
         })?;
         let sig = body_signature(&module, &body);
+        let linkage = zm
+            .entry_point
+            .is_some_and(|token| token.rid() == rid)
+            .then_some(Linkage::Export)
+            .unwrap_or(Linkage::Local);
         let fid = module
-            .declare_function(&format!("m{rid}"), Linkage::Local, &sig)
+            .declare_function(&format!("m{rid}"), linkage, &sig)
             .map_err(|e| JitError::Module(e.to_string()))?;
         func_ids.insert(rid, fid);
     }

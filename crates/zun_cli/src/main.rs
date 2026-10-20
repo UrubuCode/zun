@@ -101,7 +101,21 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                     Ok(object) => match std::fs::write(&object_out, object) {
                                         Ok(()) => {
                                             println!("wrote {}", object_out.display());
-                                            ExitCode::SUCCESS
+                                            let executable_out = out.with_extension("exe");
+                                            match link_aot_executable(
+                                                &object_out,
+                                                &executable_out,
+                                                module.entry_point.map(|token| token.rid()),
+                                            ) {
+                                                Ok(()) => {
+                                                    println!("wrote {}", executable_out.display());
+                                                    ExitCode::SUCCESS
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("zun: cannot link AOT executable: {e}");
+                                                    ExitCode::FAILURE
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             eprintln!("zun: cannot write {}: {e}", object_out.display());
@@ -155,6 +169,38 @@ fn print_disassembly(module: &Module) {
 /// `foo.ts` -> `foo.zm` in the same directory.
 fn out_path(source: &Path) -> PathBuf {
     source.with_extension("zm")
+}
+
+fn link_aot_executable(
+    object: &Path,
+    executable: &Path,
+    entry: Option<u32>,
+) -> Result<(), String> {
+    let entry = entry.ok_or_else(|| "module has no entry point".to_string())?;
+    let launcher = object.with_extension("aot.rs");
+    let source = format!(
+        "extern \"C\" {{ fn m{entry}() -> i64; }}\nfn main() {{ println!(\"{{}}\", unsafe {{ m{entry}() }}); }}\n"
+    );
+    std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
+    let result = std::process::Command::new("rustc")
+        .arg(&launcher)
+        .arg("--crate-name")
+        .arg("zun_aot")
+        .arg("-C")
+        .arg("opt-level=3")
+        .arg("-C")
+        .arg(format!("link-arg={}", object.display()))
+        .arg("-o")
+        .arg(executable)
+        .output()
+        .map_err(|error| error.to_string());
+    let _ = std::fs::remove_file(&launcher);
+    let output = result?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
 }
 
 /// Render diagnostics as `file:line:col: message`, resolving spans to line and
