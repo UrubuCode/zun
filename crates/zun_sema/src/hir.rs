@@ -83,6 +83,8 @@ pub enum Ty {
     String,
     /// `boolean`.
     Boolean,
+    /// A managed contiguous array.
+    Array,
     /// A dictionary-backed dynamic object.
     DynamicObject,
     /// A dynamically tagged value.

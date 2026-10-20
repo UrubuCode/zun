@@ -181,6 +181,7 @@ impl Checker<'_> {
             "u64" => Ty::Int(IntKind::U64),
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
+            "Array" | "array" => Ty::Array,
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "any" => Ty::Any,
             "void" => Ty::Void,
@@ -1564,6 +1565,13 @@ mod tests {
         let hir = check_ok("function identity(value: any): any { return value; }");
         assert_eq!(hir.functions[0].param_count, 1);
         assert_eq!(hir.functions[0].return_ty, Ty::Any);
+    }
+
+    #[test]
+    fn array_is_a_managed_core_type() {
+        let hir = check_ok("function identity(values: Array): Array { return values; }");
+        assert_eq!(hir.functions[0].locals, vec![Ty::Array]);
+        assert_eq!(hir.functions[0].return_ty, Ty::Array);
     }
 
     #[test]
