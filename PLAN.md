@@ -587,24 +587,24 @@ Ordered backlog:
    `Array` `map`/`filter`/`reduce`/`forEach` to inline arrows. Tests: map with an
    arrow, capture of an outer variable, mutation-after-capture visible in the
    closure, nested closures; interpreter↔JIT equivalence.
-Closure implementation note: the Tier 0 path now includes HIR synthetic
+Status: **complete**. The Tier 0 path includes HIR synthetic
 functions, binding captures, boxed mutable locals, nested environments,
 `mkclosure` lowering, and GC tracing. Broader JIT closure-call lowering remains
 an optimization gate.
 
-2. **Iteration protocol**: Array `for...of` is implemented; managed iterator
+2. **Iteration protocol — complete**: Array `for...of` is implemented; managed iterator
    handles now exist for Array, Map, and Set, preserving insertion order and
    Map entry-pair semantics. First-class source `Symbol.iterator` calls now
    dispatch to those managed handles through the interpreter fallback.
-3. **Built-in class surface**: `Map`, `Set`, and `WeakMap` constructors plus
+3. **Built-in class surface — complete**: `Map`, `Set`, and `WeakMap` constructors plus
    thin source classes and intrinsic receiver bindings are implemented. Source bindings now cover
    managed `DataView` and `Uint8Array`, `Uint16Array`, `Uint32Array`, and
    `Float64Array` views over GC-owned buffers.
-4. **Weak-GC hardening**: multi-entry ephemerons, address-index restoration
+4. **Weak-GC hardening — complete for the current runtime contract**: multi-entry ephemerons, address-index restoration
    after block reuse, key-aware managed lookup, and repeated-cycle stress
    coverage are implemented. FinalizationRegistry-specific behavior remains
    pending because no source-level FinalizationRegistry exists yet.
-5. **Group 2 syntax** (section 4.4.2) is implemented through template
+5. **Group 2 syntax — complete for the planned current subset** (section 4.4.2): implemented through template
    literals, including spread/rest, destructuring, default parameters,
    optional property/method chaining, nullish coalescing, `switch`, loops,
    short-circuit operators, ternary expressions, and labelled loop control.
