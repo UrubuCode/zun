@@ -13,6 +13,7 @@ pub(super) struct FinalizerEntry {
     pub(super) target: usize,
     pub(super) token: u64,
     pub(super) callback_id: u64,
+    pub(super) callback: Option<zun_core::FunctionHandle>,
     pub(super) queued: bool,
 }
 
@@ -21,4 +22,6 @@ pub(super) struct FinalizerEntry {
 pub struct FinalizationRecord {
     pub token: u64,
     pub callback_id: u64,
+    /// Optional callable callback, including its closure environment.
+    pub callback: Option<zun_core::FunctionHandle>,
 }

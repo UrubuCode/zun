@@ -480,8 +480,21 @@ mod tests {
         unsafe { heap.collect(&[], &|_| Vec::new()) };
         assert_eq!(
             heap.finalization_drain_records(),
-            vec![FinalizationRecord { token: 99, callback_id: 7 }]
+            vec![FinalizationRecord { token: 99, callback_id: 7, callback: None }]
         );
+    }
+
+    #[test]
+    fn finalization_queue_preserves_closure_callback_identity() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let environment = heap.alloc(2, 0);
+        let callback = zun_core::FunctionHandle::new(17, Some(environment.addr() as usize));
+        heap.finalization_register_with_function(target, 100, callback);
+        unsafe { heap.collect(&[], &|_| Vec::new()) };
+        let records = heap.finalization_drain_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].callback, Some(callback));
     }
 
     #[test]

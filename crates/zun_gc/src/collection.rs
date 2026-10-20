@@ -240,6 +240,7 @@ impl Heap {
                 self.finalization_queue.push(super::FinalizationRecord {
                     token: entry.token,
                     callback_id: entry.callback_id,
+                    callback: entry.callback,
                 });
             }
         }

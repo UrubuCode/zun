@@ -261,6 +261,26 @@ impl Heap {
             target: target.addr() as usize,
             token,
             callback_id,
+            callback: None,
+            queued: false,
+        });
+        id
+    }
+
+    /// Register a closure callback while retaining its complete callable
+    /// identity, including the captured environment.
+    pub fn finalization_register_with_function(
+        &mut self,
+        target: Obj,
+        token: u64,
+        callback: zun_core::FunctionHandle,
+    ) -> FinalizationId {
+        let id = FinalizationId(self.finalizers.len() as u32);
+        self.finalizers.push(FinalizerEntry {
+            target: target.addr() as usize,
+            token,
+            callback_id: callback.method_rid() as u64,
+            callback: Some(callback),
             queued: false,
         });
         id
