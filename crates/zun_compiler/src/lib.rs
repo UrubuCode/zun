@@ -83,6 +83,23 @@ where
     Ok((loader, manifest))
 }
 
+/// Compile named modules, produce the flattened manifest, and persist it for
+/// a host or packaging step.
+pub fn compile_modules_with_manifest_file<'a, I>(
+    entry: &str,
+    sources: I,
+    path: impl AsRef<std::path::Path>,
+) -> Result<(zun_loader::ModuleLoader, zun_loader::ModuleManifest), Vec<Diagnostic>>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let (loader, manifest) = compile_modules_with_manifest(entry, sources)?;
+    manifest
+        .write_file(path)
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    Ok((loader, manifest))
+}
+
 /// Validate imports against the complete source set before module emission.
 ///
 /// This is the compiler-side half of module linking: native `zun:*` exports
@@ -238,5 +255,25 @@ mod tests {
             zun_loader::ModuleManifest::read(&manifest.write()).unwrap(),
             manifest
         );
+    }
+
+    #[test]
+    fn build_can_persist_manifest_for_distribution() {
+        let path =
+            std::env::temp_dir().join(format!("zun-build-manifest-{}.zman", std::process::id()));
+        let (_loader, manifest) = compile_modules_with_manifest_file(
+            "app",
+            [
+                ("core", "function answer(): int { return 42; }"),
+                ("app", "function main(): int { return 0; }"),
+            ],
+            &path,
+        )
+        .expect("build");
+        assert_eq!(
+            zun_loader::ModuleManifest::read_file(&path).unwrap(),
+            manifest
+        );
+        std::fs::remove_file(path).expect("remove manifest");
     }
 }
