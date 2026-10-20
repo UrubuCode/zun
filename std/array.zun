@@ -20,3 +20,12 @@ function arraySet(values: Array, index: u64, value: any): any {
     values[index] = value;
     return value;
 }
+
+function arrayContains(values: Array, value: any): boolean {
+    let index: u64 = 0;
+    while (index < values.length) {
+        if (values[index] == value) { return true; }
+        index = index + 1;
+    }
+    return false;
+}
