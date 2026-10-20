@@ -442,6 +442,12 @@ mod tests {
             dispatch(repeat_id, &[NativeArg::Str("zu"), NativeArg::Int(3)], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "zuzuzu"
         ));
+        let (reverse_id, reverse_fn) = resolve("zun:string", "reverse").unwrap();
+        assert_eq!(reverse_fn.params, &[NativeTy::Str]);
+        assert!(matches!(
+            dispatch(reverse_id, &[NativeArg::Str("zun")], &mut sink).unwrap(),
+            NativeValue::Str(value) if value == "nuz"
+        ));
     }
 
     #[test]

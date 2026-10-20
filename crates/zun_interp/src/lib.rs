@@ -1076,6 +1076,19 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_reverse_native_method() {
+        let module = zun_compiler::compile(
+            "import { reverse } from \"zun:string\";\n\
+             class String { extern reverse(): string; }\n\
+             function main(): string { let value: string = \"zun\"; return value.reverse(); }",
+        )
+        .expect("compile String reverse");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String reverse");
+        assert!(matches!(result, Value::Str(value) if value.as_ref() == "nuz"));
+    }
+
+    #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
             "import { toFixed } from \"zun:number\";\n\
