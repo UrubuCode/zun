@@ -151,29 +151,6 @@ impl Heap {
         ))
     }
 
-    pub fn buffer_view_read_f64(
-        &self,
-        object: Obj,
-        view: zun_core::TypedArrayView,
-        index: usize,
-    ) -> Option<f64> {
-        view.read_f64(self.buffers.get(&(object.addr() as usize))?, index)
-    }
-
-    pub fn buffer_view_write_f64(
-        &mut self,
-        object: Obj,
-        view: zun_core::TypedArrayView,
-        index: usize,
-        value: f64,
-    ) -> Option<bool> {
-        Some(view.write_f64(
-            self.buffers.get_mut(&(object.addr() as usize))?,
-            index,
-            value,
-        ))
-    }
-
 }
 
 #[cfg(test)]
