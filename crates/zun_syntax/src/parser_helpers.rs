@@ -3,6 +3,25 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn unary(&mut self) -> Expr {
+        let op = match self.peek().kind {
+            TokenKind::Minus => Some(UnaryOp::Neg),
+            TokenKind::Bang => Some(UnaryOp::Not),
+            _ => None,
+        };
+        if let Some(op) = op {
+            let start = self.bump().span;
+            let operand = self.unary();
+            let span = start.to(operand.span());
+            return Expr::Unary {
+                op,
+                operand: Box::new(operand),
+                span,
+            };
+        }
+        self.cast()
+    }
+
     pub(crate) fn binary(&mut self, min_level: u8) -> Expr {
         let mut lhs = self.unary();
         loop {

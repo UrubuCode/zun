@@ -514,25 +514,6 @@ impl Parser<'_> {
 
     // --- expressions (precedence climbing) ---
 
-    fn unary(&mut self) -> Expr {
-        let op = match self.peek().kind {
-            TokenKind::Minus => Some(UnaryOp::Neg),
-            TokenKind::Bang => Some(UnaryOp::Not),
-            _ => None,
-        };
-        if let Some(op) = op {
-            let start = self.bump().span;
-            let operand = self.unary();
-            let span = start.to(operand.span());
-            return Expr::Unary {
-                op,
-                operand: Box::new(operand),
-                span,
-            };
-        }
-        self.cast()
-    }
-
     /// `call ('as' type)*` — casts bind tighter than binary operators but looser
     /// than calls and member access.
     fn cast(&mut self) -> Expr {
