@@ -342,6 +342,16 @@ mod tests {
             dispatch(concat_id, &[NativeArg::Str("a"), NativeArg::Str("b")], &mut sink).unwrap(),
             NativeValue::Str(value) if value == "ab"
         ));
+        let (contains_id, _) = resolve("zun:string", "contains").unwrap();
+        assert!(matches!(
+            dispatch(contains_id, &[NativeArg::Str("abc"), NativeArg::Str("bc")], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        let (char_code_id, _) = resolve("zun:string", "charCodeAt").unwrap();
+        assert!(matches!(
+            dispatch(char_code_id, &[NativeArg::Str("hé"), NativeArg::Int(1)], &mut sink).unwrap(),
+            NativeValue::Int(0xE9)
+        ));
     }
 
     #[test]
