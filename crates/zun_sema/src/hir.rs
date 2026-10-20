@@ -303,6 +303,8 @@ pub struct Function {
 pub struct AsyncStateMachinePlan {
     /// State zero is the entry state; later states resume after an await.
     pub state_count: u16,
+    /// Number of source await expressions represented by the plan.
+    pub await_count: u16,
     /// Locals whose lifetime crosses a suspension point.
     pub hoisted_locals: Vec<LocalSlot>,
 }

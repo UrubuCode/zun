@@ -50,6 +50,20 @@
     }
 
     #[test]
+    fn async_plan_counts_await_states_before_lowering() {
+        let (hir, diagnostics) = check_src(
+            "async function main(): Promise { let first = await new Promise(); let second = await new Promise(); return new Promise(); }",
+        );
+        assert!(!diagnostics.is_empty(), "async lowering must remain gated");
+        let plan = hir.functions[0]
+            .async_plan
+            .as_ref()
+            .expect("async plan");
+        assert_eq!(plan.await_count, 2);
+        assert_eq!(plan.state_count, 3);
+    }
+
+    #[test]
     fn let_infers_type_from_initializer() {
         let hir = check_ok("function f() { let x = 1; let s = \"hi\"; }");
         assert_eq!(hir.functions[0].locals, vec![Ty::F64, Ty::String]);
