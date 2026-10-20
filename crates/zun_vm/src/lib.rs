@@ -10,7 +10,7 @@ mod verify_module;
 
 use zun_interp::value::Value;
 use zun_interp::{run_with, Output, RunError, StdoutOutput};
-use zun_module::{Module, ReadError};
+use zun_module::Module;
 
 pub use jit_hook::JitHook;
 pub use verify_module::{verify_module, ModuleVerifyError};
@@ -19,7 +19,7 @@ pub use verify_module::{verify_module, ModuleVerifyError};
 #[derive(Debug)]
 pub enum VmError {
     /// The module bytes could not be parsed.
-    Load(ReadError),
+    Load(zun_loader::LoadError),
     /// The module failed verification.
     Verify(ModuleVerifyError),
     /// Execution failed.

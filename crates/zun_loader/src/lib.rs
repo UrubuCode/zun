@@ -6,20 +6,25 @@
 
 use std::path::Path;
 use zun_module::{Module, ReadError};
+use zun_types::{TypeError, TypeSystem};
 
 /// A loaded module together with its loader-visible identity.
 #[derive(Debug)]
 pub struct ModuleScope {
     name: String,
     module: Module,
+    types: TypeSystem,
 }
 
 impl ModuleScope {
     /// Load a module from serialized `.zm` bytes.
-    pub fn from_bytes(name: impl Into<String>, bytes: &[u8]) -> Result<Self, ReadError> {
+    pub fn from_bytes(name: impl Into<String>, bytes: &[u8]) -> Result<Self, LoadError> {
+        let module = Module::read(bytes).map_err(LoadError::Format)?;
+        let types = TypeSystem::from_module(&module).map_err(LoadError::Types)?;
         Ok(Self {
             name: name.into(),
-            module: Module::read(bytes)?,
+            module,
+            types,
         })
     }
 
@@ -27,7 +32,7 @@ impl ModuleScope {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let bytes = std::fs::read(path).map_err(LoadError::Io)?;
-        Self::from_bytes(path.to_string_lossy(), &bytes).map_err(LoadError::Format)
+        Self::from_bytes(path.to_string_lossy(), &bytes)
     }
 
     /// The loader identity of this module.
@@ -38,6 +43,11 @@ impl ModuleScope {
     /// Access the decoded module for verification or execution.
     pub fn module(&self) -> &Module {
         &self.module
+    }
+
+    /// Access the reified runtime types built for this module.
+    pub fn types(&self) -> &TypeSystem {
+        &self.types
     }
 
     /// Consume the scope and return its decoded module.
@@ -53,6 +63,8 @@ pub enum LoadError {
     Io(std::io::Error),
     /// The bytes are not a valid `.zm` container.
     Format(ReadError),
+    /// The metadata cannot be materialized as runtime types.
+    Types(TypeError),
 }
 
 impl core::fmt::Display for LoadError {
@@ -60,6 +72,7 @@ impl core::fmt::Display for LoadError {
         match self {
             Self::Io(error) => write!(f, "module I/O failed: {error}"),
             Self::Format(error) => write!(f, "invalid module: {error}"),
+            Self::Types(error) => write!(f, "invalid type metadata: {error}"),
         }
     }
 }

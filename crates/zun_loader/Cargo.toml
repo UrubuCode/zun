@@ -8,6 +8,7 @@ description = "Loadable module scopes for Zun .zm binaries."
 
 [dependencies]
 zun_module = { path = "../zun_module" }
+zun_types = { path = "../zun_types" }
 
 [lints]
 workspace = true
