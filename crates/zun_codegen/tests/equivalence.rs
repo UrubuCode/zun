@@ -2088,6 +2088,17 @@ fn boolean_return() {
 }
 
 #[test]
+fn named_function_values_remain_on_interpreter_fallback() {
+    let src = "function add_one(value: number): number { return value + 1.0; }\n\
+               function main(): number { let f = add_one; return f(41.0); }";
+    let module = compile(src);
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback");
+    assert!(!jit.is_compiled(entry), "indirect calls require Tier 0 until JIT lowering exists");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 42.0));
+}
+
+#[test]
 fn object_alloc_and_field_access_in_jit() {
     // A helper that builds a Point, writes/reads fields, and returns a number.
     // It uses newobj/ldfld/stfld with numeric fields, so it is JIT-eligible;

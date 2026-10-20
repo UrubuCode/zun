@@ -430,6 +430,10 @@ and `reduce`) are not considered implemented by wrappers: they require a
 complete function-value representation, capture handling, indirect-call IL,
 verifier support, interpreter dispatch, and equivalent JIT lowering.
 
+Named non-capturing function references now lower through `ldftn` and
+`call.indirect` and execute in Tier 0; closures, function-parameter signatures,
+and Cranelift lowering remain separate gates.
+
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
 constructor lowering remain runtime/compiler gates. The source hierarchy now
