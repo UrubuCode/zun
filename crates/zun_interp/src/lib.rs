@@ -501,7 +501,11 @@ impl Interp<'_> {
                     }
                 }
                 Opcode::Rethrow => {
-                    return Err(RunError::Thrown(pop(&mut stack)?));
+                    let exception = pop(&mut stack)?;
+                    if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                        continue;
+                    }
+                    return Err(RunError::Thrown(exception));
                 }
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);
@@ -1018,6 +1022,42 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let value = run(&module, &mut output).expect("outer catch should handle rethrow");
         assert_eq!(value.as_int(), 9);
+    }
+
+    #[test]
+    fn inner_finally_rethrows_to_an_outer_catch_in_the_same_frame() {
+        let module = zun_compiler::compile(
+            "class Error {} function main(): int { try { try { throw new Error(); } finally { print(1); } } catch (outer: Error) { return 42; } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("outer catch should receive rethrow");
+        assert_eq!(value.as_int(), 42);
+        assert_eq!(output.lines, vec!["1"]);
+    }
+
+    #[test]
+    fn callee_finally_rethrows_to_a_caller_catch() {
+        let module = zun_compiler::compile(
+            "class Error {} function fail(): int { try { throw new Error(); } finally { print(1); } } function main(): int { try { return fail(); } catch (outer: Error) { return 42; } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("caller catch should receive rethrow");
+        assert_eq!(value.as_int(), 42);
+        assert_eq!(output.lines, vec!["1"]);
+    }
+
+    #[test]
+    fn return_inside_inner_try_runs_finally_before_outer_catch_path() {
+        let module = zun_compiler::compile(
+            "class Error {} function main(): int { try { try { return 1; } finally { print(1); } } catch (outer: Error) { return 42; } }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("normal return should survive cleanup");
+        assert_eq!(value.as_int(), 1);
+        assert_eq!(output.lines, vec!["1"]);
     }
 
     #[test]
