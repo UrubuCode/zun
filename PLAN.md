@@ -13,10 +13,14 @@ validates `MemberRef` across loaded scopes, and executes external calls in Tier
 0. The interpreter also uses compact inherited virtual-slot tables instead of
 a type-by-all-methods matrix.
 
-Dynamic override dispatch in the JIT remains open, as do precise native-frame
-safepoints and stack maps, async/Promise, `Any`, FFI, N-API hosting, AOT/R2R,
-OSR, and trimming. These remain implementation work rather than documentation
-only.
+Dynamic override dispatch in the JIT is implemented through compact inherited
+virtual-slot tables. Precise interpreter roots, native/JIT stack-map metadata,
+Promise/microtask primitives, `Any`/`DynamicObject`, scalar external-library
+calls, interpreted backedge observation, and conservative reachability-based
+trimming are also implemented. The remaining gates are source-level async
+state-machine lowering, complete typed FFI/ABI integration, N-API hosting,
+AOT/R2R object emission, true OSR frame replacement, and production-grade
+trimming diagnostics and metadata removal.
 
 ## 1. Visão geral do pipeline
 
