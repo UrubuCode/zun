@@ -178,6 +178,18 @@ impl ArrayStorage {
         Some(std::mem::replace(slot, value))
     }
 
+    /// Append an element and return its new zero-based index.
+    pub fn push(&mut self, value: Any) -> usize {
+        let index = self.elements.len();
+        self.elements.push(value);
+        index
+    }
+
+    /// Remove and return the last element, if any.
+    pub fn pop(&mut self) -> Option<Any> {
+        self.elements.pop()
+    }
+
     /// Return object references stored in the array for precise GC tracing.
     pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
         self.elements.iter().filter_map(|value| value.as_object())
@@ -337,5 +349,7 @@ mod tests {
         assert_eq!(array.get(1).and_then(Any::as_int), Some(7));
         assert_eq!(array.get(2), None);
         assert_eq!(array.set(2, Any::int(9)), None);
+        assert_eq!(array.push(Any::int(11)), 2);
+        assert_eq!(array.pop().and_then(Any::as_int), Some(11));
     }
 }
