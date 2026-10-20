@@ -3,6 +3,27 @@
 use super::*;
 
 impl Parser<'_> {
+    pub(crate) fn arguments(&mut self) -> Vec<Expr> {
+        let mut args = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            if self.eat(TokenKind::Ellipsis) {
+                let expr = self.expression();
+                let span = expr.span();
+                args.push(Expr::Spread {
+                    expr: Box::new(expr),
+                    span,
+                });
+            } else {
+                args.push(self.expression());
+            }
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "`)`");
+        args
+    }
+
     pub(crate) fn cast(&mut self) -> Expr {
         let mut expr = self.call();
         while self.eat(TokenKind::KwAs) {
