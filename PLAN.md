@@ -434,6 +434,12 @@ Named non-capturing function references now lower through `ldftn` and
 `call.indirect` and execute in Tier 0; closures, function-parameter signatures,
 and Cranelift lowering remain separate gates.
 
+The current callback contract is deliberately exact: a parameter annotation
+names one top-level function, so both its parameter list and return type are
+checked before lowering. Forward references are supported. A future generic
+function type must define its call signature and capture ABI before it can be
+used by `Array.map`, `filter`, or `reduce`.
+
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
 constructor lowering remain runtime/compiler gates. The source hierarchy now
