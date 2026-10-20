@@ -45,6 +45,10 @@ fn weekday(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     Ok(NativeValue::Int(date(args, "weekday")?.weekday().ok_or_else(|| NativeError("weekday: invalid date".into()))? as i64))
 }
 
+fn ordinal(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Int(date(args, "dayOfYear")?.ordinal().ok_or_else(|| NativeError("dayOfYear: invalid date".into()))? as i64))
+}
+
 fn iso(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     date(args, "iso")?.iso_date().map(NativeValue::Str).ok_or_else(|| NativeError("iso: invalid date".into()))
 }
@@ -86,6 +90,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "second", params: &[I64], ret: I32, imp: second },
         NativeFn { name: "millisecond", params: &[I64], ret: I32, imp: millisecond },
         NativeFn { name: "weekday", params: &[I64], ret: I32, imp: weekday },
+        NativeFn { name: "dayOfYear", params: &[I64], ret: I32, imp: ordinal },
         NativeFn { name: "isoDate", params: &[I64], ret: Str, imp: iso },
         NativeFn { name: "isoDateTime", params: &[I64], ret: Str, imp: iso_datetime },
         NativeFn { name: "parseIsoDateTime", params: &[Str], ret: I64, imp: parse_iso_datetime },

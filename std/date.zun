@@ -1,6 +1,6 @@
 // UTC calendar surface over a millisecond timestamp.
 
-import { year, month, day, hour, minute, second, millisecond, weekday, isoDate, isoDateTime } from "zun:date";
+import { year, month, day, hour, minute, second, millisecond, weekday, dayOfYear, isoDate, isoDateTime } from "zun:date";
 import { parseIsoDateTime } from "zun:date";
 import { parseIsoDate } from "zun:date";
 import { nowMillis } from "zun:time";
@@ -31,6 +31,7 @@ class Date {
     utcSecond(): i32 { return second(this.millis); }
     utcMillisecond(): i32 { return millisecond(this.millis); }
     utcWeekday(): i32 { return weekday(this.millis); }
+    utcDayOfYear(): i32 { return dayOfYear(this.millis); }
     isoDate(): string { return isoDate(this.millis); }
     isoDateTime(): string { return isoDateTime(this.millis); }
     getUTCFullYear(): i32 { return this.utcYear(); }
@@ -42,6 +43,7 @@ class Date {
     getUTCMilliseconds(): i32 { return this.utcMillisecond(); }
     getUTCWeekday(): i32 { return this.utcWeekday(); }
     getUTCDay(): i32 { return this.utcWeekday(); }
+    getUTCDayOfYear(): i32 { return this.utcDayOfYear(); }
     toISOString(): string { return this.isoDateTime(); }
     toJSON(): string { return this.toISOString(); }
     toString(): string { return this.isoDateTime(); }

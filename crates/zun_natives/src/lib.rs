@@ -339,12 +339,14 @@ mod tests {
         let (minute_id, _) = resolve("zun:date", "minute").unwrap();
         let (second_id, _) = resolve("zun:date", "second").unwrap();
         let (millisecond_id, _) = resolve("zun:date", "millisecond").unwrap();
+        let (ordinal_id, _) = resolve("zun:date", "dayOfYear").unwrap();
         let (iso_id, _) = resolve("zun:date", "isoDateTime").unwrap();
         let mut sink = TestSink;
         let timestamp = 3_723_004_i64;
         assert!(matches!(dispatch(minute_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(2)));
         assert!(matches!(dispatch(second_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(3)));
         assert!(matches!(dispatch(millisecond_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(4)));
+        assert!(matches!(dispatch(ordinal_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Int(1)));
         assert!(matches!(dispatch(iso_id, &[NativeArg::Int(timestamp)], &mut sink).unwrap(), NativeValue::Str(value) if value == "1970-01-01T01:02:03.004Z"));
         let (parse_id, _) = resolve("zun:date", "parseIsoDateTime").unwrap();
         assert!(matches!(dispatch(parse_id, &[NativeArg::Str("1970-01-01T01:02:03.004Z")], &mut sink).unwrap(), NativeValue::Int(value) if value == timestamp));
