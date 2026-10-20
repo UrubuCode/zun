@@ -496,6 +496,16 @@ mod tests {
     }
 
     #[test]
+    fn finalization_unregister_rejects_already_queued_registration() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let id = heap.finalization_register(target, 101);
+        unsafe { heap.collect(&[], &|_| Vec::new()) };
+        assert!(!heap.finalization_unregister(id));
+        assert_eq!(heap.finalization_drain(), vec![101]);
+    }
+
+    #[test]
     fn byte_buffers_roundtrip_through_the_heap() {
         let mut heap = Heap::new();
         let buffer = heap.alloc_buffer(4);
