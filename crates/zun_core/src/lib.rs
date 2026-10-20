@@ -78,7 +78,8 @@ mod tests {
         assert_eq!(CoreTypeId::Object.get(), 0);
         assert_eq!(CoreTypeId::Function.get(), 5);
         assert_eq!(CoreTypeId::new(2), Some(CoreTypeId::Number));
-        assert_eq!(CoreTypeId::new(6), None);
+        assert_eq!(CoreTypeId::Promise.get(), 6);
+        assert_eq!(CoreTypeId::new(6), Some(CoreTypeId::Promise));
     }
 
     #[test]
