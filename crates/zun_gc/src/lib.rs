@@ -165,6 +165,8 @@ pub struct Heap {
     dynamic_objects: HashMap<usize, zun_core::DynamicObject>,
     /// Contiguous array storage associated with array objects.
     arrays: HashMap<usize, zun_core::ArrayStorage>,
+    /// Contiguous byte storage associated with ArrayBuffer objects.
+    buffers: HashMap<usize, zun_core::ByteBuffer>,
     /// Ordered hash tables associated with Map objects.
     maps: HashMap<usize, zun_core::OrderedMap>,
     /// Ordered hash tables associated with Set objects.
@@ -253,6 +255,24 @@ impl Heap {
         self.arrays
             .insert(object.addr() as usize, zun_core::ArrayStorage::with_length(length));
         object
+    }
+
+    pub fn alloc_buffer(&mut self, length: usize) -> Obj {
+        let object = self.alloc(0, 0);
+        self.buffers.insert(object.addr() as usize, zun_core::ByteBuffer::new(length));
+        object
+    }
+
+    pub fn buffer_len(&self, object: Obj) -> Option<usize> {
+        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::len)
+    }
+
+    pub fn buffer_get(&self, object: Obj, index: usize) -> Option<u8> {
+        self.buffers.get(&(object.addr() as usize))?.get(index)
+    }
+
+    pub fn buffer_set(&mut self, object: Obj, index: usize, value: u8) -> Option<bool> {
+        Some(self.buffers.get_mut(&(object.addr() as usize))?.set(index, value))
     }
 
     /// Allocate a runtime-backed Map with insertion-ordered hash storage.
@@ -552,6 +572,7 @@ impl Heap {
                 self.by_addr.remove(&(r.addr as usize));
                 self.dynamic_objects.remove(&(r.addr as usize));
                 self.arrays.remove(&(r.addr as usize));
+                self.buffers.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
                 self.sets.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
@@ -941,6 +962,18 @@ mod tests {
         assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
         assert_eq!(heap.finalization_drain(), vec![99]);
         assert!(heap.finalization_drain().is_empty());
+    }
+
+    #[test]
+    fn byte_buffers_roundtrip_through_the_heap() {
+        let mut heap = Heap::new();
+        let buffer = heap.alloc_buffer(4);
+        assert_eq!(heap.buffer_len(buffer), Some(4));
+        assert_eq!(heap.buffer_set(buffer, 2, 0xfe), Some(true));
+        assert_eq!(heap.buffer_get(buffer, 2), Some(0xfe));
+        assert_eq!(heap.buffer_set(buffer, 4, 1), Some(false));
+        assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+        assert_eq!(heap.buffer_len(buffer), None);
     }
 
     #[test]

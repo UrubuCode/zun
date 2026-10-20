@@ -267,6 +267,25 @@ pub struct ArrayStorage {
     elements: Vec<Any>,
 }
 
+/// Contiguous byte storage for ArrayBuffer-like runtime objects.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ByteBuffer {
+    bytes: Vec<u8>,
+}
+
+impl ByteBuffer {
+    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length] } }
+    pub fn len(&self) -> usize { self.bytes.len() }
+    pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
+    pub fn get(&self, index: usize) -> Option<u8> { self.bytes.get(index).copied() }
+    pub fn set(&mut self, index: usize, value: u8) -> bool {
+        let Some(slot) = self.bytes.get_mut(index) else { return false; };
+        *slot = value;
+        true
+    }
+    pub fn as_slice(&self) -> &[u8] { &self.bytes }
+}
+
 impl ArrayStorage {
     /// Create an array with `length` initialized to `undefined`-like void values.
     pub fn with_length(length: usize) -> Self {
@@ -514,6 +533,18 @@ mod tests {
         assert!(array.insert(1, Any::int(13)));
         assert_eq!(array.remove(1).and_then(Any::as_int), Some(13));
         assert!(!array.insert(3, Any::int(14)));
+    }
+
+    #[test]
+    fn byte_buffer_is_contiguous_and_bounds_checked() {
+        let mut buffer = ByteBuffer::new(3);
+        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer.get(0), Some(0));
+        assert!(buffer.set(1, 0xab));
+        assert_eq!(buffer.get(1), Some(0xab));
+        assert!(!buffer.set(3, 1));
+        assert_eq!(buffer.get(3), None);
+        assert_eq!(buffer.as_slice(), &[0, 0xab, 0]);
     }
 
     #[test]

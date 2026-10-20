@@ -379,6 +379,8 @@ The following runtime contracts are implemented and covered by tests:
   fixed-point marking is now implemented for direct object values; finalization
   queues are now exposed as a post-sweep token queue; source-level bindings and
   callback scheduling remain separate follow-up gates.
+- Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
+  intrinsic substrate for `ArrayBuffer` and typed-array views.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
