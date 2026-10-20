@@ -566,6 +566,12 @@ The following runtime contracts are implemented and covered by tests:
   rejects suspension inside exception handlers. The interpreter remains the
   correct fallback; Cranelift compilation of methods containing `await` is an
   explicit eligibility boundary. Generator lowering remains a separate gate.
+- Generator preparation now has an explicit frontend/HIR boundary: `yield` and
+  `function*` are represented, yield/state counts and conservatively hoisted
+  locals are planned, the VM exposes a persistent `GeneratorStateMachine`, and
+  `yield` has a verified IL stack effect. Source emission and runtime iterator
+  objects remain gated until `next()` lowering and interpreter resumption are
+  connected.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
