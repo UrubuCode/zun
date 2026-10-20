@@ -215,3 +215,24 @@ impl DataView {
             .all(|(index, byte)| buffer.set(offset + index, byte))
     }
 }
+
+impl TypedArrayView {
+    pub fn new(
+        buffer_length: usize,
+        offset: usize,
+        length: usize,
+        element: TypedElement,
+    ) -> Option<Self> {
+        let view = ByteView::new(buffer_length, offset, length)?;
+        (offset % element.size() == 0 && length % element.size() == 0)
+            .then_some(Self { view, element })
+    }
+
+    pub fn len(self) -> usize {
+        self.view.len() / self.element.size()
+    }
+
+    pub fn element(self) -> TypedElement {
+        self.element
+    }
+}

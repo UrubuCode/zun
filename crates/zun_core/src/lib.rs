@@ -641,24 +641,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
 }
 
 impl TypedArrayView {
-    pub fn new(
-        buffer_length: usize,
-        offset: usize,
-        length: usize,
-        element: TypedElement,
-    ) -> Option<Self> {
-        let view = ByteView::new(buffer_length, offset, length)?;
-        (offset % element.size() == 0 && length % element.size() == 0)
-            .then_some(Self { view, element })
-    }
-
-    pub fn len(self) -> usize {
-        self.view.len() / self.element.size()
-    }
-    pub fn element(self) -> TypedElement {
-        self.element
-    }
-
     pub fn read_u8(self, buffer: &ByteBuffer, index: usize) -> Option<u8> {
         (self.element == TypedElement::U8)
             .then(|| buffer.get(self.view.offset + index))
