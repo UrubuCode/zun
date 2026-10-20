@@ -94,6 +94,7 @@ impl ExecutionFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RunError;
 
     #[test]
     fn frame_preserves_resume_pc_and_promise_identity() {
@@ -117,7 +118,7 @@ mod tests {
     fn execution_outcome_adapts_existing_sync_results() {
         let outcome = ExecutionOutcome::from_result(Ok(Value::Bool(true)));
         assert!(matches!(outcome, ExecutionOutcome::Complete(Value::Bool(true))));
-        let result = ExecutionOutcome::from_result(Err(super::RunError::BadToken)).into_result();
-        assert!(matches!(result, Err(super::RunError::BadToken)));
+        let result = ExecutionOutcome::from_result(Err(RunError::BadToken)).into_result();
+        assert!(matches!(result, Err(RunError::BadToken)));
     }
 }
