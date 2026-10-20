@@ -225,7 +225,7 @@ impl Interp<'_> {
                         _ => return Err(RunError::BadToken),
                     };
                     let rid = token.rid();
-                    if self.module.tables.method_defs.get(rid as usize - 1).is_none() {
+                    if rid == 0 || self.module.tables.method_defs.get(rid as usize - 1).is_none() {
                         return Err(RunError::BadToken);
                     }
                     stack.push(Value::Function(zun_core::FunctionHandle::new(rid, None)));
