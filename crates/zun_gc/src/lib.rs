@@ -124,6 +124,8 @@ pub struct Heap {
     arrays: HashMap<usize, zun_core::ArrayStorage>,
     /// Ordered hash tables associated with Map objects.
     maps: HashMap<usize, zun_core::OrderedMap>,
+    /// Ordered hash tables associated with Set objects.
+    sets: HashMap<usize, zun_core::OrderedMap>,
     /// Record index by object address, for tracing child references.
     by_addr: HashMap<usize, usize>,
     /// Dead record indices available for reuse, keyed by field count.
@@ -246,6 +248,47 @@ impl Heap {
 
     pub fn map_len(&self, object: Obj) -> Option<usize> {
         self.maps.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
+    }
+
+    /// Allocate a runtime-backed Set with insertion-ordered hash storage.
+    pub fn alloc_set(&mut self) -> Obj {
+        let object = self.alloc(0, 0);
+        self.sets.insert(object.addr() as usize, zun_core::OrderedMap::new());
+        object
+    }
+
+    /// Add a value and report whether it was newly inserted.
+    pub fn set_add(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
+        let hash = self.any_hash(value);
+        let strings = &self.strings;
+        let set = self.sets.get_mut(&(object.addr() as usize))?;
+        let existed = set.get(hash, |candidate| any_same_value_zero(candidate, value, strings)).is_some();
+        if !existed {
+            set.insert(value, zun_core::Any::bool(true), hash, |candidate| {
+                any_same_value_zero(candidate, value, strings)
+            });
+        }
+        Some(!existed)
+    }
+
+    pub fn set_has(&self, object: Obj, value: zun_core::Any) -> Option<bool> {
+        let hash = self.any_hash(value);
+        let strings = &self.strings;
+        Some(self.sets.get(&(object.addr() as usize))?.get(hash, |candidate| {
+            any_same_value_zero(candidate, value, strings)
+        }).is_some())
+    }
+
+    pub fn set_remove(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
+        let hash = self.any_hash(value);
+        let strings = &self.strings;
+        Some(self.sets.get_mut(&(object.addr() as usize))?.remove(hash, |candidate| {
+            any_same_value_zero(candidate, value, strings)
+        }).is_some())
+    }
+
+    pub fn set_len(&self, object: Obj) -> Option<usize> {
+        self.sets.get(&(object.addr() as usize)).map(zun_core::OrderedMap::len)
     }
 
     fn any_hash(&self, value: zun_core::Any) -> u64 {
@@ -406,6 +449,16 @@ impl Heap {
                     }
                 }
             }
+            if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
+                for (key, _) in set.iter() {
+                    if let Some(&cidx) = key.as_object().and_then(|child| self.by_addr.get(&child)) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
@@ -418,6 +471,7 @@ impl Heap {
                 self.dynamic_objects.remove(&(r.addr as usize));
                 self.arrays.remove(&(r.addr as usize));
                 self.maps.remove(&(r.addr as usize));
+                self.sets.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             }
@@ -664,6 +718,19 @@ mod tests {
         let freed = unsafe { heap.collect(&[map], &no_refs) };
         assert_eq!(freed, 0);
         assert_eq!(heap.live_count(), 3);
+    }
+
+    #[test]
+    fn set_has_same_value_zero_and_traces_object_keys() {
+        let mut heap = Heap::new();
+        let set = heap.alloc_set();
+        let key = heap.alloc(1, 0);
+        assert_eq!(heap.set_add(set, zun_core::Any::object(key.addr() as usize)), Some(true));
+        assert_eq!(heap.set_add(set, zun_core::Any::object(key.addr() as usize)), Some(false));
+        assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(true));
+        assert_eq!(heap.set_len(set), Some(1));
+        assert_eq!(heap.set_remove(set, zun_core::Any::object(key.addr() as usize)), Some(true));
+        assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(false));
     }
 
     #[test]

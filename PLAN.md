@@ -368,6 +368,10 @@ The following runtime contracts are implemented and covered by tests:
   IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
 - Array instructions have verifier fixtures and an explicit Tier 0 fallback
   test while Cranelift lowering for array storage remains pending.
+- Runtime-backed ordered hash storage for strong `Map` and `Set`, including
+  SameValueZero lookup, stable object-key hashing, insertion order, and GC
+  tracing of managed keys and values. Source-level constructors and intrinsic
+  bindings remain the next integration gate.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
