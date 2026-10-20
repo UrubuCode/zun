@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 const PENDING: u8 = 0;
 const RESOLVED: u8 = 1;
+const REJECTED: u8 = 2;
 
 /// Result of advancing a stackless asynchronous state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +19,9 @@ pub enum Poll<T> {
 
 struct Inner<T> {
     value: Option<T>,
+    error: Option<String>,
     continuation: Option<Box<dyn FnOnce(T) + Send + 'static>>,
+    rejection: Option<Box<dyn FnOnce(String) + Send + 'static>>,
 }
 
 /// A single-assignment future with one continuation, matching the runtime
@@ -120,7 +123,9 @@ impl<T: Send + 'static> Promise<T> {
             state: Arc::new(AtomicU8::new(PENDING)),
             inner: Arc::new(Mutex::new(Inner {
                 value: None,
+                error: None,
                 continuation: None,
+                rejection: None,
             })),
         }
     }
@@ -160,12 +165,58 @@ impl<T: Send + 'static> Promise<T> {
                 );
                 inner.continuation = continuation.take();
                 None
-            } else {
+            } else if self.state.load(Ordering::Acquire) == RESOLVED {
                 inner.value.take()
+            } else {
+                None
             }
         };
         if let Some(value) = value {
             continuation.take().expect("late continuation missing")(value);
+        }
+    }
+
+    /// Reject the promise. Returns `false` when it was already settled.
+    pub fn reject(&self, error: impl Into<String>) -> bool {
+        let error = error.into();
+        if self
+            .state
+            .compare_exchange(PENDING, REJECTED, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        let rejection = {
+            let mut inner = self.inner.lock().expect("promise mutex poisoned");
+            inner.error = Some(error.clone());
+            if inner.rejection.is_some() {
+                inner.rejection.take()
+            } else {
+                return true;
+            }
+        };
+        rejection.expect("rejection disappeared")(error);
+        true
+    }
+
+    /// Register a rejection continuation. A late registration runs immediately.
+    pub fn catch(&self, rejection: impl FnOnce(String) + Send + 'static) {
+        let mut rejection: Option<Box<dyn FnOnce(String) + Send + 'static>> =
+            Some(Box::new(rejection));
+        let error = {
+            let mut inner = self.inner.lock().expect("promise mutex poisoned");
+            match self.state.load(Ordering::Acquire) {
+                PENDING => {
+                    assert!(inner.rejection.is_none(), "promise already has a rejection handler");
+                    inner.rejection = rejection.take();
+                    None
+                }
+                REJECTED => inner.error.clone(),
+                _ => None,
+            }
+        };
+        if let Some(error) = error {
+            rejection.take().expect("late rejection missing")(error);
         }
     }
 
@@ -202,6 +253,23 @@ impl<T: Send + 'static> Promise<T> {
     /// Whether the promise has already been resolved.
     pub fn is_resolved(&self) -> bool {
         self.state.load(Ordering::Acquire) == RESOLVED
+    }
+
+    /// Whether the promise has been rejected.
+    pub fn is_rejected(&self) -> bool {
+        self.state.load(Ordering::Acquire) == REJECTED
+    }
+
+    /// Return the stored rejection message, if any.
+    pub fn error(&self) -> Option<String> {
+        if !self.is_rejected() {
+            return None;
+        }
+        self.inner
+            .lock()
+            .expect("promise mutex poisoned")
+            .error
+            .clone()
     }
 }
 
@@ -416,6 +484,19 @@ mod tests {
         assert!(!machine.is_completed());
         assert_eq!(machine.poll(), Poll::Ready(7));
         assert!(machine.is_completed());
+    }
+
+    #[test]
+    fn promise_rejection_is_single_assignment_and_observable() {
+        let promise = Promise::<u32>::new();
+        let seen = Arc::new(Mutex::new(None));
+        let target = Arc::clone(&seen);
+        promise.catch(move |error| *target.lock().unwrap() = Some(error));
+        assert!(promise.reject("boom"));
+        assert!(!promise.reject("later"));
+        assert!(promise.is_rejected());
+        assert_eq!(promise.error().as_deref(), Some("boom"));
+        assert_eq!(seen.lock().unwrap().as_deref(), Some("boom"));
     }
 
     #[test]
