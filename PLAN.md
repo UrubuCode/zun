@@ -446,6 +446,14 @@ typed generic function signatures, and Cranelift lowering remain separate gates
 before capturing callbacks and Cranelift execution are enabled. The verifier
 and loaded-module resolver cover the unary and binary null-token forms.
 
+The closure ABI is the next coordinated gate: a closure environment is an
+ordinary managed object whose fields are the captured locals in declaration
+order; `FunctionHandle.environment` points to that object; and an indirect
+closure call supplies the environment as an implicit first argument to the
+generated method. The implementation must add one closure-construction IL
+instruction, verifier stack effects, environment field load/store lowering,
+interpreter dispatch, and GC root tracing before lambda syntax is accepted.
+
 The managed error hierarchy is now declared in `std/error.zun` with `Error`
 and the standard ECMAScript error subtypes. Throwing, stack capture, and
 constructor lowering remain runtime/compiler gates. The source hierarchy now
