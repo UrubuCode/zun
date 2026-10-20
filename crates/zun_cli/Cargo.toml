@@ -21,6 +21,7 @@ zun_vm = { path = "../zun_vm" }
 zun_module = { path = "../zun_module" }
 zun_il = { path = "../zun_il" }
 zun_prelude = { path = "../zun_prelude" }
+zun_codegen = { path = "../zun_codegen" }
 
 [lints]
 workspace = true

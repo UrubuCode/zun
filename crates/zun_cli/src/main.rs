@@ -19,9 +19,12 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, file] if cmd == "run" => dispatch(file, Action::Run),
-        [cmd, file] if cmd == "build" => dispatch(file, Action::Build { trim: false }),
+        [cmd, file] if cmd == "build" => dispatch(file, Action::Build { trim: false, aot: false }),
         [cmd, flag, file] if cmd == "build" && flag == "--trim" => {
-            dispatch(file, Action::Build { trim: true })
+            dispatch(file, Action::Build { trim: true, aot: false })
+        }
+        [cmd, flag, file] if cmd == "build" && flag == "--aot" => {
+            dispatch(file, Action::Build { trim: true, aot: true })
         }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
         _ => {
@@ -34,13 +37,13 @@ fn main() -> ExitCode {
 const USAGE: &str = "\
 usage: zun <command> <file.ts>
   run      compile and execute the program
-  build    compile to a .zm module next to the source (use --trim to remove unreachable bodies)
+  build    compile to a .zm module (use --trim or --aot to remove unreachable bodies)
   disasm   compile and print the ZIL disassembly";
 
 #[derive(Clone, Copy)]
 enum Action {
     Run,
-    Build { trim: bool },
+    Build { trim: bool, aot: bool },
     Disasm,
 }
 
@@ -63,7 +66,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
     };
 
     let module = match action {
-        Action::Build { trim: true } => match zun_compiler::trim_module(&module) {
+        Action::Build { trim: true, .. } => match zun_compiler::trim_module(&module) {
             Ok(module) => module,
             Err(error) => {
                 eprintln!("zun: cannot trim module: {error}");
@@ -81,7 +84,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Action::Build { .. } => {
+        Action::Build { aot, .. } => {
             let out = out_path(path);
             let manifest_out = out.with_extension("zman");
             match std::fs::write(&out, module.write()) {
@@ -92,7 +95,27 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                         Ok(()) => {
                             println!("wrote {}", out.display());
                             println!("wrote {}", manifest_out.display());
-                            ExitCode::SUCCESS
+                            if aot {
+                                let object_out = out.with_extension("o");
+                                match zun_codegen::compile_object(&module) {
+                                    Ok(object) => match std::fs::write(&object_out, object) {
+                                        Ok(()) => {
+                                            println!("wrote {}", object_out.display());
+                                            ExitCode::SUCCESS
+                                        }
+                                        Err(e) => {
+                                            eprintln!("zun: cannot write {}: {e}", object_out.display());
+                                            ExitCode::FAILURE
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("zun: cannot emit AOT object: {e}");
+                                        ExitCode::FAILURE
+                                    }
+                                }
+                            } else {
+                                ExitCode::SUCCESS
+                            }
                         }
                         Err(e) => {
                             eprintln!("zun: cannot write {}: {e}", manifest_out.display());
