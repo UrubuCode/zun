@@ -23,6 +23,12 @@ impl Heap {
     pub fn proxy_handler(&self, proxy: Obj) -> Option<Obj> {
         self.proxies.get(&(proxy.addr() as usize)).map(|record| record.handler)
     }
+
+    /// Resolve a named trap from the proxy's handler without invoking it.
+    pub fn proxy_trap(&self, proxy: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+        let handler = self.proxy_handler(proxy)?;
+        self.dynamic_get_function(handler, name)
+    }
 }
 
 #[cfg(test)]
@@ -48,5 +54,16 @@ mod tests {
         assert_eq!(unsafe { heap.collect(&[proxy], &|_| Vec::new()) }, 0);
         assert_eq!(heap.proxy_target(proxy), Some(target));
         assert_eq!(heap.proxy_handler(proxy), Some(handler));
+    }
+
+    #[test]
+    fn proxy_resolves_named_handler_trap() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let handler = heap.alloc_dynamic();
+        let callback = zun_core::FunctionHandle::new(19, Some(target.addr() as usize));
+        heap.dynamic_set_function(handler, "get", callback);
+        let proxy = heap.alloc_proxy(target, handler);
+        assert_eq!(heap.proxy_trap(proxy, "get"), Some(callback));
     }
 }
