@@ -2282,6 +2282,14 @@ impl Checker<'_> {
                 || matches!((a, b), (Ty::Float(x), Ty::Float(y)) if x == y)
         };
         match op {
+            And | Or => {
+                if lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean {
+                    Ty::Boolean
+                } else {
+                    self.error(span, "logical operators require boolean operands");
+                    Ty::Error
+                }
+            }
             Add => {
                 // `+` is numeric addition or string concatenation.
                 if same_numeric(lhs.ty, rhs.ty) {

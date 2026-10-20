@@ -751,6 +751,24 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
             }
             ExprKind::Binary { op, lhs, rhs } => {
+                if matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    self.expr(lhs);
+                    let short = self.emit_branch(if *op == BinaryOp::And {
+                        Opcode::BranchFalse
+                    } else {
+                        Opcode::BranchTrue
+                    });
+                    self.expr(rhs);
+                    let end = self.emit_branch(Opcode::Branch);
+                    self.patch_to_here(short);
+                    self.emit(Instruction::simple(if *op == BinaryOp::And {
+                        Opcode::ConstFalse
+                    } else {
+                        Opcode::ConstTrue
+                    }));
+                    self.patch_to_here(end);
+                    return;
+                }
                 self.expr(lhs);
                 self.expr(rhs);
                 // Pick the opcode family from the operand type: int operands use
@@ -771,6 +789,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     BinaryOp::Le => Opcode::CmpLe,
                     BinaryOp::Gt => Opcode::CmpGt,
                     BinaryOp::Ge => Opcode::CmpGe,
+                    BinaryOp::And | BinaryOp::Or => unreachable!("logical operators lower through branches"),
                 };
                 self.emit(Instruction::simple(opcode));
             }

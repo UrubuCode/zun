@@ -151,6 +151,16 @@ fn c_style_for_is_jit_equivalent() {
 }
 
 #[test]
+fn short_circuit_logical_operators_are_jit_equivalent() {
+    let module = compile("function main(): boolean { return true || false && false; }");
+    assert!(
+        zun_codegen::Jit::compile(&module).is_err(),
+        "short-circuit joins remain on the interpreter fallback"
+    );
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn f64_arithmetic_and_recursion() {
     assert_equivalent(
         "function fib(n: number): number {\n\

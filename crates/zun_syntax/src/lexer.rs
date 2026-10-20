@@ -124,6 +124,10 @@ pub enum TokenKind {
     Gt,
     /// `>=`
     GtEq,
+    /// `&&`
+    AndAnd,
+    /// `||`
+    OrOr,
     /// `!`
     Bang,
 
@@ -255,6 +259,14 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                         } else {
                             TokenKind::Bang
                         }
+                    }
+                    b'&' if bytes.get(pos) == Some(&b'&') => {
+                        pos += 1;
+                        TokenKind::AndAnd
+                    }
+                    b'|' if bytes.get(pos) == Some(&b'|') => {
+                        pos += 1;
+                        TokenKind::OrOr
                     }
                     b'<' => {
                         if bytes.get(pos) == Some(&b'=') {

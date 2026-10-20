@@ -909,6 +909,8 @@ fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
         TokenKind::LtEq => (BinaryOp::Le, 2),
         TokenKind::Gt => (BinaryOp::Gt, 2),
         TokenKind::GtEq => (BinaryOp::Ge, 2),
+        TokenKind::OrOr => (BinaryOp::Or, 0),
+        TokenKind::AndAnd => (BinaryOp::And, 1),
         TokenKind::Plus => (BinaryOp::Add, 3),
         TokenKind::Minus => (BinaryOp::Sub, 3),
         TokenKind::Star => (BinaryOp::Mul, 4),
@@ -1082,6 +1084,12 @@ mod tests {
     fn parses_c_style_for_statement() {
         let p = parse_ok("function main() { for (let i: int = 0; i < 3; i = i + 1) { print(i); } }");
         assert!(matches!(p.functions[0].body.statements[0], Stmt::For { .. }));
+    }
+
+    #[test]
+    fn parses_short_circuit_logical_operators() {
+        let p = parse_ok("function main(): boolean { return true || false && false; }");
+        assert!(matches!(p.functions[0].body.statements[0], Stmt::Return { .. }));
     }
 
     #[test]

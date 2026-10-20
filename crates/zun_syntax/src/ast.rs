@@ -263,6 +263,10 @@ pub enum BinaryOp {
     Gt,
     /// `>=`
     Ge,
+    /// `&&`
+    And,
+    /// `||`
+    Or,
 }
 
 /// A unary operator.

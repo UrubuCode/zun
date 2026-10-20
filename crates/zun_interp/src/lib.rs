@@ -1374,6 +1374,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run c-style for");
         assert_eq!(value.as_int(), 4);
     }
+
+    #[test]
+    fn short_circuit_logical_operators_return_boolean_values() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { return true || false && false; }",
+        )
+        .expect("compile logical operators");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run logical operators");
+        assert!(matches!(value, Value::Bool(true)));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
