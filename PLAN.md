@@ -360,10 +360,10 @@ mirroring the way weak collections forced dedicated GC work.
   `=>`). A function value is a `(code pointer, captured environment)` pair; the
   environment is heap-allocated and GC-traced (the .NET display-class model).
   This is what makes functional `Array.map`/`filter`/`reduce` and callbacks
-  possible at all. *Status: runtime substrate implemented — closure construction
-  opcode, environment capture through indirect calls, and interpreter GC tracing
-  of closure environments. Surface syntax (`=>`, function expressions) and the
-  higher-order stdlib methods that consume callbacks remain to be wired.*
+  possible at all. *Status: Tier 0 implementation complete — closure
+  construction, binding captures, boxed mutable locals, nested environments,
+  callback lowering, and interpreter GC tracing are covered by tests. Broader
+  Cranelift closure-call lowering remains an optimization gate.*
 - Exceptions: `throw`/`try`/`catch`/`finally`. Requires IL handler regions,
   verifier support, interpreter unwinding, and Cranelift landing pads. The
   `Error` hierarchy already exists but is unusable without throw/catch control
@@ -378,7 +378,9 @@ mirroring the way weak collections forced dedicated GC work.
 chaining `?.` and nullish coalescing `??`, template literals, `switch`,
 `do/while` and C-style `for(;;)`, labelled `break`/`continue`, ternary and
 short-circuit `&&`/`||` value semantics, getters/setters, `static`
-fields/methods, and private `#fields`. *Status: pending, added on demand.*
+fields/methods, and private `#fields`. *Status: `switch` is implemented by
+structured lowering with interpreter fallback; the remaining features are
+pending and must be added only with complete parser, sema, and lowering paths.*
 
 **Group 3 — TypeScript type-level (erased at runtime):** generics, interfaces,
 enums, union types with narrowing, and optional properties. These are handled by
@@ -493,28 +495,27 @@ contracts and have interpreter coverage. `reduce` now uses the explicit
 binary `Reducer` contract in Tier 0; captures and equivalent JIT lowering
 remain separate gates.
 
-Named non-capturing function references now lower through `ldftn` and
-`call.indirect` and execute in Tier 0; closures, function-parameter signatures,
-and Cranelift lowering remain separate gates.
+Named function references and anonymous/arrow closures now lower through
+`ldftn`/`mkclosure` and `call.indirect` and execute in Tier 0; Cranelift
+closure-call lowering remains a separate optimization gate.
 
 Named callback parameters remain exact and validate both parameter and return
 signatures. The generic `Function` and `Predicate` types are now available as
 deliberately limited unary callback contracts: `Function` returns `any`, while
 `Predicate` returns `boolean`, and `Reducer` accepts two arguments and returns
-`any`. All currently support non-capturing top-level function handles only.
-Their indirect calls use typed null tokens to defer the target RID to the
-handle. Captures,
-typed generic function signatures, and Cranelift lowering remain separate gates
-before capturing callbacks and Cranelift execution are enabled. The verifier
-and loaded-module resolver cover the unary and binary null-token forms.
+`any`. Capturing callbacks are supported in Tier 0 with typed generic
+signatures. Their indirect calls use typed null tokens to defer the target RID
+to the handle; Cranelift closure-call lowering remains a separate optimization
+gate. The verifier and loaded-module resolver cover the unary and binary
+null-token forms.
 
-The closure ABI is the next coordinated gate: a closure environment is an
+The closure ABI is implemented as a coordinated gate: a closure environment is an
 ordinary managed object whose fields are the captured locals in declaration
 order; `FunctionHandle.environment` points to that object; and an indirect
 closure call supplies the environment as an implicit first argument to the
-generated method. The implementation must add one closure-construction IL
-instruction, verifier stack effects, environment field load/store lowering,
-interpreter dispatch, and GC root tracing before lambda syntax is accepted.
+generated method. Closure construction, verifier stack effects, environment
+field load/store lowering, interpreter dispatch, and GC root tracing are
+implemented; lambda syntax is enabled for Tier 0.
 The first construction opcode, `mkclosure`, now consumes one managed object
 and produces a `FunctionHandle`; `call.indirect` now prepends that environment
 for generated closure methods whose body declares the hidden parameter.
