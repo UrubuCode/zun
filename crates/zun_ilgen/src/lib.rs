@@ -504,6 +504,10 @@ impl FnLowerer<'_> {
                 let token = self.layout.type_tokens[*class as usize];
                 self.emit(Instruction::new(Opcode::NewObj, Operand::Token(token)));
             }
+            ExprKind::ArrayNew { length } => {
+                self.expr(length);
+                self.emit(Instruction::simple(Opcode::NewArray));
+            }
             ExprKind::FieldGet {
                 object,
                 class,

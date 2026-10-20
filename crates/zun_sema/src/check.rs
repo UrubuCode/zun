@@ -1007,6 +1007,21 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                if name == "Array" || name == "array" {
+                    if args.len() != 1 {
+                        self.error(span, "`Array` expects one length argument");
+                        return self.poison(span);
+                    }
+                    let length = self.check_expr(cx, &args[0]);
+                    if !length.ty.is_int() {
+                        self.error(length.span, "array length must be an integer");
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::ArrayNew { length: Box::new(length) },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
                 let Some(&class_idx) = self.classes_by_name.get(&name) else {
                     self.error(class.span, format!("unknown class `{name}`"));
                     return self.poison(span);
@@ -1571,6 +1586,12 @@ mod tests {
     fn array_is_a_managed_core_type() {
         let hir = check_ok("function identity(values: Array): Array { return values; }");
         assert_eq!(hir.functions[0].locals, vec![Ty::Array]);
+        assert_eq!(hir.functions[0].return_ty, Ty::Array);
+    }
+
+    #[test]
+    fn array_constructor_checks_integer_length() {
+        let hir = check_ok("function main(): Array { return new Array(2); }");
         assert_eq!(hir.functions[0].return_ty, Ty::Array);
     }
 

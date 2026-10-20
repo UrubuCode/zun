@@ -316,6 +316,11 @@ pub enum ExprKind {
         /// One initializer per field, in field-slot order.
         args: Vec<Expr>,
     },
+    /// Allocate a managed array with a numeric length.
+    ArrayNew {
+        /// Number of elements to allocate.
+        length: Box<Expr>,
+    },
     /// Read `object`'s field at `field_slot`.
     FieldGet {
         /// The object expression.
