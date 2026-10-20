@@ -79,7 +79,7 @@
         let (hir, diagnostics) = check_src(
             "function* main(): int { let value: int = 1; yield value; yield value + 1; return value; }",
         );
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("generator lowering")), "{diagnostics:?}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let plan = hir.functions[0].generator_plan.as_ref().expect("generator plan");
         assert_eq!(plan.yield_count, 2);
         assert_eq!(plan.state_count, 3);
@@ -99,15 +99,15 @@
     }
 
     #[test]
-    fn generators_are_rejected_until_state_machine_lowering_exists() {
+    fn yield_is_rejected_outside_generator_functions() {
         let (_, diagnostics) = check_src("function main(): int { return yield 1; }");
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("generators are not supported yet")), "{diagnostics:?}");
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("yield is only valid inside a generator function")), "{diagnostics:?}");
     }
 
     #[test]
-    fn generator_declarations_are_rejected_until_state_machine_lowering_exists() {
+    fn generator_declarations_are_accepted_by_the_checker() {
         let (_, diagnostics) = check_src("function* main(): int { yield 1; return 0; }");
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("generator lowering is not implemented yet")), "{diagnostics:?}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]

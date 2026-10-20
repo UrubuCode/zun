@@ -176,6 +176,7 @@ struct FunctionCx {
     locals: Vec<Ty>,
     scopes: Vec<Scope>,
     return_ty: Ty,
+    is_generator: bool,
     loop_depth: usize,
     loop_labels: Vec<String>,
     mutated: HashSet<hir::LocalSlot>,
@@ -328,9 +329,6 @@ impl Checker<'_> {
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
         let name = sig.name.clone();
-        if f.is_generator {
-            self.error(f.name.span, "generator lowering is not implemented yet");
-        }
         if f.is_async {
             if return_ty != Ty::Promise {
                 self.error(
@@ -348,6 +346,7 @@ impl Checker<'_> {
             locals: Vec::new(),
             scopes: vec![Scope::new()],
             return_ty,
+            is_generator: f.is_generator,
             loop_depth: 0,
             loop_labels: Vec::new(),
             mutated: HashSet::new(),
@@ -843,7 +842,9 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Yield { value, .. } => {
-                self.error(span, "generators are not supported yet");
+                if !cx.is_generator {
+                    self.error(span, "yield is only valid inside a generator function");
+                }
                 let checked = self.check_expr(cx, value);
                 hir::Expr {
                     kind: hir::ExprKind::Yield {

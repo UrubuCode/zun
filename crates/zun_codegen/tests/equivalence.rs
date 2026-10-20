@@ -3030,6 +3030,39 @@ fn numeric_array_allocation_is_jit_equivalent() {
 }
 
 #[test]
+fn generator_session_yields_and_resumes_in_tier0() {
+    let module = zun_compiler::compile(
+        "function* count(): int { yield 1; yield 2; return 3; }",
+    )
+    .expect("compile generator");
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "count")
+        .map(|index| index as u32 + 1)
+        .expect("generator method");
+    let mut output = CaptureOutput::default();
+    let mut session = zun_interp::ResumableSession::new(
+        &module,
+        rid,
+        Vec::new(),
+        &mut output,
+        None,
+        None,
+    )
+    .expect("create generator session");
+    let first = session.poll().expect("first generator poll");
+    assert!(matches!(first, zun_interp::ResumeResult::Yielded(Value::Float(value, _)) if value == 1.0), "{first:?}");
+    assert!(matches!(
+        session.poll().expect("second generator poll"),
+        zun_interp::ResumeResult::Yielded(Value::Float(value, _)) if value == 2.0
+    ));
+    let complete = session.poll().expect("generator completion");
+    assert!(matches!(complete, zun_interp::ResumeResult::Complete(Value::Int(value, _)) if value == 3), "{complete:?}");
+}
+
+#[test]
 fn non_overridden_virtual_call_is_jit_eligible() {
     let src = "class Counter { n: int; get(): int { return this.n; } }\n\
                function read(c: Counter): int { return c.get(); }\n\

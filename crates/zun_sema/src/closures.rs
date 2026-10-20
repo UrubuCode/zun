@@ -46,6 +46,7 @@ impl Checker<'_> {
                 .as_ref()
                 .map(|annotation| self.resolve_annotation(annotation))
                 .unwrap_or(Ty::Any),
+            is_generator: false,
             loop_depth: 0,
             loop_labels: Vec::new(),
             mutated: HashSet::new(),

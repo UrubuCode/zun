@@ -461,7 +461,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 // model — including void calls, which push a void value — so an
                 // expression statement always discards one.
                 self.expr(e);
-                self.emit(Instruction::simple(Opcode::Pop));
+                if !matches!(e.kind, ExprKind::Yield { .. }) {
+                    self.emit(Instruction::simple(Opcode::Pop));
+                }
             }
             Stmt::If {
                 cond,
