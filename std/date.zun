@@ -1,6 +1,6 @@
 // UTC calendar surface over a millisecond timestamp.
 
-import { year, month, day, hour, minute, second, millisecond, weekday, dayOfYear, isoDate, isoDateTime } from "zun:date";
+import { isValid, year, month, day, hour, minute, second, millisecond, weekday, dayOfYear, isoDate, isoDateTime } from "zun:date";
 import { parseIsoDateTime } from "zun:date";
 import { parseIsoDate } from "zun:date";
 import { nowMillis } from "zun:time";
@@ -14,6 +14,7 @@ class Date {
     }
 
     valueOf(): i64 { return this.millis; }
+    isValid(): boolean { return isValid(this.millis); }
     getTime(): i64 { return this.millis; }
     setTime(value: i64): i64 {
         this.millis = value;

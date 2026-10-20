@@ -129,6 +129,13 @@ fn date_surface_decomposes_utc_timestamps() {
 }
 
 #[test]
+fn date_validity_is_jit_equivalent() {
+    assert_equivalent(
+        "import { isValid } from \"zun:date\"; function main(): boolean { return isValid(0); }",
+    );
+}
+
+#[test]
 fn date_numeric_intrinsics_are_equivalent_in_jit() {
     let module = compile(
         "import { year, month, day, hour, minute, second, millisecond, weekday, dayOfYear } from \"zun:date\";\n\

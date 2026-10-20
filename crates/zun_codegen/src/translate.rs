@@ -373,6 +373,7 @@ impl Translator<'_> {
                 Opcode::CallBuiltin => {
                     let id = match instr.operand { Operand::Imm32(id) => id as u32, _ => return Err("builtin operand".into()) };
                     let (name, arg_count, arg_type, result_kind, result_type) = match zun_natives::by_id(id).map(|f| f.name) {
+                        Some("isValid") => ("zun_jit_date_is_valid", 1, types::I64, JitKind::Bool, types::I32),
                         Some("year") => ("zun_jit_date_year", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
                         Some("month") => ("zun_jit_date_month", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),
                         Some("day") => ("zun_jit_date_day", 1, types::I64, JitKind::Num(NumKind::I32), types::I32),

@@ -13,6 +13,10 @@ fn date(args: &[NativeArg], name: &str) -> Result<zun_core::DateValue, NativeErr
     Ok(zun_core::DateValue::from_millis(millis(args, name)?))
 }
 
+fn is_valid(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Bool(date(args, "isValid")?.millis().is_some()))
+}
+
 fn year(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     Ok(NativeValue::Int(date(args, "year")?.utc_date().ok_or_else(|| NativeError("year: invalid date".into()))?.0 as i64))
 }
@@ -82,6 +86,7 @@ fn parse_iso_date(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:date",
     functions: &[
+        NativeFn { name: "isValid", params: &[I64], ret: Bool, imp: is_valid },
         NativeFn { name: "year", params: &[I64], ret: I32, imp: year },
         NativeFn { name: "month", params: &[I64], ret: I32, imp: month },
         NativeFn { name: "day", params: &[I64], ret: I32, imp: day },

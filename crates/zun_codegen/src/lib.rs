@@ -20,6 +20,7 @@ pub use zun_il::{JitKind, NumKind};
 
 #[inline]
 pub extern "C" fn zun_jit_date_year(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().0 }
+#[inline] pub extern "C" fn zun_jit_date_is_valid(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).millis().is_some() as i32 }
 #[inline]
 pub extern "C" fn zun_jit_date_month(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().1 as i32 }
 #[inline]
@@ -201,6 +202,7 @@ impl Jit {
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_date_year", zun_jit_date_year as *const u8);
+        builder.symbol("zun_jit_date_is_valid", zun_jit_date_is_valid as *const u8);
         builder.symbol("zun_jit_date_month", zun_jit_date_month as *const u8);
         builder.symbol("zun_jit_date_day", zun_jit_date_day as *const u8);
         builder.symbol("zun_jit_date_hour", zun_jit_date_hour as *const u8);
