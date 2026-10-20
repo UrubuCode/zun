@@ -16,6 +16,7 @@ mod dynamic_object;
 mod error_value;
 mod date_value;
 mod ids;
+mod any_value;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
@@ -25,6 +26,7 @@ pub use dynamic_object::DynamicObject;
 pub use error_value::ErrorValue;
 pub use date_value::DateValue;
 pub use ids::{CoreTypeId, IntrinsicId};
+pub use any_value::{Any, AnyTag};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
@@ -83,36 +85,6 @@ impl FunctionHandle {
     }
 }
 
-/// Runtime tag carried by a dynamically typed [`Any`] value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnyTag {
-    /// A signed small integer.
-    Int = 0,
-    /// An IEEE-754 f64 payload.
-    Float = 1,
-    /// A boolean encoded as zero or one.
-    Bool = 2,
-    /// A raw managed-object address.
-    Object = 3,
-    /// An index into the runtime string table.
-    String = 4,
-    /// The explicit JavaScript `null` value.
-    Null = 5,
-}
-
-/// Explicit tagged-union representation for opt-in dynamic values.
-///
-/// The payload is deliberately opaque at this layer: the GC owns object
-/// addresses and the heap owns string handles. This keeps `zun_core` free of
-/// interpreter and collector dependencies while freezing the wire contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
-pub struct Any {
-    tag: AnyTag,
-    payload: u64,
-}
-
 /// Runtime identity for a Symbol. Symbols with the same description are still
 /// distinct unless obtained through the global registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -167,100 +139,6 @@ impl SymbolRegistry {
 
     pub fn len(&self) -> usize {
         self.descriptions.len()
-    }
-}
-
-impl Any {
-    /// The explicit JavaScript `null` value.
-    pub const fn null() -> Self {
-        Self {
-            tag: AnyTag::Null,
-            payload: 0,
-        }
-    }
-    /// Box a signed integer.
-    pub const fn int(value: i64) -> Self {
-        Self {
-            tag: AnyTag::Int,
-            payload: value as u64,
-        }
-    }
-
-    /// Box an f64 without changing its bits.
-    pub const fn float(value: f64) -> Self {
-        Self {
-            tag: AnyTag::Float,
-            payload: value.to_bits(),
-        }
-    }
-
-    /// Box a boolean.
-    pub const fn bool(value: bool) -> Self {
-        Self {
-            tag: AnyTag::Bool,
-            payload: value as u64,
-        }
-    }
-
-    /// Box an object address supplied by the GC boundary.
-    pub const fn object(address: usize) -> Self {
-        Self {
-            tag: AnyTag::Object,
-            payload: address as u64,
-        }
-    }
-
-    /// Box a string-table handle supplied by the heap.
-    pub const fn string(handle: u32) -> Self {
-        Self {
-            tag: AnyTag::String,
-            payload: handle as u64,
-        }
-    }
-
-    /// Return the dynamic tag.
-    pub const fn tag(self) -> AnyTag {
-        self.tag
-    }
-
-    /// Unbox an integer if the tag matches.
-    pub const fn as_int(self) -> Option<i64> {
-        match self.tag {
-            AnyTag::Int => Some(self.payload as i64),
-            _ => None,
-        }
-    }
-
-    /// Unbox an f64 if the tag matches.
-    pub const fn as_float(self) -> Option<f64> {
-        match self.tag {
-            AnyTag::Float => Some(f64::from_bits(self.payload)),
-            _ => None,
-        }
-    }
-
-    /// Unbox a boolean if the tag matches.
-    pub const fn as_bool(self) -> Option<bool> {
-        match self.tag {
-            AnyTag::Bool => Some(self.payload != 0),
-            _ => None,
-        }
-    }
-
-    /// Unbox an object address if the tag matches.
-    pub const fn as_object(self) -> Option<usize> {
-        match self.tag {
-            AnyTag::Object => Some(self.payload as usize),
-            _ => None,
-        }
-    }
-
-    /// Unbox a string handle if the tag matches.
-    pub const fn as_string(self) -> Option<u32> {
-        match self.tag {
-            AnyTag::String => Some(self.payload as u32),
-            _ => None,
-        }
     }
 }
 
