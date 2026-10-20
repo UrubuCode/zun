@@ -372,6 +372,9 @@ The following runtime contracts are implemented and covered by tests:
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
   tracing of managed keys and values. Source-level constructors and intrinsic
   bindings remain the next integration gate.
+- Per-isolate `SymbolRegistry` with unique symbols and canonical
+  `Symbol.for`-style keys; iterator protocol bindings remain a source/compiler
+  integration gate.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

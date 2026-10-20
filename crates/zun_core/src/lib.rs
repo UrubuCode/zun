@@ -4,7 +4,7 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Size of one raw object slot in bytes.
 pub const SLOT_SIZE: usize = 8;
@@ -43,6 +43,50 @@ pub enum AnyTag {
 pub struct Any {
     tag: AnyTag,
     payload: u64,
+}
+
+/// Runtime identity for a Symbol. Symbols with the same description are still
+/// distinct unless obtained through the global registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct SymbolId(u64);
+
+impl SymbolId {
+    pub const fn get(self) -> u64 { self.0 }
+}
+
+/// Per-isolate symbol storage. The registry is deliberately separate from
+/// ordinary string interning: Symbol descriptions do not define identity.
+#[derive(Debug, Default)]
+pub struct SymbolRegistry {
+    descriptions: Vec<Option<String>>,
+    global: HashMap<String, SymbolId>,
+}
+
+impl SymbolRegistry {
+    pub fn new() -> Self { Self::default() }
+
+    pub fn create(&mut self, description: Option<impl Into<String>>) -> SymbolId {
+        let id = SymbolId(self.descriptions.len() as u64);
+        self.descriptions.push(description.map(Into::into));
+        id
+    }
+
+    pub fn for_key(&mut self, key: impl Into<String>) -> SymbolId {
+        let key = key.into();
+        if let Some(&id) = self.global.get(&key) {
+            return id;
+        }
+        let id = self.create(Some(key.clone()));
+        self.global.insert(key, id);
+        id
+    }
+
+    pub fn description(&self, id: SymbolId) -> Option<&str> {
+        self.descriptions.get(id.0 as usize).and_then(Option::as_deref)
+    }
+
+    pub fn len(&self) -> usize { self.descriptions.len() }
 }
 
 impl Any {
@@ -424,6 +468,19 @@ mod tests {
         assert_eq!(Any::object(0x1234).as_object(), Some(0x1234));
         assert_eq!(Any::string(9).as_string(), Some(9));
         assert_eq!(Any::int(1).as_float(), None);
+    }
+
+    #[test]
+    fn symbols_are_unique_but_global_keys_are_canonical() {
+        let mut symbols = SymbolRegistry::new();
+        let first = symbols.create(Some("iterator"));
+        let second = symbols.create(Some("iterator"));
+        let global_a = symbols.for_key("iterator");
+        let global_b = symbols.for_key("iterator");
+        assert_ne!(first, second);
+        assert_eq!(global_a, global_b);
+        assert_eq!(symbols.description(first), Some("iterator"));
+        assert_eq!(symbols.len(), 3);
     }
 
     #[test]
