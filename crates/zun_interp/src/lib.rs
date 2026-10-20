@@ -17,7 +17,7 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
-use stack::{pop, pop_n, underflow};
+use stack::{bin_float, pop, pop_n, underflow};
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3815,15 +3815,6 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
-}
-
-fn bin_float(stack: &mut Vec<Value>, f: impl Fn(f64, f64) -> f64) -> Result<(), RunError> {
-    let b = pop(stack)?;
-    let a = pop(stack)?;
-    let kind = a.float_kind();
-    let r = value::round_float(f(a.as_number(), b.as_number()), kind);
-    stack.push(Value::Float(r, kind));
-    Ok(())
 }
 
 fn bin_int(stack: &mut Vec<Value>, f: impl Fn(i64, i64) -> i64) -> Result<(), RunError> {
