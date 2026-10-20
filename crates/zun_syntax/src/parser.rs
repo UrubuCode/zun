@@ -1125,18 +1125,19 @@ fn parse_template_parts(
         };
         let end = expression_start + end_relative;
         let expression = inner[expression_start..end].trim();
-        let bytes = expression.as_bytes();
-        let valid = !bytes.is_empty()
-            && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_' || bytes[0] == b'$')
-            && bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$');
-        if valid {
-            let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
-            let start = span.start + offset as u32;
-            parts.push(crate::ast::TemplatePart::Expr(Box::new(crate::ast::Expr::Ident(crate::ast::Name {
-                span: Span::new(start, start + expression.len() as u32),
-            }))));
+        let mut expression_diagnostics = Vec::new();
+        let Some(mut parsed) = parse_expression_fragment(expression, &mut expression_diagnostics) else {
+            diagnostics.extend(expression_diagnostics);
+            diagnostics.push(Diagnostic::error("invalid template interpolation").with_code("SYN0005").with_span(span));
+            cursor = end + 1;
+            continue;
+        };
+        if !expression_diagnostics.is_empty() {
+            diagnostics.extend(expression_diagnostics);
         } else {
-            diagnostics.push(Diagnostic::error("template interpolation currently requires an identifier").with_code("SYN0005").with_span(span));
+            let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
+            rebase_expression_names(&mut parsed, span.start + offset as u32);
+            parts.push(crate::ast::TemplatePart::Expr(Box::new(parsed)));
         }
         cursor = end + 1;
     }
@@ -1148,6 +1149,51 @@ fn parse_template_parts(
 
 fn decode_template_text(text: &str) -> String {
     decode_string(&format!("\"{text}\""))
+}
+
+fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
+    let tokens = lex(source, diagnostics);
+    let mut parser = Parser { source, tokens, pos: 0, diagnostics };
+    let expression = parser.expression();
+    if parser.at(TokenKind::Eof) && diagnostics.is_empty() {
+        Some(expression)
+    } else {
+        None
+    }
+}
+
+fn rebase_expression_names(expr: &mut Expr, base: u32) {
+    let shift = |span: &mut Span| {
+        *span = Span::new(span.start + base, span.end + base);
+    };
+    match expr {
+        Expr::Ident(name) => shift(&mut name.span),
+        Expr::Assign { target, value, .. } => { shift(&mut target.span); rebase_expression_names(value, base); }
+        Expr::Binary { lhs, rhs, .. } => { rebase_expression_names(lhs, base); rebase_expression_names(rhs, base); }
+        Expr::Conditional { condition, when_true, when_false, .. } => {
+            rebase_expression_names(condition, base); rebase_expression_names(when_true, base); rebase_expression_names(when_false, base);
+        }
+        Expr::Unary { operand, .. } | Expr::Cast { expr: operand, .. } => rebase_expression_names(operand, base),
+        Expr::Call { callee, args, .. } => { shift(&mut callee.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::ComputedCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::MethodCall { receiver, method, args, .. } | Expr::OptionalMethodCall { object: receiver, method, args, .. } => {
+            rebase_expression_names(receiver, base); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); }
+        }
+        Expr::Spread { expr, .. } => rebase_expression_names(expr, base),
+        Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } => {
+            rebase_expression_names(object, base); shift(&mut field.span);
+        }
+        Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::FieldAssign { object, field, value, .. } => {
+            rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base);
+        }
+        Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
+        Expr::IndexAssign { object, index, value, .. } => {
+            rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base);
+        }
+        Expr::Function(_) | Expr::Number { .. } | Expr::String { .. } | Expr::Template { .. }
+        | Expr::Bool { .. } | Expr::Null { .. } => {}
+    }
 }
 
 #[cfg(test)]
@@ -1221,6 +1267,16 @@ mod tests {
         assert_eq!(parts[0], crate::ast::TemplatePart::Text("hello ".into()));
         assert!(matches!(parts[1], crate::ast::TemplatePart::Expr(_)));
         assert_eq!(parts[2], crate::ast::TemplatePart::Text("!".into()));
+    }
+
+    #[test]
+    fn parses_expression_inside_template_interpolation() {
+        let src = "function main() { let value: number = 1.0; return `${value + 2.0}`; }";
+        let p = parse_ok(src);
+        let Stmt::Return { value: Some(Expr::Template { parts, .. }), .. } = &p.functions[0].body.statements[1] else {
+            panic!("expected template literal");
+        };
+        assert!(matches!(&parts[0], crate::ast::TemplatePart::Expr(expression) if matches!(expression.as_ref(), Expr::Binary { .. })));
     }
 
     #[test]

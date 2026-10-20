@@ -2697,3 +2697,11 @@ fn template_literals_convert_numbers_through_the_native_floor() {
     assert!(!jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "value=12.5"));
 }
+
+#[test]
+fn template_literals_parse_expression_interpolations() {
+    let module = compile(
+        "function main(): string { let value: number = 1.0; return `sum=${value + 2.0}`; }",
+    );
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "sum=3"));
+}
