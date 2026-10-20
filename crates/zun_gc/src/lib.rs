@@ -116,6 +116,8 @@ pub struct Heap {
     cursor: usize,
     /// Interned strings, referenced from field slots by index.
     strings: Vec<Rc<str>>,
+    /// Symbols belong to this heap/isolate and never share identity globally.
+    symbols: zun_core::SymbolRegistry,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Dynamic property bags associated with dynamic objects.
@@ -513,6 +515,24 @@ impl Heap {
         self.strings.get(handle as usize)
     }
 
+    /// Create a unique symbol in this heap's isolate.
+    pub fn symbol_create(&mut self, description: Option<impl Into<String>>) -> zun_core::SymbolId {
+        self.symbols.create(description)
+    }
+
+    /// Get the canonical symbol for a registry key in this isolate.
+    pub fn symbol_for(&mut self, key: impl Into<String>) -> zun_core::SymbolId {
+        self.symbols.for_key(key)
+    }
+
+    pub fn symbol_description(&self, symbol: zun_core::SymbolId) -> Option<&str> {
+        self.symbols.description(symbol)
+    }
+
+    pub fn symbol_count(&self) -> usize {
+        self.symbols.len()
+    }
+
     /// Number of objects' worth of chunks currently held (for diagnostics).
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
@@ -731,6 +751,20 @@ mod tests {
         assert_eq!(heap.set_len(set), Some(1));
         assert_eq!(heap.set_remove(set, zun_core::Any::object(key.addr() as usize)), Some(true));
         assert_eq!(heap.set_has(set, zun_core::Any::object(key.addr() as usize)), Some(false));
+    }
+
+    #[test]
+    fn symbols_are_isolate_local_heap_state() {
+        let mut first = Heap::new();
+        let mut second = Heap::new();
+        let first_symbol = first.symbol_for("iterator");
+        let second_symbol = second.symbol_for("iterator");
+        assert_eq!(first_symbol, second_symbol);
+        assert_eq!(first.symbol_description(first_symbol), Some("iterator"));
+        assert_eq!(first.symbol_count(), 1);
+        assert_eq!(second.symbol_count(), 1);
+        let unique = first.symbol_create(Some("iterator"));
+        assert_ne!(unique, first_symbol);
     }
 
     #[test]
