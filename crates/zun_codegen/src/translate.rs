@@ -319,7 +319,12 @@ impl Translator<'_> {
                     let args: Vec<Value> = stack
                         .split_off(stack.len() - nargs)
                         .into_iter()
-                        .map(|(v, _)| v)
+                        .map(|(v, kind)| {
+                            if kind == JitKind::Object {
+                                self.builder.declare_value_needs_stack_map(v);
+                            }
+                            v
+                        })
                         .collect();
                     let inst = if instr.opcode == Opcode::CallVirt {
                         let receiver = args.first().copied().ok_or("virtual call receiver")?;
@@ -369,7 +374,11 @@ impl Translator<'_> {
                     let results = self.builder.inst_results(inst);
                     if callee.returns_value {
                         let r = results[0];
-                        stack.push((r, JitKind::from_byte(callee.return_kind)));
+                        let kind = JitKind::from_byte(callee.return_kind);
+                        if kind == JitKind::Object {
+                            self.builder.declare_value_needs_stack_map(r);
+                        }
+                        stack.push((r, kind));
                     }
                 }
                 Opcode::CallBuiltin => {
@@ -743,6 +752,9 @@ impl Translator<'_> {
                         .ins()
                         .load(types::I64, MemFlags::trusted(), ptr, off);
                     let v = crate::shim::unpack_arg(&mut self.builder, raw, kind);
+                    if kind == JitKind::Object {
+                        self.builder.declare_value_needs_stack_map(v);
+                    }
                     stack.push((v, kind));
                 }
                 Opcode::StoreField => {
