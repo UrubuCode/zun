@@ -176,6 +176,17 @@ fn non_overridden_virtual_call_is_jit_eligible() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(entry));
+    let read = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    assert!(
+        !jit.stack_maps(read).expect("read stack maps").is_empty(),
+        "object call must produce a native safepoint map"
+    );
     let jit_result = {
         let mut heap = zun_gc::Heap::new();
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };

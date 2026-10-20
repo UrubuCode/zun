@@ -86,6 +86,15 @@ pub enum RetVal {
     Void,
 }
 
+/// A machine-code safepoint carrying a user stack map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackMapInfo {
+    /// Offset of the safepoint from the method's native entry point.
+    pub code_offset: u32,
+    /// Number of bytes covered by the map in the native frame.
+    pub span: u32,
+}
+
 /// A compiled method's call shape.
 #[derive(Clone)]
 struct Sig {
@@ -107,6 +116,7 @@ pub struct Jit {
     fb_ctx: FunctionBuilderContext,
     types: zun_types::TypeSystem,
     virtual_table: Box<[u64]>,
+    stack_maps: HashMap<u32, Vec<StackMapInfo>>,
 }
 
 impl core::fmt::Debug for Jit {
@@ -158,6 +168,7 @@ impl Jit {
             fb_ctx: FunctionBuilderContext::new(),
             types,
             virtual_table,
+            stack_maps: HashMap::new(),
         };
 
         for &rid in &eligible {
@@ -295,6 +306,18 @@ impl Jit {
                 method_rid: rid,
                 detail: e.to_string(),
             })?;
+        let maps = self
+            .ctx
+            .compiled_code()
+            .map(|code| {
+                code.buffer
+                    .user_stack_maps()
+                    .iter()
+                    .map(|&(code_offset, span, _)| StackMapInfo { code_offset, span })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.stack_maps.insert(rid, maps);
         self.module.clear_context(&mut self.ctx);
 
         let sig = self.sigs[&rid].clone();
@@ -348,6 +371,11 @@ impl Jit {
     /// Whether `method_rid`'s body has actually been compiled and finalized.
     pub fn is_defined(&self, method_rid: u32) -> bool {
         self.defined.contains(&method_rid)
+    }
+
+    /// Return the native safepoint maps emitted for a method, if it is JIT-defined.
+    pub fn stack_maps(&self, method_rid: u32) -> Option<&[StackMapInfo]> {
+        self.stack_maps.get(&method_rid).map(Vec::as_slice)
     }
 
     /// The parameter kinds of a compiled method (for marshalling arguments).
