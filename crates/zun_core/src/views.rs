@@ -247,4 +247,17 @@ impl TypedArrayView {
             && index < self.len()
             && buffer.set(self.view.offset + index, value)
     }
+
+    pub fn read_u16(self, buffer: &ByteBuffer, index: usize) -> Option<u16> {
+        (self.element == TypedElement::U16)
+            .then(|| buffer.read_u16(self.view.offset + index.checked_mul(2)?))
+            .flatten()
+    }
+
+    pub fn write_u16(self, buffer: &mut ByteBuffer, index: usize, value: u16) -> bool {
+        self.element == TypedElement::U16
+            && index
+                .checked_mul(2)
+                .is_some_and(|offset| self.view.write_u16(buffer, offset, value))
+    }
 }
