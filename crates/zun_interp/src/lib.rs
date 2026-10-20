@@ -1708,6 +1708,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_string_is_printable_source_method() {
+        let module = zun_compiler::compile(
+            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPrintable(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 32) { return false; } if (code > 126) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Zun 2026!\"; return value.isPrintable(); }",
+        )
+        .expect("compile String isPrintable");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String isPrintable");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_string_to_string_source_method() {
         let module = zun_compiler::compile(
             "class String { toString(): string { return this; } }\n\
