@@ -77,6 +77,8 @@ pub enum NativeArg<'a> {
     Str(&'a str),
     /// An opaque reference (e.g. an object) — only its presence is known.
     Opaque,
+    /// A managed value preserved across an intrinsic boundary.
+    Any(zun_core::Any),
     /// No value.
     Void,
 }
@@ -98,6 +100,7 @@ impl NativeArg<'_> {
             NativeArg::Bool(b) => b.to_string(),
             NativeArg::Str(s) => s.to_string(),
             NativeArg::Opaque => "[object]".to_string(),
+            NativeArg::Any(value) => format!("[any:{:?}]", value.tag()),
             NativeArg::Void => "undefined".to_string(),
         }
     }
@@ -114,6 +117,8 @@ pub enum NativeValue {
     Bool(bool),
     /// A string result.
     Str(String),
+    /// A managed value returned by a collection intrinsic.
+    Any(zun_core::Any),
     /// No value.
     Void,
 }

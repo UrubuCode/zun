@@ -655,8 +655,8 @@ fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
         Value::Float(n, _) => zun_natives::NativeArg::Float(*n),
         Value::Bool(b) => zun_natives::NativeArg::Bool(*b),
         Value::Str(s) => zun_natives::NativeArg::Str(s),
-        Value::Object(_) => zun_natives::NativeArg::Opaque,
-        Value::Any(_) => zun_natives::NativeArg::Opaque,
+        Value::Object(object) => zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize)),
+        Value::Any(value) => zun_natives::NativeArg::Any(*value),
         Value::Void => zun_natives::NativeArg::Void,
     }
 }
@@ -669,6 +669,7 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
         NativeValue::Void => Value::Void,
         NativeValue::Bool(b) => Value::Bool(b),
         NativeValue::Str(s) => Value::Str(s.into()),
+        NativeValue::Any(value) => Value::Any(value),
         NativeValue::Float(n) => {
             let kind = match zun_natives::by_id(id).map(|f| f.ret) {
                 Some(NativeTy::F32) => zun_il::NumKind::F32,
