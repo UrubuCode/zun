@@ -778,6 +778,18 @@ fn array_remove_at_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_insert_at_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { insertAt(index: u64, value: any): Array { let cursor: u64 = this.length; this.push(value); while (cursor > index) { this[cursor] = this[cursor - 1]; cursor = cursor - 1; } this[index] = value; return this; } } function main(): number { let values = new Array(2); values[0] = 10.0; values[1] = 30.0; values.insertAt(1, values[0]); return (values[1] as number) + (values[2] as number); }",
+    )
+    .expect("compile Array insertAt");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 40.0));
+}
+
+#[test]
 fn array_product_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\

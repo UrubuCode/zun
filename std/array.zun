@@ -40,6 +40,17 @@ class Array {
         return removed;
     }
 
+    insertAt(index: u64, value: any): Array {
+        let cursor: u64 = this.length;
+        this.push(value);
+        while (cursor > index) {
+            this[cursor] = this[cursor - 1];
+            cursor = cursor - 1;
+        }
+        this[index] = value;
+        return this;
+    }
+
     swap(first: u64, second: u64): Array {
         let temporary: any = this[first];
         this[first] = this[second];
