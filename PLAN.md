@@ -409,8 +409,9 @@ fallback. Source-level `Symbol.iterator` calls now resolve to canonical
 iterator handles, and typed-array/DataView source constructors are available
 through the interpreter path. `DataView` is integrated with the managed
 buffers; `RegExp` now has a managed Rust regex floor and a Tier 0 source
-wrapper (Cranelift remains explicitly deferred); `Proxy`/`Reflect` go through
-the dynamic `Any`/`DynamicObject` path (Phase 4); `BigInt` needs a bignum
+wrapper (Cranelift remains explicitly deferred); `Reflect` now has Tier 0
+`get`/`set` aliases over `DynamicObject`, while `has`/`delete` and `Proxy`
+traps remain on the dynamic `Any`/`DynamicObject` path (Phase 4); `BigInt` needs a bignum
 (deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
 Cross-cutting rule: data structures with real algorithmic complexity (hashing,
