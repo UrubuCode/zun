@@ -99,6 +99,19 @@ impl<T: Send + 'static> Promise<T> {
         mapped
     }
 
+    /// Register a continuation that is always delivered through a microtask
+    /// queue, including when this promise has already resolved.
+    pub fn then_scheduled(
+        &self,
+        queue: Arc<Mutex<MicrotaskQueue>>,
+        continuation: impl FnOnce(T) + Send + 'static,
+    ) {
+        self.then(move |value| {
+            let mut queue = queue.lock().expect("microtask mutex poisoned");
+            queue.schedule(move || continuation(value));
+        });
+    }
+
     /// Whether the promise has already been resolved.
     pub fn is_resolved(&self) -> bool {
         self.state.load(Ordering::Acquire) == RESOLVED
@@ -276,6 +289,21 @@ mod tests {
         let target = Arc::clone(&seen);
         mapped.then(move |value| *target.lock().unwrap() = Some(value));
         assert_eq!(*seen.lock().unwrap(), Some(18));
+    }
+
+    #[test]
+    fn scheduled_continuation_waits_for_the_microtask_turn() {
+        let queue = Arc::new(Mutex::new(MicrotaskQueue::default()));
+        let promise = Promise::new();
+        let seen = Arc::new(Mutex::new(None));
+        let target = Arc::clone(&seen);
+        promise.then_scheduled(Arc::clone(&queue), move |value| {
+            *target.lock().unwrap() = Some(value)
+        });
+        assert!(promise.resolve(5));
+        assert_eq!(*seen.lock().unwrap(), None);
+        assert_eq!(queue.lock().unwrap().run_one(), true);
+        assert_eq!(*seen.lock().unwrap(), Some(5));
     }
 
     #[test]
