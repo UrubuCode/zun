@@ -514,44 +514,6 @@ impl Parser<'_> {
 
     // --- expressions (precedence climbing) ---
 
-    fn assignment(&mut self) -> Expr {
-        let lhs = self.conditional();
-        if self.at(TokenKind::Eq) {
-            let eq_span = self.bump().span;
-            let value = self.assignment();
-            match lhs {
-                Expr::Ident(target) => {
-                    let span = target.span.to(value.span());
-                    return Expr::Assign {
-                        target,
-                        value: Box::new(value),
-                        span,
-                    };
-                }
-                Expr::Field { object, field, .. } => {
-                    let span = object.span().to(value.span());
-                    return Expr::FieldAssign {
-                        object,
-                        field,
-                        value: Box::new(value),
-                        span,
-                    };
-                }
-                Expr::Index { object, index, .. } => {
-                    let span = object.span().to(value.span());
-                    return Expr::IndexAssign {
-                        object,
-                        index,
-                        value: Box::new(value),
-                        span,
-                    };
-                }
-                _ => self.error_at(eq_span, "invalid assignment target"),
-            }
-        }
-        lhs
-    }
-
     fn conditional(&mut self) -> Expr {
         let condition = self.binary(0);
         if !self.eat(TokenKind::Question) {
