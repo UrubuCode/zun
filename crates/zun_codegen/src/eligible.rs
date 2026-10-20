@@ -3,7 +3,8 @@
 //! The typed backend compiles numeric and boolean method bodies: every local,
 //! parameter, and the return must be a JIT value type (any `int` width, `f32`,
 //! `f64`, or `bool`), and the body may use only opcodes the translator handles.
-//! Heap operations (strings, objects, fields, `callvirt`, builtins) and the
+//! Heap operations (strings, objects, fields, `callvirt`, and unsupported
+//! builtins) and the
 //! float-remainder libcall stay on the interpreter. Eligibility is a
 //! whole-call-graph fixpoint, so a JIT frame never calls back into the
 //! interpreter.
@@ -13,8 +14,8 @@ use zun_il::{decode_all, JitKind, Opcode, Operand};
 use zun_module::{read_body, Module};
 
 /// Whether an opcode is handled by the typed translator.
-fn opcode_supported(op: Opcode) -> bool {
-    matches!(
+fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
+    let supported = matches!(
         op,
         Opcode::Nop
             | Opcode::ConstI32
@@ -52,7 +53,14 @@ fn opcode_supported(op: Opcode) -> bool {
             | Opcode::NewObj
             | Opcode::LoadField
             | Opcode::StoreField
-    )
+    );
+    supported || (op == Opcode::CallBuiltin && date_builtin(instr))
+}
+
+fn date_builtin(instr: &zun_il::Instruction) -> bool {
+    let Operand::Imm32(id) = instr.operand else { return false; };
+    matches!(zun_natives::by_id(id as u32).map(|f| f.name),
+        Some("year" | "month" | "day" | "hour" | "minute" | "second" | "millisecond" | "weekday" | "dayOfYear"))
 }
 
 /// Whether a field (by FieldDef token RID) has a JIT-representable type, i.e.
@@ -134,7 +142,7 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
-        if !instrs.iter().all(|i| opcode_supported(i.opcode)) {
+        if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
             continue;
         }
         // Reject methods whose field/newobj operands touch non-JIT types

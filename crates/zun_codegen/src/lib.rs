@@ -18,6 +18,25 @@ mod translate;
 pub use eligible::eligible_methods;
 pub use zun_il::{JitKind, NumKind};
 
+#[inline]
+pub extern "C" fn zun_jit_date_year(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().0 }
+#[inline]
+pub extern "C" fn zun_jit_date_month(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().1 as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_day(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_date().unwrap().2 as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_hour(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().0 as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_minute(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().1 as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_second(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().2 as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_millisecond(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).utc_time().unwrap().3 as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_weekday(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).weekday().unwrap() as i32 }
+#[inline]
+pub extern "C" fn zun_jit_date_day_of_year(millis: i64) -> i32 { zun_core::DateValue::from_millis(millis).ordinal().unwrap() as i32 }
+
 use std::collections::{HashMap, HashSet};
 
 use cranelift_codegen::ir::AbiParam;
@@ -150,6 +169,15 @@ impl Jit {
         let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
+        builder.symbol("zun_jit_date_year", zun_jit_date_year as *const u8);
+        builder.symbol("zun_jit_date_month", zun_jit_date_month as *const u8);
+        builder.symbol("zun_jit_date_day", zun_jit_date_day as *const u8);
+        builder.symbol("zun_jit_date_hour", zun_jit_date_hour as *const u8);
+        builder.symbol("zun_jit_date_minute", zun_jit_date_minute as *const u8);
+        builder.symbol("zun_jit_date_second", zun_jit_date_second as *const u8);
+        builder.symbol("zun_jit_date_millisecond", zun_jit_date_millisecond as *const u8);
+        builder.symbol("zun_jit_date_weekday", zun_jit_date_weekday as *const u8);
+        builder.symbol("zun_jit_date_day_of_year", zun_jit_date_day_of_year as *const u8);
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);

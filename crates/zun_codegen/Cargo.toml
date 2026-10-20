@@ -12,6 +12,7 @@ zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
 zun_gc = { path = "../zun_gc" }
+zun_natives = { path = "../zun_natives" }
 zun_types = { path = "../zun_types" }
 zun_compiler = { path = "../zun_compiler" }
 cranelift-codegen = { workspace = true }

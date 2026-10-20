@@ -197,6 +197,7 @@ impl Translator<'_> {
         index_of_offset: &BTreeMap<usize, usize>,
     ) -> Result<(), String> {
         let mut stack: Vec<Slot> = Vec::new();
+        let mut builtin_ids: HashMap<&'static str, FuncId> = HashMap::new();
 
         for (i, instr) in instrs.iter().enumerate() {
             if i != 0 {
@@ -368,6 +369,34 @@ impl Translator<'_> {
                         let r = results[0];
                         stack.push((r, JitKind::from_byte(callee.return_kind)));
                     }
+                }
+                Opcode::CallBuiltin => {
+                    let id = match instr.operand { Operand::Imm32(id) => id as u32, _ => return Err("builtin operand".into()) };
+                    let name = match zun_natives::by_id(id).map(|f| f.name) {
+                        Some("year") => "zun_jit_date_year",
+                        Some("month") => "zun_jit_date_month",
+                        Some("day") => "zun_jit_date_day",
+                        Some("hour") => "zun_jit_date_hour",
+                        Some("minute") => "zun_jit_date_minute",
+                        Some("second") => "zun_jit_date_second",
+                        Some("millisecond") => "zun_jit_date_millisecond",
+                        Some("weekday") => "zun_jit_date_weekday",
+                        Some("dayOfYear") => "zun_jit_date_day_of_year",
+                        _ => return Err("unsupported builtin".into()),
+                    };
+                    let (arg, _) = stack.pop().ok_or("builtin stack underflow")?;
+                    let fid = if let Some(&fid) = builtin_ids.get(name) { fid } else {
+                        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+                        sig.params.push(AbiParam::new(types::I64));
+                        sig.returns.push(AbiParam::new(types::I32));
+                        let fid = self.module.declare_function(name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
+                        builtin_ids.insert(name, fid);
+                        fid
+                    };
+                    let fref = self.module.declare_func_in_func(fid, self.builder.func);
+                    let inst = self.builder.ins().call(fref, &[arg]);
+                    let result = self.builder.inst_results(inst)[0];
+                    stack.push((result, JitKind::Num(NumKind::I32)));
                 }
                 Opcode::NewObj => {
                     let type_rid = match instr.operand {

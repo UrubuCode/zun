@@ -409,11 +409,10 @@ The following runtime contracts are implemented and covered by tests:
   invalid-input rejection. JIT lowering remains a separate gate for the native
   date intrinsics.
 
-The current typed Cranelift backend intentionally rejects `CallBuiltin`; native
-Date calls therefore remain Tier 0. Enabling their numeric subset requires a
-stable JIT ABI/import table plus eligibility and interp/JIT equivalence tests,
-and must be implemented as one coordinated backend phase rather than by
-marking builtin-bearing methods eligible prematurely.
+The typed Cranelift backend now lowers the numeric `zun:date` subset through a
+stable C ABI/import table (`i64 -> i32`), with eligibility and interp/JIT
+equivalence coverage. String-returning Date calls and other builtins remain
+Tier 0 until their value representations and ABI lowering are defined.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and

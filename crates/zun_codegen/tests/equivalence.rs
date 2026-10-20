@@ -98,9 +98,15 @@ fn date_surface_decomposes_utc_timestamps() {
          function main(): int { let value: Date = new Date(0); if (value.utcYear() == 1970) { if (value.utcMonth() == 1) { if (value.utcDay() == 1) { return 1; } } } return 0; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "new date intrinsics remain interpreter-only until JIT lowering exists");
-    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    let interp_result = interp_entry(&module);
+    assert!(matches!((jit_result, interp_result),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
 }
 
 #[test]
@@ -220,9 +226,14 @@ fn date_surface_exposes_utc_weekday_alias() {
          function main(): int { let value: Date = new Date(0); if (value.getUTCWeekday() == 4) { return 1; } return 0; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Date native weekday calls remain interpreter-only");
-    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    assert!(matches!((jit_result, interp_entry(&module)),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
 }
 
 #[test]
@@ -233,9 +244,14 @@ fn date_surface_converts_iso_weekday_to_ecmascript_day() {
          function main(): int { let value: Date = new Date(0); if (value.getUTCDay() == 4) { return 1; } return 0; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Date weekday native calls remain interpreter-only");
-    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    let jit_result = {
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        jit.call_entry(entry).expect("jit call")
+    };
+    assert!(matches!((jit_result, interp_entry(&module)),
+        (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
 }
 
 #[test]
