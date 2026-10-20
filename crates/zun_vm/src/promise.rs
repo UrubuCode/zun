@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const PENDING: u8 = 0;
 const RESOLVED: u8 = 1;
@@ -15,8 +15,8 @@ struct Inner<T> {
 /// A single-assignment future with one continuation, matching the runtime
 /// representation planned for Promise state machines.
 pub struct Promise<T> {
-    state: AtomicU8,
-    inner: Mutex<Inner<T>>,
+    state: Arc<AtomicU8>,
+    inner: Arc<Mutex<Inner<T>>>,
 }
 
 impl<T> core::fmt::Debug for Promise<T> {
@@ -31,11 +31,11 @@ impl<T: Send + 'static> Promise<T> {
     /// Create a pending promise.
     pub fn new() -> Self {
         Self {
-            state: AtomicU8::new(PENDING),
-            inner: Mutex::new(Inner {
+            state: Arc::new(AtomicU8::new(PENDING)),
+            inner: Arc::new(Mutex::new(Inner {
                 value: None,
                 continuation: None,
-            }),
+            })),
         }
     }
 
@@ -82,9 +82,66 @@ impl<T: Send + 'static> Promise<T> {
         }
     }
 
+    /// Transform the resolved value into a new promise.
+    ///
+    /// The continuation remains single-assignment: the returned promise is
+    /// resolved exactly when this promise resolves, whether the callback is
+    /// registered before or after that resolution.
+    pub fn map<U: Send + 'static>(
+        &self,
+        transform: impl FnOnce(T) -> U + Send + 'static,
+    ) -> Promise<U> {
+        let mapped = Promise::new();
+        let target = mapped.clone_handle();
+        self.then(move |value| {
+            target.resolve(transform(value));
+        });
+        mapped
+    }
+
     /// Whether the promise has already been resolved.
     pub fn is_resolved(&self) -> bool {
         self.state.load(Ordering::Acquire) == RESOLVED
+    }
+}
+
+impl<T: Send + 'static> Promise<T> {
+    fn clone_handle(&self) -> PromiseHandle<T> {
+        PromiseHandle {
+            state: Arc::clone(&self.state),
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+/// A non-owning resolver used internally while composing promises.
+struct PromiseHandle<T> {
+    state: Arc<AtomicU8>,
+    inner: Arc<Mutex<Inner<T>>>,
+}
+
+impl<T> PromiseHandle<T> {
+    fn resolve(&self, value: T)
+    where
+        T: Send + 'static,
+    {
+        if self
+            .state
+            .compare_exchange(PENDING, RESOLVED, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let continuation = {
+            let mut inner = self.inner.lock().expect("promise mutex poisoned");
+            if inner.continuation.is_some() {
+                inner.continuation.take()
+            } else {
+                inner.value = Some(value);
+                return;
+            }
+        };
+        continuation.expect("continuation disappeared")(value);
     }
 }
 
@@ -200,6 +257,25 @@ mod tests {
         let target = Arc::clone(&seen);
         promise.then(move |value| *target.lock().unwrap() = Some(value));
         assert_eq!(*seen.lock().unwrap(), Some(9));
+    }
+
+    #[test]
+    fn map_composes_pending_and_already_resolved_promises() {
+        let promise = Promise::new();
+        let mapped = promise.map(|value| value + 1);
+        let seen = Arc::new(Mutex::new(None));
+        let target = Arc::clone(&seen);
+        mapped.then(move |value| *target.lock().unwrap() = Some(value));
+        assert!(promise.resolve(41));
+        assert_eq!(*seen.lock().unwrap(), Some(42));
+
+        let resolved = Promise::new();
+        assert!(resolved.resolve(9));
+        let mapped = resolved.map(|value| value * 2);
+        let seen = Arc::new(Mutex::new(None));
+        let target = Arc::clone(&seen);
+        mapped.then(move |value| *target.lock().unwrap() = Some(value));
+        assert_eq!(*seen.lock().unwrap(), Some(18));
     }
 
     #[test]
