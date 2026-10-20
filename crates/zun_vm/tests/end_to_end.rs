@@ -374,6 +374,9 @@ fn adaptive_tiering_compiles_hot_methods() {
     assert_eq!(out.lines, ["0", "1", "4", "9", "16"]);
     // After 5 calls with threshold 2, `sq` must have been compiled.
     assert!(hook.jit_is_defined(sq_rid));
+    // The interpreted loop reports its backedge before the hot call path
+    // takes over, providing the observation point required by future OSR.
+    assert!(hook.total_loop_backedges(2) > 0);
 }
 
 #[test]

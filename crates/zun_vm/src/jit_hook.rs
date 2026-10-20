@@ -25,6 +25,7 @@ pub struct JitHook<'a> {
     jit: RefCell<Jit>,
     module: &'a Module,
     counts: RefCell<HashMap<u32, u32>>,
+    loop_counts: RefCell<HashMap<(u32, usize), u64>>,
     threshold: u32,
 }
 
@@ -51,8 +52,28 @@ impl<'a> JitHook<'a> {
             jit: RefCell::new(jit),
             module,
             counts: RefCell::new(HashMap::new()),
+            loop_counts: RefCell::new(HashMap::new()),
             threshold,
         }
+    }
+
+    /// Return the number of interpreted backedges observed at a loop header.
+    pub fn loop_count(&self, method_rid: u32, target_pc: usize) -> u64 {
+        self.loop_counts
+            .borrow()
+            .get(&(method_rid, target_pc))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Return all observed backedges for one method, summed across headers.
+    pub fn total_loop_backedges(&self, method_rid: u32) -> u64 {
+        self.loop_counts
+            .borrow()
+            .iter()
+            .filter(|((rid, _), _)| *rid == method_rid)
+            .map(|(_, count)| *count)
+            .sum()
     }
 }
 
@@ -100,6 +121,11 @@ impl CallHook for JitHook<'_> {
         let packed: Vec<u64> = args.iter().zip(kinds).map(|(v, &k)| pack_value(v, k)).collect();
         let result = jit.call_packed(method_rid, &packed).ok()?;
         Some(unpack_value(result, jit.return_kind(method_rid)))
+    }
+
+    fn on_backedge(&self, method_rid: u32, target_pc: usize) {
+        let mut counts = self.loop_counts.borrow_mut();
+        *counts.entry((method_rid, target_pc)).or_insert(0) += 1;
     }
 }
 

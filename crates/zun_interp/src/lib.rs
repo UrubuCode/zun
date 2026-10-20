@@ -73,6 +73,10 @@ impl std::error::Error for RunError {}
 pub trait CallHook {
     /// Try to execute method `method_rid` with `args`.
     fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value>;
+
+    /// Observe a backwards branch in an interpreted method. Backedges are the
+    /// stable safepoint boundary used by future OSR implementations.
+    fn on_backedge(&self, _method_rid: u32, _target_pc: usize) {}
 }
 
 /// Run a module's entry point with no arguments, on the interpreter alone.
@@ -310,16 +314,34 @@ impl Interp<'_> {
                 Opcode::CmpGt => compare(&mut stack, Ordering::Gt)?,
                 Opcode::CmpGe => compare(&mut stack, Ordering::Ge)?,
                 Opcode::Branch => {
-                    pc = branch_target(next, &instr.operand);
+                    let target = branch_target(next, &instr.operand);
+                    if target < pc {
+                        if let Some(hook) = self.hook {
+                            hook.on_backedge(method_rid, target);
+                        }
+                    }
+                    pc = target;
                 }
                 Opcode::BranchTrue => {
                     if pop(&mut stack)?.as_bool() {
-                        pc = branch_target(next, &instr.operand);
+                        let target = branch_target(next, &instr.operand);
+                        if target < pc {
+                            if let Some(hook) = self.hook {
+                                hook.on_backedge(method_rid, target);
+                            }
+                        }
+                        pc = target;
                     }
                 }
                 Opcode::BranchFalse => {
                     if !pop(&mut stack)?.as_bool() {
-                        pc = branch_target(next, &instr.operand);
+                        let target = branch_target(next, &instr.operand);
+                        if target < pc {
+                            if let Some(hook) = self.hook {
+                                hook.on_backedge(method_rid, target);
+                            }
+                        }
+                        pc = target;
                     }
                 }
                 Opcode::Ret => {
