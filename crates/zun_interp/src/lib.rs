@@ -1425,6 +1425,17 @@ mod method_tests {
         let value = run(&module, &mut output).expect("run optional access");
         assert!(matches!(value, Value::Null));
     }
+
+    #[test]
+    fn optional_dynamic_access_reads_non_null_property() {
+        let module = zun_compiler::compile(
+            "function main(): any { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); let value: any = object; return value?.answer; }",
+        )
+        .expect("compile optional property read");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run optional property read");
+        assert!(matches!(value, Value::Any(any) if any.as_float() == Some(41.0)));
+    }
     use zun_il::{encode, Instruction, Operand};
     use zun_metadata::{FieldDef, MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
