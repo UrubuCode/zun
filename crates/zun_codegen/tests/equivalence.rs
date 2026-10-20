@@ -125,6 +125,39 @@ fn async_function_without_await_returns_a_promise_through_tier0() {
 }
 
 #[test]
+fn async_await_preserves_the_interpreter_fallback_boundary() {
+    let module = compile(
+        "async function main(): Promise { let p = new Promise(); await p; return p; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "Await requires Tier 0 state-machine execution");
+    let mut output = CaptureOutput::default();
+    let mut session = zun_interp::ResumableSession::new(
+        &module,
+        entry,
+        Vec::new(),
+        &mut output,
+        None,
+        None,
+    )
+    .expect("create resumable session");
+    assert!(matches!(
+        session.poll().expect("initial poll"),
+        zun_interp::ResumeResult::Suspended
+    ));
+    let promise = session.awaited_promise().expect("awaited promise");
+    let boxed = Value::Int(1, zun_il::NumKind::I32)
+        .box_any(session.heap_mut())
+        .expect("box result");
+    assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
+    assert!(matches!(
+        session.poll().expect("resumed poll"),
+        zun_interp::ResumeResult::Complete(Value::Object(_))
+    ));
+}
+
+#[test]
 fn map_and_set_values_are_exposed_as_instance_methods() {
     let module = compile(
         "function main(): int { let map = new Map(); map.set(7.0, 42.0); let set = new Set(); set.add(9.0); let map_values: Array = map.values(); let set_values: Array = set.values(); if ((map_values[0] as number) == 42.0) { if ((set_values[0] as number) == 9.0) { return 1; } } return 0; }",
