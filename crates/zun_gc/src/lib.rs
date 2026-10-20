@@ -297,6 +297,14 @@ impl Heap {
         self.dates.get(&(object.addr() as usize))?.utc_time()
     }
 
+    pub fn date_weekday(&self, object: Obj) -> Option<u32> {
+        self.dates.get(&(object.addr() as usize))?.weekday()
+    }
+
+    pub fn date_ordinal(&self, object: Obj) -> Option<u32> {
+        self.dates.get(&(object.addr() as usize))?.ordinal()
+    }
+
     pub fn date_iso(&self, object: Obj) -> Option<String> {
         self.dates.get(&(object.addr() as usize))?.iso_date()
     }
@@ -1196,6 +1204,8 @@ mod tests {
         assert_eq!(heap.date_compare(earlier, later), Some(std::cmp::Ordering::Less));
         assert_eq!(heap.date_utc_date(earlier), Some((1970, 1, 1)));
         assert_eq!(heap.date_utc_time(earlier), Some((0, 0, 0, 100)));
+        assert_eq!(heap.date_weekday(earlier), Some(4));
+        assert_eq!(heap.date_ordinal(earlier), Some(1));
         assert_eq!(heap.date_iso(earlier).as_deref(), Some("1970-01-01"));
         assert_eq!(heap.date_iso_datetime(earlier).as_deref(), Some("1970-01-01T00:00:00.100Z"));
         assert_eq!(heap.date_set_millis(earlier, 200), Some(()));

@@ -346,6 +346,18 @@ impl DateValue {
         Some((hour, minute, second, millisecond))
     }
 
+    /// ISO weekday where Monday is 1 and Sunday is 7.
+    pub fn weekday(self) -> Option<u32> {
+        let days = self.millis()?.div_euclid(86_400_000);
+        Some((days + 3).rem_euclid(7) as u32 + 1)
+    }
+
+    pub fn ordinal(self) -> Option<u32> {
+        let (year, month, day) = self.utc_date()?;
+        let before = (1..month).map(|m| days_in_month(year, m)).sum::<u32>();
+        Some(before + day)
+    }
+
     pub fn iso_datetime(self) -> Option<String> {
         let (year, month, day) = self.utc_date()?;
         let (hour, minute, second, millisecond) = self.utc_time()?;
@@ -825,7 +837,10 @@ mod tests {
         assert_eq!(date.millis(), Some(1_700_000_000_123));
         assert_eq!(date.compare(DateValue::from_millis(1_700_000_000_124)), Some(std::cmp::Ordering::Less));
         assert_eq!(DateValue::from_millis(0).utc_date(), Some((1970, 1, 1)));
+        assert_eq!(DateValue::from_millis(0).weekday(), Some(4));
+        assert_eq!(DateValue::from_millis(0).ordinal(), Some(1));
         assert_eq!(DateValue::from_millis(1_700_000_000_000).utc_date(), Some((2023, 11, 14)));
+        assert_eq!(DateValue::from_millis(1_700_000_000_000).ordinal(), Some(318));
         assert_eq!(DateValue::from_millis(3_723_004).utc_time(), Some((1, 2, 3, 4)));
         assert_eq!(DateValue::from_millis(-1).utc_time(), Some((23, 59, 59, 999)));
         assert_eq!(DateValue::from_millis(3_723_004).iso_datetime().as_deref(), Some("1970-01-01T01:02:03.004Z"));
