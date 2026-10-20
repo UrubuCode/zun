@@ -75,6 +75,24 @@ impl<'a> JitHook<'a> {
             .map(|(_, count)| *count)
             .sum()
     }
+
+    /// Whether a loop header has crossed the same hotness threshold used for
+    /// lazy method compilation. This is the decision point an OSR backend can
+    /// consume without reaching into the hook's counters.
+    pub fn is_loop_hot(&self, method_rid: u32, target_pc: usize) -> bool {
+        self.loop_count(method_rid, target_pc) >= u64::from(self.threshold.max(1))
+    }
+
+    /// Return the observed loop headers that are currently hot for a method.
+    pub fn hot_loop_headers(&self, method_rid: u32) -> Vec<usize> {
+        self.loop_counts
+            .borrow()
+            .iter()
+            .filter_map(|(&(rid, target), &count)| {
+                (rid == method_rid && count >= u64::from(self.threshold.max(1))).then_some(target)
+            })
+            .collect()
+    }
 }
 
 impl CallHook for JitHook<'_> {

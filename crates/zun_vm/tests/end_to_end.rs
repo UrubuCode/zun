@@ -377,6 +377,8 @@ fn adaptive_tiering_compiles_hot_methods() {
     // The interpreted loop reports its backedge before the hot call path
     // takes over, providing the observation point required by future OSR.
     assert!(hook.total_loop_backedges(2) > 0);
+    assert!(hook.is_loop_hot(2, 0));
+    assert!(hook.hot_loop_headers(2).contains(&0));
 }
 
 #[test]
