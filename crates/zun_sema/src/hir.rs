@@ -299,6 +299,13 @@ pub enum Stmt {
         /// The initializer.
         init: Expr,
     },
+    /// Initialize consecutive locals from an Array by index.
+    ArrayDestructure {
+        /// Destination local slots in index order.
+        slots: Vec<LocalSlot>,
+        /// Source array expression.
+        init: Expr,
+    },
     /// Initialize a local whose storage is a shared closure cell.
     BoxedLet {
         /// Destination local slot containing the cell object.

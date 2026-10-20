@@ -224,7 +224,9 @@ impl Checker<'_> {
     fn collect_mutated_names(&self, statements: &[ast::Stmt], names: &mut HashSet<String>) {
         for statement in statements {
             match statement {
-                ast::Stmt::Let { init, .. } | ast::Stmt::Expr(init) => {
+                ast::Stmt::Let { init, .. }
+                | ast::Stmt::ArrayDestructure { init, .. }
+                | ast::Stmt::Expr(init) => {
                     self.collect_mutated_expr(init, names)
                 }
                 ast::Stmt::If {
@@ -585,7 +587,9 @@ impl Checker<'_> {
         uses: &mut CaptureUse,
     ) {
         match statement {
-            ast::Stmt::Let { init, .. } | ast::Stmt::Expr(init) => {
+            ast::Stmt::Let { init, .. }
+            | ast::Stmt::ArrayDestructure { init, .. }
+            | ast::Stmt::Expr(init) => {
                 self.collect_capture_expr(cx, parameters, init, uses)
             }
             ast::Stmt::If {
@@ -1291,6 +1295,20 @@ impl Checker<'_> {
 
     fn check_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
         match stmt {
+            ast::Stmt::ArrayDestructure { names, init, .. } => {
+                let init = self.check_expr(cx, init);
+                if init.ty != Ty::Array && !init.ty.is_error() {
+                    self.error(init.span, "array destructuring requires an Array initializer");
+                }
+                let slots = names
+                    .iter()
+                    .map(|name| {
+                        let name = self.text(name).to_string();
+                        cx.declare(&name, Ty::Any)
+                    })
+                    .collect();
+                hir::Stmt::ArrayDestructure { slots, init }
+            }
             ast::Stmt::Let { name, ty, init, .. } => {
                 let mut init = self.check_expr(cx, init);
                 let declared = ty.as_ref().map(|t| self.resolve_annotation(t));

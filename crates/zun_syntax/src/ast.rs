@@ -150,6 +150,15 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
+    /// `let [a, b] = array;` fixed-length array destructuring.
+    ArrayDestructure {
+        /// Declared binding names in index order.
+        names: Vec<Name>,
+        /// The source array expression.
+        init: Expr,
+        /// Span of the whole statement.
+        span: Span,
+    },
     /// `expr;`
     Expr(Expr),
     /// `if (cond) { then } else { otherwise }`

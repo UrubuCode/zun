@@ -362,6 +362,25 @@ impl Parser<'_> {
 
     fn let_statement(&mut self) -> Stmt {
         let start = self.bump().span; // `let`
+        if self.eat(TokenKind::LBracket) {
+            let mut names = Vec::new();
+            while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
+                names.push(self.name("an array destructuring binding"));
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBracket, "`]` after array destructuring pattern");
+            self.expect(TokenKind::Eq, "`=` after array destructuring pattern");
+            let init = self.expression();
+            let end = self.peek().span;
+            self.expect(TokenKind::Semi, "`;`");
+            return Stmt::ArrayDestructure {
+                names,
+                init,
+                span: start.to(end),
+            };
+        }
         let name = self.name("a variable name");
         let ty = self.optional_type_annotation();
         self.expect(TokenKind::Eq, "`=` (phase 1 requires an initializer)");
@@ -1132,6 +1151,15 @@ mod tests {
             panic!("expected call expression");
         };
         assert!(matches!(args[0], Expr::Spread { .. }));
+    }
+
+    #[test]
+    fn parses_array_destructuring_declaration() {
+        let p = parse_ok("function main() { let [first, second] = values; }");
+        assert!(matches!(
+            p.functions[0].body.statements[0],
+            Stmt::ArrayDestructure { ref names, .. } if names.len() == 2
+        ));
     }
 
     #[test]

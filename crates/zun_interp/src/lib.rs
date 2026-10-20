@@ -2038,6 +2038,17 @@ mod method_tests {
     }
 
     #[test]
+    fn array_destructuring_reads_elements_by_index() {
+        let module = zun_compiler::compile(
+            "function main(): number { let values = new Array(2); values[0] = 4; values[1] = 8; let [first, second] = values; return first as number + second as number; }",
+        )
+        .expect("compile array destructuring");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run array destructuring");
+        assert!(matches!(value, Value::Float(12.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn method_default_parameter_preserves_the_receiver() {
         let module = zun_compiler::compile(
             "class Box { value(factor: number = 3.0): number { return factor; } } function main(): number { let box_value = new Box(); return box_value.value(); }",
