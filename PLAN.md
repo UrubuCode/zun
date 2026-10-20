@@ -323,7 +323,8 @@ reserves a header slot for that hash, and the non-moving heap assigns a fresh
 hash when an allocation is created or a reclaimed block is reused. This keeps
 object-key hashing valid when a future compacting collector changes addresses.
 The ordered table uses stable entry indices and tombstones, so deletion does
-not shift the insertion-order vector or become an O(n) operation.
+not shift the insertion-order vector or become an O(n) operation. Automatic
+compaction bounds tombstone memory after repeated deletion.
 
 Weak collections are a separate GC phase: weak slots require post-mark
 clearing, `WeakMap` requires ephemeron fixed-point marking, and

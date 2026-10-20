@@ -197,6 +197,7 @@ pub struct OrderedMap {
     entries: Vec<Option<(Any, Any, u64)>>,
     buckets: Vec<Vec<usize>>,
     live_len: usize,
+    dead_len: usize,
 }
 
 impl Default for OrderedMap {
@@ -207,7 +208,7 @@ impl Default for OrderedMap {
 
 impl OrderedMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8], live_len: 0 }
+        Self { entries: Vec::new(), buckets: vec![Vec::new(); 8], live_len: 0, dead_len: 0 }
     }
 
     pub fn len(&self) -> usize { self.live_len }
@@ -221,6 +222,9 @@ impl OrderedMap {
     }
 
     pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
+        if self.dead_len >= 8 && self.dead_len > self.live_len {
+            self.compact();
+        }
         let bucket_index = (hash as usize) % self.buckets.len();
         if let Some(&index) = self.buckets[bucket_index].iter().find(|&&index| {
             self.entries[index].is_some_and(|(key, _, _)| equal(key))
@@ -244,6 +248,7 @@ impl OrderedMap {
         })?;
         let removed = self.entries[index].take()?;
         self.live_len -= 1;
+        self.dead_len += 1;
         Some((removed.0, removed.1))
     }
 
@@ -260,6 +265,13 @@ impl OrderedMap {
             }
         }
         self.buckets = buckets;
+    }
+
+    fn compact(&mut self) {
+        let entries: Vec<_> = self.entries.iter().filter_map(|entry| *entry).map(Some).collect();
+        self.entries = entries;
+        self.dead_len = 0;
+        self.rehash();
     }
 }
 
@@ -731,5 +743,19 @@ mod tests {
         assert_eq!(values, vec![22, 10]);
         assert_eq!(map.remove(1, |k| key(k, 1)).map(|(_, value)| value.as_int()), Some(Some(10)));
         assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn ordered_map_compacts_tombstones_without_changing_order() {
+        let mut map = OrderedMap::new();
+        for key in 0..12 {
+            map.insert(Any::int(key), Any::int(key * 10), key as u64, |candidate| candidate.as_int() == Some(key));
+        }
+        for key in 0..10 {
+            assert!(map.remove(key as u64, |candidate| candidate.as_int() == Some(key)).is_some());
+        }
+        map.insert(Any::int(12), Any::int(120), 12, |candidate| candidate.as_int() == Some(12));
+        let keys: Vec<i64> = map.iter().filter_map(|(key, _)| key.as_int()).collect();
+        assert_eq!(keys, vec![10, 11, 12]);
     }
 }
