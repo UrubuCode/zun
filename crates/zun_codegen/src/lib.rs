@@ -106,6 +106,7 @@ pub struct Jit {
     ctx: cranelift_codegen::Context,
     fb_ctx: FunctionBuilderContext,
     types: zun_types::TypeSystem,
+    virtual_table: Box<[u64]>,
 }
 
 impl core::fmt::Debug for Jit {
@@ -137,8 +138,10 @@ impl Jit {
         let module = JITModule::new(builder);
 
         let eligible = eligible_methods(zm);
-        let types = zun_types::TypeSystem::from_module(zm)
-            .map_err(|e| JitError::Module(e.to_string()))?;
+        let types =
+            zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
+        let virtual_slot_count = types.virtual_slot_count();
+        let virtual_table = vec![0; (types.len() + 1) * virtual_slot_count].into_boxed_slice();
 
         // Declare every eligible function and shim up front (signatures only) so
         // calls can reference any of them; bodies are defined later, eagerly by
@@ -154,11 +157,18 @@ impl Jit {
             ctx: cranelift_codegen::Context::new(),
             fb_ctx: FunctionBuilderContext::new(),
             types,
+            virtual_table,
         };
 
         for &rid in &eligible {
-            let body = read_body(&zm.code, zm.tables.method_defs[rid as usize - 1].body_offset)
-                .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?;
+            let body = read_body(
+                &zm.code,
+                zm.tables.method_defs[rid as usize - 1].body_offset,
+            )
+            .map_err(|e| JitError::Compile {
+                method_rid: rid,
+                detail: e.to_string(),
+            })?;
             let sig = body_signature(&jit.module, &body);
             let fid = jit
                 .module
@@ -174,22 +184,36 @@ impl Jit {
                 rid,
                 Sig {
                     param_kinds,
-                    returns: body.returns_value.then(|| JitKind::from_byte(body.return_kind)),
+                    returns: body
+                        .returns_value
+                        .then(|| JitKind::from_byte(body.return_kind)),
                 },
             );
-            jit.callees.insert(
-                rid,
-                zun_il::decode_all(body.code)
-                    .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?
-                    .iter()
-                    .filter(|i| matches!(i.opcode, zun_il::Opcode::Call | zun_il::Opcode::CallVirt))
-                    .filter_map(|i| match i.operand {
-                        zun_il::Operand::Token(t) => Some(t.rid()),
-                        _ => None,
-                    })
-                    .filter(|c| eligible.contains(c))
-                    .collect(),
-            );
+            let instrs = zun_il::decode_all(body.code).map_err(|e| JitError::Compile {
+                method_rid: rid,
+                detail: e.to_string(),
+            })?;
+            let mut callees = Vec::new();
+            for instr in instrs
+                .iter()
+                .filter(|i| matches!(i.opcode, zun_il::Opcode::Call | zun_il::Opcode::CallVirt))
+            {
+                let zun_il::Operand::Token(token) = instr.operand else {
+                    continue;
+                };
+                if instr.opcode == zun_il::Opcode::CallVirt {
+                    let name = zm.tables.method_defs[token.rid() as usize - 1].name;
+                    callees.extend(zm.tables.method_defs.iter().enumerate().filter_map(
+                        |(index, method)| {
+                            (method.name == name && eligible.contains(&(index as u32 + 1)))
+                                .then_some(index as u32 + 1)
+                        },
+                    ));
+                } else if eligible.contains(&token.rid()) {
+                    callees.push(token.rid());
+                }
+            }
+            jit.callees.insert(rid, callees);
         }
         Ok(jit)
     }
@@ -235,13 +259,20 @@ impl Jit {
         for m in batch {
             self.defined.insert(m);
         }
+        self.refresh_virtual_table();
         Ok(true)
     }
 
     /// Translate and define one method body and its shim (no finalize).
     fn define_method(&mut self, zm: &Module, rid: u32) -> Result<(), JitError> {
-        let body = read_body(&zm.code, zm.tables.method_defs[rid as usize - 1].body_offset)
-            .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?;
+        let body = read_body(
+            &zm.code,
+            zm.tables.method_defs[rid as usize - 1].body_offset,
+        )
+        .map_err(|e| JitError::Compile {
+            method_rid: rid,
+            detail: e.to_string(),
+        })?;
         self.ctx.func.signature = body_signature(&self.module, &body);
         translate::translate_body(
             &mut self.module,
@@ -250,12 +281,20 @@ impl Jit {
             &mut self.fb_ctx,
             &self.func_ids,
             &self.types,
+            self.virtual_table.as_ptr(),
+            self.types.virtual_slot_count(),
             &body,
         )
-        .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;
+        .map_err(|detail| JitError::Compile {
+            method_rid: rid,
+            detail,
+        })?;
         self.module
             .define_function(self.func_ids[&rid], &mut self.ctx)
-            .map_err(|e| JitError::Compile { method_rid: rid, detail: e.to_string() })?;
+            .map_err(|e| JitError::Compile {
+                method_rid: rid,
+                detail: e.to_string(),
+            })?;
         self.module.clear_context(&mut self.ctx);
 
         let sig = self.sigs[&rid].clone();
@@ -268,9 +307,37 @@ impl Jit {
             &sig.param_kinds,
             sig.returns,
         )
-        .map_err(|detail| JitError::Compile { method_rid: rid, detail })?;
+        .map_err(|detail| JitError::Compile {
+            method_rid: rid,
+            detail,
+        })?;
         self.shim_ids.insert(rid, shim_id);
         Ok(())
+    }
+
+    fn refresh_virtual_table(&mut self) {
+        let slots = self.types.virtual_slot_count();
+        if slots == 0 {
+            return;
+        }
+        for type_rid in 1..=self.types.len() as u32 {
+            let Some(ty) = self.types.get(type_rid) else {
+                continue;
+            };
+            for (slot, &method_rid) in ty.vtable.iter().enumerate() {
+                if method_rid == 0 {
+                    continue;
+                }
+                let Some(&func_id) = self.func_ids.get(&method_rid) else {
+                    continue;
+                };
+                if !self.defined.contains(&method_rid) {
+                    continue;
+                }
+                let ptr = self.module.get_finalized_function(func_id);
+                self.virtual_table[type_rid as usize * slots + slot] = ptr as usize as u64;
+            }
+        }
     }
 
     /// Whether `method_rid` is eligible for JIT compilation.
@@ -400,7 +467,8 @@ fn body_signature(
 ) -> cranelift_codegen::ir::Signature {
     let mut sig = cranelift_codegen::ir::Signature::new(module.isa().default_call_conv());
     for &k in &body.local_kinds[..body.param_count as usize] {
-        sig.params.push(AbiParam::new(clif_ty(JitKind::from_byte(k))));
+        sig.params
+            .push(AbiParam::new(clif_ty(JitKind::from_byte(k))));
     }
     if body.returns_value {
         sig.returns

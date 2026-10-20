@@ -10,11 +10,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, Block, InstBuilder, MemFlags, Type, Value};
-use cranelift_codegen::ir::AbiParam;
-use cranelift_module::Linkage;
+use cranelift_codegen::ir::{
+    types, AbiParam, Block, InstBuilder, MemFlags, Signature, Type, Value,
+};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_module::Linkage;
 use cranelift_module::{FuncId, Module as ClifModule};
 use zun_il::{decode_all, JitKind, NumKind, Opcode, Operand};
 use zun_module::{read_body, MethodBody, Module as ZmModule};
@@ -45,7 +46,10 @@ fn is_signed(kind: JitKind) -> bool {
 }
 
 fn is_float(kind: JitKind) -> bool {
-    matches!(kind, JitKind::Num(NumKind::F32) | JitKind::Num(NumKind::F64))
+    matches!(
+        kind,
+        JitKind::Num(NumKind::F32) | JitKind::Num(NumKind::F64)
+    )
 }
 
 /// Translate `body` into `ctx.func`. `zm` provides callee frames (arity and
@@ -57,6 +61,8 @@ pub fn translate_body(
     fb_ctx: &mut FunctionBuilderContext,
     func_ids: &HashMap<u32, FuncId>,
     types: &TypeSystem,
+    virtual_table: *const u64,
+    virtual_slot_count: usize,
     body: &MethodBody<'_>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
@@ -84,7 +90,11 @@ pub fn translate_body(
     builder.append_block_params_for_function_params(entry);
 
     // Local kinds (params first); declare a typed Variable per local.
-    let local_kinds: Vec<JitKind> = body.local_kinds.iter().map(|&b| JitKind::from_byte(b)).collect();
+    let local_kinds: Vec<JitKind> = body
+        .local_kinds
+        .iter()
+        .map(|&b| JitKind::from_byte(b))
+        .collect();
     let mut vars = Vec::with_capacity(local_kinds.len());
     for &k in &local_kinds {
         vars.push(builder.declare_var(clif_ty(k)));
@@ -108,6 +118,8 @@ pub fn translate_body(
         blocks,
         func_ids,
         types,
+        virtual_table,
+        virtual_slot_count,
         module,
         zm,
     };
@@ -169,6 +181,8 @@ struct Translator<'a> {
     module: &'a mut dyn ClifModule,
     zm: &'a ZmModule,
     types: &'a TypeSystem,
+    virtual_table: *const u64,
+    virtual_slot_count: usize,
 }
 
 impl Translator<'_> {
@@ -217,8 +231,7 @@ impl Translator<'_> {
                     stack.push((c, JitKind::Bool));
                 }
                 Opcode::Conv => {
-                    let target = NumKind::from_imm(imm32(&instr.operand))
-                        .ok_or("bad conv kind")?;
+                    let target = NumKind::from_imm(imm32(&instr.operand)).ok_or("bad conv kind")?;
                     let (v, from) = stack.pop().ok_or("stack underflow")?;
                     let out = self.convert(v, from, JitKind::Num(target));
                     stack.push((out, JitKind::Num(target)));
@@ -289,7 +302,6 @@ impl Translator<'_> {
                         Operand::Token(t) => t.rid(),
                         _ => return Err("call operand".into()),
                     };
-                    let fid = *self.func_ids.get(&rid).ok_or("call to non-compiled method")?;
                     let callee = read_body(
                         &self.zm.code,
                         self.zm.tables.method_defs[rid as usize - 1].body_offset,
@@ -304,8 +316,52 @@ impl Translator<'_> {
                         .into_iter()
                         .map(|(v, _)| v)
                         .collect();
-                    let fref = self.module.declare_func_in_func(fid, self.builder.func);
-                    let inst = self.builder.ins().call(fref, &args);
+                    let inst = if instr.opcode == Opcode::CallVirt {
+                        let receiver = args.first().copied().ok_or("virtual call receiver")?;
+                        let slot = self.types.virtual_slot(rid).ok_or("virtual method slot")?;
+                        if self.virtual_slot_count == 0 {
+                            return Err("empty virtual slot table".into());
+                        }
+                        let type_rid =
+                            self.builder
+                                .ins()
+                                .load(types::I32, MemFlags::trusted(), receiver, 0);
+                        let type_rid = self.builder.ins().uextend(types::I64, type_rid);
+                        let row = self
+                            .builder
+                            .ins()
+                            .imul_imm(type_rid, self.virtual_slot_count as i64);
+                        let index = self.builder.ins().iadd_imm(row, slot as i64);
+                        let byte_offset = self.builder.ins().imul_imm(index, 8);
+                        let table = self
+                            .builder
+                            .ins()
+                            .iconst(types::I64, self.virtual_table as i64);
+                        let address = self.builder.ins().iadd(table, byte_offset);
+                        let target =
+                            self.builder
+                                .ins()
+                                .load(types::I64, MemFlags::trusted(), address, 0);
+                        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+                        for &kind in &callee.local_kinds[..callee.param_count as usize] {
+                            sig.params
+                                .push(AbiParam::new(clif_ty(JitKind::from_byte(kind))));
+                        }
+                        if callee.returns_value {
+                            sig.returns.push(AbiParam::new(clif_ty(JitKind::from_byte(
+                                callee.return_kind,
+                            ))));
+                        }
+                        let sig_ref = self.builder.import_signature(sig);
+                        self.builder.ins().call_indirect(sig_ref, target, &args)
+                    } else {
+                        let fid = *self
+                            .func_ids
+                            .get(&rid)
+                            .ok_or("call to non-compiled method")?;
+                        let fref = self.module.declare_func_in_func(fid, self.builder.func);
+                        self.builder.ins().call(fref, &args)
+                    };
                     let results = self.builder.inst_results(inst);
                     if callee.returns_value {
                         let r = results[0];
@@ -342,7 +398,10 @@ impl Translator<'_> {
                     let (kind, slot) = self.field_info(&instr.operand)?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
                     let off = ((slot + 1) * 8) as i32;
-                    let raw = self.builder.ins().load(types::I64, MemFlags::trusted(), ptr, off);
+                    let raw = self
+                        .builder
+                        .ins()
+                        .load(types::I64, MemFlags::trusted(), ptr, off);
                     let v = crate::shim::unpack_arg(&mut self.builder, raw, kind);
                     stack.push((v, kind));
                 }
@@ -514,7 +573,10 @@ impl Translator<'_> {
         let end = offset_of_index[i] + instr.encoded_len();
         let target = (end as i64 + disp as i64) as usize;
         let &idx = index_of_offset.get(&target).ok_or("bad branch target")?;
-        self.blocks.get(&idx).copied().ok_or_else(|| "target not a leader".into())
+        self.blocks
+            .get(&idx)
+            .copied()
+            .ok_or_else(|| "target not a leader".into())
     }
 
     fn fallthrough(&self, i: usize) -> Result<Block, String> {

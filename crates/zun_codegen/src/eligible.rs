@@ -82,9 +82,8 @@ fn instr_fields_ok(module: &Module, instr: &zun_il::Instruction) -> bool {
     }
 }
 
-/// A virtual call may be lowered to a direct call when no method in the
-/// module can override the statically referenced method. Dynamic dispatch is
-/// still required for overridden methods and remains Tier 0 for now.
+/// Validate a virtual call token. Its target set is added to the call graph
+/// below, so overridden implementations can be compiled for indirect calls.
 fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> bool {
     if instr.opcode != Opcode::CallVirt {
         return true;
@@ -95,12 +94,7 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
     let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
         return false;
     };
-    !module
-        .tables
-        .method_defs
-        .iter()
-        .enumerate()
-        .any(|(index, candidate)| index as u32 + 1 != token.rid() && candidate.name == method.name)
+    method.body_offset != u32::MAX
 }
 
 /// Whether a value-type code is one the typed JIT can represent.
@@ -140,14 +134,28 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         if !instrs.iter().all(|i| callvirt_is_non_overridden(module, i)) {
             continue;
         }
-        let callees = instrs
-            .iter()
-            .filter(|i| matches!(i.opcode, Opcode::Call | Opcode::CallVirt))
-            .filter_map(|i| match i.operand {
-                Operand::Token(t) => Some(t.rid()),
-                _ => None,
-            })
-            .collect();
+        let mut callees = Vec::new();
+        for instr in &instrs {
+            if !matches!(instr.opcode, Opcode::Call | Opcode::CallVirt) {
+                continue;
+            }
+            let Operand::Token(token) = instr.operand else {
+                continue;
+            };
+            if instr.opcode == Opcode::CallVirt {
+                let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
+                    continue;
+                };
+                callees.extend(module.tables.method_defs.iter().enumerate().filter_map(
+                    |(index, candidate)| {
+                        (candidate.name == method.name && candidate.body_offset != u32::MAX)
+                            .then_some(index as u32 + 1)
+                    },
+                ));
+            } else {
+                callees.push(token.rid());
+            }
+        }
         candidate.insert(rid, callees);
     }
 
