@@ -790,7 +790,7 @@ fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
 mod method_tests {
     use super::*;
     use zun_il::{encode, Instruction, Operand};
-    use zun_metadata::{MethodDef, TableKind, Token};
+    use zun_metadata::{MethodDef, TableKind, Token, TypeDef};
     use zun_module::write_body;
 
     #[test]
@@ -851,6 +851,72 @@ mod method_tests {
         module.entry_point = Some(Token::new(TableKind::MethodDef, 2));
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run indirect call");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn executes_indirect_call_with_closure_environment() {
+        let mut module = zun_module::Module::new();
+        let environment_type = module.tables.add_type_def(TypeDef {
+            name: module.strings.intern("ClosureEnvironment"),
+            namespace: zun_metadata::StringIndex(0),
+            base: Token::null(TableKind::TypeDef),
+            field_start: 0,
+            field_end: 0,
+            method_start: 1,
+            method_end: 2,
+        });
+        let body = [
+            Instruction::new(Opcode::LoadLocal, Operand::Local(1)),
+            Instruction::new(Opcode::ConstF64, Operand::Float64(1.0)),
+            Instruction::simple(Opcode::AddF64),
+            Instruction::simple(Opcode::Ret),
+        ];
+        let mut code = Vec::new();
+        for instruction in body { encode(&instruction, &mut code); }
+        let target_offset = write_body(
+            &mut module.code,
+            2,
+            2,
+            true,
+            zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+            &[
+                zun_il::JitKind::Object.to_byte(),
+                zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+            ],
+            &code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("capturedAddOne"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: target_offset,
+        });
+        let main_body = [
+            Instruction::new(Opcode::NewObj, Operand::Token(environment_type)),
+            Instruction::new(Opcode::MakeClosure, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+            Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
+            Instruction::new(Opcode::CallIndirect, Operand::Token(Token::null(TableKind::MethodDef))),
+            Instruction::simple(Opcode::Ret),
+        ];
+        let mut main_code = Vec::new();
+        for instruction in main_body { encode(&instruction, &mut main_code); }
+        let main_offset = write_body(
+            &mut module.code,
+            0,
+            0,
+            true,
+            zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+            &[],
+            &main_code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("main"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: main_offset,
+        });
+        module.entry_point = Some(Token::new(TableKind::MethodDef, 2));
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run closure environment call");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 
