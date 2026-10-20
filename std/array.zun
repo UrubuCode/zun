@@ -274,6 +274,16 @@ class Array {
         return this.length == 0;
     }
 
+    equals(other: Array): boolean {
+        if (this.length != other.length) { return false; }
+        let index: u64 = 0;
+        while (index < this.length) {
+            if (this[index] != other[index]) { return false; }
+            index = index + 1;
+        }
+        return true;
+    }
+
     sum(): number {
     let total: number = 0.0;
     let index: u64 = 0;

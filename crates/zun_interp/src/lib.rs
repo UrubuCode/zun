@@ -1027,6 +1027,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_array_equals_source_method() {
+        let module = zun_compiler::compile(
+            "class Array { equals(other: Array): boolean { if (this.length != other.length) { return false; } let index: u64 = 0; while (index < this.length) { if (this[index] != other[index]) { return false; } index = index + 1; } return true; } } function main(): boolean { let left = new Array(2); left[0] = 4.0; left[1] = 8.0; let right = new Array(2); right[0] = 4.0; right[1] = 8.0; return left.equals(right); }",
+        )
+        .expect("compile Array equals");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Array equals");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
     fn executes_array_product_source_method() {
         let module = zun_compiler::compile(
             "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\

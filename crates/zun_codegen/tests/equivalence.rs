@@ -814,6 +814,18 @@ fn array_remove_all_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn array_equals_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "class Array { equals(other: Array): boolean { if (this.length != other.length) { return false; } let index: u64 = 0; while (index < this.length) { if (this[index] != other[index]) { return false; } index = index + 1; } return true; } } function main(): boolean { let left = new Array(2); left[0] = 4.0; left[1] = 8.0; let right = new Array(2); right[0] = 4.0; right[1] = 8.0; return left.equals(right); }",
+    )
+    .expect("compile Array equals");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn array_product_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array { product(): number { let total: number = 1.0; let index: u64 = 0; while (index < this.length) { total = total * (this[index] as number); index = index + 1; } return total; } }\n\
