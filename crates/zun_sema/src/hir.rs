@@ -367,6 +367,13 @@ pub enum ExprKind {
         /// The array expression.
         object: Box<Expr>,
     },
+    /// Append a value and return the new array length.
+    ArrayPush {
+        /// The array expression.
+        object: Box<Expr>,
+        /// The value expression.
+        value: Box<Expr>,
+    },
     /// A numeric conversion (`as`). The target type is the expression's `ty`.
     Convert {
         /// The value being converted.

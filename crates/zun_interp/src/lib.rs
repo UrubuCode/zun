@@ -305,6 +305,15 @@ impl Interp<'_> {
                     .ok_or(RunError::BadToken)?;
                     stack.push(value);
                 }
+                Opcode::ArrayPush => {
+                    let value = pop(&mut stack)?;
+                    let array = pop(&mut stack)?.as_object();
+                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    let length = zun_gc::with_current_heap_mut(|heap| heap.array_push(array, any))
+                        .ok_or(RunError::BadToken)?;
+                    stack.push(Value::Int(length as i64, zun_il::NumKind::U64));
+                }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
                     let v = pop(&mut stack)?;
@@ -849,6 +858,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array pop");
         assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn executes_source_array_push() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let values = new Array(0); return values.push(41.0); }",
+        )
+        .expect("compile array push");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array push");
+        assert!(matches!(result, Value::Int(1, zun_il::NumKind::U64)));
     }
 }
 

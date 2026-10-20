@@ -945,6 +945,18 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if receiver.ty == Ty::Array && mname == "push" {
+                    if args.len() != 1 {
+                        self.error(span, "Array.push expects one argument");
+                        return self.poison(span);
+                    }
+                    let value = self.check_expr(cx, &args[0]);
+                    return hir::Expr {
+                        kind: hir::ExprKind::ArrayPush { object: Box::new(receiver), value: Box::new(value) },
+                        ty: Ty::Int(IntKind::U64),
+                        span,
+                    };
+                }
                 let class = match receiver.ty {
                     Ty::Instance(c) => c,
                     Ty::Error => return self.poison(span),

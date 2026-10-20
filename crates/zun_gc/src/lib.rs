@@ -193,6 +193,13 @@ impl Heap {
         self.arrays.get_mut(&(object.addr() as usize))?.pop()
     }
 
+    /// Append an element and return the resulting array length.
+    pub fn array_push(&mut self, object: Obj, value: zun_core::Any) -> Option<usize> {
+        let array = self.arrays.get_mut(&(object.addr() as usize))?;
+        array.push(value);
+        Some(array.len())
+    }
+
     /// Read a dynamic property from an object allocated by [`Self::alloc_dynamic`].
     pub fn dynamic_get(&self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects

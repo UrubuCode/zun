@@ -248,6 +248,8 @@ define_opcodes! {
     ArrayLength = 0x7E, None, "arraylen", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Remove and return the last element of a managed array.
     ArrayPop = 0x7F, None, "arraypop", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Append a value and return the new length of a managed array.
+    ArrayPush = 0x80, None, "arraypush", StackEffect::Fixed { pops: 2, pushes: 1 };
 }
 
 #[cfg(test)]
