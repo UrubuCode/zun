@@ -18,7 +18,10 @@ pub mod value;
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
-use operands::{operand_f64, operand_i32, operand_i64};
+use operands::{
+    operand_f64, operand_i32, operand_i64, operand_local, operand_strref, operand_token,
+    operand_token_imm32,
+};
 use stack::{
     bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
     Ordering,
@@ -3832,27 +3835,3 @@ fn branch_target(instr_end: usize, operand: &Operand) -> usize {
     (instr_end as i64 + disp as i64) as usize
 }
 
-fn operand_local(o: &Operand) -> usize {
-    match o {
-        Operand::Local(v) => *v as usize,
-        _ => 0,
-    }
-}
-fn operand_strref(o: &Operand) -> u32 {
-    match o {
-        Operand::StringRef(v) => *v,
-        _ => 0,
-    }
-}
-fn operand_token(o: &Operand) -> zun_metadata::Token {
-    match o {
-        Operand::Token(t) => *t,
-        _ => zun_metadata::Token::from_raw(0),
-    }
-}
-fn operand_token_imm32(o: &Operand) -> (zun_metadata::Token, i32) {
-    match o {
-        Operand::TokenImm32(token, value) => (*token, *value),
-        _ => (zun_metadata::Token::from_raw(0), -1),
-    }
-}

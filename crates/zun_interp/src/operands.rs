@@ -22,3 +22,31 @@ pub(crate) fn operand_i32(o: &Operand) -> i32 {
         _ => 0,
     }
 }
+
+pub(crate) fn operand_local(o: &Operand) -> usize {
+    match o {
+        Operand::Local(value) => *value as usize,
+        _ => 0,
+    }
+}
+
+pub(crate) fn operand_strref(o: &Operand) -> u32 {
+    match o {
+        Operand::StringRef(value) => *value,
+        _ => 0,
+    }
+}
+
+pub(crate) fn operand_token(o: &Operand) -> zun_metadata::Token {
+    match o {
+        Operand::Token(token) => *token,
+        _ => zun_metadata::Token::from_raw(0),
+    }
+}
+
+pub(crate) fn operand_token_imm32(o: &Operand) -> (zun_metadata::Token, i32) {
+    match o {
+        Operand::TokenImm32(token, value) => (*token, *value),
+        _ => (zun_metadata::Token::from_raw(0), -1),
+    }
+}
