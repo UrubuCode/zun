@@ -38,9 +38,16 @@
     }
 
     #[test]
-    fn async_source_is_rejected_until_state_machine_lowering_exists() {
+    fn async_source_with_await_is_rejected_until_state_machine_lowering_exists() {
         let message = first_error("async function main(): Promise { return await load(); }");
-        assert!(message.contains("async functions are parsed"), "{message}");
+        assert!(message.contains("state-machine lowering"), "{message}");
+    }
+
+    #[test]
+    fn async_without_await_uses_the_synchronous_promise_path() {
+        let hir = check_ok("async function main(): Promise { return new Promise(); }");
+        assert!(hir.functions[0].is_async);
+        assert_eq!(hir.functions[0].async_plan.as_ref().unwrap().await_count, 0);
     }
 
     #[test]

@@ -333,10 +333,16 @@ impl Checker<'_> {
                     "async functions must declare a Promise return type",
                 );
             }
-            self.error(
-                f.name.span,
-                "async functions are parsed but source-level async lowering is not implemented yet",
-            );
+            // A body without suspension points follows the .NET fast path:
+            // execute synchronously and return the already-created Promise.
+            // Bodies containing await remain gated until state-machine IL is
+            // available, so the front end never emits an invalid suspension.
+            if count_awaits_in_block(&f.body) != 0 {
+                self.error(
+                    f.name.span,
+                    "async functions with await require source-level state-machine lowering",
+                );
+            }
         }
 
         let mut cx = FunctionCx {
