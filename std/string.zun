@@ -1,39 +1,13 @@
-// String helpers implemented in Zun source.
+// The String surface is a statically bound primitive-backed class.
 
 import { length, contains, charCodeAt, startsWith, endsWith, trim, repeat } from "zun:string";
 
-function stringConcat(left: string, right: string): string {
-    return left + right;
-}
-
-function stringWithSeparator(left: string, separator: string, right: string): string {
-    return left + separator + right;
-}
-
-function stringLength(value: string): u64 {
-    return length(value);
-}
-
-function stringContains(value: string, needle: string): boolean {
-    return contains(value, needle);
-}
-
-function stringCharCodeAt(value: string, index: u64): u32 {
-    return charCodeAt(value, index);
-}
-
-function stringStartsWith(value: string, prefix: string): boolean {
-    return startsWith(value, prefix);
-}
-
-function stringEndsWith(value: string, suffix: string): boolean {
-    return endsWith(value, suffix);
-}
-
-function stringTrim(value: string): string {
-    return trim(value);
-}
-
-function stringRepeat(value: string, count: u64): string {
-    return repeat(value, count);
+class String {
+    extern length(): u64;
+    extern contains(needle: string): boolean;
+    extern charCodeAt(index: u64): u32;
+    extern startsWith(prefix: string): boolean;
+    extern endsWith(suffix: string): boolean;
+    extern trim(): string;
+    extern repeat(count: u64): string;
 }

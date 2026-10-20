@@ -87,6 +87,20 @@ fn extern_method_uses_interpreter_fallback_until_native_jit_lowering_exists() {
 }
 
 #[test]
+fn string_primitive_methods_use_static_class_binding() {
+    let module = zun_compiler::compile(
+        "import { length, contains } from \"zun:string\";\n\
+         class String { extern length(): u64; extern contains(needle: string): boolean; }\n\
+         function main(): boolean { let value: string = \"zun\"; if (value.length() == 3) { return value.contains(\"u\"); } return false; }",
+    )
+    .expect("compile String methods");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
+    assert!(!jit.is_compiled(entry), "native String methods must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn array_operations_use_interpreter_fallback_until_array_jit_lowering_exists() {
     let module = zun_compiler::compile(
         "function main(): any { let values = new Array(1); values[0] = 41.0; return values[0]; }",

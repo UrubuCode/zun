@@ -535,12 +535,17 @@ impl Interp<'_> {
                     let static_body = read_body(&self.module.code, static_method.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, static_body.param_count as usize)?;
-                    // Dispatch on the receiver's runtime class.
-                    let type_rid = args[0].as_object().type_rid();
-                    let target = self
-                        .types
-                        .resolve_virtual(type_rid, token.rid())
-                        .ok_or(RunError::BadToken)?;
+                    // Primitive-backed classes use static method binding: the
+                    // receiver is still passed as `this`, but has no heap type
+                    // to consult for virtual dispatch.
+                    let target = if matches!(args.first(), Some(Value::Str(_))) {
+                        token.rid()
+                    } else {
+                        let type_rid = args[0].as_object().type_rid();
+                        self.types
+                            .resolve_virtual(type_rid, token.rid())
+                            .ok_or(RunError::BadToken)?
+                    };
                     let link = RootLink {
                         stack: &stack,
                         locals: &locals,
@@ -885,6 +890,19 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array numeric cast");
         assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
+    fn executes_string_primitive_methods_through_static_class_binding() {
+        let module = zun_compiler::compile(
+            "import { length, contains } from \"zun:string\";\n\
+             class String { extern length(): u64; extern contains(needle: string): boolean; }\n\
+             function main(): boolean { let value: string = \"zun\"; if (value.length() == 3) { return value.contains(\"u\"); } return false; }",
+        )
+        .expect("compile String primitive methods");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run String primitive methods");
+        assert!(matches!(result, Value::Bool(true)));
     }
 }
 

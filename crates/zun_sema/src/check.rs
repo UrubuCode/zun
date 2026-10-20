@@ -378,7 +378,12 @@ impl Checker<'_> {
         for (class_idx, class) in program.classes.iter().enumerate() {
             for m in &class.methods {
                 let name = self.text(&m.name).to_string();
-                let mut params = vec![Ty::Instance(class_idx as u32)];
+                let receiver_ty = if self.text(&class.name) == "String" {
+                    Ty::String
+                } else {
+                    Ty::Instance(class_idx as u32)
+                };
+                let mut params = vec![receiver_ty];
                 for p in &m.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
@@ -958,6 +963,13 @@ impl Checker<'_> {
                     };
                 }
                 let class = match receiver.ty {
+                    Ty::String => match self.classes_by_name.get("String") {
+                        Some(&class) => class,
+                        None => {
+                            self.error(receiver.span, "String methods are not available without class String");
+                            return self.poison(span);
+                        }
+                    },
                     Ty::Instance(c) => c,
                     Ty::Error => return self.poison(span),
                     other => {
