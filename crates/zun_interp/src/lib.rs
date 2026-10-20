@@ -967,6 +967,17 @@ impl Interp<'_> {
                 zun_gc::with_current_heap_mut(|heap| heap.map_clear(object)).ok_or(RunError::BadToken)?;
                 Ok(Value::Void)
             }
+            "mapValues" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let entries = zun_gc::with_current_heap(|heap| heap.map_entries(object)).ok_or(RunError::BadToken)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(entries.len()));
+                for (index, (_, value)) in entries.into_iter().enumerate() {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(array, index, value);
+                    });
+                }
+                Ok(Value::Object(array))
+            }
             "setNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -995,6 +1006,17 @@ impl Interp<'_> {
                 zun_gc::with_current_heap_mut(|heap| heap.set_clear(object)).ok_or(RunError::BadToken)?;
                 Ok(Value::Void)
             }
+            "setValues" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let values = zun_gc::with_current_heap(|heap| heap.set_values(object)).ok_or(RunError::BadToken)?;
+                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(values.len()));
+                for (index, value) in values.into_iter().enumerate() {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(array, index, value);
+                    });
+                }
+                Ok(Value::Object(array))
+            }
             "weakMapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_map());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
@@ -1016,7 +1038,7 @@ impl Interp<'_> {
 }
 
 fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "weakMapNew", "weakMapSet", "weakMapHas"] {
+    for name in ["mapNew", "mapSet", "mapGet", "mapHas", "mapSize", "mapDelete", "mapClear", "mapValues", "setNew", "setAdd", "setHas", "setSize", "setDelete", "setClear", "setValues", "weakMapNew", "weakMapSet", "weakMapHas"] {
         if zun_natives::resolve("zun:collections", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
@@ -1475,6 +1497,18 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run array for-of");
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
         assert_eq!(output.lines, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn iterates_map_and_set_values_in_insertion_order() {
+        let module = zun_compiler::compile(
+            "function main(): any { let map = new Map(); map.set(1.0, 10.0); map.set(2.0, 20.0); let set = new Set(); set.add(3.0); set.add(4.0); for (let value of map) { print(value); } for (let value of set) { print(value); } return 42.0; }",
+        )
+        .expect("compile managed collection for-of");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run managed collection for-of");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(output.lines, vec!["10", "20", "3", "4"]);
     }
 
     #[test]

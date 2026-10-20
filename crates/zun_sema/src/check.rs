@@ -1091,7 +1091,23 @@ impl Checker<'_> {
                 hir::Stmt::While { cond, body }
             }
             ast::Stmt::ForOf { name, iterable, body, span: _ } => {
-                let iterable_expr = self.check_expr(cx, iterable);
+                let mut iterable_expr = self.check_expr(cx, iterable);
+                if matches!(iterable_expr.ty, Ty::Map | Ty::Set) {
+                    let intrinsic = match iterable_expr.ty {
+                        Ty::Map => "mapValues",
+                        Ty::Set => "setValues",
+                        _ => unreachable!(),
+                    };
+                    if let Some((id, _)) = zun_natives::resolve("zun:collections", intrinsic) {
+                        let source = iterable_expr;
+                        let span = source.span;
+                        iterable_expr = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![source] },
+                            ty: Ty::Array,
+                            span,
+                        };
+                    }
+                }
                 if iterable_expr.ty != Ty::Array && !iterable_expr.ty.is_error() {
                     self.error(iterable_expr.span, "for-of currently requires an Array iterable");
                 }
@@ -2155,6 +2171,7 @@ fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::Str => Ty::String,
         N::Void => Ty::Void,
         N::Opaque => Ty::Any,
+        N::Array => Ty::Array,
         N::Map => Ty::Map,
         N::Set => Ty::Set,
         N::WeakMap => Ty::WeakMap,

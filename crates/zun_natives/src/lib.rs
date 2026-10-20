@@ -64,6 +64,8 @@ pub enum NativeTy {
     Void,
     /// An opaque managed reference, used for an extern method receiver.
     Opaque,
+    /// A managed Array reference.
+    Array,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.
