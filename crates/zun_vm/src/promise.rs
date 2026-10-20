@@ -88,6 +88,14 @@ impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachi
         self.state
     }
 
+    /// Whether the state machine has reached its terminal state.
+    ///
+    /// The compiler-generated resume path can use this to avoid scheduling a
+    /// second continuation after the completion value has been published.
+    pub fn is_completed(&self) -> bool {
+        self.completed
+    }
+
     /// Observe completion through the machine's Promise.
     pub fn promise(&self) -> &Promise<T> {
         &self.completion
@@ -400,6 +408,14 @@ mod tests {
         assert_eq!(machine.poll(), Poll::Ready(42));
         assert_eq!(machine.poll(), Poll::Ready(42));
         assert!(machine.promise().is_resolved());
+    }
+
+    #[test]
+    fn state_machine_reports_synchronous_completion() {
+        let mut machine = AsyncStateMachine::new(|_| Poll::Ready(7));
+        assert!(!machine.is_completed());
+        assert_eq!(machine.poll(), Poll::Ready(7));
+        assert!(machine.is_completed());
     }
 
     #[test]
