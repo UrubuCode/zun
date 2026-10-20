@@ -1072,6 +1072,13 @@ impl Checker<'_> {
             ast::Expr::Field { object, field, .. } => {
                 let object = self.check_expr(cx, object);
                 let fname = self.text(field).to_string();
+                if object.ty == Ty::Array && fname == "length" {
+                    return hir::Expr {
+                        kind: hir::ExprKind::ArrayLength { object: Box::new(object) },
+                        ty: Ty::Int(IntKind::U64),
+                        span,
+                    };
+                }
                 match object.ty {
                     Ty::Instance(class) => match self.field_of(class, &fname) {
                         Some((slot, ty)) => hir::Expr {

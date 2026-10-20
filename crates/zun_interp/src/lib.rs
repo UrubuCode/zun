@@ -291,6 +291,12 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     stack.push(value);
                 }
+                Opcode::ArrayLength => {
+                    let array = pop(&mut stack)?.as_object();
+                    let length = zun_gc::with_current_heap(|heap| heap.array_len(array))
+                        .ok_or(RunError::BadToken)?;
+                    stack.push(Value::Int(length as i64, zun_il::NumKind::U64));
+                }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
                     let v = pop(&mut stack)?;
@@ -813,6 +819,17 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run array assignment");
         assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)), "{result:?}");
+    }
+
+    #[test]
+    fn executes_source_array_length() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let values = new Array(2); return values.length; }",
+        )
+        .expect("compile array length");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run array length");
+        assert!(matches!(result, Value::Int(2, zun_il::NumKind::U64)));
     }
 }
 

@@ -357,6 +357,11 @@ pub enum ExprKind {
         /// The assigned value.
         value: Box<Expr>,
     },
+    /// Read the length of a managed array.
+    ArrayLength {
+        /// The array expression.
+        object: Box<Expr>,
+    },
     /// A numeric conversion (`as`). The target type is the expression's `ty`.
     Convert {
         /// The value being converted.

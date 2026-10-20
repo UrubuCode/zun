@@ -542,6 +542,10 @@ impl FnLowerer<'_> {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::StoreArray));
             }
+            ExprKind::ArrayLength { object } => {
+                self.expr(object);
+                self.emit(Instruction::simple(Opcode::ArrayLength));
+            }
             ExprKind::Convert { value } => {
                 self.expr(value);
                 self.emit_conv_to(e.ty);
