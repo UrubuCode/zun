@@ -9,6 +9,9 @@ use crate::ast::*;
 use crate::lexer::{lex, Token, TokenKind};
 use zun_common::{Diagnostic, Span};
 
+#[path = "parser_helpers.rs"]
+mod parser_helpers;
+
 /// Parse `source` into a [`Program`], appending any diagnostics.
 pub fn parse(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Program {
     let tokens = lex(source, diagnostics);
@@ -1070,23 +1073,6 @@ impl Parser<'_> {
         }
     }
 
-    fn parenthesized_arrow_start(&self) -> bool {
-        let mut index = self.pos + 1;
-        let mut expect_name = true;
-        while index < self.tokens.len() {
-            match self.tokens[index].kind {
-                TokenKind::RParen => {
-                    return self.tokens.get(index + 1).map(|t| t.kind) == Some(TokenKind::Arrow);
-                }
-                TokenKind::Ident if expect_name => expect_name = false,
-                TokenKind::Colon if !expect_name => expect_name = true,
-                TokenKind::Comma if !expect_name => expect_name = true,
-                _ => return false,
-            }
-            index += 1;
-        }
-        false
-    }
 }
 
 /// Operator and binding level for a binary-operator token. Higher binds tighter.
