@@ -36,4 +36,12 @@ impl Heap {
     pub fn data_view(&self, object: Obj, offset: usize, length: usize) -> Option<zun_core::DataView> {
         zun_core::DataView::new(self.buffer_len(object)?, offset, length)
     }
+
+    pub fn data_view_read_u16(&self, object: Obj, view: zun_core::DataView, offset: usize, little_endian: bool) -> Option<u16> {
+        view.get_u16(self.buffers.get(&(object.addr() as usize))?, offset, little_endian)
+    }
+
+    pub fn data_view_write_u16(&mut self, object: Obj, view: zun_core::DataView, offset: usize, value: u16, little_endian: bool) -> Option<bool> {
+        Some(view.set_u16(self.buffers.get_mut(&(object.addr() as usize))?, offset, value, little_endian))
+    }
 }
