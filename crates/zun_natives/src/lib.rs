@@ -547,6 +547,13 @@ mod tests {
         assert!(matches!(dispatch(atan2_id, &[NativeArg::Float(1.0), NativeArg::Float(0.0)], &mut sink).unwrap(), NativeValue::Float(value) if (value - std::f64::consts::FRAC_PI_2).abs() < 1e-12));
     }
 
+    #[test]
+    fn math_hypot_matches_numeric_expectations() {
+        let (id, _) = resolve("zun:math", "hypotNumber").unwrap();
+        let mut sink = TestSink;
+        assert!(matches!(dispatch(id, &[NativeArg::Float(3.0), NativeArg::Float(4.0)], &mut sink).unwrap(), NativeValue::Float(value) if value == 5.0));
+    }
+
     struct TestSink;
 
     impl Sink for TestSink {

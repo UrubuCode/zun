@@ -1508,6 +1508,17 @@ mod method_tests {
     }
 
     #[test]
+    fn executes_math_hypot_intrinsic() {
+        let module = zun_compiler::compile(
+            "import { hypotNumber } from \"zun:math\"; function main(): number { return hypotNumber(3.0, 4.0); }",
+        )
+        .expect("compile math hypot");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run math hypot");
+        assert!(matches!(result, Value::Float(value, _) if value == 5.0));
+    }
+
+    #[test]
     fn executes_number_finiteness_source_methods() {
         let module = zun_compiler::compile(
             "class Number { isNaN(): boolean { return this != this; } isFinite(): boolean { return this == this; } }\n\

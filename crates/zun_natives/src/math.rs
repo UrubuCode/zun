@@ -107,6 +107,16 @@ fn atan2(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     Ok(NativeValue::Float(y.atan2(x)))
 }
 
+fn hypot(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let left = float_arg(args, "hypot")?;
+    let right = match args.get(1) {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("hypot: expected two numbers".to_string())),
+    };
+    Ok(NativeValue::Float(left.hypot(right)))
+}
+
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:math",
@@ -132,5 +142,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "logNumber", params: &[F64], ret: F64, imp: log },
         NativeFn { name: "tanNumber", params: &[F64], ret: F64, imp: tan },
         NativeFn { name: "atan2Number", params: &[F64, F64], ret: F64, imp: atan2 },
+        NativeFn { name: "hypotNumber", params: &[F64, F64], ret: F64, imp: hypot },
     ],
 };

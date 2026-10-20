@@ -911,6 +911,18 @@ fn math_tangent_and_atan2_keep_interpreter_fallback() {
 }
 
 #[test]
+fn math_hypot_keeps_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { hypotNumber } from \"zun:math\"; function main(): number { return hypotNumber(3.0, 4.0); }",
+    )
+    .expect("compile math hypot");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with math fallback");
+    assert!(!jit.is_compiled(entry), "native math calls must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 5.0));
+}
+
+#[test]
 fn break_keeps_interpreter_and_jit_paths_equivalent() {
     let module = zun_compiler::compile(
         "function main(): u64 { let index: u64 = 0; while (index < 10) { if (index == 3) { break; } index = index + 1; } return index; }",
