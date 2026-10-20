@@ -523,6 +523,17 @@ Consequences for the design:
 
 ## 5. Implementation ledger (2026-10-20)
 
+### Current ABI gates (2026-10-20)
+
+- `Any` has a stable two-word ABI contract (`tag`, `payload`) with validated
+  reconstruction and layout tests in `zun_core`.
+- The Cranelift carrier remains intentionally gated: `ArrayLoad` must preserve
+  both words and register object/string payloads with precise GC metadata before
+  it can leave Tier 0.
+- Interpreter safepoints already poll allocation sites and backedges with the
+  current frame and caller chain as precise roots; native `(PC, SP)` capture is
+  still pending.
+
 The following runtime contracts are implemented and covered by tests:
 
 - compact virtual-slot dispatch in both the interpreter and Cranelift JIT;
