@@ -10,12 +10,14 @@ mod builtins;
 mod collections;
 mod native;
 mod roots;
+mod stack;
 mod unwind;
 pub mod value;
 
 use builtins::{managed_buffer_builtin, managed_collection_builtin};
 use native::{from_native_value, to_native_arg};
 use roots::collect_frame_roots;
+use stack::underflow;
 use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
@@ -3813,10 +3815,6 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run Array includes");
         assert!(matches!(result, Value::Bool(true)));
     }
-}
-
-fn underflow() -> RunError {
-    RunError::Malformed("stack underflow".to_string())
 }
 
 fn pop(stack: &mut Vec<Value>) -> Result<Value, RunError> {
