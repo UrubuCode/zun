@@ -41,6 +41,12 @@ pub struct Promise<T> {
     inner: Arc<Mutex<Inner<T>>>,
 }
 
+/// Awaiter view used by compiler-generated async state machines.
+#[derive(Debug)]
+pub struct PromiseAwaiter<T> {
+    promise: Promise<T>,
+}
+
 /// A stackless state machine whose suspension point is represented by `state`.
 ///
 /// Compiler-generated async bodies can store locals in the closure and update
@@ -143,6 +149,15 @@ impl<T> core::fmt::Debug for Promise<T> {
     }
 }
 
+impl<T> Clone for Promise<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 impl<T: Send + 'static> Promise<T> {
     /// Create a pending promise.
     pub fn new() -> Self {
@@ -154,6 +169,13 @@ impl<T: Send + 'static> Promise<T> {
                 continuation: None,
                 rejection: None,
             })),
+        }
+    }
+
+    /// Create an awaiter for this promise without changing its settlement.
+    pub fn awaiter(&self) -> PromiseAwaiter<T> {
+        PromiseAwaiter {
+            promise: self.clone(),
         }
     }
 
@@ -421,6 +443,44 @@ impl<T: Send + 'static> Promise<T> {
             .expect("promise mutex poisoned")
             .error
             .clone()
+    }
+}
+
+impl<T: Send + 'static> PromiseAwaiter<T> {
+    /// Whether resumption can happen without registering a continuation.
+    pub fn is_completed(&self) -> bool {
+        self.promise.state() != PromiseState::Pending
+    }
+
+    /// Schedule one resumption callback with the awaited value or failure.
+    pub fn on_completed(
+        &self,
+        queue: Arc<Mutex<MicrotaskQueue>>,
+        continuation: impl FnOnce(Result<T, String>) + Send + 'static,
+    ) {
+        let success_queue = Arc::clone(&queue);
+        let failure_queue = Arc::clone(&queue);
+        let continuation = Arc::new(Mutex::new(Some(continuation)));
+        let success_continuation = Arc::clone(&continuation);
+        self.promise.then_scheduled(success_queue, move |value| {
+            if let Some(continuation) = success_continuation
+                .lock()
+                .expect("promise mutex poisoned")
+                .take()
+            {
+                continuation(Ok(value));
+            }
+        });
+        let failure_continuation = Arc::clone(&continuation);
+        self.promise.catch_scheduled(failure_queue, move |error| {
+            if let Some(continuation) = failure_continuation
+                .lock()
+                .expect("promise mutex poisoned")
+                .take()
+            {
+                continuation(Err(error));
+            }
+        });
     }
 }
 
@@ -773,6 +833,24 @@ mod tests {
         assert_eq!(completed.state(), PromiseState::Resolved);
         assert!(!completed.is_rejected());
         assert!(cleaned.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn promise_awaiter_reports_readiness_and_schedules_resumption() {
+        let promise = Promise::new();
+        let awaiter = promise.awaiter();
+        let queue = Arc::new(Mutex::new(MicrotaskQueue::default()));
+        let seen = Arc::new(Mutex::new(None));
+        let result = Arc::clone(&seen);
+        awaiter.on_completed(Arc::clone(&queue), move |value| {
+            *result.lock().unwrap() = Some(value);
+        });
+        assert!(!awaiter.is_completed());
+        assert!(promise.resolve(11));
+        assert!(seen.lock().unwrap().is_none());
+        queue.lock().unwrap().run_all();
+        assert_eq!(*seen.lock().unwrap(), Some(Ok(11)));
+        assert!(awaiter.is_completed());
     }
 
     #[test]
