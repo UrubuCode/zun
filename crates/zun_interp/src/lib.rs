@@ -7,9 +7,11 @@
 //! capture it.
 
 pub mod value;
+mod native;
 
 use std::rc::Rc;
 use value::Value;
+use native::{from_native_value, to_native_arg};
 use zun_il::{decode_one, Opcode, Operand};
 use zun_metadata::TableKind;
 use zun_module::{read_body, Module};
@@ -2067,56 +2069,6 @@ fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         }
     }
     None
-}
-
-/// Borrow a `Value` as a neutral [`NativeArg`](zun_natives::NativeArg).
-fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
-    match v {
-        Value::Int(n, _) => zun_natives::NativeArg::Int(*n),
-        Value::Float(n, _) => zun_natives::NativeArg::Float(*n),
-        Value::Bool(b) => zun_natives::NativeArg::Bool(*b),
-        Value::Str(s) => zun_natives::NativeArg::Str(s),
-        Value::Object(object) => {
-            zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize))
-        }
-        Value::Any(value) => zun_natives::NativeArg::Any(*value),
-        Value::Function(_) => panic!("function values cannot be passed to native calls yet"),
-        Value::Void => zun_natives::NativeArg::Void,
-        Value::Null => zun_natives::NativeArg::Void,
-    }
-}
-
-/// Convert a native result back to a `Value`, using the function's declared
-/// return type (via `id`) to pick the integer width.
-fn from_native_value(v: zun_natives::NativeValue, id: u32) -> Value {
-    use zun_natives::{NativeTy, NativeValue};
-    match v {
-        NativeValue::Void => Value::Void,
-        NativeValue::Bool(b) => Value::Bool(b),
-        NativeValue::Str(s) => Value::Str(s.into()),
-        NativeValue::Any(value) => Value::Any(value),
-        NativeValue::Float(n) => {
-            let kind = match zun_natives::by_id(id).map(|f| f.ret) {
-                Some(NativeTy::F32) => zun_il::NumKind::F32,
-                _ => zun_il::NumKind::F64,
-            };
-            Value::Float(value::round_float(n, kind), kind)
-        }
-        NativeValue::Int(n) => {
-            use zun_il::NumKind as K;
-            let kind = match zun_natives::by_id(id).map(|f| f.ret) {
-                Some(NativeTy::I8) => K::I8,
-                Some(NativeTy::I16) => K::I16,
-                Some(NativeTy::I64) => K::I64,
-                Some(NativeTy::U8) => K::U8,
-                Some(NativeTy::U16) => K::U16,
-                Some(NativeTy::U32) => K::U32,
-                Some(NativeTy::U64) => K::U64,
-                _ => K::I32,
-            };
-            Value::Int(value::wrap_int(n, kind), kind)
-        }
-    }
 }
 
 #[cfg(test)]
