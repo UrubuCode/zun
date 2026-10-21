@@ -243,7 +243,8 @@ impl Heap {
                 *root = unsafe { Obj::from_addr(mapped as *mut u64) };
             }
         }
-        let rewritten_references = self.rewrite_all_references(&relocation, ref_slots);
+        let mut rewritten_references = self.rewrite_all_references(&relocation, ref_slots);
+        rewritten_references += unsafe { rewrite_native_roots(&relocation) };
         for record in self.records.iter_mut().filter(|record| !record.alive) {
             record.addr = std::ptr::null_mut();
         }
@@ -1410,6 +1411,23 @@ mod tests {
         assert!(!heap.by_addr.contains_key(&(dead_addr as usize)));
         assert_ne!(roots[0], owner);
         assert_ne!(roots[0].field(0) as *mut u64, old_child);
+    }
+
+    #[test]
+    fn compaction_rewrites_active_native_roots_before_releasing_chunks() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let old_address = object.addr();
+        let native_roots = [object];
+        let _scope = unsafe { NativeRootScope::enter(&native_roots) };
+        let mut roots = vec![object];
+
+        let result = unsafe { heap.compact(&mut roots, &|_| Vec::new()) };
+
+        assert_eq!(result.moved_objects, 1);
+        assert_eq!(result.rewritten_references, 1);
+        assert_ne!(roots[0].addr(), old_address);
+        assert_eq!(native_roots[0], roots[0]);
     }
 
     #[test]
