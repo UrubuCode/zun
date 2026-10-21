@@ -1415,6 +1415,26 @@ impl Jit {
         let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
         self.call_entry(method_rid)
     }
+
+    /// Call a zero-argument entry point while publishing caller-supplied
+    /// native safepoint coordinates to the GC boundary.
+    ///
+    /// # Safety
+    /// `pc` and `sp` must identify a live frame covered by this JIT's stack-map
+    /// registry, and that frame must remain valid for the complete call.
+    pub unsafe fn call_entry_with_heap_and_native_frame(
+        &self,
+        method_rid: u32,
+        heap: &mut zun_gc::Heap,
+        pc: usize,
+        sp: *mut u8,
+    ) -> Result<RetVal, JitError> {
+        let _frame = unsafe {
+            zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp)
+        };
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_entry(method_rid)
+    }
 }
 
 /// Emit the JIT-eligible portion of a ZIL module as a relocatable native
