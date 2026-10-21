@@ -601,7 +601,8 @@ The following runtime contracts are implemented and covered by tests:
   registered frames and preserve their slots through relocation. Automatic suspension remains
   pending; the coordinator-facing explicit frame-list API, the thread-local
   convenience path, and the heap-backed JIT call boundary now share the same
-  mark/relocate implementation.
+  mark/relocate implementation; both packed and zero-argument JIT entry
+  boundaries can publish the coordinator's `(PC, SP)` pair.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
