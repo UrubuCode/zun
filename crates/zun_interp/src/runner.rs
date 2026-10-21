@@ -71,6 +71,21 @@ impl<'a> GeneratorSession<'a> {
         args: Vec<Value>,
         output: &'a mut dyn Output,
     ) -> Result<Self, RunError> {
+        Self::new_with_context(module, method_rid, args, output, None, None)
+    }
+
+    /// Create a generator while preserving the host/JIT context used by its
+    /// body.  A generator is resumed by a different call to `next`, but its
+    /// native hook and module loader are part of the state-machine boundary,
+    /// not per-poll state.
+    pub fn new_with_context(
+        module: &'a Module,
+        method_rid: u32,
+        args: Vec<Value>,
+        output: &'a mut dyn Output,
+        hook: Option<&'a dyn CallHook>,
+        loader: Option<&'a zun_loader::ModuleLoader>,
+    ) -> Result<Self, RunError> {
         let method = module
             .tables
             .method_defs
@@ -92,7 +107,7 @@ impl<'a> GeneratorSession<'a> {
             ));
         }
         Ok(Self {
-            inner: ResumableSession::new(module, method_rid, args, output, None, None)?,
+            inner: ResumableSession::new(module, method_rid, args, output, hook, loader)?,
             done: false,
             current: None,
             completion: None,
