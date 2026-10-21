@@ -304,6 +304,30 @@ fn array_buffer_numeric_writes_use_scalar_managed_abis() {
 }
 
 #[test]
+fn data_view_u32_read_uses_the_typed_view_abi() {
+    let module = compile(
+        "import { dataViewGetU32 } from \"zun:buffer\"; function read(view: DataView, offset: u64, little: boolean): u32 { return dataViewGetU32(view, offset, little); } function main(): u64 { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .expect("data view reader") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(4);
+    heap.buffer_write_u32(buffer, 0, 0xfeed_beef);
+    let view = heap.alloc_data_view(buffer, 0, 4).expect("data view");
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[view.addr() as u64, 0, 1], &mut heap),
+        Ok(0xfeed_beef)
+    ));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

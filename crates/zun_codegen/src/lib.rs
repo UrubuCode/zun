@@ -120,6 +120,24 @@ pub extern "C" fn zun_jit_buffer_write_f64(address: i64, offset: i64, value: f64
     })
 }
 
+/// Read a u32 from a managed DataView without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_data_view_get_u32(
+    address: i64,
+    offset: i64,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return -1;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_get_u32(object, offset as usize, little_endian != 0)
+            .map(|value| value as i32)
+            .unwrap_or(-1)
+    })
+}
+
 /// Read a managed Map length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
@@ -646,6 +664,7 @@ impl Jit {
     builder.symbol("zun_jit_buffer_set_u8", zun_jit_buffer_set_u8 as *const u8);
     builder.symbol("zun_jit_buffer_write_u32", zun_jit_buffer_write_u32 as *const u8);
     builder.symbol("zun_jit_buffer_write_f64", zun_jit_buffer_write_f64 as *const u8);
+    builder.symbol("zun_jit_data_view_get_u32", zun_jit_data_view_get_u32 as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);

@@ -70,6 +70,8 @@ pub enum NativeTy {
     Array,
     /// A managed ArrayBuffer reference.
     Buffer,
+    /// A managed DataView reference.
+    DataView,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.

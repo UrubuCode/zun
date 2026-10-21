@@ -761,6 +761,13 @@ impl Translator<'_> {
                                 JitKind::Bool,
                                 types::I32,
                             ),
+                            Some("dataViewGetU32") => (
+                                "zun_jit_data_view_get_u32",
+                                3,
+                                types::I64,
+                                JitKind::Num(NumKind::U32),
+                                types::I32,
+                            ),
                             _ => return Err("unsupported builtin".into()),
                         };
                     if stack.len() < arg_count {
@@ -771,6 +778,7 @@ impl Translator<'_> {
                         "zun_jit_buffer_set_u8" => vec![types::I64, types::I64, types::I8],
                         "zun_jit_buffer_write_u32" => vec![types::I64, types::I64, types::I32],
                         "zun_jit_buffer_write_f64" => vec![types::I64, types::I64, types::F64],
+                        "zun_jit_data_view_get_u32" => vec![types::I64, types::I64, types::I32],
                         _ => vec![arg_type; arg_count],
                     };
                     let fid = if let Some(&fid) = builtin_ids.get(name) {

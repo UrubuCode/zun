@@ -20,6 +20,7 @@ pub(super) fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::Opaque => Ty::Any,
         N::Array => Ty::Array,
         N::Buffer => Ty::Buffer,
+        N::DataView => Ty::BufferView(crate::hir::BufferViewKind::DataView),
         N::Map => Ty::Map,
         N::Set => Ty::Set,
         N::WeakMap => Ty::WeakMap,
