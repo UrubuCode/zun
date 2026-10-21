@@ -683,13 +683,12 @@ The following runtime contracts are implemented and covered by tests:
   correct fallback; Cranelift compilation of methods containing `await` is an
   explicit eligibility boundary. Broader Cranelift support for async and
   generator state machines remains a separate optimization gate.
-- Generator lowering now preserves `yield` through HIR and verified IL,
-  accepts `function*` declarations, and resumes Tier 0 frames through the
-  persistent interpreter session. The session exposes yielded values and final
-  completion, and retains the native-hook/module-loader execution context
-  across polls. The VM state-machine contract also exposes `current()` and
-  terminal `dispose()` semantics. A managed generator iterator object and
-  source-level `next()` binding remain a separate integration gate.
+- Generator lowering preserves `yield` through HIR and verified IL, accepts
+  `function*` declarations, and resumes owned Tier 0 frames. Managed generator
+  objects are GC-traced, expose `next()`/`done` intrinsics, and work with
+  source-level `for...of` for zero-argument generators. The interpreter is the
+  explicit JIT fallback; argumentful generator calls and broader Cranelift
+  suspension support remain pending.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
@@ -911,10 +910,10 @@ an optimization gate.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
    safepoints, true OSR, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
-   the Tier 0 state-machine path; generator source lowering and frame
-   resumption are implemented, while managed iterator-object/`next()`
-   integration remains pending. Broader JIT support remains an optimization
-   gate. Module-hygiene splits are
+   the Tier 0 state-machine path; generator source lowering, managed iterator
+   objects, `next()`, and `for...of` integration are implemented for
+   zero-argument generators. Argumentful generator calls and broader JIT
+   support remain pending. Module-hygiene splits are
    maintained separately by the reviewer and are not part of this execution
    backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
