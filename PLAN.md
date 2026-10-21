@@ -561,7 +561,8 @@ The following runtime contracts are implemented and covered by tests:
 - mark-sweep GC with interpreter roots, native root scopes, and precise JIT
   stack-map reference-slot metadata; object-producing JIT values are registered
   in those maps and the GC can consume a stopped native frame through `(PC, SP)`.
-  JIT allocation, field-store barriers, managed calls, and imported builtins
+  JIT allocation, object-initialization and field-store barriers, managed calls,
+  and imported builtins
   now retain object operands across their call boundaries, and field loads
   retain their receivers in stack maps; nested native-frame collection
   coverage is tested. Interpreter safepoints now select minor/full collection
