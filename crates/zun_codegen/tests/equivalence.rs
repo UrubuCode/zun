@@ -83,6 +83,25 @@ fn generic_set_has_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn generic_map_has_preserves_interpreter_fallback_boundary() {
+    let module = compile(
+        "import { mapHas } from \"zun:collections\";\n\
+         function contains(map: Map, key: any): boolean { return mapHas(map, key); }\n\
+         function main(): boolean { let map = new Map(); map.set(7, 42); return contains(map, 7); }",
+    );
+    let contains = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "contains")
+        .expect("contains method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback");
+    assert!(!jit.is_compiled(contains), "generic Map.has must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn checked_string_array_unbox_preserves_tier0_fallback_boundary() {
     let module = compile(
         "function read(values: Array): string { return values[0] as string; } function main(): int { let values = new Array(1); values[0] = \"hello\"; return 1; }",
