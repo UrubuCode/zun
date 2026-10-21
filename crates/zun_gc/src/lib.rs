@@ -155,6 +155,8 @@ pub struct Heap {
     reference_slots: HashMap<u32, Vec<usize>>,
     /// Allocations since the last native safepoint collection.
     native_allocations: usize,
+    /// Young native safepoint collections since the last native compaction.
+    native_young_collections: usize,
     /// Dynamic property bags associated with dynamic objects.
     dynamic_objects: HashMap<usize, zun_core::DynamicObject>,
     /// Contiguous array storage associated with array objects.
@@ -214,6 +216,16 @@ impl Heap {
         self.native_allocations = self.native_allocations.saturating_add(1);
         if self.native_allocations >= 256 {
             self.native_allocations = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn native_compaction_due(&mut self) -> bool {
+        self.native_young_collections = self.native_young_collections.saturating_add(1);
+        if self.native_young_collections >= 8 {
+            self.native_young_collections = 0;
             true
         } else {
             false

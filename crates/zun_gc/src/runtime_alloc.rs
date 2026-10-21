@@ -59,12 +59,19 @@ pub unsafe extern "C" fn zun_rt_alloc(
                 // SAFETY: the active frame and all registered roots remain
                 // stopped and valid for this allocation slow path.
                 unsafe {
-                    heap.collect_young_with_active_native_frame(
-                        &[],
-                        pc,
-                        caller_sp as *const u8,
-                        &ref_slots,
-                    );
+                    if heap.native_compaction_due() {
+                        heap.collect_and_compact_with_registered_native_frames(
+                            &mut Vec::new(),
+                            &ref_slots,
+                        );
+                    } else {
+                        heap.collect_young_with_active_native_frame(
+                            &[],
+                            pc,
+                            caller_sp as *const u8,
+                            &ref_slots,
+                        );
+                    }
                 }
             }
             heap.alloc(type_rid, field_count).addr()
@@ -106,10 +113,12 @@ mod tests {
         let _registry_scope = unsafe { ActiveStackMapScope::enter(&registry) };
         let _heap_scope = unsafe { HeapScope::enter(&mut heap) };
 
-        for _ in 0..256 {
+        for _ in 0..2_048 {
             unsafe { super::zun_rt_alloc(2, 0, caller_sp) };
         }
 
-        assert!(heap.by_addr.contains_key(&(live.addr() as usize)));
+        // The eighth young collection compacts the heap. The stack-map slot,
+        // rather than the stale pre-compaction Obj, is the authoritative root.
+        assert!(heap.by_addr.contains_key(&native_frame[1]));
     }
 }
