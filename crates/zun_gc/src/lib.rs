@@ -428,6 +428,7 @@ impl Heap {
         frames: &[StoppedNativeFrame<'_>],
     ) -> CollectionCompactionResult {
         let mut mark_roots = roots.clone();
+        append_native_roots(&mut mark_roots);
         for frame in frames {
             mark_roots.extend(unsafe { frame.registry.roots_at(frame.pc, frame.sp) });
         }
@@ -1718,6 +1719,31 @@ mod tests {
         let moved_address = unsafe { (frame.as_ptr() as *const u64).read_unaligned() } as *mut u64;
         assert_ne!(moved_address, old_address);
         assert_eq!(moved_address, heap.records.iter().find(|record| record.alive).unwrap().addr);
+    }
+
+    #[test]
+    fn collect_and_compact_marks_native_root_scopes() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let old_address = object.addr();
+        let roots = [object];
+        let _native_roots = unsafe { NativeRootScope::enter(&roots) };
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 75, span: 1, reference_slots: Vec::new() }]);
+        let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 75, std::ptr::null_mut()) };
+        let mut explicit_roots = Vec::new();
+
+        let result = unsafe {
+            heap.collect_and_compact_with_registered_native_frames(
+                &mut explicit_roots,
+                &|_| Vec::new(),
+            )
+        };
+
+        assert_eq!(result.reclaimed_objects, 0);
+        assert_eq!(result.moved_objects, 1);
+        assert_ne!(roots[0].addr(), old_address);
+        assert_eq!(heap.live_count(), 1);
     }
 
     #[test]
