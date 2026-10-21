@@ -663,18 +663,18 @@ impl Translator<'_> {
                     if stack.len() < nargs {
                         return Err("stack underflow at call".into());
                     }
-                    let args: Vec<Value> = stack
+                    let arg_values: Vec<(Value, JitKind)> = stack
                         .split_off(stack.len() - nargs)
                         .into_iter()
                         .map(|(v, kind)| {
                             if kind == JitKind::Object {
                                 self.builder.declare_value_needs_stack_map(v);
                             }
-                            v
+                            (v, kind)
                         })
                         .collect();
                     let inst = if instr.opcode == Opcode::CallVirt {
-                        let receiver = args.first().copied().ok_or("virtual call receiver")?;
+                        let receiver = arg_values.first().map(|(value, _)| *value).ok_or("virtual call receiver")?;
                         let slot = self.types.virtual_slot(rid).ok_or("virtual method slot")?;
                         let type_rid =
                             self.builder
@@ -699,33 +699,101 @@ impl Translator<'_> {
                                 .ins()
                                 .load(types::I64, MemFlags::trusted(), address, 0);
                         let mut sig = Signature::new(self.builder.func.signature.call_conv);
-                        for &kind in &callee.local_kinds[..callee.param_count as usize] {
-                            sig.params
-                                .push(AbiParam::new(clif_ty(JitKind::from_byte(kind))));
+                        let mut call_args = Vec::new();
+                        for ((value, _kind), &param_kind_byte) in arg_values.iter().zip(
+                            &callee.local_kinds[..callee.param_count as usize],
+                        ) {
+                            let param_kind = JitKind::from_byte(param_kind_byte);
+                            if param_kind == JitKind::Other {
+                                sig.params.push(AbiParam::new(types::I64));
+                                sig.params.push(AbiParam::new(types::I64));
+                                call_args.push(self.builder.ins().load(
+                                    types::I64,
+                                    MemFlags::trusted(),
+                                    *value,
+                                    crate::any_abi::TAG_OFFSET,
+                                ));
+                                call_args.push(self.builder.ins().load(
+                                    types::I64,
+                                    MemFlags::trusted(),
+                                    *value,
+                                    crate::any_abi::PAYLOAD_OFFSET,
+                                ));
+                            } else {
+                                sig.params.push(AbiParam::new(clif_ty(param_kind)));
+                                call_args.push(*value);
+                            }
                         }
                         if callee.returns_value {
-                            sig.returns.push(AbiParam::new(clif_ty(JitKind::from_byte(
-                                callee.return_kind,
-                            ))));
+                            let return_kind = JitKind::from_byte(callee.return_kind);
+                            if return_kind == JitKind::Other {
+                                sig.returns.push(AbiParam::new(types::I64));
+                                sig.returns.push(AbiParam::new(types::I64));
+                            } else {
+                                sig.returns.push(AbiParam::new(clif_ty(return_kind)));
+                            }
                         }
                         let sig_ref = self.builder.import_signature(sig);
-                        self.builder.ins().call_indirect(sig_ref, target, &args)
+                        self.builder.ins().call_indirect(sig_ref, target, &call_args)
                     } else {
                         let fid = *self
                             .func_ids
                             .get(&rid)
                             .ok_or("call to non-compiled method")?;
                         let fref = self.module.declare_func_in_func(fid, self.builder.func);
-                        self.builder.ins().call(fref, &args)
-                    };
-                    let results = self.builder.inst_results(inst);
-                    if callee.returns_value {
-                        let r = results[0];
-                        let kind = JitKind::from_byte(callee.return_kind);
-                        if kind == JitKind::Object {
-                            self.builder.declare_value_needs_stack_map(r);
+                        let mut call_args = Vec::new();
+                        for ((value, _kind), &param_kind_byte) in arg_values.iter().zip(
+                            &callee.local_kinds[..callee.param_count as usize],
+                        ) {
+                            if JitKind::from_byte(param_kind_byte) == JitKind::Other {
+                                call_args.push(self.builder.ins().load(
+                                    types::I64,
+                                    MemFlags::trusted(),
+                                    *value,
+                                    crate::any_abi::TAG_OFFSET,
+                                ));
+                                call_args.push(self.builder.ins().load(
+                                    types::I64,
+                                    MemFlags::trusted(),
+                                    *value,
+                                    crate::any_abi::PAYLOAD_OFFSET,
+                                ));
+                            } else {
+                                call_args.push(*value);
+                            }
                         }
-                        stack.push((r, kind));
+                        self.builder.ins().call(fref, &call_args)
+                    };
+                    let results = self.builder.inst_results(inst).to_vec();
+                    if callee.returns_value {
+                        let kind = JitKind::from_byte(callee.return_kind);
+                        if kind == JitKind::Other {
+                            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                crate::any_abi::CARRIER_SIZE,
+                                crate::any_abi::CARRIER_ALIGN_SHIFT,
+                            ));
+                            let carrier = self.builder.ins().stack_addr(types::I64, slot, 0);
+                            self.builder.ins().store(
+                                MemFlags::trusted(),
+                                results[0],
+                                carrier,
+                                crate::any_abi::TAG_OFFSET,
+                            );
+                            self.builder.ins().store(
+                                MemFlags::trusted(),
+                                results[1],
+                                carrier,
+                                crate::any_abi::PAYLOAD_OFFSET,
+                            );
+                            stack.push((carrier, kind));
+                        } else {
+                            let r = results[0];
+                            if kind == JitKind::Object {
+                                self.builder.declare_value_needs_stack_map(r);
+                            }
+                            stack.push((r, kind));
+                        }
                     }
                 }
                 Opcode::CallBuiltin => {
