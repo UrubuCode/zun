@@ -103,6 +103,15 @@ fn tiering_calls_a_heap_eligible_f64_array_pop() {
 }
 
 #[test]
+fn tiering_calls_a_heap_eligible_object_field_reader() {
+    let out = run_source(
+        "class Box { value: number; get(): number { return this.value; } }\n\
+         function main() { let box = new Box(41.0); print(box.get()); print(box.get()); }",
+    );
+    assert_eq!(out, ["41", "41"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
