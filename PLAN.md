@@ -611,7 +611,8 @@ The following runtime contracts are implemented and covered by tests:
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
   exception-bearing methods;
 - `Any` and `DynamicObject`, including dynamic-property IL, source lowering,
-  and GC tracing of object-tagged dynamic values;
+  checked `castclass` lowering from `Any` to class instances, and GC tracing
+  of object-tagged dynamic values;
 - interpreted backedge observation plus Tier 1 local backedge poll counters as
   the first OSR integration boundary; hot `(method_rid, target_pc)` transfer
   requests are published and deduplicated by `JitHook`, and the hook now
