@@ -481,7 +481,9 @@ impl Heap {
             let Some(registry) = registry else {
                 return unsafe { self.collect_with_native_roots(roots, ref_slots) };
             };
-            unsafe { self.collect_with_native_frame(roots, registry, pc, sp, ref_slots) }
+            let mut all_roots = roots.to_vec();
+            append_native_roots(&mut all_roots);
+            unsafe { self.collect_with_native_frame(&all_roots, registry, pc, sp, ref_slots) }
         })
     }
 

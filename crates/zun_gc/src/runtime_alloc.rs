@@ -1,6 +1,6 @@
 //! C ABI allocation entry points used by generated native code.
 
-use super::{append_native_roots, with_active_stack_map_registry, with_current_heap_mut, ActiveNativeFrameScope, Heap};
+use super::{with_active_stack_map_registry, with_current_heap_mut, ActiveNativeFrameScope, Heap};
 
 #[inline]
 unsafe fn safepoint_pc(caller_sp: usize) -> usize {
@@ -54,15 +54,13 @@ pub unsafe extern "C" fn zun_rt_alloc(
         };
         with_current_heap_mut(|heap| {
             if heap.native_allocation_due() {
-                let mut roots = Vec::new();
-                append_native_roots(&mut roots);
                 let layouts = heap.reference_slots.clone();
                 let ref_slots = |rid: u32| layouts.get(&rid).cloned().unwrap_or_default();
                 // SAFETY: the active frame and all registered roots remain
                 // stopped and valid for this allocation slow path.
                 unsafe {
                     heap.collect_with_active_native_frame(
-                        &roots,
+                        &[],
                         pc,
                         caller_sp as *const u8,
                         &ref_slots,

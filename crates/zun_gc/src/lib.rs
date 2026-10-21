@@ -2120,6 +2120,30 @@ mod tests {
     }
 
     #[test]
+    fn active_stack_map_collection_includes_native_root_scopes() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let roots = [object];
+        let _native_roots = unsafe { NativeRootScope::enter(&roots) };
+        let frame = [0u8; 8];
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 105, span: 1, reference_slots: Vec::new() }]);
+        let _scope = unsafe { ActiveStackMapScope::enter(&registry) };
+
+        let reclaimed = unsafe {
+            heap.collect_with_active_native_frame(
+                &[],
+                105,
+                frame.as_ptr() as *const u8,
+                &|_| Vec::new(),
+            )
+        };
+
+        assert_eq!(reclaimed, 0);
+        assert_eq!(heap.live_count(), 1);
+    }
+
+    #[test]
     fn active_stack_map_collection_falls_back_to_explicit_roots() {
         let mut heap = Heap::new();
         let object = heap.alloc(1, 0);
