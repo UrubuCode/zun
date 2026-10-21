@@ -2157,4 +2157,18 @@ mod tests {
         assert_eq!(freed, 0);
         assert_eq!(heap.live_count(), 1);
     }
+
+    #[test]
+    fn generator_state_keeps_argument_object_alive() {
+        let mut heap = Heap::new();
+        let generator = heap.alloc_generator(0, 17, Vec::new());
+        let child = heap.alloc(2, 0);
+        heap.generator_state_mut(generator)
+            .expect("generator state")
+            .args
+            .push(zun_core::Any::object(child.addr() as usize));
+        let freed = unsafe { heap.collect(&[generator], &|_| Vec::new()) };
+        assert_eq!(freed, 0);
+        assert_eq!(heap.live_count(), 2);
+    }
 }
