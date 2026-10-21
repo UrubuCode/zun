@@ -206,6 +206,28 @@ impl Heap {
         roots: &mut [Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
     ) -> CompactionResult {
+        unsafe { self.compact_impl(roots, ref_slots, None) }
+    }
+
+    /// Compact while also rewriting the reference slots of one stopped JIT
+    /// frame selected by its program counter and stack pointer.
+    pub unsafe fn compact_with_native_frame(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        registry: &StackMapRegistry,
+        pc: usize,
+        sp: *mut u8,
+    ) -> CompactionResult {
+        unsafe { self.compact_impl(roots, ref_slots, Some((registry, pc, sp))) }
+    }
+
+    unsafe fn compact_impl(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        native_frame: Option<(&StackMapRegistry, usize, *mut u8)>,
+    ) -> CompactionResult {
         fn allocate(
             chunks: &mut Vec<Box<[u64]>>,
             cursor: &mut usize,
@@ -245,6 +267,9 @@ impl Heap {
         }
         let mut rewritten_references = self.rewrite_all_references(&relocation, ref_slots);
         rewritten_references += unsafe { rewrite_native_roots(&relocation) };
+        if let Some((registry, pc, sp)) = native_frame {
+            rewritten_references += unsafe { registry.rewrite_slots_at(pc, sp, &relocation) };
+        }
         for record in self.records.iter_mut().filter(|record| !record.alive) {
             record.addr = std::ptr::null_mut();
         }
@@ -1428,6 +1453,31 @@ mod tests {
         assert_eq!(result.rewritten_references, 1);
         assert_ne!(roots[0].addr(), old_address);
         assert_eq!(native_roots[0], roots[0]);
+    }
+
+    #[test]
+    fn compaction_rewrites_a_stopped_native_frame_stack_map() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut frame = [0u8; 8];
+        unsafe { (frame.as_mut_ptr() as *mut u64).write_unaligned(object.addr() as u64); }
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 20, span: 1, reference_slots: vec![0] }]);
+        let mut roots = vec![object];
+
+        let result = unsafe {
+            heap.compact_with_native_frame(
+                &mut roots,
+                &|_| Vec::new(),
+                &registry,
+                20,
+                frame.as_mut_ptr(),
+            )
+        };
+
+        assert_eq!(result.moved_objects, 1);
+        assert_eq!(result.rewritten_references, 1);
+        assert_eq!(unsafe { (frame.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
     }
 
     #[test]
