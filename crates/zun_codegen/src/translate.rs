@@ -435,6 +435,18 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::Num(NumKind::I32)));
                                 continue;
                             }
+                            Some("compare") => {
+                                let (right, right_kind) = stack.pop().ok_or("string compare right")?;
+                                let (left, left_kind) = stack.pop().ok_or("string compare left")?;
+                                if left_kind != JitKind::String || right_kind != JitKind::String {
+                                    return Err("string compare expects string arguments".into());
+                                }
+                                let helper = self.string_compare_fref();
+                                let call = self.builder.ins().call(helper, &[left, right]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Num(NumKind::I32)));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -570,6 +582,13 @@ impl Translator<'_> {
                             ),
                             Some("count") => (
                                 "zun_jit_string_count",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("compare") => (
+                                "zun_jit_string_compare",
                                 2,
                                 types::I64,
                                 JitKind::Num(NumKind::I32),
@@ -1639,6 +1658,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_count", Linkage::Import, &sig)
             .expect("declare zun_jit_string_count");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_compare_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_compare", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_compare");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

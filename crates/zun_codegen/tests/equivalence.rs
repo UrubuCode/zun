@@ -276,6 +276,30 @@ fn primitive_string_count_uses_the_managed_string_abi() {
     ));
 }
 
+#[test]
+fn primitive_string_compare_uses_the_managed_string_abi() {
+    let module = compile(
+        "import { compare } from \"zun:string\"; class String { extern compare(other: string): int; } function measure(value: string, other: string): int { return value.compare(other); } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let left = heap.intern_string(std::rc::Rc::from("alpha"));
+    let right = heap.intern_string(std::rc::Rc::from("beta"));
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[left as u64, right as u64], &mut heap),
+        Ok(u64::MAX)
+    ));
+}
+
 
 #[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {

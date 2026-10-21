@@ -148,6 +148,15 @@ pub extern "C" fn zun_jit_string_count(value: i64, needle: i64) -> i32 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_compare(left: i64, right: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| {
+        let Some(left) = heap.try_string(left as u32) else { return 0 };
+        let Some(right) = heap.try_string(right as u32) else { return 0 };
+        if left < right { -1 } else if left > right { 1 } else { 0 }
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -1011,6 +1020,7 @@ impl Jit {
         builder.symbol("zun_jit_string_index_of", zun_jit_string_index_of as *const u8);
         builder.symbol("zun_jit_string_last_index_of", zun_jit_string_last_index_of as *const u8);
         builder.symbol("zun_jit_string_count", zun_jit_string_count as *const u8);
+        builder.symbol("zun_jit_string_compare", zun_jit_string_compare as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
