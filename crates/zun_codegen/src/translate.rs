@@ -719,6 +719,20 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::U64),
                                 types::I64,
                             ),
+                            Some("dataViewLength") => (
+                                "zun_jit_data_view_length",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::U64),
+                                types::I64,
+                            ),
+                            Some("u8ArrayLength") | Some("u16ArrayLength") | Some("u32ArrayLength") | Some("f64ArrayLength") => (
+                                "zun_jit_typed_array_length",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::U64),
+                                types::I64,
+                            ),
                             Some("bufferGetU8") => (
                                 "zun_jit_buffer_get_u8",
                                 2,

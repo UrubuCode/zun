@@ -208,6 +208,45 @@ fn array_buffer_length_uses_the_managed_object_abi() {
 }
 
 #[test]
+fn managed_view_lengths_use_typed_object_abis() {
+    let module = compile(
+        "import { dataViewLength, u8ArrayLength, u16ArrayLength, u32ArrayLength, f64ArrayLength } from \"zun:buffer\"; function data(view: DataView): u64 { return dataViewLength(view); } function u8(view: Uint8Array): u64 { return u8ArrayLength(view); } function u16(view: Uint16Array): u64 { return u16ArrayLength(view); } function u32(view: Uint32Array): u64 { return u32ArrayLength(view); } function f64(view: Float64Array): u64 { return f64ArrayLength(view); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("view length method") as u32
+            + 1
+    };
+    let data = find("data");
+    let u8 = find("u8");
+    let u16 = find("u16");
+    let u32 = find("u32");
+    let f64 = find("f64");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(data));
+    assert!(jit.is_compiled(u8));
+    assert!(jit.is_compiled(u16));
+    assert!(jit.is_compiled(u32));
+    assert!(jit.is_compiled(f64));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(32);
+    let data_view = heap.alloc_data_view(buffer, 0, 12).expect("data view");
+    let u8_view = heap.alloc_u8_array(buffer, 0, 5).expect("u8 view");
+    let u16_view = heap.alloc_u16_array(buffer, 0, 8).expect("u16 view");
+    let u32_view = heap.alloc_u32_array(buffer, 0, 8).expect("u32 view");
+    let f64_view = heap.alloc_f64_array(buffer, 0, 16).expect("f64 view");
+    assert!(matches!(jit.call_packed_with_heap(data, &[data_view.addr() as u64], &mut heap), Ok(12)));
+    assert!(matches!(jit.call_packed_with_heap(u8, &[u8_view.addr() as u64], &mut heap), Ok(5)));
+    assert!(matches!(jit.call_packed_with_heap(u16, &[u16_view.addr() as u64], &mut heap), Ok(4)));
+    assert!(matches!(jit.call_packed_with_heap(u32, &[u32_view.addr() as u64], &mut heap), Ok(2)));
+    assert!(matches!(jit.call_packed_with_heap(f64, &[f64_view.addr() as u64], &mut heap), Ok(2)));
+}
+
+#[test]
 fn array_buffer_u8_read_uses_the_scalar_managed_abi() {
     let module = compile(
         "import { bufferGetU8 } from \"zun:buffer\"; function read(buffer: ArrayBuffer, index: u64): u8 { return bufferGetU8(buffer, index); } function main(): u64 { return 0; }",

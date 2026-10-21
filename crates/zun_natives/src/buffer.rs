@@ -64,6 +64,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: DataView,
             imp: unavailable,
         },
+        NativeFn { name: "dataViewLength", params: &[DataView], ret: U64, imp: unavailable },
         NativeFn {
             name: "dataViewGetU32",
             params: &[DataView, U64, Bool],
@@ -106,6 +107,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: U32Array,
             imp: unavailable,
         },
+        NativeFn { name: "u32ArrayLength", params: &[U32Array], ret: U64, imp: unavailable },
         NativeFn {
             name: "u32ArrayGet",
             params: &[U32Array, U64],
@@ -124,6 +126,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: U8Array,
             imp: unavailable,
         },
+        NativeFn { name: "u8ArrayLength", params: &[U8Array], ret: U64, imp: unavailable },
         NativeFn {
             name: "u8ArrayGet",
             params: &[U8Array, U64],
@@ -142,6 +145,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: F64Array,
             imp: unavailable,
         },
+        NativeFn { name: "f64ArrayLength", params: &[F64Array], ret: U64, imp: unavailable },
         NativeFn {
             name: "f64ArrayGet",
             params: &[F64Array, U64],
@@ -160,6 +164,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: U16Array,
             imp: unavailable,
         },
+        NativeFn { name: "u16ArrayLength", params: &[U16Array], ret: U64, imp: unavailable },
         NativeFn {
             name: "u16ArrayGet",
             params: &[U16Array, U64],
