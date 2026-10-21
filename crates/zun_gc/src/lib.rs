@@ -367,18 +367,33 @@ impl Heap {
                     sp: frame.sp,
                 })
                 .collect();
-            let mut mark_roots = roots.clone();
-            for frame in &frames {
-                mark_roots.extend(unsafe { frame.registry.roots_at(frame.pc, frame.sp) });
-            }
-            let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
-            let compacted = unsafe { self.compact_with_native_frames(roots, ref_slots, &frames) };
-            CollectionCompactionResult {
-                reclaimed_objects,
-                moved_objects: compacted.moved_objects,
-                rewritten_references: compacted.rewritten_references,
-            }
+            unsafe { self.collect_and_compact_with_native_frames(roots, ref_slots, &frames) }
         })
+    }
+
+    /// Run mark/sweep and compaction using an explicit stop-the-world frame
+    /// list supplied by the runtime coordinator.
+    ///
+    /// # Safety
+    /// Every frame must remain stopped and valid, with a live registry and a
+    /// stack pointer covered by its stack map, until this method returns.
+    pub unsafe fn collect_and_compact_with_native_frames(
+        &mut self,
+        roots: &mut Vec<Obj>,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        frames: &[StoppedNativeFrame<'_>],
+    ) -> CollectionCompactionResult {
+        let mut mark_roots = roots.clone();
+        for frame in frames {
+            mark_roots.extend(unsafe { frame.registry.roots_at(frame.pc, frame.sp) });
+        }
+        let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
+        let compacted = unsafe { self.compact_with_native_frames(roots, ref_slots, frames) };
+        CollectionCompactionResult {
+            reclaimed_objects,
+            moved_objects: compacted.moved_objects,
+            rewritten_references: compacted.rewritten_references,
+        }
     }
 
     /// Rewrite managed references stored in object fields using a forwarding
@@ -1657,6 +1672,27 @@ mod tests {
         let moved_address = unsafe { (frame.as_ptr() as *const u64).read_unaligned() } as *mut u64;
         assert_ne!(moved_address, old_address);
         assert_eq!(moved_address, heap.records.iter().find(|record| record.alive).unwrap().addr);
+    }
+
+    #[test]
+    fn collect_and_compact_accepts_explicit_native_frames() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let old_address = object.addr();
+        let mut frame = [0u8; 8];
+        unsafe { (frame.as_mut_ptr() as *mut u64).write_unaligned(old_address as u64); }
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 80, span: 1, reference_slots: vec![0] }]);
+        let frames = [StoppedNativeFrame { registry: &registry, pc: 80, sp: frame.as_mut_ptr() }];
+
+        let result = unsafe {
+            heap.collect_and_compact_with_native_frames(&mut Vec::new(), &|_| Vec::new(), &frames)
+        };
+
+        assert_eq!(result.reclaimed_objects, 0);
+        assert_eq!(result.moved_objects, 1);
+        let moved_address = unsafe { (frame.as_ptr() as *const u64).read_unaligned() } as *mut u64;
+        assert_ne!(moved_address, old_address);
     }
 
     #[test]
