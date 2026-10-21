@@ -541,6 +541,45 @@ Consequences for the design:
   `symbol_functions`, today `BTreeMap`) must live in the shape/slot model too.
 - **`switch`** over many/dense cases should lower to a jump table in ilgen/codegen.
 
+## 4.6 Front-end: native TS/JS via OXC (decision, 2026-10-21)
+
+Goal: Zun targets **native TS/JS** to compete with Bun/Node, not only its own
+`.zun` dialect. JS/TS is a *borrowed* front-end (as C# is to .NET), so Zun does
+**not** own the grammar and will not hand-write the full TS/JS parser; it adopts
+a mature Rust parser as the front-end feeding the existing sema/HIR/ilgen. The
+ZIL-only compiler↔VM invariant is unaffected — the AST is internal either way.
+
+**Choice: OXC (`oxc_parser`), not SWC.** Benchmarked in isolated scratch crates
+(2026-10-21): OXC is lighter on every axis (build time a tie):
+
+| metric | OXC `oxc_parser` 0.155 | SWC `swc_ecma_parser` 46 |
+|---|---|---|
+| transitive crates | 105 | 122 |
+| compiled `.rlib`s | 71 | 85 |
+| clean release build | 42 s | 40 s |
+| `target/release/deps` | 215 MB | 267 MB |
+
+OXC is also library-first (parser + arena allocator, built to embed), has a
+cleaner AST than SWC (whose AST is shaped around its own transforms), and parses
+faster in published benchmarks. Caveat: both are **heavy** dependencies (100+
+crates, 200+ MB artifacts) — that is the real cost of a full TS/JS parser; OXC
+merely minimizes it.
+
+Plan:
+
+- Keep the hand-written `zun_syntax` parser for now (the team is mid-runtime);
+  do not swap mid-flight.
+- When broad TS/JS support is the active target, add `oxc_parser` as the
+  front-end and write an **adapter `oxc_ast` → Zun HIR** (sema/HIR/ilgen stay).
+  The `.zun` dialect and the hand parser coexist during the transition.
+- Express Zun's non-standard syntax as **valid TS** so a stock parser accepts it:
+  intrinsic/`extern` bodies as `declare` methods + a decorator (`@intrinsic`),
+  machine-width types (`u8`..`u64`, `i8`..`i64`, `f32`) as ordinary type
+  references resolved by sema. Do not invent keywords the parser would reject.
+- Before committing, prototype the `oxc_ast` → HIR adapter for one construct in a
+  worktree and measure the adapter effort (per the "measure before asserting"
+  rule).
+
 ## 5. Implementation ledger (2026-10-20)
 
 ### Current ABI gates (2026-10-20)
@@ -666,8 +705,10 @@ The following runtime contracts are implemented and covered by tests:
   managed-runtime gates.
 - Primitive-backed `String` scalar queries (`length`, `contains`, `charCodeAt`,
   `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `count`, and `compare`)
-  now use direct Cranelift helpers with interpreter/JIT equivalence coverage;
-  string-producing operations remain on the interpreter path.
+  now use direct Cranelift helpers with interpreter/JIT equivalence coverage.
+  The managed string-producing `concat` and `substring` operations also use
+  heap-handle helpers with equivalence coverage; other string-producing
+  operations remain on the interpreter path.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
