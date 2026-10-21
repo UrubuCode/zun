@@ -422,6 +422,16 @@ fn any_array_return_only(instrs: &[zun_il::Instruction], body: &zun_module::Meth
         ))
 }
 
+fn any_param_return_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+    body.returns_value
+        && JitKind::from_byte(body.return_kind) == JitKind::Other
+        && body.param_count > 0
+        && body.local_kinds[..body.param_count as usize]
+            .iter()
+            .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
+        && instrs.iter().all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Ret))
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
@@ -458,15 +468,18 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                 continue;
             }
         }
-        if !body.local_kinds.iter().all(|&k| kind_supported(k)) {
-            continue;
-        }
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
+        if !body.local_kinds.iter().all(|&k| kind_supported(k))
+            && !any_param_return_only(&instrs, &body)
+        {
+            continue;
+        }
         if !kind_supported(body.return_kind)
             && body.returns_value
             && !any_array_return_only(&instrs, &body)
+            && !any_param_return_only(&instrs, &body)
         {
             continue;
         }

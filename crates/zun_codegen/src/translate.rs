@@ -107,10 +107,36 @@ pub fn translate_body(
 
     builder.switch_to_block(entry);
     let entry_params: Vec<Value> = builder.block_params(entry).to_vec();
-    for (i, &p) in entry_params.iter().enumerate() {
-        builder.def_var(vars[i], p);
-        if local_kinds[i] == JitKind::Object {
-            builder.declare_value_needs_stack_map(p);
+    let mut param_value = 0usize;
+    for (i, &kind) in local_kinds.iter().take(body.param_count as usize).enumerate() {
+        if kind == JitKind::Other {
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                crate::any_abi::CARRIER_SIZE,
+                crate::any_abi::CARRIER_ALIGN_SHIFT,
+            ));
+            let address = builder.ins().stack_addr(types::I64, slot, 0);
+            builder.ins().store(
+                MemFlags::trusted(),
+                entry_params[param_value],
+                address,
+                crate::any_abi::TAG_OFFSET,
+            );
+            builder.ins().store(
+                MemFlags::trusted(),
+                entry_params[param_value + 1],
+                address,
+                crate::any_abi::PAYLOAD_OFFSET,
+            );
+            builder.def_var(vars[i], address);
+            param_value += 2;
+        } else {
+            let p = entry_params[param_value];
+            builder.def_var(vars[i], p);
+            if kind == JitKind::Object {
+                builder.declare_value_needs_stack_map(p);
+            }
+            param_value += 1;
         }
     }
     // Zero-initialize non-parameter locals to a typed zero.

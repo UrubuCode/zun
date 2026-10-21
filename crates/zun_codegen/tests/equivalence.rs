@@ -4244,6 +4244,28 @@ fn direct_any_array_load_preserves_the_two_word_return_abi() {
 }
 
 #[test]
+fn direct_any_parameter_roundtrips_through_the_two_word_shim() {
+    let module = compile(
+        "function echo(value: any): any { return value; } function main(): u64 { return 0; }",
+    );
+    let echo_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "echo")
+        .map(|index| index as u32 + 1)
+        .expect("echo method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles Any parameter");
+    assert!(jit.is_compiled(echo_rid));
+    let carrier = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(91));
+    let mut heap = zun_gc::Heap::new();
+    let result = jit
+        .call_packed_any_with_heap(echo_rid, &[carrier.tag, carrier.payload], &mut heap)
+        .expect("jit Any parameter");
+    assert_eq!(result.into_any(), Some(zun_core::Any::int(91)));
+}
+
+#[test]
 fn proven_float_array_unbox_is_jit_equivalent() {
     let src = "function read(values: Array): number { return values[0] as number; }\n\
                function main(): number { let values = new Array(1); values[0] = 2.5; return read(values); }";
