@@ -347,6 +347,40 @@ impl Heap {
         }
     }
 
+    /// Run mark/sweep and compaction using interpreter roots plus every
+    /// stopped native frame currently registered at the GC boundary.
+    ///
+    /// # Safety
+    /// The caller must stop managed execution and keep every registered frame,
+    /// stack-map registry, and stack pointer valid until this method returns.
+    pub unsafe fn collect_and_compact_with_registered_native_frames(
+        &mut self,
+        roots: &mut Vec<Obj>,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> CollectionCompactionResult {
+        with_active_native_frames(|active| {
+            let frames: Vec<_> = active
+                .iter()
+                .map(|frame| StoppedNativeFrame {
+                    registry: unsafe { &*frame.registry },
+                    pc: frame.pc,
+                    sp: frame.sp,
+                })
+                .collect();
+            let mut mark_roots = roots.clone();
+            for frame in &frames {
+                mark_roots.extend(unsafe { frame.registry.roots_at(frame.pc, frame.sp) });
+            }
+            let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
+            let compacted = unsafe { self.compact_with_native_frames(roots, ref_slots, &frames) };
+            CollectionCompactionResult {
+                reclaimed_objects,
+                moved_objects: compacted.moved_objects,
+                rewritten_references: compacted.rewritten_references,
+            }
+        })
+    }
+
     /// Rewrite managed references stored in object fields using a forwarding
     /// map. This is the object-heap portion of a future relocate phase;
     /// interpreter roots, side tables, and native stack-map slots are handled
@@ -1599,6 +1633,30 @@ mod tests {
 
         assert_eq!(reclaimed, 0);
         assert_eq!(heap.live_count(), 1);
+    }
+
+    #[test]
+    fn collect_and_compact_preserves_registered_native_frame_roots() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let old_address = object.addr();
+        let mut frame = [0u8; 8];
+        unsafe { (frame.as_mut_ptr() as *mut u64).write_unaligned(old_address as u64); }
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 70, span: 1, reference_slots: vec![0] }]);
+        let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 70, frame.as_mut_ptr()) };
+        let mut roots = Vec::new();
+
+        let result = unsafe {
+            heap.collect_and_compact_with_registered_native_frames(&mut roots, &|_| Vec::new())
+        };
+
+        assert_eq!(result.reclaimed_objects, 0);
+        assert_eq!(result.moved_objects, 1);
+        assert_eq!(heap.live_count(), 1);
+        let moved_address = unsafe { (frame.as_ptr() as *const u64).read_unaligned() } as *mut u64;
+        assert_ne!(moved_address, old_address);
+        assert_eq!(moved_address, heap.records.iter().find(|record| record.alive).unwrap().addr);
     }
 
     #[test]
