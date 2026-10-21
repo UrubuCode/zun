@@ -521,6 +521,19 @@ mod tests {
         assert!(error.to_string().contains("unsupported bool FFI signature"));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn typed_i64_signature_calls_a_real_system_symbol() {
+        let library = unsafe { NativeLibrary::open("kernel32.dll") }.expect("load kernel32");
+        let signature = FfiSignature::new(Vec::new(), FfiScalar::I64);
+        let process_id = unsafe {
+            library
+                .call_i64_signature(b"GetCurrentProcessId", &signature, &[])
+                .expect("resolve GetCurrentProcessId through typed ABI")
+        };
+        assert!(process_id > 0);
+    }
+
     #[test]
     fn missing_typed_symbol_returns_a_typed_error() {
         let path = std::env::current_exe().expect("test executable path");
