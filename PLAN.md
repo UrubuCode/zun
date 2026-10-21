@@ -743,10 +743,10 @@ layouts, plus a source-level `toString()` implementation. The heap also stores
 managed `ErrorValue` name/message pairs with mutation and sweep cleanup,
 providing the runtime backing for those source-level error objects.
 
-The release benchmark rerun on 2026-10-20 measured 231.467 ns/iteration for
-the integer Tier 0 loop and 2.107 ns/iteration for the equivalent JIT loop
-(109.84x). The metadata-focused Tier 0 workloads measured 226.999
-ns/iteration for field load/store and 378.087 ns/iteration for virtual
+The release benchmark rerun on 2026-10-20 measured 294.174 ns/iteration for
+the integer Tier 0 loop and 2.230 ns/iteration for the equivalent JIT loop
+(131.94x). The metadata-focused Tier 0 workloads measured 280.909
+ns/iteration for field load/store and 483.534 ns/iteration for virtual
 dispatch. These figures are machine-specific and should be re-run after
 interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
