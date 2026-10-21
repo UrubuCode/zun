@@ -51,6 +51,49 @@ impl Heap {
         unsafe { self.collect_generation(roots, ref_slots, true) }
     }
 
+    /// Collect only young objects using roots from an explicit stopped-frame
+    /// list in addition to interpreter roots.
+    ///
+    /// # Safety
+    /// Every frame must remain stopped and valid for the duration of the
+    /// collection, with its `(PC, SP)` pair covered by its stack map.
+    pub unsafe fn collect_young_with_native_frames(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        frames: &[StoppedNativeFrame<'_>],
+    ) -> usize {
+        let mut all_roots = roots.to_vec();
+        for frame in frames {
+            all_roots.extend(unsafe { frame.registry.roots_at(frame.pc, frame.sp) });
+        }
+        unsafe { self.collect_young(&all_roots, ref_slots) }
+    }
+
+    /// Collect only young objects using every stopped native frame currently
+    /// registered at the GC boundary.
+    ///
+    /// # Safety
+    /// Every registered frame must remain stopped for the duration of the
+    /// collection and point to valid stack-map metadata and stack memory.
+    pub unsafe fn collect_young_with_registered_native_frames(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        with_active_native_frames(|active| {
+            let frames: Vec<_> = active
+                .iter()
+                .map(|frame| StoppedNativeFrame {
+                    registry: unsafe { &*frame.registry },
+                    pc: frame.pc,
+                    sp: frame.sp,
+                })
+                .collect();
+            unsafe { self.collect_young_with_native_frames(roots, ref_slots, &frames) }
+        })
+    }
+
     unsafe fn collect_generation(
         &mut self,
         roots: &[Obj],

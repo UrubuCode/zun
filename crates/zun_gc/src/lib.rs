@@ -1696,6 +1696,24 @@ mod tests {
     }
 
     #[test]
+    fn young_collection_marks_registered_native_frame_roots() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut frame = [0u8; 8];
+        unsafe { (frame.as_mut_ptr() as *mut u64).write_unaligned(object.addr() as u64); }
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 90, span: 1, reference_slots: vec![0] }]);
+        let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 90, frame.as_mut_ptr()) };
+
+        let reclaimed = unsafe {
+            heap.collect_young_with_registered_native_frames(&[], &|_| Vec::new())
+        };
+
+        assert_eq!(reclaimed, 0);
+        assert_eq!(heap.live_count(), 1);
+    }
+
+    #[test]
     fn compaction_rewrites_data_view_buffer_fields_and_indexes() {
         let mut heap = Heap::new();
         let buffer = heap.alloc_buffer(8);
