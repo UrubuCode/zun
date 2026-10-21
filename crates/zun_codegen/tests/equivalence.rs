@@ -134,6 +134,29 @@ fn primitive_string_contains_uses_the_managed_string_abi() {
 }
 
 #[test]
+fn primitive_string_char_code_at_uses_the_managed_string_abi() {
+    let module = compile(
+        "import { charCodeAt } from \"zun:string\"; class String { extern charCodeAt(index: u64): u32; } function measure(value: string, index: u64): u32 { return value.charCodeAt(index); } function main(): u32 { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("Az"));
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[value as u64, 1], &mut heap),
+        Ok(122)
+    ));
+}
+
+#[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {
     let module = compile(
         "function* values(): int { yield 7; return 9; } function main(): any { for (let value of values()) { return value; } return 0; }",

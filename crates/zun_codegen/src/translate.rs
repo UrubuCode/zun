@@ -358,6 +358,27 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::Bool));
                                 continue;
                             }
+                            Some("charCodeAt") => {
+                                let (index, index_kind) =
+                                    stack.pop().ok_or("string charCodeAt index")?;
+                                let (receiver, receiver_kind) =
+                                    stack.pop().ok_or("string charCodeAt receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || !matches!(index_kind, JitKind::Num(kind) if kind.int_parts().is_some())
+                                {
+                                    return Err("string charCodeAt expects string and integer arguments".into());
+                                }
+                                let index = match clif_ty(index_kind) {
+                                    types::I64 => index,
+                                    ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
+                                    _ => return Err("string charCodeAt index must be an integer".into()),
+                                };
+                                let char_code = self.string_char_code_at_fref();
+                                let call = self.builder.ins().call(char_code, &[receiver, index]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Num(NumKind::U32)));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -454,6 +475,13 @@ impl Translator<'_> {
                                 2,
                                 types::I64,
                                 JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("charCodeAt") => (
+                                "zun_jit_string_char_code_at",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::U32),
                                 types::I32,
                             ),
                             Some("isValid") => (
@@ -948,6 +976,7 @@ impl Translator<'_> {
                         }
                     }
                     let arg_types = match name {
+                        "zun_jit_string_char_code_at" => vec![types::I64, types::I64],
                         "zun_jit_buffer_set_u8" => vec![types::I64, types::I64, types::I8],
                         "zun_jit_buffer_write_u32" => vec![types::I64, types::I64, types::I32],
                         "zun_jit_buffer_write_f64" => vec![types::I64, types::I64, types::F64],
@@ -1463,6 +1492,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_contains", Linkage::Import, &sig)
             .expect("declare zun_jit_string_contains");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_char_code_at_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_char_code_at", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_char_code_at");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

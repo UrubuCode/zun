@@ -57,6 +57,17 @@ pub extern "C" fn zun_jit_string_contains(value: i64, needle: i64) -> i32 {
     })
 }
 
+/// Read one UTF-16 code unit from an interned string without allocation.
+#[inline]
+pub extern "C" fn zun_jit_string_char_code_at(handle: i64, index: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| {
+        heap.try_string(handle as u32)
+            .and_then(|value| value.encode_utf16().nth(index as usize))
+            .map(|code| code as i32)
+            .unwrap_or(-1)
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -914,6 +925,7 @@ impl Jit {
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
         builder.symbol("zun_jit_string_length", zun_jit_string_length as *const u8);
         builder.symbol("zun_jit_string_contains", zun_jit_string_contains as *const u8);
+        builder.symbol("zun_jit_string_char_code_at", zun_jit_string_char_code_at as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
