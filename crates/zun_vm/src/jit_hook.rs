@@ -185,6 +185,28 @@ impl<'a> JitHook<'a> {
         boundaries.insert(offset);
         boundaries.contains(&snapshot.target_pc) && boundaries.contains(&snapshot.pc)
     }
+
+    fn is_osr_patchpoint_allowed(&self, method_rid: u32, target_pc: usize) -> bool {
+        if method_rid == 0 {
+            return false;
+        }
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+        else {
+            return false;
+        };
+        let Ok(body) = zun_module::read_body(&self.module.code, method.body_offset) else {
+            return false;
+        };
+        !body.handlers.iter().any(|handler| {
+            (handler.try_start as usize..handler.try_end as usize).contains(&target_pc)
+                || (handler.handler_start as usize..handler.handler_end as usize)
+                    .contains(&target_pc)
+        })
+    }
 }
 
 impl CallHook for JitHook<'_> {
@@ -281,6 +303,7 @@ impl CallHook for JitHook<'_> {
         if count >= u64::from(self.threshold.max(1))
             && self.jit.borrow().is_compiled(method_rid)
             && self.jit.borrow().is_defined(method_rid)
+            && self.is_osr_patchpoint_allowed(method_rid, target_pc)
         {
             let mut requests = self.osr_requests.borrow_mut();
             if !requests
@@ -303,6 +326,7 @@ impl CallHook for JitHook<'_> {
         self.on_backedge(method_rid, target_pc);
         if self.is_loop_hot(method_rid, target_pc)
             && self.jit.borrow().is_defined(method_rid)
+            && self.is_osr_patchpoint_allowed(method_rid, target_pc)
         {
             let mut snapshots = self.osr_snapshots.borrow_mut();
             snapshots.retain(|snapshot| {
