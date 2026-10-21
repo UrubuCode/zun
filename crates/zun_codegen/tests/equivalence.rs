@@ -116,6 +116,24 @@ fn jit_preserves_object_references_through_managed_fields() {
 }
 
 #[test]
+fn jit_stores_and_reloads_managed_object_references() {
+    let module = compile(
+        "class Box { value: int; }
+         class Holder { box: Box; }
+         function main(): int { let first = new Box(1); let second = new Box(9); let holder = new Holder(first); holder.box = second; return holder.box.value; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(entry));
+    let mut heap = zun_gc::Heap::new();
+    assert!(matches!(
+        jit.call_entry_with_heap(entry, &mut heap),
+        Ok(zun_codegen::RetVal::Int(9))
+    ));
+    assert!(matches!(interp_entry(&module), Value::Int(9, _)));
+}
+
+#[test]
 fn managed_collections_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "import { mapNew, mapSet, mapHas } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 7.0, 42.0); if (mapHas(map, 7.0)) { return 1; } return 0; }",
