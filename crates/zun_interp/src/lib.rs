@@ -4227,5 +4227,35 @@ mod method_tests {
         let result = run_with(&module, &mut output, Some(&hook)).expect("run external hook call");
         assert!(matches!(result, Value::Int(42, _)));
     }
+
+    #[test]
+    fn generator_preserves_external_call_hook_across_polls() {
+        let module = zun_compiler::compile_with_externals(
+            "extern function answer(value: int): int from \"native\"; function* main(): int { yield answer(1); return 9; }",
+            &[zun_sema::check::ExternalFunction {
+                module: "native".into(),
+                name: "answer".into(),
+                params: vec![zun_sema::Ty::INT],
+                return_ty: zun_sema::Ty::INT,
+            }],
+        )
+        .expect("compile generator external hook call");
+        let entry = module.entry_point.expect("generator entry point");
+        let mut output = CaptureOutput::default();
+        let hook = ExternalHook;
+        let mut generator = GeneratorSession::new_with_context(
+            &module,
+            entry.rid(),
+            Vec::new(),
+            &mut output,
+            Some(&hook),
+            None,
+        )
+        .expect("create generator with host context");
+
+        let yielded = generator.next_result().expect("poll generator");
+        assert!(matches!(yielded.value, Value::Int(42, zun_il::NumKind::I32)));
+        assert!(!yielded.done);
+    }
 }
 
