@@ -4297,6 +4297,35 @@ fn direct_any_call_preserves_the_two_word_carrier() {
 }
 
 #[test]
+fn direct_any_call_expands_multiple_carriers_without_shifting_arguments() {
+    let module = compile(
+        "function choose(first: any, second: any): any { return second; }\n\
+         function forward(first: any, second: any): any { return choose(first, second); }\n\
+         function main(): u64 { return 0; }",
+    );
+    let forward_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "forward")
+        .map(|index| index as u32 + 1)
+        .expect("forward method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles multi-carrier call");
+    assert!(jit.is_compiled(forward_rid));
+    let first = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(1));
+    let second = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(2));
+    let mut heap = zun_gc::Heap::new();
+    let result = jit
+        .call_packed_any_with_heap(
+            forward_rid,
+            &[first.tag, first.payload, second.tag, second.payload],
+            &mut heap,
+        )
+        .expect("jit multi-carrier call");
+    assert_eq!(result.into_any(), Some(zun_core::Any::int(2)));
+}
+
+#[test]
 fn proven_float_array_unbox_is_jit_equivalent() {
     let src = "function read(values: Array): number { return values[0] as number; }\n\
                function main(): number { let values = new Array(1); values[0] = 2.5; return read(values); }";
