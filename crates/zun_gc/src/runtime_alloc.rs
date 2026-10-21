@@ -71,3 +71,18 @@ pub unsafe extern "C" fn zun_rt_alloc(
         })
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn safepoint_pc_reads_return_address_from_pre_call_stack_pointer() {
+        let mut call_frame = [0usize; 1];
+        call_frame[0] = 0x1234_5678;
+        let pre_call_sp = unsafe { call_frame.as_mut_ptr().add(1) as usize };
+
+        let pc = unsafe { super::safepoint_pc(pre_call_sp) };
+
+        assert_eq!(pc, call_frame[0]);
+    }
+}
