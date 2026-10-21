@@ -1,4 +1,4 @@
-use super::{Ephemeron, FinalizationId, FinalizerEntry, Heap, Obj, Record, WeakMapId, WeakRefId, WeakSlot, CHUNK_SLOTS};
+use super::{Ephemeron, FinalizationId, FinalizerEntry, GeneratorState, Heap, Obj, Record, WeakMapId, WeakRefId, WeakSlot, CHUNK_SLOTS};
 use super::records::Generation;
 
 impl Heap {
@@ -71,6 +71,20 @@ impl Heap {
         let object = self.alloc(zun_core::CoreTypeId::Promise.get() as u32, 0);
         self.promises
             .insert(object.addr() as usize, zun_core::ManagedPromise::new());
+        object
+    }
+
+    /// Allocate the managed identity of a generator before its first resume.
+    /// The state table owns arguments and the eventual suspended frame.
+    pub fn alloc_generator(&mut self, type_rid: u32, method_rid: u32, args: Vec<zun_core::Any>) -> Obj {
+        let object = self.alloc(type_rid, 0);
+        self.generator_states.insert(object.addr() as usize, GeneratorState {
+            method_rid,
+            args,
+            frame: None,
+            done: false,
+            current: zun_core::Any::null(),
+        });
         object
     }
 
