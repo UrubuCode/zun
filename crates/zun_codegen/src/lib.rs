@@ -37,6 +37,20 @@ pub extern "C" fn zun_jit_array_length(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.array_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+/// Read a managed Map length without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.map_len(object).map(|len| len as i64).unwrap_or(-1))
+}
+
+/// Read a managed Set length without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_set_size(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.set_len(object).map(|len| len as i64).unwrap_or(-1))
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -542,6 +556,8 @@ impl Jit {
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
+    builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
+    builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
@@ -1173,7 +1189,10 @@ fn body_signature<M: ClifModule>(
 
 #[cfg(test)]
 mod tests {
-    use super::{zun_jit_array_load_any, zun_jit_array_store_any, JitAnyAbi};
+    use super::{
+        zun_jit_array_load_any, zun_jit_array_store_any, zun_jit_map_size, zun_jit_set_size,
+        JitAnyAbi,
+    };
 
     #[test]
     fn dynamic_array_load_helper_preserves_both_abi_words() {
@@ -1224,5 +1243,19 @@ mod tests {
             Some(child.addr() as usize)
         );
         assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+    }
+
+    #[test]
+    fn collection_size_helpers_read_managed_lengths() {
+        let mut heap = zun_gc::Heap::new();
+        let map = heap.alloc_map();
+        let set = heap.alloc_set();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        assert_eq!(zun_jit_map_size(map.addr() as i64), 0);
+        assert_eq!(zun_jit_set_size(set.addr() as i64), 0);
+        heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::int(2));
+        heap.set_add(set, zun_core::Any::int(3));
+        assert_eq!(zun_jit_map_size(map.addr() as i64), 1);
+        assert_eq!(zun_jit_set_size(set.addr() as i64), 1);
     }
 }

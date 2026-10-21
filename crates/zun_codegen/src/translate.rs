@@ -698,6 +698,20 @@ impl Translator<'_> {
                                 JitKind::Bool,
                                 types::I32,
                             ),
+                            Some("mapSize") => (
+                                "zun_jit_map_size",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::U64),
+                                types::I64,
+                            ),
+                            Some("setSize") => (
+                                "zun_jit_set_size",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::U64),
+                                types::I64,
+                            ),
                             _ => return Err("unsupported builtin".into()),
                         };
                     if stack.len() < arg_count {
