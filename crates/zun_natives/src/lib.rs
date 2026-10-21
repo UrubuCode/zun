@@ -68,6 +68,8 @@ pub enum NativeTy {
     Opaque,
     /// A managed Array reference.
     Array,
+    /// A managed ArrayBuffer reference.
+    Buffer,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.

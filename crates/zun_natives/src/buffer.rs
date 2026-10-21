@@ -13,18 +13,18 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn {
             name: "bufferNew",
             params: &[U64],
-            ret: Opaque,
+            ret: Buffer,
             imp: unavailable,
         },
         NativeFn {
             name: "bufferLength",
-            params: &[Opaque],
+            params: &[Buffer],
             ret: U64,
             imp: unavailable,
         },
         NativeFn {
             name: "bufferGetU8",
-            params: &[Opaque, U64],
+            params: &[Buffer, U64],
             ret: U8,
             imp: unavailable,
         },
