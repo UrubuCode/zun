@@ -1405,6 +1405,25 @@ mod method_tests {
     }
 
     #[test]
+    fn owned_generator_session_injects_context_per_resume() {
+        let module = zun_compiler::compile("function* main(): int { yield 7; return 9; }")
+            .expect("compile generator function");
+        let entry = module.entry_point.expect("entry point");
+        let mut session = OwnedGeneratorSession::new(&module, entry.rid(), Vec::new())
+            .expect("create owned generator session");
+        let mut first_output = CaptureOutput::default();
+        assert!(matches!(
+            session.resume(&mut first_output, None, None).expect("first resume"),
+            ResumeResult::Yielded(Value::Float(value, zun_il::NumKind::F64)) if value == 7.0
+        ));
+        let mut second_output = CaptureOutput::default();
+        assert!(matches!(
+            session.resume(&mut second_output, None, None).expect("second resume"),
+            ResumeResult::Complete(Value::Int(value, zun_il::NumKind::I32)) if value == 9
+        ));
+    }
+
+    #[test]
     fn resumable_session_suspends_and_resumes_on_promise_settlement() {
         let module = zun_compiler::compile(
             "async function main(): Promise { let p = new Promise(); await p; return p; }",
