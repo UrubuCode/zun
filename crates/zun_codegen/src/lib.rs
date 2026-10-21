@@ -829,6 +829,18 @@ pub extern "C" fn zun_jit_array_store_u64(address: i64, index: i64, value: i64) 
     })
 }
 
+/// Store a boolean dynamic-array element through the narrow i32 JIT ABI.
+#[inline]
+pub extern "C" fn zun_jit_array_store_bool(address: i64, index: i64, value: i32) -> i32 {
+    if index < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_set(object, index as usize, zun_core::Any::bool(value != 0)).is_some() as i32
+    })
+}
+
 /// Store an object-valued dynamic array element and apply the write barrier.
 #[inline]
 pub extern "C" fn zun_jit_array_store_object(address: i64, index: i64, value: i64) -> i32 {
@@ -1376,6 +1388,7 @@ impl Jit {
     builder.symbol("zun_jit_array_load_object", zun_jit_array_load_object as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);
+    builder.symbol("zun_jit_array_store_bool", zun_jit_array_store_bool as *const u8);
     builder.symbol("zun_jit_array_store_object", zun_jit_array_store_object as *const u8);
         builder.symbol("zun_jit_store_ref", zun_jit_store_ref as *const u8);
     builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);

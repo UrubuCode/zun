@@ -1584,8 +1584,9 @@ impl Translator<'_> {
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
                     let store_object = value_kind == JitKind::Object;
                     let store_u64 = value_kind == JitKind::Num(NumKind::U64);
+                    let store_bool = value_kind == JitKind::Bool;
                     if array_kind != JitKind::Object
-                        || (!store_object && !store_u64 && value_kind != JitKind::Num(NumKind::F64))
+                        || (!store_object && !store_u64 && !store_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array store requires object and f64/u64 value".into());
                     }
@@ -1599,6 +1600,8 @@ impl Translator<'_> {
                         self.array_store_object_fref()
                     } else if store_u64 {
                         self.array_store_u64_fref()
+                    } else if store_bool {
+                        self.array_store_bool_fref()
                     } else {
                         self.array_store_f64_fref()
                     };
@@ -2211,6 +2214,19 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_store_u64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_u64");
+        self.module.declare_func_in_func(func, self.builder.func)
+    }
+
+    fn array_store_bool_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(types::I32));
+        let func = self
+            .module
+            .declare_function("zun_jit_array_store_bool", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_store_bool");
         self.module.declare_func_in_func(func, self.builder.func)
     }
 

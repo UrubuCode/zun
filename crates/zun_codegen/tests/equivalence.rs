@@ -4239,6 +4239,29 @@ fn proven_bool_array_unbox_is_jit_equivalent() {
 }
 
 #[test]
+fn proven_bool_array_store_is_jit_equivalent() {
+    let src = "function write(values: Array, value: boolean): boolean { values[0] = value; return values[0] as boolean; }\n\
+               function main(): boolean { let values = new Array(1); return write(values, true); }";
+    let module = compile(src);
+    let write_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "write")
+        .map(|index| index as u32 + 1)
+        .expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles bool store");
+    assert!(jit.is_compiled(write_rid), "proven bool array store should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let jit_value = jit
+        .call_packed_with_heap(write_rid, &[array.addr() as u64, 1], &mut heap)
+        .expect("jit bool store");
+    assert_eq!(jit_value, 1);
+    assert_eq!(heap.array_get(array, 0).and_then(|value| value.as_bool()), Some(true));
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";
