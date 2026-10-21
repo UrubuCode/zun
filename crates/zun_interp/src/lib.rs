@@ -1284,6 +1284,7 @@ impl Interp<'_> {
             return;
         }
         self.allocs = 0;
+        let young_before = zun_gc::with_current_heap(|heap| heap.generation_counts().0);
         let full = self.minor_collections >= 7;
         let reclaimed = self.collect(stack, locals, parent, full);
         if full {
@@ -1291,7 +1292,7 @@ impl Interp<'_> {
         } else {
             self.minor_collections = self.minor_collections.saturating_add(1);
         }
-        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed);
+        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed, young_before);
     }
 
 }
