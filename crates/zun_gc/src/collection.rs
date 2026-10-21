@@ -175,6 +175,15 @@ impl Heap {
                     }
                 }
             }
+            let generator_state_children: Vec<_> = self.trace_generator_state(obj).collect();
+            for child in generator_state_children {
+                if let Some(&cidx) = self.by_addr.get(&child) {
+                    if !self.records[cidx].marked {
+                        self.records[cidx].marked = true;
+                        work.push(cidx);
+                    }
+                }
+            }
             if let Some(proxy) = self.proxies.get(&(obj.addr() as usize)) {
                 for child in [proxy.target, proxy.handler] {
                     if let Some(&cidx) = self.by_addr.get(&(child.addr() as usize)) {
@@ -359,6 +368,7 @@ impl Heap {
                 self.typed_views.remove(&(r.addr as usize));
                 self.array_iterators.remove(&(r.addr as usize));
                 self.generator_frames.remove(&(r.addr as usize));
+                self.generator_states.remove(&(r.addr as usize));
                 self.set_iterators.remove(&(r.addr as usize));
                 self.map_iterators.remove(&(r.addr as usize));
                 self.dates.remove(&(r.addr as usize));

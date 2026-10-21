@@ -120,6 +120,15 @@ pub struct GeneratorFrame {
     pub eval_stack: Vec<zun_core::Any>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorState {
+    pub method_rid: u32,
+    pub args: Vec<zun_core::Any>,
+    pub frame: Option<GeneratorFrame>,
+    pub done: bool,
+    pub current: zun_core::Any,
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -155,6 +164,8 @@ pub struct Heap {
     array_iterators: HashMap<usize, (Obj, zun_core::ArrayIterator)>,
     /// Suspended generator state associated with managed generator objects.
     generator_frames: HashMap<usize, GeneratorFrame>,
+    /// State-machine metadata associated with managed generator objects.
+    generator_states: HashMap<usize, GeneratorState>,
     /// Set iterator state associated with managed iterator objects.
     set_iterators: HashMap<usize, (Obj, zun_core::SetIterator)>,
     /// Map iterator state associated with managed iterator objects.
@@ -687,6 +698,7 @@ impl Heap {
         self.rewrite_object_references(relocation, ref_slots)
             + self.rewrite_auxiliary_references(relocation)
             + self.rewrite_generator_frames(relocation)
+            + self.rewrite_generator_states(relocation)
             + self.rewrite_iterator_references(relocation)
             + self.rewrite_weak_references(relocation)
             + self.rewrite_runtime_references(relocation)
