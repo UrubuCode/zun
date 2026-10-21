@@ -131,6 +131,9 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "mapIteratorNew",
         "mapIteratorNext",
         "mapIteratorDone",
+        "generatorIteratorNew",
+        "generatorIteratorNext",
+        "generatorIteratorDone",
     ] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);

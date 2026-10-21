@@ -2,6 +2,7 @@
 
 use super::{Interp, RunError};
 use super::value::Value;
+use super::state::{ExecutionFrame, ExecutionOutcome};
 
 impl<'a> Interp<'a> {
     pub(crate) fn call_managed_collection(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
@@ -528,6 +529,83 @@ impl<'a> Interp<'a> {
                     zun_gc::with_current_heap_mut(|heap| heap.map_iterator_done(iterator))
                         .ok_or(RunError::BadToken)?,
                 ))
+            }
+            "generatorIteratorNew" => {
+                let generator = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(generator))
+            }
+            "generatorIteratorDone" => {
+                let generator = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| {
+                        heap.generator_state(generator).map(|state| state.done)
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
+            }
+            "generatorIteratorNext" => {
+                let generator = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let mut state = zun_gc::with_current_heap_mut(|heap| {
+                    heap.generator_state_take(generator)
+                })
+                .ok_or(RunError::BadToken)?;
+                let outcome = if let Some(saved) = state.frame.take() {
+                    let locals = zun_gc::with_current_heap(|heap| {
+                        saved.locals.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or(RunError::BadToken)?;
+                    let stack = zun_gc::with_current_heap(|heap| {
+                        saved.eval_stack.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or(RunError::BadToken)?;
+                    let mut frame = ExecutionFrame::new(state.method_rid, locals);
+                    frame.pc = saved.pc;
+                    frame.stack = stack;
+                    self.resume_suspended(frame)
+                } else {
+                    let initial_args = zun_gc::with_current_heap(|heap| {
+                        state.args.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or(RunError::BadToken)?;
+                    self.dispatch_outcome(state.method_rid, initial_args, None)
+                };
+                let result = match outcome {
+                    ExecutionOutcome::Suspended(frame) => {
+                        let value = self.yielded.take().ok_or(RunError::Malformed(
+                            "generator suspended without yielding a value".into(),
+                        ))?;
+                        state.current = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .ok_or(RunError::BadToken)?;
+                        let locals = zun_gc::with_current_heap_mut(|heap| {
+                            frame.locals.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+                        })
+                        .ok_or(RunError::BadToken)?;
+                        let eval_stack = zun_gc::with_current_heap_mut(|heap| {
+                            frame.stack.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+                        })
+                        .ok_or(RunError::BadToken)?;
+                        state.frame = Some(zun_gc::GeneratorFrame {
+                            method_rid: frame.method_rid,
+                            pc: frame.pc,
+                            locals,
+                            eval_stack,
+                        });
+                        value
+                    }
+                    ExecutionOutcome::Complete(value) => {
+                        state.done = true;
+                        state.current = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .ok_or(RunError::BadToken)?;
+                        value
+                    }
+                    ExecutionOutcome::Thrown(value) => return Err(RunError::Thrown(value)),
+                    ExecutionOutcome::Fault(error) => return Err(error),
+                };
+                zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                Ok(result)
             }
             "mapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
