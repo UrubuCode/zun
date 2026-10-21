@@ -420,6 +420,29 @@ impl<'a> ResumableSession<'a> {
         &mut self.heap
     }
 
+    /// Collect unreachable objects and compact the owned async frame between
+    /// poll steps.
+    pub fn collect_and_compact_pending_frame(
+        &mut self,
+    ) -> Option<zun_gc::CollectionCompactionResult> {
+        let mut frame = self.pending.take()?;
+        let mut roots = Vec::new();
+        frame.append_managed_roots(&mut roots);
+        let types = self.interp.types.clone();
+        let mut rewrite = |relocation: &zun_gc::RelocationMap| {
+            frame.rewrite_managed_references(relocation);
+        };
+        let result = unsafe {
+            self.heap.collect_and_compact_with_relocation(
+                &mut roots,
+                &|type_rid| types.reference_slots(type_rid),
+                &mut rewrite,
+            )
+        };
+        self.pending = Some(frame);
+        Some(result)
+    }
+
     pub fn awaited_promise(&self) -> Option<zun_gc::Obj> {
         self.pending.as_ref().and_then(|frame| match frame.state {
             super::state::FrameState::Suspended { promise, .. } => Some(promise),

@@ -1544,7 +1544,11 @@ mod method_tests {
         )
         .expect("create resumable session");
         assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
-        let promise = session.awaited_promise().expect("awaited promise");
+        let compacted = session
+            .collect_and_compact_pending_frame()
+            .expect("compact pending async frame");
+        assert_eq!(compacted.moved_objects, 1);
+        let promise = session.awaited_promise().expect("relocated awaited promise");
         let value = Value::Int(42, zun_il::NumKind::I32);
         let boxed = value.box_any(session.heap_mut()).expect("box result");
         assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
