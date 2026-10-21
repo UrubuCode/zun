@@ -64,6 +64,23 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn checked_string_array_unbox_preserves_tier0_fallback_boundary() {
+    let module = compile(
+        "function read(values: Array): string { return values[0] as string; } function main(): int { let values = new Array(1); values[0] = \"hello\"; return 1; }",
+    );
+    let read = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .expect("read method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(read), "checked string unbox must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn interned_string_length_uses_the_typed_jit_abi() {
     let module = compile(
         "import { length } from \"zun:string\"; function measure(value: string): u64 { return length(value); } function main(): u64 { return 0; }",
