@@ -284,6 +284,27 @@ mod tests {
         assert!(matches!(result, Value::Float(value, _) if (value - 3.0).abs() < f64::EPSILON));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn native_execution_routes_bool_external_member_ref() {
+        let bytes = zun_compiler::compile_with_externals(
+            "import { IsDebuggerPresent } from \"kernel32\"; function main(): boolean { return IsDebuggerPresent(); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "kernel32".into(),
+                name: "IsDebuggerPresent".into(),
+                params: Vec::new(),
+                return_ty: zun_sema::Ty::Boolean,
+            }],
+        )
+        .expect("compile bool native member reference")
+        .write();
+        let mut native = NativeCallHook::new();
+        native.register("kernel32", "IsDebuggerPresent", FfiSignature::new([], FfiScalar::Bool));
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = execute_with_native(&bytes, &mut output, &native).expect("run bool native member reference");
+        assert!(matches!(result, Value::Bool(_)));
+    }
+
     #[test]
     fn verifies_all_manifest_scopes_before_execution() {
         let dependency = zun_module::Module::new();
