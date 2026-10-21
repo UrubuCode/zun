@@ -854,18 +854,33 @@ impl Translator<'_> {
                         return Err("array pop requires an object receiver".into());
                     }
                     self.builder.declare_value_needs_stack_map(array);
-                    let pop = self.array_pop_f64_fref();
+                    let pop_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
+                    let pop = if pop_u64 {
+                        self.array_pop_u64_fref()
+                    } else {
+                        self.array_pop_f64_fref()
+                    };
                     let inst = self.builder.ins().call(pop, &[array]);
-                    stack.push((self.builder.inst_results(inst)[0], JitKind::Num(NumKind::F64)));
+                    stack.push((
+                        self.builder.inst_results(inst)[0],
+                        if pop_u64 { JitKind::Num(NumKind::U64) } else { JitKind::Num(NumKind::F64) },
+                    ));
                 }
                 Opcode::ArrayPush => {
                     let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
-                    if array_kind != JitKind::Object || value_kind != JitKind::Num(NumKind::F64) {
-                        return Err("numeric array push requires object and f64 value".into());
+                    let push_u64 = value_kind == JitKind::Num(NumKind::U64);
+                    if array_kind != JitKind::Object
+                        || (!push_u64 && value_kind != JitKind::Num(NumKind::F64))
+                    {
+                        return Err("numeric array push requires object and f64/u64 value".into());
                     }
                     self.builder.declare_value_needs_stack_map(array);
-                    let push = self.array_push_f64_fref();
+                    let push = if push_u64 {
+                        self.array_push_u64_fref()
+                    } else {
+                        self.array_push_f64_fref()
+                    };
                     let inst = self.builder.ins().call(push, &[array, value]);
                     stack.push((self.builder.inst_results(inst)[0], JitKind::Num(NumKind::I64)));
                 }
@@ -1205,6 +1220,17 @@ impl Translator<'_> {
             .declare_func_in_func(id, self.builder.func)
     }
 
+    fn array_pop_u64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let func = self
+            .module
+            .declare_function("zun_jit_array_pop_u64", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_pop_u64");
+        self.module.declare_func_in_func(func, self.builder.func)
+    }
+
     fn array_push_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
@@ -1216,6 +1242,18 @@ impl Translator<'_> {
             .expect("declare zun_jit_array_push_f64");
         self.module
             .declare_func_in_func(id, self.builder.func)
+    }
+
+    fn array_push_u64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let func = self
+            .module
+            .declare_function("zun_jit_array_push_u64", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_push_u64");
+        self.module.declare_func_in_func(func, self.builder.func)
     }
 
     /// Resolve a field token to its `(kind, slot)` using module metadata.

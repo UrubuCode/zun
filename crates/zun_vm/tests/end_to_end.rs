@@ -103,6 +103,16 @@ fn tiering_calls_a_heap_eligible_f64_array_pop() {
 }
 
 #[test]
+fn tiering_calls_heap_eligible_u64_array_push_and_pop() {
+    let out = run_source(
+        "function push(values: Array, value: u64): u64 { return values.push(value) as u64; }\n\
+         function pop(values: Array): u64 { return values.pop() as u64; }\n\
+         function main() { let values = new Array(0); print(push(values, 41 as u64)); print(push(values, 42 as u64)); print(pop(values)); print(pop(values)); }",
+    );
+    assert_eq!(out, ["1", "2", "42", "41"]);
+}
+
+#[test]
 fn tiering_calls_a_heap_eligible_object_field_reader() {
     let out = run_source(
         "class Box { value: number; get(): number { return this.value; } }\n\
