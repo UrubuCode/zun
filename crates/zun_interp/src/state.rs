@@ -45,10 +45,10 @@ impl<'a> Interp<'a> {
     ) -> Option<zun_gc::CompactionResult> {
         let mut roots = Vec::new();
         if let Some(frame) = self.suspended.as_ref() {
-            super::roots::collect_frame_roots(&frame.stack, &frame.locals, &mut roots);
+            frame.append_managed_roots(&mut roots);
         }
         if let Some(frame) = self.resume_frame.as_ref() {
-            super::roots::collect_frame_roots(&frame.stack, &frame.locals, &mut roots);
+            frame.append_managed_roots(&mut roots);
         }
         if roots.is_empty() {
             return None;
@@ -167,10 +167,27 @@ impl ExecutionFrame {
     ) -> usize {
         let mut rewritten = Value::rewrite_managed_references(&mut self.stack, relocation);
         rewritten += Value::rewrite_managed_references(&mut self.locals, relocation);
+        if let FrameState::Suspended { promise, .. } = &mut self.state {
+            let relocated = relocation.relocate(*promise);
+            if relocated != *promise {
+                *promise = relocated;
+                rewritten += 1;
+            }
+        }
         if let Some(parent) = self.parent.as_mut() {
             rewritten += parent.rewrite_managed_references(relocation);
         }
         rewritten
+    }
+
+    pub(super) fn append_managed_roots(&self, roots: &mut Vec<Obj>) {
+        super::roots::collect_frame_roots(&self.stack, &self.locals, roots);
+        if let FrameState::Suspended { promise, .. } = self.state {
+            roots.push(promise);
+        }
+        if let Some(parent) = self.parent.as_ref() {
+            parent.append_managed_roots(roots);
+        }
     }
 }
 
@@ -220,5 +237,21 @@ mod tests {
         assert!(matches!(frame.locals[0], Value::Object(object) if object == new));
         assert!(matches!(frame.stack[0], Value::Any(any) if any.as_object() == Some(0x2000)));
         assert!(matches!(frame.parent.as_ref().unwrap().locals[0], Value::Object(object) if object == new));
+    }
+
+    #[test]
+    fn moving_collection_rewrites_suspended_promise() {
+        let old = unsafe { Obj::from_addr(0x3000usize as *mut u64) };
+        let new = unsafe { Obj::from_addr(0x4000usize as *mut u64) };
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert(old, new);
+        let mut frame = ExecutionFrame::new(1, vec![]);
+        frame.suspend(old, 9);
+
+        let mut roots = Vec::new();
+        frame.append_managed_roots(&mut roots);
+        assert_eq!(roots, vec![old]);
+        assert_eq!(frame.rewrite_managed_references(&relocation), 1);
+        assert!(matches!(frame.state, FrameState::Suspended { promise, .. } if promise == new));
     }
 }
