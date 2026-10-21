@@ -442,6 +442,31 @@ fn u16_array_access_uses_the_typed_view_abi() {
 }
 
 #[test]
+fn u32_and_f64_array_access_use_typed_view_abis() {
+    let module = compile(
+        "import { u32ArrayGet, u32ArraySet, f64ArrayGet, f64ArraySet } from \"zun:buffer\"; function readU32(view: Uint32Array, index: u64): u32 { return u32ArrayGet(view, index); } function writeU32(view: Uint32Array, index: u64, value: u32): boolean { return u32ArraySet(view, index, value); } function readF64(view: Float64Array, index: u64): number { return f64ArrayGet(view, index); } function writeF64(view: Float64Array, index: u64, value: number): boolean { return f64ArraySet(view, index, value); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("typed array method") as u32 + 1;
+    let read_u32 = find("readU32");
+    let write_u32 = find("writeU32");
+    let read_f64 = find("readF64");
+    let write_f64 = find("writeF64");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(read_u32));
+    assert!(jit.is_compiled(write_u32));
+    assert!(jit.is_compiled(read_f64));
+    assert!(jit.is_compiled(write_f64));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(32);
+    let u32_view = heap.alloc_u32_array(buffer, 0, 8).expect("u32 view");
+    let f64_view = heap.alloc_f64_array(buffer, 16, 16).expect("f64 view");
+    assert!(matches!(jit.call_packed_with_heap(write_u32, &[u32_view.addr() as u64, 1, 0xdead_beef], &mut heap), Ok(1)));
+    assert!(matches!(jit.call_packed_with_heap(write_f64, &[f64_view.addr() as u64, 1, 3.25f64.to_bits()], &mut heap), Ok(1)));
+    assert!(matches!(jit.call_packed_with_heap(read_u32, &[u32_view.addr() as u64, 1], &mut heap), Ok(0xdead_beef)));
+    assert!(matches!(jit.call_packed_with_heap(read_f64, &[f64_view.addr() as u64, 1], &mut heap), Ok(value) if f64::from_bits(value) == 3.25));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

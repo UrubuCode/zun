@@ -93,7 +93,11 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "u8ArrayGet"
                 | "u8ArraySet"
                 | "u16ArrayGet"
-                | "u16ArraySet",
+                | "u16ArraySet"
+                | "u32ArrayGet"
+                | "u32ArraySet"
+                | "f64ArrayGet"
+                | "f64ArraySet",
         )
     )
 }

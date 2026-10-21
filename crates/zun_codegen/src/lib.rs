@@ -274,6 +274,44 @@ pub extern "C" fn zun_jit_u16_array_set(address: i64, index: i64, value: i16) ->
     })
 }
 
+/// Read one element from a managed Uint32Array view without allocation.
+#[inline]
+pub extern "C" fn zun_jit_u32_array_get(address: i64, index: i64) -> i32 {
+    if index < 0 { return -1; }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.u32_array_get(object, index as usize).map(|value| value as i32).unwrap_or(-1)
+    })
+}
+
+/// Write one element to a managed Uint32Array view without allocation.
+#[inline]
+pub extern "C" fn zun_jit_u32_array_set(address: i64, index: i64, value: i32) -> i32 {
+    if index < 0 { return 0; }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.u32_array_set(object, index as usize, value as u32).unwrap_or(false) as i32
+    })
+}
+
+/// Read one element from a managed Float64Array view without allocation.
+#[inline]
+pub extern "C" fn zun_jit_f64_array_get(address: i64, index: i64) -> f64 {
+    if index < 0 { return f64::NAN; }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.f64_array_get(object, index as usize).unwrap_or(f64::NAN))
+}
+
+/// Write one element to a managed Float64Array view without allocation.
+#[inline]
+pub extern "C" fn zun_jit_f64_array_set(address: i64, index: i64, value: f64) -> i32 {
+    if index < 0 { return 0; }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.f64_array_set(object, index as usize, value).unwrap_or(false) as i32
+    })
+}
+
 /// Read a managed Map length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
@@ -810,6 +848,10 @@ impl Jit {
     builder.symbol("zun_jit_u8_array_set", zun_jit_u8_array_set as *const u8);
     builder.symbol("zun_jit_u16_array_get", zun_jit_u16_array_get as *const u8);
     builder.symbol("zun_jit_u16_array_set", zun_jit_u16_array_set as *const u8);
+    builder.symbol("zun_jit_u32_array_get", zun_jit_u32_array_get as *const u8);
+    builder.symbol("zun_jit_u32_array_set", zun_jit_u32_array_set as *const u8);
+    builder.symbol("zun_jit_f64_array_get", zun_jit_f64_array_get as *const u8);
+    builder.symbol("zun_jit_f64_array_set", zun_jit_f64_array_set as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);

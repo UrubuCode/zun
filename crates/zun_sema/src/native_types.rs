@@ -23,6 +23,8 @@ pub(super) fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::DataView => Ty::BufferView(crate::hir::BufferViewKind::DataView),
         N::U8Array => Ty::BufferView(crate::hir::BufferViewKind::U8),
         N::U16Array => Ty::BufferView(crate::hir::BufferViewKind::U16),
+        N::U32Array => Ty::BufferView(crate::hir::BufferViewKind::U32),
+        N::F64Array => Ty::BufferView(crate::hir::BufferViewKind::F64),
         N::Map => Ty::Map,
         N::Set => Ty::Set,
         N::WeakMap => Ty::WeakMap,

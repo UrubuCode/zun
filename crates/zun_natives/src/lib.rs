@@ -76,6 +76,10 @@ pub enum NativeTy {
     U8Array,
     /// A managed Uint16Array view.
     U16Array,
+    /// A managed Uint32Array view.
+    U32Array,
+    /// A managed Float64Array view.
+    F64Array,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.
