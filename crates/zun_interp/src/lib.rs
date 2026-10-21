@@ -541,6 +541,39 @@ impl Interp<'_> {
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);
                     if token.table() == Some(TableKind::MemberRef) {
+                        let member = self
+                            .module
+                            .tables
+                            .member_refs
+                            .get(token.rid() as usize - 1)
+                            .ok_or(RunError::BadToken)?;
+                        let module_ref = self
+                            .module
+                            .tables
+                            .module_refs
+                            .get(member.parent.rid() as usize - 1)
+                            .ok_or(RunError::BadToken)?;
+                        let module_name = self.module.strings.get(module_ref.name);
+                        let member_name = self.module.strings.get(member.name);
+                        if let Some(hook) = self.hook {
+                            let signature = self.module.blobs.get(member.signature);
+                            let arity = signature.first().copied().map(usize::from);
+                            if let Some(arity) = arity {
+                                if stack.len() < arity {
+                                    return Err(RunError::BadToken);
+                                }
+                                let start = stack.len() - arity;
+                                if let Some(result) = hook.try_call_external(
+                                    module_name,
+                                    member_name,
+                                    &stack[start..],
+                                ) {
+                                    stack.truncate(start);
+                                    stack.push(result?);
+                                    continue;
+                                }
+                            }
+                        }
                         let loader = self.loader.ok_or(RunError::BadToken)?;
                         let resolved = loader
                             .resolve_member_ref_in_module(self.module, token)
@@ -4154,6 +4187,44 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run Any class cast");
         assert!(matches!(result, Value::Bool(true)));
+    }
+
+    struct ExternalHook;
+
+    impl CallHook for ExternalHook {
+        fn try_call(&self, _method_rid: u32, _args: &[Value]) -> Option<Value> {
+            None
+        }
+
+        fn try_call_external(
+            &self,
+            module: &str,
+            name: &str,
+            args: &[Value],
+        ) -> Option<Result<Value, RunError>> {
+            if module == "native" && name == "answer" && args.len() == 1 {
+                return Some(Ok(Value::Int(42, zun_il::NumKind::I32)));
+            }
+            None
+        }
+    }
+
+    #[test]
+    fn external_member_ref_can_be_served_by_a_host_call_hook() {
+        let module = zun_compiler::compile_with_externals(
+            "import { answer } from \"native\"; function main(): int { return answer(41); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "native".into(),
+                name: "answer".into(),
+                params: vec![zun_sema::Ty::INT],
+                return_ty: zun_sema::Ty::INT,
+            }],
+        )
+        .expect("compile external hook call");
+        let mut output = CaptureOutput::default();
+        let hook = ExternalHook;
+        let result = run_with(&module, &mut output, Some(&hook)).expect("run external hook call");
+        assert!(matches!(result, Value::Int(42, _)));
     }
 }
 

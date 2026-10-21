@@ -18,6 +18,7 @@ zun_types = { path = "../zun_types" }
 
 [dev-dependencies]
 zun_compiler = { path = "../zun_compiler" }
+zun_sema = { path = "../zun_sema" }
 
 [lints]
 workspace = true

@@ -1080,10 +1080,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     .module
                     .tables
                     .add_module_ref(ModuleRef { name: module_name });
+                let arity = u8::try_from(args.len()).expect("external call arity exceeds metadata limit");
+                let signature = self.module.blobs.intern(&[arity]);
                 let member_ref = self.module.tables.add_member_ref(MemberRef {
                     parent: module_ref,
                     name: member_name,
-                    signature: BlobIndex(0),
+                    signature,
                 });
                 self.emit(Instruction::new(Opcode::Call, Operand::Token(member_ref)));
             }

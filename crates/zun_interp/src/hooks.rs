@@ -3,6 +3,17 @@ use super::Value;
 pub trait CallHook {
     fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value>;
 
+    /// Try a host-provided external call identified by module and export.
+    /// Returning `None` preserves the ordinary module-loader path.
+    fn try_call_external(
+        &self,
+        _module: &str,
+        _name: &str,
+        _args: &[Value],
+    ) -> Option<Result<Value, super::RunError>> {
+        None
+    }
+
     /// Append managed references retained by a tiering backend, such as OSR
     /// frame snapshots, to the interpreter's precise root set.
     fn append_roots(&self, _roots: &mut Vec<zun_gc::Obj>) {}
