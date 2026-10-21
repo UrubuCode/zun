@@ -594,6 +594,10 @@ Plan:
   precise GC metadata before it can leave Tier 0. A narrow single-pointer
   object-array load/store ABI now leaves Tier 0 with a managed write barrier;
   mixed and aggregate `Any` array operations remain on the interpreter path.
+  The Cranelift method signature and shim now preserve an `Any` return as two
+  `i64` values, and `call_packed_any` is separate from the scalar `u64` API;
+  `Any` parameters, internal calls, and eligibility remain gated until the
+  carrier is propagated end to end.
 - Interpreter safepoints already poll allocation sites and backedges with the
   current frame and caller chain as precise roots. JIT allocation calls now
   pass the pre-call SP, derive the x86-64 return PC, and publish the stopped
