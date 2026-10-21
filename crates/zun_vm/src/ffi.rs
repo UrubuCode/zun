@@ -57,6 +57,10 @@ impl FfiSignature {
             && self.params.iter().all(|param| *param == FfiScalar::F64)
             && self.arity() <= 2
     }
+
+    fn matches_bool_call(&self) -> bool {
+        self.result == FfiScalar::Bool && self.params.is_empty()
+    }
 }
 
 /// Return the platform library-name candidates for a logical native library.
@@ -331,6 +335,23 @@ impl NativeLibrary {
         Ok(unsafe { symbol() } != 0)
     }
 
+    /// Call a blittable C integer-style boolean after validating its ABI
+    /// descriptor. Boolean arguments remain deferred until their C layout is
+    /// represented explicitly rather than guessed from the host ABI.
+    pub unsafe fn call_bool_signature(
+        &self,
+        name: &[u8],
+        signature: &FfiSignature,
+    ) -> Result<bool, FfiError> {
+        if !signature.matches_bool_call() {
+            return Err(FfiError {
+                message: "unsupported bool FFI signature: expected () -> bool".into(),
+            });
+        }
+        // SAFETY: the descriptor restricts this to the existing bool thunk.
+        unsafe { self.call_bool_0(name) }
+    }
+
     /// Call a C symbol with no arguments and an `f64` result.
     ///
     /// # Safety
@@ -486,6 +507,18 @@ mod tests {
         }
         .expect_err("incompatible signature must be rejected");
         assert!(error.to_string().contains("unsupported f64 FFI signature"));
+    }
+
+    #[test]
+    fn typed_bool_call_rejects_an_incompatible_signature_before_lookup() {
+        let path = std::env::current_exe().expect("test executable path");
+        let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
+        let signature = FfiSignature::new(vec![FfiScalar::I64], FfiScalar::Bool);
+        let error = unsafe {
+            library.call_bool_signature(b"zun_missing_symbol", &signature)
+        }
+        .expect_err("incompatible signature must be rejected");
+        assert!(error.to_string().contains("unsupported bool FFI signature"));
     }
 
     #[test]
