@@ -568,9 +568,9 @@ The following runtime contracts are implemented and covered by tests:
   coverage is tested; a regression also proves a JIT reference store retains a
   young target through minor collection. Interpreter safepoints now select
   minor/full collection policy, and the GC boundary has RAII thread-local
-  registration for nested stopped frames; the compactor can consume every
-  registered `(PC, SP)` frame directly once the stop-the-world coordinator has
-  suspended them;
+  registration for nested stopped frames; ordinary mark-sweep and compaction
+  can consume every registered `(PC, SP)` frame directly once the
+  stop-the-world coordinator has suspended them;
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
