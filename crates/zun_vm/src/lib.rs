@@ -242,6 +242,27 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn native_execution_routes_external_member_ref_to_the_registered_hook() {
+        let bytes = zun_compiler::compile_with_externals(
+            "import { GetCurrentProcessId } from \"kernel32\"; function main(): i64 { return GetCurrentProcessId(); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "kernel32".into(),
+                name: "GetCurrentProcessId".into(),
+                params: Vec::new(),
+                return_ty: zun_sema::Ty::Int(zun_sema::hir::IntKind::I64),
+            }],
+        )
+        .expect("compile native member reference")
+        .write();
+        let mut native = NativeCallHook::new();
+        native.register("kernel32", "GetCurrentProcessId", FfiSignature::new([], FfiScalar::I64));
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = execute_with_native(&bytes, &mut output, &native).expect("run native member reference");
+        assert!(matches!(result, Value::Int(pid, zun_il::NumKind::I64) if pid > 0));
+    }
+
     #[test]
     fn verifies_all_manifest_scopes_before_execution() {
         let dependency = zun_module::Module::new();
