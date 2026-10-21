@@ -90,6 +90,15 @@ pub enum GeneratorStep<T> {
     Complete,
 }
 
+/// Iterator-shaped result for a synchronous generator poll.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratorIteratorResult<T> {
+    /// The yielded value, or `None` after terminal completion.
+    pub value: Option<T>,
+    /// Whether the generator can no longer produce values.
+    pub done: bool,
+}
+
 /// Minimal persistent state-machine contract for synchronous generators.
 pub struct GeneratorStateMachine<T, F> {
     state: usize,
@@ -129,6 +138,20 @@ impl<T: Clone, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T
             self.done = true;
         }
         result
+    }
+
+    /// Advance once using the source-level iterator result shape.
+    pub fn next_result(&mut self) -> GeneratorIteratorResult<T> {
+        match self.next() {
+            GeneratorStep::Yielded(value) => GeneratorIteratorResult {
+                value: Some(value),
+                done: false,
+            },
+            GeneratorStep::Complete => GeneratorIteratorResult {
+                value: None,
+                done: true,
+            },
+        }
     }
 
     /// Current generated state, useful to a runtime resume hook.
@@ -840,6 +863,26 @@ mod tests {
         machine.dispose();
         assert_eq!(machine.current(), None);
         assert_eq!(machine.next(), GeneratorStep::Complete);
+    }
+
+    #[test]
+    fn generator_state_machine_exposes_iterator_result_shape() {
+        let mut machine = GeneratorStateMachine::new(|state| {
+            if *state == 0 {
+                *state = 1;
+                GeneratorStep::Yielded(7)
+            } else {
+                GeneratorStep::Complete
+            }
+        });
+        assert_eq!(
+            machine.next_result(),
+            GeneratorIteratorResult { value: Some(7), done: false }
+        );
+        assert_eq!(
+            machine.next_result(),
+            GeneratorIteratorResult { value: None, done: true }
+        );
     }
 
     #[test]

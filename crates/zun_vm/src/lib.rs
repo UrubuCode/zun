@@ -22,7 +22,7 @@ pub use ffi::{
 pub use jit_hook::{JitHook, OsrRequest, OsrSnapshot};
 pub use native_hook::NativeCallHook;
 pub use promise::{
-    AsyncStateMachine, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
+    AsyncStateMachine, GeneratorIteratorResult, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
     PromiseAwaiter, PromiseState, Scheduler,
 };
 pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
