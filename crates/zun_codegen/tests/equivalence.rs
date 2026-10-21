@@ -64,6 +64,17 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn generator_for_of_preserves_tier0_fallback_boundary() {
+    let module = compile(
+        "function* values(): int { yield 7; return 9; } function main(): any { for (let value of values()) { return value; } return 0; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "generator suspension requires Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(7.0, _)));
+}
+
+#[test]
 fn jit_can_allocate_an_array_for_a_scalar_length_result_with_heap_scope() {
     let module = compile(
         "function main(): u64 { let values = new Array(3); return values.length; }",
