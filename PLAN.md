@@ -962,8 +962,10 @@ environment side tables, publish old-to-young remembered-set barriers.
 preserves old objects, and clears dead young weak references. Interpreter GC
 safepoints now use seven minor collections followed by a full collection, and
 finalizer callback environments are explicit roots during both collection modes.
-This activates the first generational policy while leaving nursery allocation
-and card-table scaling as later completion work. JIT allocation safepoints now
+This completes the first generational policy while leaving nursery allocation
+and card-table scaling as later optimization work. The young-only correctness
+path is no longer pending; incremental scheduling and larger-scale
+nursery/card-table tuning remain. JIT allocation safepoints now
 capture the x86-64 return PC from the pre-call SP, publish the stopped frame,
 consume the corresponding Cranelift stack map during collection, and compact
 the heap at a conservative periodic boundary while rewriting registered JIT
