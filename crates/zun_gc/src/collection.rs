@@ -260,6 +260,10 @@ impl Heap {
                 });
             }
         }
+        self.remembered_set.retain(|address| self.by_addr.contains_key(address));
+        if self.records.iter().all(|record| !record.alive || record.generation == records::Generation::Old) {
+            self.remembered_set.clear();
+        }
         freed
     }
 
