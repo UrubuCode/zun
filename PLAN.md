@@ -583,9 +583,10 @@ The following runtime contracts are implemented and covered by tests:
   map; `Heap::rewrite_all_references` coordinates the heap-owned passes, and an
   explicit stop-the-world `Heap::compact` now copies live objects into fresh
   chunks and releases the old chunks. Automatic frame discovery/stop and
-  normal-GC policy integration remain pending; an opt-in
+  normal-GC policy integration and stopped JIT stack-map coordination remain
+  pending; an opt-in
   `collect_and_compact` API now runs mark/sweep followed by that explicit
-  movement path for interpreter roots.
+  movement path for interpreter roots and active `NativeRootScope` roots.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
