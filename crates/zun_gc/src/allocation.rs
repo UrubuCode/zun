@@ -1,4 +1,5 @@
 use super::{Ephemeron, FinalizationId, FinalizerEntry, Heap, Obj, Record, WeakMapId, WeakRefId, WeakSlot, CHUNK_SLOTS};
+use super::records::Generation;
 
 impl Heap {
     pub fn new() -> Self {
@@ -28,6 +29,7 @@ impl Heap {
             }
             self.records[idx].alive = true;
             self.records[idx].marked = false;
+            self.records[idx].generation = Generation::Young;
             self.by_addr.insert(addr as usize, idx);
             return Obj(addr);
         }
@@ -51,6 +53,7 @@ impl Heap {
             field_count,
             alive: true,
             marked: false,
+            generation: Generation::Young,
         });
         self.by_addr.insert(base as usize, idx);
         Obj(base)

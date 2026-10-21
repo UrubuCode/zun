@@ -243,6 +243,11 @@ impl Heap {
                 self.proxies.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
+            } else if r.alive {
+                // A full collection is also the promotion boundary. Future
+                // nursery collections can skip these records and rely on a
+                // remembered set for old-to-young writes.
+                r.generation = records::Generation::Old;
             }
         }
         for entry in &mut self.finalizers {

@@ -132,6 +132,17 @@ pub struct Heap {
 }
 
 impl Heap {
+    /// Return the number of live objects in each generation.
+    pub fn generation_counts(&self) -> (usize, usize) {
+        self.records.iter().filter(|record| record.alive).fold(
+            (0, 0),
+            |(young, old), record| match record.generation {
+                records::Generation::Young => (young + 1, old),
+                records::Generation::Old => (young, old + 1),
+            },
+        )
+    }
+
     pub fn data_view_get_f64(
         &self,
         object: Obj,
@@ -800,6 +811,20 @@ mod tests {
         let freed = unsafe { heap.collect(&[a], &ref_slots) };
         assert_eq!(freed, 1);
         assert_eq!(heap.live_count(), 2);
+    }
+
+    #[test]
+    fn full_collection_promotes_surviving_objects() {
+        let mut heap = Heap::new();
+        let keep = heap.alloc(7, 0);
+        let garbage = heap.alloc(8, 0);
+        assert_eq!(heap.generation_counts(), (2, 0));
+
+        let freed = unsafe { heap.collect(&[keep], &|_| Vec::new()) };
+        assert_eq!(freed, 1);
+        assert_eq!(heap.generation_counts(), (0, 1));
+        assert!(heap.by_addr.contains_key(&(keep.addr() as usize)));
+        assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
     }
 
     #[test]
