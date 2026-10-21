@@ -556,8 +556,9 @@ Consequences for the design:
   object-array load/store ABI now leaves Tier 0 with a managed write barrier;
   mixed and aggregate `Any` array operations remain on the interpreter path.
 - Interpreter safepoints already poll allocation sites and backedges with the
-  current frame and caller chain as precise roots; native `(PC, SP)` capture is
-  still pending.
+  current frame and caller chain as precise roots. JIT allocation calls now
+  pass the pre-call SP, derive the x86-64 return PC, and publish the stopped
+  native frame against the Cranelift registry during the allocation slow path.
 
 The following runtime contracts are implemented and covered by tests:
 
@@ -846,8 +847,8 @@ This activates the first generational policy while leaving nursery allocation,
 card-table scaling, and precise JIT-frame safepoints as later completion work.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
-automatic precise JIT-frame safepoints (the stack-map metadata and registered
-stopped-frame consumer are implemented), true OSR frame replacement, compacting GC
+automatic collection policy at the now-published precise JIT-frame safepoint,
+true OSR frame replacement, compacting GC
 integration with the live execution coordinator,
  non-blittable FFI marshalling, production Node N-API bindings, AOT/R2R support
  for the full runtime surface, BigInt, and the remaining Group 3 type-level
