@@ -879,6 +879,36 @@ mod tests {
     }
 
     #[test]
+    fn minor_collection_reclaims_unreachable_young_and_promotes_reachable_young() {
+        let mut heap = Heap::new();
+        let old = heap.alloc(7, 1);
+        unsafe { heap.collect(&[old], &|_| vec![0]) };
+        let young = heap.alloc(8, 0);
+        let garbage = heap.alloc(9, 0);
+        heap.store_field(old, 0, young.addr() as u64, true);
+
+        let freed = unsafe { heap.collect_young(&[], &|_| vec![0]) };
+        assert_eq!(freed, 1);
+        assert!(heap.by_addr.contains_key(&(old.addr() as usize)));
+        assert!(heap.by_addr.contains_key(&(young.addr() as usize)));
+        assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
+        assert_eq!(heap.generation_counts(), (0, 2));
+    }
+
+    #[test]
+    fn minor_collection_clears_dead_young_weak_references() {
+        let mut heap = Heap::new();
+        let old = heap.alloc(7, 0);
+        unsafe { heap.collect(&[old], &|_| Vec::new()) };
+        let young = heap.alloc(8, 0);
+        let weak = heap.weak_ref_new(young);
+
+        assert_eq!(unsafe { heap.collect_young(&[old], &|_| Vec::new()) }, 1);
+        assert_eq!(heap.weak_ref_get(weak), None);
+        assert!(heap.by_addr.contains_key(&(old.addr() as usize)));
+    }
+
+    #[test]
     fn collection_reuses_freed_blocks() {
         let mut heap = Heap::new();
         let keep = heap.alloc(1, 2);

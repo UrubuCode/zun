@@ -8,6 +8,32 @@ impl Heap {
         roots: &[Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
     ) -> usize {
+        // SAFETY: callers uphold the root contract documented on the public
+        // entry point; this is the complete-heap policy.
+        unsafe { self.collect_generation(roots, ref_slots, false) }
+    }
+
+    /// Collect only young objects while retaining every old allocation.
+    ///
+    /// The remembered set supplies old objects as additional traversal roots,
+    /// so references written by the barrier keep their young targets alive.
+    /// Weak references and finalizers are deliberately processed only by a
+    /// full collection until their generation-specific policies are added.
+    pub unsafe fn collect_young(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        // SAFETY: same root contract as `collect`.
+        unsafe { self.collect_generation(roots, ref_slots, true) }
+    }
+
+    unsafe fn collect_generation(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        young_only: bool,
+    ) -> usize {
         for r in &mut self.records {
             r.marked = false;
         }
@@ -19,6 +45,16 @@ impl Heap {
                 if !self.records[idx].marked {
                     self.records[idx].marked = true;
                     work.push(idx);
+                }
+            }
+        }
+        if young_only {
+            for address in self.remembered_set.clone() {
+                if let Some(&idx) = self.by_addr.get(&address) {
+                    if !self.records[idx].marked {
+                        self.records[idx].marked = true;
+                        work.push(idx);
+                    }
                 }
             }
         }
@@ -197,22 +233,21 @@ impl Heap {
         // roots. Clear dead targets before sweep removes their addresses.
         for entry in &mut self.weak_maps {
             entry.entries.retain(|(key, value)| {
-                self.by_addr
-                    .get(key)
-                    .is_some_and(|idx| self.records[*idx].marked)
-                    && self
-                        .by_addr
-                        .get(value)
-                        .is_some_and(|idx| self.records[*idx].marked)
+                let keep = |address: &usize| {
+                    self.by_addr.get(address).is_some_and(|idx| {
+                        let record = &self.records[*idx];
+                        record.marked || (young_only && record.generation == records::Generation::Old)
+                    })
+                };
+                keep(key) && keep(value)
             });
         }
         for weak in &mut self.weak_refs {
             if let Some(address) = weak.target {
-                if self
-                    .by_addr
-                    .get(&address)
-                    .is_none_or(|&idx| !self.records[idx].marked)
-                {
+                if self.by_addr.get(&address).is_none_or(|&idx| {
+                    !self.records[idx].marked
+                        && (!young_only || self.records[idx].generation == records::Generation::Young)
+                }) {
                     weak.target = None;
                 }
             }
@@ -222,7 +257,8 @@ impl Heap {
         let mut freed = 0;
         for idx in 0..self.records.len() {
             let r = &mut self.records[idx];
-            if r.alive && !r.marked {
+            let collect_this = !young_only || r.generation == records::Generation::Young;
+            if r.alive && collect_this && !r.marked {
                 r.alive = false;
                 self.by_addr.remove(&(r.addr as usize));
                 self.dynamic_objects.remove(&(r.addr as usize));
@@ -243,7 +279,7 @@ impl Heap {
                 self.proxies.remove(&(r.addr as usize));
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
-            } else if r.alive {
+            } else if r.alive && (!young_only || r.generation == records::Generation::Young) {
                 // A full collection is also the promotion boundary. Future
                 // nursery collections can skip these records and rely on a
                 // remembered set for old-to-young writes.
