@@ -259,7 +259,7 @@ impl Heap {
         roots: &mut [Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
     ) -> CompactionResult {
-        unsafe { self.compact_impl(roots, ref_slots, &[]) }
+        unsafe { self.compact_impl(roots, ref_slots, &[], None) }
     }
 
     /// Compact while also rewriting the reference slots of one stopped JIT
@@ -273,7 +273,7 @@ impl Heap {
         sp: *mut u8,
     ) -> CompactionResult {
         let frames = [StoppedNativeFrame { registry, pc, sp }];
-        unsafe { self.compact_impl(roots, ref_slots, &frames) }
+        unsafe { self.compact_impl(roots, ref_slots, &frames, None) }
     }
 
     /// Compact while rewriting all stopped native frames supplied by the
@@ -284,7 +284,7 @@ impl Heap {
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
         frames: &[StoppedNativeFrame<'_>],
     ) -> CompactionResult {
-        unsafe { self.compact_impl(roots, ref_slots, frames) }
+        unsafe { self.compact_impl(roots, ref_slots, frames, None) }
     }
 
     /// Compact using every native frame currently registered by the runtime's
@@ -312,11 +312,30 @@ impl Heap {
         })
     }
 
+    /// Compact and invoke `on_relocation` while the forwarding map is valid.
+    ///
+    /// The callback runs after heap and stopped-native references have been
+    /// rewritten, but before the old chunks are released. This is the safe
+    /// bridge for owners of managed values that are not stored in the heap.
+    ///
+    /// # Safety
+    /// The caller must stop all managed execution and ensure that the callback
+    /// rewrites every external managed reference before it returns.
+    pub unsafe fn compact_with_relocation(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        on_relocation: &mut dyn FnMut(&RelocationMap),
+    ) -> CompactionResult {
+        unsafe { self.compact_impl(roots, ref_slots, &[], Some(on_relocation)) }
+    }
+
     unsafe fn compact_impl(
         &mut self,
         roots: &mut [Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
         native_frames: &[StoppedNativeFrame<'_>],
+        mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
     ) -> CompactionResult {
         fn allocate(
             chunks: &mut Vec<Box<[u64]>>,
@@ -361,6 +380,9 @@ impl Heap {
             rewritten_references += unsafe {
                 frame.registry.rewrite_slots_at(frame.pc, frame.sp, &relocation)
             };
+        }
+        if let Some(callback) = on_relocation.as_mut() {
+            callback(&relocation);
         }
         for record in self.records.iter_mut().filter(|record| !record.alive) {
             record.addr = std::ptr::null_mut();
@@ -1562,6 +1584,27 @@ mod tests {
         assert!(heap.by_addr.contains_key(&(roots[0].addr() as usize)));
         assert!(heap.by_addr.contains_key(&(new_child as usize)));
         assert_eq!(heap.live_count(), 2);
+    }
+
+    #[test]
+    fn compaction_callback_exposes_forwarding_map_before_release() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let old_address = object.addr() as usize;
+        let mut roots = vec![object];
+        let mut relocated = None;
+
+        let result = unsafe {
+            heap.compact_with_relocation(
+                &mut roots,
+                &|_| Vec::new(),
+                &mut |map| relocated = Some(map.relocate_address(old_address)),
+            )
+        };
+
+        assert_eq!(result.moved_objects, 1);
+        assert_eq!(relocated, Some(roots[0].addr() as usize));
+        assert!(relocated.is_some_and(|address| address != old_address));
     }
 
     #[test]
