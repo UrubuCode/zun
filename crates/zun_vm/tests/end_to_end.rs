@@ -160,6 +160,15 @@ fn tiering_returns_a_managed_object_field_through_the_vm() {
 }
 
 #[test]
+fn tiering_returns_jit_allocated_arrays_through_the_vm() {
+    let out = run_source(
+        "function make(length: u64): Array { return new Array(length); }\n\
+         function main() { let first = make(2 as u64); let second = make(3 as u64); print(first.length); print(second.length); }",
+    );
+    assert_eq!(out, ["2", "3"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
