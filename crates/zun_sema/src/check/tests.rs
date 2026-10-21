@@ -392,6 +392,12 @@
     }
 
     #[test]
+    fn any_can_be_explicitly_converted_to_string() {
+        let hir = check_ok("function main(): string { let value: any = box_any(1); return value as string; }");
+        assert_eq!(hir.functions[0].return_ty, Ty::String);
+    }
+
+    #[test]
     fn array_is_a_managed_core_type() {
         let hir = check_ok("function identity(values: Array): Array { return values; }");
         assert_eq!(hir.functions[0].locals, vec![Ty::Array]);

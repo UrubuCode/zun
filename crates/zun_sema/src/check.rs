@@ -2056,7 +2056,10 @@ impl Checker<'_> {
                 if !value.ty.is_error()
                     && !((numeric(value.ty) && numeric(target))
                         || (value.ty == Ty::Any
-                            && (numeric(target) || target == Ty::Array || matches!(target, Ty::Instance(_)))))
+                            && (numeric(target)
+                                || target == Ty::Array
+                                || target == Ty::String
+                                || matches!(target, Ty::Instance(_)))))
                 {
                     self.error(span, format!("cannot convert {:?} to {target:?}", value.ty));
                     return self.poison(span);
