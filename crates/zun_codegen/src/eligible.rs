@@ -439,8 +439,12 @@ fn any_direct_call_return_only(instrs: &[zun_il::Instruction], body: &zun_module
         && body.local_kinds[..body.param_count as usize]
             .iter()
             .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
-        && instrs.iter().filter(|i| i.opcode == Opcode::Call).count() == 1
-        && instrs.iter().all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Call | Opcode::Ret))
+        && instrs
+            .iter()
+            .filter(|i| matches!(i.opcode, Opcode::Call | Opcode::CallVirt))
+            .count()
+            == 1
+        && instrs.iter().all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Call | Opcode::CallVirt | Opcode::Ret))
 }
 
 /// Compute the set of JIT-eligible method RIDs for `module`.
