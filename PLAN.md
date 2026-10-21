@@ -509,6 +509,12 @@ does); the `.zun` class is a thin surface. A generic / `any` `Array` stores boxe
 Optional later: V8-style elements-kind specialization (packed int/double/holey/
 dictionary) if mixed arrays prove hot — performance backlog, not now.
 
+The generic `Any` carrier ABI is intentionally deferred in Cranelift. Dynamic
+operations such as `Map.has(any)` and `Set.has(any)` remain Tier 0 unless a
+measured workload justifies a dedicated lowering; typed keys and values use the
+existing scalar JIT ABIs. This is a design boundary for the opt-in dynamic
+path, not a correctness gap.
+
 ### Payoff beyond property access
 
 Shapes make `JSON.parse` of uniform records (the common case — arrays of
