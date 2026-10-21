@@ -80,6 +80,24 @@ fn jit_can_allocate_an_array_for_a_scalar_length_result_with_heap_scope() {
 }
 
 #[test]
+fn jit_can_allocate_an_object_and_read_a_numeric_field_with_heap_scope() {
+    let module = compile(
+        "class Box { value: int; }
+         function read(box: Box): int { return box.value; }
+         function main(): int { return read(new Box(7)); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(entry));
+    let mut heap = zun_gc::Heap::new();
+    assert!(matches!(
+        jit.call_entry_with_heap(entry, &mut heap),
+        Ok(zun_codegen::RetVal::Int(7))
+    ));
+    assert!(matches!(interp_entry(&module), Value::Int(7, _)));
+}
+
+#[test]
 fn managed_collections_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "import { mapNew, mapSet, mapHas } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 7.0, 42.0); if (mapHas(map, 7.0)) { return 1; } return 0; }",
