@@ -573,7 +573,8 @@ The following runtime contracts are implemented and covered by tests:
   metadata-declared object reference fields. Rewriting interpreter roots,
   strong collection side tables beyond arrays/dynamic objects/maps/sets, raw
   fields outside ordinary object fields, followed by actual movement, are
-  still required before compaction is enabled;
+  still required before compaction is enabled; promise and proxy side-table
+  state is now covered alongside the other strong references;
   iterator/typed-view side tables and weak metadata translation are covered,
   while weak liveness and physical movement remain separate phases. Active
   native root scopes and stopped frames can now rewrite their reference slots
