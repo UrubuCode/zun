@@ -567,7 +567,9 @@ The following runtime contracts are implemented and covered by tests:
   exception-bearing methods;
 - `Any` and `DynamicObject`, including dynamic-property IL, source lowering,
   and GC tracing of object-tagged dynamic values;
-- interpreted backedge observation as the first OSR integration boundary.
+- interpreted backedge observation plus Tier 1 local backedge poll counters as
+  the first OSR integration boundary; frame capture and replacement remain
+  pending.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
   `.zm` module retained as the fallback for ineligible methods.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
