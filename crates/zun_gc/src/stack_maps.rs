@@ -5,6 +5,7 @@ use super::RelocationMap;
 
 thread_local! {
     static ACTIVE_REGISTRIES: RefCell<Vec<*const StackMapRegistry>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE_FRAMES: RefCell<Vec<ActiveNativeFrame>> = const { RefCell::new(Vec::new()) };
 }
 
 /// A native safepoint description published by a code generator.
@@ -16,6 +17,46 @@ pub struct NativeStackMap {
     pub reference_slots: Vec<u32>,
 }
 
+/// A native frame currently stopped at a safepoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActiveNativeFrame {
+    pub registry: *const StackMapRegistry,
+    pub pc: usize,
+    pub sp: *mut u8,
+}
+
+/// RAII registration for one stopped native frame.
+#[derive(Debug)]
+pub struct ActiveNativeFrameScope {
+    frame: ActiveNativeFrame,
+}
+
+impl ActiveNativeFrameScope {
+    /// Register a frame whose registry and stack pointer remain valid until
+    /// the returned scope is dropped.
+    pub unsafe fn enter(registry: &StackMapRegistry, pc: usize, sp: *mut u8) -> Self {
+        let frame = ActiveNativeFrame { registry: registry as *const _, pc, sp };
+        ACTIVE_FRAMES.with(|frames| frames.borrow_mut().push(frame));
+        Self { frame }
+    }
+}
+
+impl Drop for ActiveNativeFrameScope {
+    fn drop(&mut self) {
+        ACTIVE_FRAMES.with(|frames| {
+            let mut frames = frames.borrow_mut();
+            if let Some(index) = frames.iter().rposition(|frame| *frame == self.frame) {
+                frames.remove(index);
+            }
+        });
+    }
+}
+
+/// Enumerate frames registered on the current thread.
+pub fn with_active_native_frames<R>(f: impl FnOnce(&[ActiveNativeFrame]) -> R) -> R {
+    ACTIVE_FRAMES.with(|frames| f(&frames.borrow()))
+}
+
 /// Registry of native safepoint maps known to the GC boundary.
 #[derive(Debug, Default)]
 pub struct StackMapRegistry {
@@ -24,7 +65,7 @@ pub struct StackMapRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{NativeStackMap, StackMapRegistry};
+    use super::{with_active_native_frames, ActiveNativeFrameScope, NativeStackMap, StackMapRegistry};
     use crate::RelocationMap;
 
     #[test]
@@ -40,6 +81,20 @@ mod tests {
 
         assert_eq!(unsafe { registry.rewrite_slots_at(10, frame.as_mut_ptr(), &relocation) }, 1);
         assert_eq!(unsafe { (frame.as_ptr().add(8) as *const u64).read_unaligned() }, new as u64);
+    }
+
+    #[test]
+    fn tracks_nested_stopped_native_frames_per_thread() {
+        let registry = StackMapRegistry::new();
+        let mut frame = [0u8; 8];
+        let outer = unsafe { ActiveNativeFrameScope::enter(&registry, 10, frame.as_mut_ptr()) };
+        assert_eq!(with_active_native_frames(|frames| frames.len()), 1);
+        let inner = unsafe { ActiveNativeFrameScope::enter(&registry, 20, frame.as_mut_ptr()) };
+        assert_eq!(with_active_native_frames(|frames| frames.iter().map(|f| f.pc).collect::<Vec<_>>()), vec![10, 20]);
+        drop(inner);
+        assert_eq!(with_active_native_frames(|frames| frames[0].pc), 10);
+        drop(outer);
+        assert_eq!(with_active_native_frames(|frames| frames.len()), 0);
     }
 }
 

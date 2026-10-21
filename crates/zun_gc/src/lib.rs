@@ -32,7 +32,8 @@ pub use heap_context::{current_heap_ptr, with_current_heap, with_current_heap_mu
 pub use native_roots::{append_native_roots, rewrite_native_roots, NativeRootScope};
 pub use runtime_alloc::{zun_gc_alloc, zun_rt_alloc};
 pub use stack_maps::{
-    with_active_stack_map_registry, ActiveStackMapScope, NativeStackMap, StackMapRegistry,
+    with_active_native_frames, with_active_stack_map_registry, ActiveNativeFrame,
+    ActiveNativeFrameScope, ActiveStackMapScope, NativeStackMap, StackMapRegistry,
 };
 
 mod allocation;
