@@ -25,6 +25,28 @@ impl JitAnyAbi {
     pub const fn into_any(self) -> Option<zun_core::Any> {
         zun_core::Any::from_raw_parts(self.tag as u8, self.payload)
     }
+
+    /// Append the payload as a GC root when this carrier contains an object.
+    /// The tag must be inspected before the payload is interpreted as an
+    /// address; integers, strings, and null are not managed object pointers.
+    pub fn append_managed_root(self, roots: &mut Vec<zun_gc::Obj>) {
+        if self.tag == zun_core::AnyTag::Object as u64 && self.payload != 0 {
+            roots.push(unsafe { zun_gc::Obj::from_addr(self.payload as *mut u64) });
+        }
+    }
+
+    /// Rewrite an object payload after a moving collection.
+    pub fn rewrite_managed_payload(&mut self, relocation: &zun_gc::RelocationMap) -> bool {
+        if self.tag != zun_core::AnyTag::Object as u64 || self.payload == 0 {
+            return false;
+        }
+        let mapped = relocation.relocate_address(self.payload as usize);
+        if mapped == self.payload as usize {
+            return false;
+        }
+        self.payload = mapped as u64;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -39,5 +61,23 @@ mod tests {
         assert_eq!(core::mem::size_of::<JitAnyAbi>(), 16);
         assert_eq!(core::mem::align_of::<JitAnyAbi>(), 8);
         assert_eq!(JitAnyAbi { tag: 255, payload: 0 }.into_any(), None);
+    }
+
+    #[test]
+    fn carrier_exposes_and_rewrites_managed_object_payloads() {
+        let old = 0x1000usize;
+        let new = 0x2000usize;
+        let mut carrier = JitAnyAbi {
+            tag: zun_core::AnyTag::Object as u64,
+            payload: old as u64,
+        };
+        let mut roots = Vec::new();
+        carrier.append_managed_root(&mut roots);
+        assert_eq!(roots[0].addr() as usize, old);
+
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert_addresses(old, new);
+        assert!(carrier.rewrite_managed_payload(&relocation));
+        assert_eq!(carrier.payload, new as u64);
     }
 }
