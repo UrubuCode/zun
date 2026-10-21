@@ -75,6 +75,17 @@ fn generator_for_of_preserves_tier0_fallback_boundary() {
 }
 
 #[test]
+fn generator_arguments_preserve_tier0_fallback_boundary() {
+    let module = compile(
+        "function* values(seed: number): int { yield seed; yield seed + 1; return 9; } function main(): any { let total: number = 0.0; for (let value of values(2)) { total = total + (value as number); } return total; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "generator suspension requires Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Float(5.0, _)));
+}
+
+#[test]
 fn jit_can_allocate_an_array_for_a_scalar_length_result_with_heap_scope() {
     let module = compile(
         "function main(): u64 { let values = new Array(3); return values.length; }",
