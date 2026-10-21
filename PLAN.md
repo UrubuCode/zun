@@ -606,7 +606,9 @@ The following runtime contracts are implemented and covered by tests:
   roots remain pending; owned suspended interpreter frames now expose a
   recursive rewrite path; object-tagged `Any` values are included in precise
   frame roots, and the opt-in compaction path exposes a forwarding callback so
-  owned suspended frames can rewrite their values before old chunks release.
+  owned suspended frames can rewrite their values before old chunks release;
+  `GeneratorSession` exposes this maintenance operation and its cross-resume
+  object-state equivalence is tested.
   An opt-in
   `collect_and_compact` API now runs mark/sweep followed by that explicit
   movement path for interpreter roots and active `NativeRootScope` roots.
