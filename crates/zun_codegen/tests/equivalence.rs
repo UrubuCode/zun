@@ -4215,6 +4215,30 @@ fn proven_float_array_unbox_is_jit_equivalent() {
 }
 
 #[test]
+fn proven_bool_array_unbox_is_jit_equivalent() {
+    let src = "function read(values: Array): boolean { return values[0] as boolean; }\n\
+               function main(): boolean { let values = new Array(1); values[0] = true; return read(values); }";
+    let module = compile(src);
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles bool unbox");
+    assert!(jit.is_compiled(read_rid), "proven bool UnboxAny should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    heap.array_set(array, 0, zun_core::Any::bool(true));
+    let jit_value = jit
+        .call_packed_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit bool unbox");
+    assert_eq!(jit_value, 1);
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";

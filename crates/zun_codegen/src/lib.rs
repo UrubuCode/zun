@@ -777,6 +777,20 @@ pub extern "C" fn zun_jit_array_load_u64(address: i64, index: i64) -> i64 {
     })
 }
 
+/// Read a boolean dynamic-array element as the narrow i32 JIT boolean ABI.
+#[inline]
+pub extern "C" fn zun_jit_array_load_bool(address: i64, index: i64) -> i32 {
+    if index < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.array_get(object, index as usize)
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false) as i32
+    })
+}
+
 /// Read an object-valued dynamic array element through the managed pointer ABI.
 #[inline]
 pub extern "C" fn zun_jit_array_load_object(address: i64, index: i64) -> i64 {
@@ -1358,6 +1372,7 @@ impl Jit {
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
     builder.symbol("zun_jit_array_load_u64", zun_jit_array_load_u64 as *const u8);
+    builder.symbol("zun_jit_array_load_bool", zun_jit_array_load_bool as *const u8);
     builder.symbol("zun_jit_array_load_object", zun_jit_array_load_object as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);

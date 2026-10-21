@@ -2057,6 +2057,7 @@ impl Checker<'_> {
                     && !((numeric(value.ty) && numeric(target))
                         || (value.ty == Ty::Any
                             && (numeric(target)
+                                || target == Ty::Boolean
                                 || target == Ty::Array
                                 || target == Ty::String
                                 || matches!(target, Ty::Instance(_)))))
