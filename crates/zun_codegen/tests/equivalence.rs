@@ -4403,6 +4403,12 @@ fn generic_map_get_preserves_the_two_word_carrier() {
         .call_packed_any_with_heap(read_rid, &[map.addr() as u64, missing_key.tag, missing_key.payload], &mut heap)
         .expect("jit generic mapGet missing key");
     assert_eq!(result.into_any(), Some(zun_core::Any::void()));
+
+    let interpreter_module = compile(
+        "import { mapGet } from \"zun:collections\";\n\
+         function main(): any { let map = new Map(); return mapGet(map, box_any(99)); }",
+    );
+    assert!(matches!(interp_entry(&interpreter_module), Value::Void));
 }
 
 #[test]
