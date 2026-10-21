@@ -40,6 +40,12 @@ impl ManagedPromise {
         self.result
     }
 
+    pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
+        let Some(value) = self.result else { return 0; };
+        let mapped = value.map_object_address(map);
+        if mapped == value { 0 } else { self.result = Some(mapped); 1 }
+    }
+
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }

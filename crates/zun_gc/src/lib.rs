@@ -346,6 +346,36 @@ impl Heap {
         rewritten
     }
 
+    /// Rewrite remaining strong side-table state held by promises and
+    /// proxies, including their address-keyed indexes.
+    pub fn rewrite_runtime_references(&mut self, relocation: &RelocationMap) -> usize {
+        let map = |address| relocation.relocate_address(address);
+        let mut rewritten = 0;
+        let promises = std::mem::take(&mut self.promises);
+        let mut mapped_promises = HashMap::with_capacity(promises.len());
+        for (address, mut promise) in promises {
+            let mapped_address = map(address);
+            if mapped_address != address { rewritten += 1; }
+            rewritten += promise.rewrite_object_references(map);
+            mapped_promises.insert(mapped_address, promise);
+        }
+        self.promises = mapped_promises;
+
+        let proxies = std::mem::take(&mut self.proxies);
+        let mut mapped_proxies = HashMap::with_capacity(proxies.len());
+        for (address, proxy) in proxies {
+            let mapped_address = map(address);
+            let target = unsafe { Obj::from_addr(map(proxy.target.addr() as usize) as *mut u64) };
+            let handler = unsafe { Obj::from_addr(map(proxy.handler.addr() as usize) as *mut u64) };
+            if mapped_address != address { rewritten += 1; }
+            if target.addr() != proxy.target.addr() { rewritten += 1; }
+            if handler.addr() != proxy.handler.addr() { rewritten += 1; }
+            mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler });
+        }
+        self.proxies = mapped_proxies;
+        rewritten
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -1183,11 +1213,11 @@ mod tests {
     fn relocation_rewrites_weak_metadata_without_promoting_it() {
         let mut heap = Heap::new();
         let weak_owner = heap.alloc_weak_map();
-        let new_owner = heap.alloc_weak_map();
         let old_key = heap.alloc(1, 0);
-        let new_key = heap.alloc(2, 0);
         let old_value = heap.alloc(3, 0);
-        let new_value = heap.alloc(4, 0);
+        let new_owner = unsafe { Obj::from_addr(0x5000 as *mut u64) };
+        let new_key = unsafe { Obj::from_addr(0x6000 as *mut u64) };
+        let new_value = unsafe { Obj::from_addr(0x7000 as *mut u64) };
         assert!(heap.weak_map_set_object(weak_owner, old_key, old_value));
         let weak_ref = heap.weak_ref_new(old_key);
 
@@ -1197,9 +1227,36 @@ mod tests {
         relocation.insert(old_value, new_value);
         assert_eq!(heap.rewrite_weak_references(&relocation), 4);
 
-        assert_eq!(heap.weak_ref_get(weak_ref).map(|object| object.addr()), Some(new_key.addr()));
-        assert_eq!(heap.weak_map_get_object(new_owner).map(|(key, value)| (key.addr(), value.addr())), Some((new_key.addr(), new_value.addr())));
+        assert_eq!(heap.weak_refs[weak_ref.0 as usize].target, Some(new_key.addr() as usize));
+        let weak_map_id = heap.weak_map_objects.get(&(new_owner.addr() as usize)).copied().unwrap();
+        assert_eq!(heap.weak_maps[weak_map_id.0 as usize].entries, vec![(new_key.addr() as usize, new_value.addr() as usize)]);
         assert!(heap.weak_map_get_object(weak_owner).is_none());
+    }
+
+    #[test]
+    fn relocation_rewrites_promise_and_proxy_state() {
+        let mut heap = Heap::new();
+        let promise = heap.alloc_promise();
+        let target = heap.alloc(1, 0);
+        let handler = heap.alloc(3, 0);
+        let proxy = heap.alloc_proxy(target, handler);
+        let new_promise = unsafe { Obj::from_addr(0x5000 as *mut u64) };
+        let new_target = unsafe { Obj::from_addr(0x6000 as *mut u64) };
+        let new_handler = unsafe { Obj::from_addr(0x7000 as *mut u64) };
+        let new_proxy = unsafe { Obj::from_addr(0x8000 as *mut u64) };
+        heap.promise_resolve(promise, zun_core::Any::object(target.addr() as usize));
+
+        let mut relocation = RelocationMap::new();
+        relocation.insert(promise, new_promise);
+        relocation.insert(proxy, new_proxy);
+        relocation.insert(target, new_target);
+        relocation.insert(handler, new_handler);
+        assert_eq!(heap.rewrite_runtime_references(&relocation), 5);
+
+        assert_eq!(heap.promise_result(new_promise).and_then(|value| value.as_object()), Some(new_target.addr() as usize));
+        assert_eq!(heap.proxy_target(new_proxy), Some(new_target));
+        assert_eq!(heap.proxy_handler(new_proxy), Some(new_handler));
+        assert!(heap.promise_result(promise).is_none());
     }
 
     #[test]
