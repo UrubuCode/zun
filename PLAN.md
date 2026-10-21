@@ -721,8 +721,9 @@ The following runtime contracts are implemented and covered by tests:
   `Map.getF64Or` provides a typed numeric read with an explicit fallback.
   Other mutating methods remain on the interpreter path. Generic `Map.get`
   now has a narrow non-allocating out-pointer `Any` ABI for direct methods,
-  including mixed scalar-return calls; broader managed values and mutation
-  still require the remaining precise-GC and write-barrier work.
+  including mixed scalar-return calls and interned-string payloads; broader
+  managed aggregate values and generic mutation still require the remaining
+  precise-GC and write-barrier work.
   `DataView` now has a distinct native receiver type, and its scalar
   `dataViewGetU32`, `dataViewGetU16`, and `dataViewGetF64` reads, plus scalar
   writes `dataViewSetU32`, `dataViewSetU16`, and `dataViewSetF64`, are covered
@@ -739,6 +740,10 @@ The following runtime contracts are implemented and covered by tests:
   `padStart`, `padEnd`, and `replace`) also use heap-handle helpers with
   equivalence coverage. Aggregate/dynamic values remain on the interpreter
   path.
+- Interned string handles now have typed JIT coverage in object fields:
+  field reads, field stores, and constructors receiving string handles
+  preserve interpreter/JIT equivalence. Literal-pool construction remains on
+  the interpreter path until relocatable literal storage is available.
 - The scalar string conversions `toInt`, `toFloat`, and `toBoolean` now have
   direct `CallBuiltin` Cranelift helpers with equivalence coverage. Their
   instance-method form is also explicitly bound to `zun:string` in semantic
