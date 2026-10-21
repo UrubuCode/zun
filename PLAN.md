@@ -567,9 +567,10 @@ The following runtime contracts are implemented and covered by tests:
   retain their receivers in stack maps; nested native-frame collection
   coverage is tested; a regression also proves a JIT reference store retains a
   young target through minor collection. Interpreter safepoints now select
-  minor/full collection policy, while automatic native `(PC, SP)` discovery
-  remains pending; the GC boundary now has RAII thread-local registration for
-  nested stopped frames once the JIT entrypoint supplies those coordinates;
+  minor/full collection policy, and the GC boundary has RAII thread-local
+  registration for nested stopped frames; the compactor can consume every
+  registered `(PC, SP)` frame directly once the stop-the-world coordinator has
+  suspended them;
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
@@ -592,8 +593,10 @@ The following runtime contracts are implemented and covered by tests:
   `collect_and_compact` API now runs mark/sweep followed by that explicit
   movement path for interpreter roots and active `NativeRootScope` roots.
   `compact_with_native_frame` and `compact_with_native_frames` rewrite stopped
-  JIT frames from their `(PC, SP)` stack maps; automatic suspension/discovery
-  of all JIT frames and normal-GC policy integration remain pending.
+  JIT frames from their `(PC, SP)` stack maps, and
+  `compact_with_registered_native_frames` consumes the active-frame registry
+  without requiring the coordinator to rebuild the frame list. Automatic
+  suspension and normal-GC policy integration remain pending.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
