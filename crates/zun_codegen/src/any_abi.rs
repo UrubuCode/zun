@@ -15,6 +15,17 @@ pub struct JitAnyAbi {
 }
 
 impl JitAnyAbi {
+    /// Return the carrier as the two machine words used by the JIT boundary.
+    pub const fn raw_words(self) -> (u64, u64) {
+        (self.tag, self.payload)
+    }
+
+    /// Reconstruct a carrier from its two machine words without validating the
+    /// dynamic tag. Validation remains available through [`into_any`].
+    pub const fn from_raw_words(tag: u64, payload: u64) -> Self {
+        Self { tag, payload }
+    }
+
     /// Encode a runtime `Any` value for a native call boundary.
     pub const fn from_any(value: zun_core::Any) -> Self {
         let (tag, payload) = value.raw_parts();
@@ -61,6 +72,8 @@ mod tests {
         assert_eq!(core::mem::size_of::<JitAnyAbi>(), 16);
         assert_eq!(core::mem::align_of::<JitAnyAbi>(), 8);
         assert_eq!(JitAnyAbi { tag: 255, payload: 0 }.into_any(), None);
+        let words = carrier.raw_words();
+        assert_eq!(JitAnyAbi::from_raw_words(words.0, words.1), carrier);
     }
 
     #[test]
