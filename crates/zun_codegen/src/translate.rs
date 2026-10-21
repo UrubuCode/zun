@@ -330,18 +330,36 @@ impl Translator<'_> {
                         .get(rid as usize - 1)
                         .map(|method| self.zm.strings.get(method.name));
                     if instr.opcode == Opcode::CallVirt
-                        && method_name == Some("length")
-                        && stack.last().is_some_and(|(_, kind)| *kind == JitKind::String)
+                        && stack.iter().any(|(_, kind)| *kind == JitKind::String)
                     {
-                        let (receiver, _) = stack.pop().ok_or("string length receiver")?;
-                        let length = self.string_length_fref();
-                        let call = self
-                            .builder
-                            .ins()
-                            .call(length, &[receiver]);
-                        let result = self.builder.inst_results(call)[0];
-                        stack.push((result, JitKind::Num(NumKind::U64)));
-                        continue;
+                        match method_name {
+                            Some("length") => {
+                                let (receiver, _) =
+                                    stack.pop().ok_or("string length receiver")?;
+                                let length = self.string_length_fref();
+                                let call = self.builder.ins().call(length, &[receiver]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Num(NumKind::U64)));
+                                continue;
+                            }
+                            Some("contains") | Some("includes") => {
+                                let (needle, needle_kind) =
+                                    stack.pop().ok_or("string contains needle")?;
+                                let (receiver, receiver_kind) =
+                                    stack.pop().ok_or("string contains receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || needle_kind != JitKind::String
+                                {
+                                    return Err("string contains expects string arguments".into());
+                                }
+                                let contains = self.string_contains_fref();
+                                let call = self.builder.ins().call(contains, &[receiver, needle]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Bool));
+                                continue;
+                            }
+                            _ => {}
+                        }
                     }
                     let callee = read_body(
                         &self.zm.code,
@@ -430,6 +448,13 @@ impl Translator<'_> {
                                 types::I64,
                                 JitKind::Num(NumKind::U64),
                                 types::I64,
+                            ),
+                            Some("contains") | Some("includes") => (
+                                "zun_jit_string_contains",
+                                2,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
                             ),
                             Some("isValid") => (
                                 "zun_jit_date_is_valid",
@@ -1426,6 +1451,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_length", Linkage::Import, &sig)
             .expect("declare zun_jit_string_length");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_contains_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_contains", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_contains");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
