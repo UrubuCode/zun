@@ -565,8 +565,10 @@ The following runtime contracts are implemented and covered by tests:
   and imported builtins
   now retain object operands across their call boundaries, and field loads
   retain their receivers in stack maps; nested native-frame collection
-  coverage is tested. Interpreter safepoints now select minor/full collection
-  policy, while automatic native `(PC, SP)` discovery remains pending;
+  coverage is tested; a regression also proves a JIT reference store retains a
+  young target through minor collection. Interpreter safepoints now select
+  minor/full collection policy, while automatic native `(PC, SP)` discovery
+  remains pending;
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
