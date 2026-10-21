@@ -762,7 +762,9 @@ representations and ABI lowering are defined. The first string exception is
 now explicit: interned string handles have a stable `JitKind::String` ABI and
 the allocation-free `zun:string` `length` intrinsic is lowered through
 Cranelift with equivalence coverage. String-producing operations and
-error-producing indexed operations remain Tier 0.
+primitive `String.length()` dispatch now use that same direct handle path.
+String-producing operations and error-producing indexed operations remain Tier
+0 until the JIT exception/landing-pad ABI is available.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
