@@ -165,6 +165,25 @@ impl<'a> JitHook<'a> {
 }
 
 impl CallHook for JitHook<'_> {
+    fn append_roots(&self, roots: &mut Vec<zun_gc::Obj>) {
+        let snapshots = self.osr_snapshots.borrow();
+        for snapshot in snapshots.iter() {
+            for value in snapshot.stack.iter().chain(snapshot.locals.iter()) {
+                match value {
+                    Value::Object(object) => roots.push(*object),
+                    Value::Function(handle) => {
+                        if let Some(address) = handle.environment() {
+                            roots.push(unsafe {
+                                zun_gc::Obj::from_addr(address as *mut u64)
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value> {
         // Ineligible methods never go to the JIT.
         if !self.jit.borrow().is_compiled(method_rid) {

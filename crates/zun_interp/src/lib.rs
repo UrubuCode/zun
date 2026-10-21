@@ -1235,7 +1235,11 @@ impl Interp<'_> {
     /// the current frame's stack and locals, plus every ancestor frame in the
     /// `parent` chain. Reference fields are traced via the module's type layout.
     fn collect(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>) -> usize {
-        roots::collect(&self.types, stack, locals, parent)
+        let mut extra_roots = Vec::new();
+        if let Some(hook) = self.hook {
+            hook.append_roots(&mut extra_roots);
+        }
+        roots::collect(&self.types, stack, locals, parent, &extra_roots)
     }
 
     /// Poll the adaptive GC budget at an interpreter safepoint.

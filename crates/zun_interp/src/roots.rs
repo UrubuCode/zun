@@ -8,8 +8,10 @@ pub(super) fn collect(
     stack: &[Value],
     locals: &[Value],
     parent: Option<&RootLink>,
+    extra_roots: &[zun_gc::Obj],
 ) -> usize {
     let mut roots: Vec<zun_gc::Obj> = Vec::new();
+    roots.extend_from_slice(extra_roots);
     collect_frame_roots(stack, locals, &mut roots);
     let mut link = parent;
     while let Some(l) = link {
