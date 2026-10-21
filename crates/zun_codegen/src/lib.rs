@@ -684,6 +684,48 @@ pub extern "C" fn zun_jit_map_get_f64_or(address: i64, key: f64, fallback: f64) 
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_map_has_i64(address: i64, key: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key)).unwrap_or(false) as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_set_has_i64(address: i64, value: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value)).unwrap_or(false) as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_set_add_i64(address: i64, value: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value)).unwrap_or(false) as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_map_delete_i64(address: i64, key: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, zun_core::Any::int(key)).is_some() as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_set_delete_i64(address: i64, value: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, zun_core::Any::int(value)).unwrap_or(false) as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_map_set_i64(address: i64, key: i64, value: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value)).is_none() as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_map_get_i64_or(address: i64, key: i64, fallback: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::int(key)).and_then(|value| value.as_int()).unwrap_or(fallback))
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -1284,6 +1326,13 @@ impl Jit {
     builder.symbol("zun_jit_set_delete_f64", zun_jit_set_delete_f64 as *const u8);
     builder.symbol("zun_jit_map_set_f64", zun_jit_map_set_f64 as *const u8);
     builder.symbol("zun_jit_map_get_f64_or", zun_jit_map_get_f64_or as *const u8);
+    builder.symbol("zun_jit_map_has_i64", zun_jit_map_has_i64 as *const u8);
+    builder.symbol("zun_jit_set_has_i64", zun_jit_set_has_i64 as *const u8);
+    builder.symbol("zun_jit_set_add_i64", zun_jit_set_add_i64 as *const u8);
+    builder.symbol("zun_jit_map_delete_i64", zun_jit_map_delete_i64 as *const u8);
+    builder.symbol("zun_jit_set_delete_i64", zun_jit_set_delete_i64 as *const u8);
+    builder.symbol("zun_jit_map_set_i64", zun_jit_map_set_i64 as *const u8);
+    builder.symbol("zun_jit_map_get_i64_or", zun_jit_map_get_i64_or as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);

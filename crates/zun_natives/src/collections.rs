@@ -217,5 +217,12 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "setDeleteF64", params: &[Set, F64], ret: Bool, imp: unavailable },
         NativeFn { name: "mapSetF64", params: &[Map, F64, F64], ret: Bool, imp: unavailable },
         NativeFn { name: "mapGetF64Or", params: &[Map, F64, F64], ret: F64, imp: unavailable },
+        NativeFn { name: "mapHasI64", params: &[Map, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapDeleteI64", params: &[Map, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "setAddI64", params: &[Set, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "setHasI64", params: &[Set, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "setDeleteI64", params: &[Set, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapSetI64", params: &[Map, I64, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapGetI64Or", params: &[Map, I64, I64], ret: I64, imp: unavailable },
     ],
 };

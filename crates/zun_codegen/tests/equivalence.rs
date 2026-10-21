@@ -699,7 +699,7 @@ fn managed_map_and_set_size_methods_use_typed_object_receivers() {
 #[test]
 fn numeric_map_and_set_has_use_typed_jit_abis() {
     let module = compile(
-        "import { mapHasF64, setHasF64, setAddF64, mapDeleteF64, setDeleteF64, mapSetF64, mapGetF64Or } from \"zun:collections\"; function mapContains(value: Map, key: number): boolean { return mapHasF64(value, key); } function setContains(value: Set, key: number): boolean { return setHasF64(value, key); } function setInsert(value: Set, key: number): boolean { return setAddF64(value, key); } function mapRemove(value: Map, key: number): boolean { return mapDeleteF64(value, key); } function setRemove(value: Set, key: number): boolean { return setDeleteF64(value, key); } function mapInsert(value: Map, key: number, item: number): boolean { return mapSetF64(value, key, item); } function mapRead(value: Map, key: number, fallback: number): number { return mapGetF64Or(value, key, fallback); } function main(): u64 { return 0; }",
+        "import { mapHasF64, setHasF64, setAddF64, mapDeleteF64, setDeleteF64, mapSetF64, mapGetF64Or, mapHasI64, setHasI64, setAddI64, mapDeleteI64, setDeleteI64, mapSetI64, mapGetI64Or } from \"zun:collections\"; function mapContains(value: Map, key: number): boolean { return mapHasF64(value, key); } function setContains(value: Set, key: number): boolean { return setHasF64(value, key); } function setInsert(value: Set, key: number): boolean { return setAddF64(value, key); } function mapRemove(value: Map, key: number): boolean { return mapDeleteF64(value, key); } function setRemove(value: Set, key: number): boolean { return setDeleteF64(value, key); } function mapInsert(value: Map, key: number, item: number): boolean { return mapSetF64(value, key, item); } function mapRead(value: Map, key: number, fallback: number): number { return mapGetF64Or(value, key, fallback); } function mapContainsI64(value: Map, key: i64): boolean { return mapHasI64(value, key); } function setContainsI64(value: Set, key: i64): boolean { return setHasI64(value, key); } function setInsertI64(value: Set, key: i64): boolean { return setAddI64(value, key); } function mapRemoveI64(value: Map, key: i64): boolean { return mapDeleteI64(value, key); } function setRemoveI64(value: Set, key: i64): boolean { return setDeleteI64(value, key); } function mapInsertI64(value: Map, key: i64, item: i64): boolean { return mapSetI64(value, key, item); } function mapReadI64(value: Map, key: i64, fallback: i64): i64 { return mapGetI64Or(value, key, fallback); } function main(): u64 { return 0; }",
     );
     let map_rid = module
         .tables
@@ -750,6 +750,18 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
         .position(|method| module.strings.get(method.name) == "mapRead")
         .expect("mapRead method") as u32
         + 1;
+    let method_rid = |name: &str| -> u32 {
+        module.tables.method_defs.iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("typed collection method") as u32 + 1
+    };
+    let map_i64_rid = method_rid("mapContainsI64");
+    let set_i64_rid = method_rid("setContainsI64");
+    let add_i64_rid = method_rid("setInsertI64");
+    let map_remove_i64_rid = method_rid("mapRemoveI64");
+    let set_remove_i64_rid = method_rid("setRemoveI64");
+    let map_insert_i64_rid = method_rid("mapInsertI64");
+    let map_read_i64_rid = method_rid("mapReadI64");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(map_rid));
     assert!(jit.is_compiled(set_rid));
@@ -758,6 +770,13 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
     assert!(jit.is_compiled(set_remove_rid));
     assert!(jit.is_compiled(map_insert_rid));
     assert!(jit.is_compiled(map_read_rid));
+    assert!(jit.is_compiled(map_i64_rid));
+    assert!(jit.is_compiled(set_i64_rid));
+    assert!(jit.is_compiled(add_i64_rid));
+    assert!(jit.is_compiled(map_remove_i64_rid));
+    assert!(jit.is_compiled(set_remove_i64_rid));
+    assert!(jit.is_compiled(map_insert_i64_rid));
+    assert!(jit.is_compiled(map_read_i64_rid));
 
     let mut heap = zun_gc::Heap::new();
     let map = heap.alloc_map();
@@ -775,6 +794,15 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
     assert_eq!(jit.call_packed_with_heap(map_rid, &[map.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 1);
     assert_eq!(jit.call_packed_with_heap(map_remove_rid, &[map.addr() as u64, key], &mut heap).unwrap(), 1);
     assert_eq!(jit.call_packed_with_heap(set_remove_rid, &[set.addr() as u64, key], &mut heap).unwrap(), 1);
+    heap.map_insert(map, zun_core::Any::int(7), zun_core::Any::int(42));
+    heap.set_add(set, zun_core::Any::int(7));
+    assert_eq!(jit.call_packed_with_heap(map_i64_rid, &[map.addr() as u64, 7], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(set_i64_rid, &[set.addr() as u64, 7], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(add_i64_rid, &[set.addr() as u64, 8], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(map_insert_i64_rid, &[map.addr() as u64, 8, 9], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(map_read_i64_rid, &[map.addr() as u64, 8, 0], &mut heap).unwrap(), 9);
+    assert_eq!(jit.call_packed_with_heap(map_remove_i64_rid, &[map.addr() as u64, 8], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(set_remove_i64_rid, &[set.addr() as u64, 8], &mut heap).unwrap(), 1);
 }
 
 #[test]

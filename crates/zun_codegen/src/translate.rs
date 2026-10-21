@@ -1194,6 +1194,13 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::F64),
                                 types::F64,
                             ),
+                            Some("mapHasI64") => ("zun_jit_map_has_i64", 2, types::I64, JitKind::Bool, types::I32),
+                            Some("setHasI64") => ("zun_jit_set_has_i64", 2, types::I64, JitKind::Bool, types::I32),
+                            Some("setAddI64") => ("zun_jit_set_add_i64", 2, types::I64, JitKind::Bool, types::I32),
+                            Some("mapDeleteI64") => ("zun_jit_map_delete_i64", 2, types::I64, JitKind::Bool, types::I32),
+                            Some("setDeleteI64") => ("zun_jit_set_delete_i64", 2, types::I64, JitKind::Bool, types::I32),
+                            Some("mapSetI64") => ("zun_jit_map_set_i64", 3, types::I64, JitKind::Bool, types::I32),
+                            Some("mapGetI64Or") => ("zun_jit_map_get_i64_or", 3, types::I64, JitKind::Num(NumKind::I64), types::I64),
                             Some("bufferLength") => (
                                 "zun_jit_buffer_length",
                                 1,
@@ -1407,6 +1414,12 @@ impl Translator<'_> {
                             } else {
                             vec![types::I64, types::F64]
                             }
+                        }
+                        "zun_jit_map_has_i64" | "zun_jit_set_has_i64"
+                        | "zun_jit_set_add_i64" | "zun_jit_map_delete_i64"
+                        | "zun_jit_set_delete_i64" => vec![types::I64, types::I64],
+                        "zun_jit_map_set_i64" | "zun_jit_map_get_i64_or" => {
+                            vec![types::I64, types::I64, types::I64]
                         }
                         _ => vec![arg_type; arg_count],
                     };
