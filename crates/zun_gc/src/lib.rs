@@ -70,6 +70,19 @@ pub use object::Obj;
 /// The size of one object slot in bytes.
 pub use zun_core::SLOT_SIZE;
 
+/// Read-only result of the non-moving heap's compaction planning phase.
+///
+/// Planning is intentionally separate from relocation: the current heap
+/// exposes raw object addresses to the interpreter and JIT, so this phase may
+/// measure reclaimable space but must not move objects yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionPlan {
+    pub live_objects: usize,
+    pub reclaimable_objects: usize,
+    pub live_slots: usize,
+    pub reclaimable_slots: usize,
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -137,6 +150,32 @@ pub struct Heap {
 }
 
 impl Heap {
+    /// Calculate the amount of live and reclaimable object storage.
+    ///
+    /// This is the first plan-phase primitive for future compaction. It has no
+    /// side effects and deliberately does not relocate or rewrite references.
+    pub fn compaction_plan(&self) -> CompactionPlan {
+        self.records.iter().fold(
+            CompactionPlan {
+                live_objects: 0,
+                reclaimable_objects: 0,
+                live_slots: 0,
+                reclaimable_slots: 0,
+            },
+            |mut plan, record| {
+                let slots = zun_core::OBJECT_HEADER_SLOTS + record.field_count;
+                if record.alive {
+                    plan.live_objects += 1;
+                    plan.live_slots += slots;
+                } else {
+                    plan.reclaimable_objects += 1;
+                    plan.reclaimable_slots += slots;
+                }
+                plan
+            },
+        )
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -891,6 +930,23 @@ mod tests {
 
         heap.store_field(old, 0, 0, true);
         assert_eq!(heap.remembered_set_len(), 1);
+    }
+
+    #[test]
+    fn compaction_plan_reports_reclaimable_storage_without_moving_objects() {
+        let mut heap = Heap::new();
+        let live = heap.alloc(1, 2);
+        let dead = heap.alloc(2, 3);
+        let live_addr = live.addr();
+        unsafe { heap.collect(&[live], &|_| Vec::new()) };
+
+        let plan = heap.compaction_plan();
+        assert_eq!(plan.live_objects, 1);
+        assert_eq!(plan.reclaimable_objects, 1);
+        assert_eq!(plan.live_slots, zun_core::OBJECT_HEADER_SLOTS + 2);
+        assert_eq!(plan.reclaimable_slots, zun_core::OBJECT_HEADER_SLOTS + 3);
+        assert_eq!(live.addr(), live_addr);
+        assert!(!heap.by_addr.contains_key(&(dead.addr() as usize)));
     }
 
     #[test]
