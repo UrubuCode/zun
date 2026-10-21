@@ -197,7 +197,12 @@ fn field_jit_ok(module: &Module, field_rid: u32) -> bool {
         .tables
         .field_defs
         .get(field_rid as usize - 1)
-        .map(|f| kind_supported(f.kind))
+        .map(|f| {
+            matches!(
+                JitKind::from_byte(f.kind),
+                JitKind::Num(_) | JitKind::Bool | JitKind::Object
+            )
+        })
         .unwrap_or(false)
 }
 
