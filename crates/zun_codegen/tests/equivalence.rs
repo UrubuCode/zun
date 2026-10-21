@@ -393,6 +393,35 @@ fn primitive_string_trim_boundaries_use_the_managed_string_abi() {
     assert_eq!(heap.string(handle as u32).as_ref(), "zun runtime");
 }
 
+#[test]
+fn primitive_string_case_conversion_uses_the_managed_string_abi() {
+    let module = compile(
+        "import { toLowerCase, toUpperCase } from \"zun:string\"; class String { extern toLowerCase(): string; extern toUpperCase(): string; } function lower(value: string): string { return value.toLowerCase(); } function upper(value: string): string { return value.toUpperCase(); } function main(): int { return 0; }",
+    );
+    let lower_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "lower")
+        .expect("lower method") as u32
+        + 1;
+    let upper_rid = lower_rid + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(lower_rid));
+    assert!(jit.is_compiled(upper_rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("ZuN"));
+    let lower = jit
+        .call_packed_with_heap(lower_rid, &[value as u64], &mut heap)
+        .expect("lowercase call");
+    let upper = jit
+        .call_packed_with_heap(upper_rid, &[value as u64], &mut heap)
+        .expect("uppercase call");
+    assert_eq!(heap.string(lower as u32).as_ref(), "zun");
+    assert_eq!(heap.string(upper as u32).as_ref(), "ZUN");
+}
+
 
 #[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {

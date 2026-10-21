@@ -507,6 +507,17 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("toLowerCase" | "toUpperCase") => {
+                                let (receiver, receiver_kind) = stack.pop().ok_or("case receiver")?;
+                                if receiver_kind != JitKind::String {
+                                    return Err("case conversion expects a string receiver".into());
+                                }
+                                let helper = self.string_transform_fref(method_name.unwrap_or("toLowerCase"));
+                                let call = self.builder.ins().call(helper, &[receiver]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -684,6 +695,20 @@ impl Translator<'_> {
                             ),
                             Some("trimEnd") => (
                                 "zun_jit_string_trim_end",
+                                1,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("toLowerCase") => (
+                                "zun_jit_string_to_lower_case",
+                                1,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("toUpperCase") => (
+                                "zun_jit_string_to_upper_case",
                                 1,
                                 types::I64,
                                 JitKind::String,
@@ -1809,6 +1834,21 @@ impl Translator<'_> {
                 &sig,
             )
             .expect("declare string trim helper");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_transform_fref(&mut self, name: &str) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let symbol = match name {
+            "toUpperCase" => "zun_jit_string_to_upper_case",
+            _ => "zun_jit_string_to_lower_case",
+        };
+        let id = self
+            .module
+            .declare_function(symbol, Linkage::Import, &sig)
+            .expect("declare string case helper");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
