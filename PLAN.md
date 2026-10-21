@@ -582,10 +582,12 @@ The following runtime contracts are implemented and covered by tests:
   `.zm` module retained as the fallback for ineligible methods.
 - Cranelift managed-heap entry boundaries now expose explicit
   `call_packed_with_heap` and `call_entry_with_heap` APIs. The eligible subset
-  covers tested numeric array allocation/length, managed Map/Set size, numeric
-  object fields, and object-reference field loads/stores with interpreter/JIT
-  equivalence; broader managed values still require the remaining precise-GC
-  and write-barrier work.
+  covers tested numeric array allocation/length, numeric object fields, and
+  object-reference field loads/stores with interpreter/JIT equivalence. The
+  non-allocating Map/Set size helper ABI is prepared, but source-level Map/Set
+  values remain `Any` and therefore stay behind the interpreter boundary until
+  a managed collection value ABI is added; broader managed values still require
+  the remaining precise-GC and write-barrier work.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
