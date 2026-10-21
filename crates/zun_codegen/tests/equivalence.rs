@@ -4824,17 +4824,30 @@ fn boolean_object_field_is_jit_equivalent() {
 }
 
 #[test]
-fn string_field_method_is_not_jit_eligible() {
-    // A method touching a string field must stay on the interpreter.
+fn interned_string_field_read_is_jit_equivalent() {
     let src = "class Named { tag: string; }\n\
-               function make(): int { let n: Named = new Named(\"hi\"); return 1; }\n\
-               function main(): int { return make(); }";
+               function read(n: Named): string { return n.tag; }\n\
+               function main(): int { return 1; }";
     let module = compile(src);
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(
-        !jit.is_compiled(2),
-        "string-field method must be ineligible"
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(jit.is_compiled(read_rid), "interned string field read should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let named = heap.alloc(1, 1);
+    let handle = heap.intern_string(std::rc::Rc::from("hello"));
+    named.set_field(0, handle as u64);
+    assert_eq!(
+        jit.call_packed_with_heap(read_rid, &[named.addr() as u64], &mut heap)
+            .expect("jit string field read"),
+        handle as u64
     );
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
 #[test]

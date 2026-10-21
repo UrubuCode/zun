@@ -217,7 +217,7 @@ fn math_builtin(instr: &zun_il::Instruction) -> bool {
 }
 
 /// Whether a field (by FieldDef token RID) has a JIT-representable type, i.e.
-/// numeric, bool, or object — not a string or anything else.
+/// numeric, bool, object, or an interned string handle — not anything else.
 fn field_jit_ok(module: &Module, field_rid: u32) -> bool {
     module
         .tables
@@ -226,7 +226,7 @@ fn field_jit_ok(module: &Module, field_rid: u32) -> bool {
         .map(|f| {
             matches!(
                 JitKind::from_byte(f.kind),
-                JitKind::Num(_) | JitKind::Bool | JitKind::Object
+                JitKind::Num(_) | JitKind::Bool | JitKind::Object | JitKind::String
             )
         })
         .unwrap_or(false)
