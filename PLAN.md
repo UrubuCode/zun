@@ -596,7 +596,8 @@ The following runtime contracts are implemented and covered by tests:
   `Any` ABI is lowered; broader managed values still require the remaining
   precise-GC and write-barrier work.
   `DataView` now has a distinct native receiver type, and its scalar
-  `dataViewGetU32` read is covered by the same JIT object boundary.
+  `dataViewGetU32`, `dataViewGetU16`, and `dataViewGetF64` reads are covered by
+  the same JIT object boundary.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with

@@ -328,6 +328,40 @@ fn data_view_u32_read_uses_the_typed_view_abi() {
 }
 
 #[test]
+fn data_view_u16_and_f64_reads_use_width_specific_abis() {
+    let module = compile(
+        "import { dataViewGetU16, dataViewGetF64 } from \"zun:buffer\"; function readU16(view: DataView, offset: u64, little: boolean): u16 { return dataViewGetU16(view, offset, little); } function readF64(view: DataView, offset: u64, little: boolean): number { return dataViewGetF64(view, offset, little); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("data view reader") as u32
+            + 1
+    };
+    let u16_rid = find("readU16");
+    let f64_rid = find("readF64");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(u16_rid));
+    assert!(jit.is_compiled(f64_rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(16);
+    heap.buffer_write_u32(buffer, 0, 0xfeed_beef);
+    heap.buffer_write_f64(buffer, 8, 2.5);
+    let view = heap.alloc_data_view(buffer, 0, 16).expect("data view");
+    assert!(matches!(
+        jit.call_packed_with_heap(u16_rid, &[view.addr() as u64, 0, 1], &mut heap),
+        Ok(0xbeef)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(f64_rid, &[view.addr() as u64, 8, 1], &mut heap),
+        Ok(value) if f64::from_bits(value) == 2.5
+    ));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",
