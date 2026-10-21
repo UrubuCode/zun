@@ -1524,6 +1524,14 @@ impl Translator<'_> {
                     }
                     stack.push(value);
                 }
+                Opcode::CastClass => {
+                    let value = stack.pop().ok_or("stack underflow")?;
+                    if value.1 != JitKind::Object {
+                        return Err("castclass requires a managed object value".into());
+                    }
+                    self.builder.declare_value_needs_stack_map(value.0);
+                    stack.push(value);
+                }
                 // Numeric values are already represented in their native JIT
                 // form; the managed Any carrier is materialized only by the
                 // runtime array helper at the store boundary.

@@ -4131,6 +4131,31 @@ fn numeric_array_push_is_jit_equivalent() {
 }
 
 #[test]
+fn object_array_push_and_pop_are_jit_equivalent() {
+    let src = "class Item {} function pop_value(values: Array): Item { return values.pop() as Item; }\n\
+               function push_value(values: Array, value: Item): u64 { return push(values, value) as u64; }\n\
+               function push(values: Array, value: Item): u64 { return values.push(value) as u64; }\n\
+               function main(): u64 { return 0; }";
+    let module = compile(src);
+    let pop_rid = module.tables.method_defs.iter()
+        .position(|method| module.strings.get(method.name) == "pop_value")
+        .map(|index| index as u32 + 1).expect("object pop method");
+    let push_rid = module.tables.method_defs.iter()
+        .position(|method| module.strings.get(method.name) == "push_value")
+        .map(|index| index as u32 + 1).expect("object push method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object array methods");
+    assert!(jit.is_compiled(pop_rid));
+    assert!(jit.is_compiled(push_rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(0);
+    let item = heap.alloc(1, 0);
+    assert_eq!(jit.call_packed_with_heap(push_rid, &[array.addr() as u64, item.addr() as u64], &mut heap).unwrap(), 1);
+    let popped = jit.call_packed_with_heap(pop_rid, &[array.addr() as u64], &mut heap).unwrap();
+    assert_eq!(popped, item.addr() as u64);
+    assert_eq!(heap.array_len(array), Some(0));
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";
