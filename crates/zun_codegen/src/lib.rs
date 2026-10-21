@@ -672,6 +672,18 @@ pub extern "C" fn zun_jit_map_set_f64(address: i64, key: f64, value: f64) -> i32
     })
 }
 
+/// Read a numeric Map value, returning the caller-supplied fallback when the
+/// key is absent or stores a non-floating value.
+#[inline]
+pub extern "C" fn zun_jit_map_get_f64_or(address: i64, key: f64, fallback: f64) -> f64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.map_get(object, zun_core::Any::float(key))
+            .and_then(|value| value.as_float())
+            .unwrap_or(fallback)
+    })
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -1271,6 +1283,7 @@ impl Jit {
     builder.symbol("zun_jit_map_delete_f64", zun_jit_map_delete_f64 as *const u8);
     builder.symbol("zun_jit_set_delete_f64", zun_jit_set_delete_f64 as *const u8);
     builder.symbol("zun_jit_map_set_f64", zun_jit_map_set_f64 as *const u8);
+    builder.symbol("zun_jit_map_get_f64_or", zun_jit_map_get_f64_or as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);

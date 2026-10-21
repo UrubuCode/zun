@@ -216,5 +216,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "setHasF64", params: &[Set, F64], ret: Bool, imp: unavailable },
         NativeFn { name: "setDeleteF64", params: &[Set, F64], ret: Bool, imp: unavailable },
         NativeFn { name: "mapSetF64", params: &[Map, F64, F64], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapGetF64Or", params: &[Map, F64, F64], ret: F64, imp: unavailable },
     ],
 };
