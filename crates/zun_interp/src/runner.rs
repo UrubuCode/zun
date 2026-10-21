@@ -32,6 +32,69 @@ pub struct GeneratorIteratorResult {
     pub done: bool,
 }
 
+/// Owned Tier 0 generator state. Host callbacks are supplied only for the
+/// duration of `resume`, so no borrowed execution context is retained.
+pub struct OwnedGeneratorSession<'a> {
+    module: &'a Module,
+    heap: zun_gc::Heap,
+    types: zun_types::TypeSystem,
+    method_rid: u32,
+    args: Option<Vec<Value>>,
+    pending: Option<ExecutionFrame>,
+}
+
+impl<'a> OwnedGeneratorSession<'a> {
+    pub fn new(module: &'a Module, method_rid: u32, args: Vec<Value>) -> Result<Self, RunError> {
+        let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
+        Ok(Self { module, heap: zun_gc::Heap::new(), types, method_rid, args: Some(args), pending: None })
+    }
+
+    pub fn resume(
+        &mut self,
+        output: &mut dyn Output,
+        hook: Option<&dyn CallHook>,
+        loader: Option<&zun_loader::ModuleLoader>,
+    ) -> Result<ResumeResult, RunError> {
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut self.heap as *mut _) };
+        let mut interp = Interp {
+            module: self.module,
+            output,
+            hook,
+            loader,
+            allocs: 0,
+            gc_interval: GC_INTERVAL,
+            minor_collections: 0,
+            types: self.types.clone(),
+            suspended: None,
+            resume_frame: None,
+            yielded: None,
+        };
+        let outcome = if let Some(frame) = self.pending.take() {
+            interp.resume_suspended(frame)
+        } else {
+            interp.dispatch_outcome(self.method_rid, self.args.take().unwrap_or_default(), None)
+        };
+        match outcome {
+            ExecutionOutcome::Complete(value) => {
+                interp.deliver_finalization_callbacks()?;
+                Ok(ResumeResult::Complete(value))
+            }
+            ExecutionOutcome::Suspended(frame) => {
+                self.pending = Some(frame);
+                if let Some(value) = interp.yielded.take() {
+                    Ok(ResumeResult::Yielded(value))
+                } else {
+                    Ok(ResumeResult::Suspended)
+                }
+            }
+            ExecutionOutcome::Thrown(value) => Err(RunError::Thrown(value)),
+            ExecutionOutcome::Fault(error) => Err(error),
+        }
+    }
+
+    pub fn heap_mut(&mut self) -> &mut zun_gc::Heap { &mut self.heap }
+}
+
 /// Persistent interpreter boundary for async executions.
 ///
 /// The heap and suspended frame outlive an individual poll, matching the

@@ -34,7 +34,8 @@ use stack::{
 use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
 use runner::run_method_with;
 pub use runner::{
-    GeneratorIteratorResult, GeneratorResult, GeneratorSession, ResumableSession, ResumeResult,
+    GeneratorIteratorResult, GeneratorResult, GeneratorSession, OwnedGeneratorSession,
+    ResumableSession, ResumeResult,
 };
 
 /// Read the result of a settled managed Promise for the synchronous await
