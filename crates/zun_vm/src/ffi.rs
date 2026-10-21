@@ -51,6 +51,12 @@ impl FfiSignature {
             && self.params.iter().all(|param| *param == FfiScalar::I64)
             && self.arity() <= 3
     }
+
+    fn matches_f64_call(&self) -> bool {
+        self.result == FfiScalar::F64
+            && self.params.iter().all(|param| *param == FfiScalar::F64)
+            && self.arity() <= 2
+    }
 }
 
 /// Return the platform library-name candidates for a logical native library.
@@ -360,6 +366,37 @@ impl NativeLibrary {
         // SAFETY: the resolved function has the declared ABI and signature.
         Ok(unsafe { symbol(first, second) })
     }
+
+    /// Call a blittable `f64` function after validating its ABI descriptor.
+    pub unsafe fn call_f64_signature(
+        &self,
+        name: &[u8],
+        signature: &FfiSignature,
+        args: &[f64],
+    ) -> Result<f64, FfiError> {
+        if !signature.matches_f64_call() || signature.arity() != args.len() {
+            return Err(FfiError {
+                message: format!(
+                    "unsupported f64 FFI signature: arity {}, arguments {}",
+                    signature.arity(),
+                    args.len()
+                ),
+            });
+        }
+        // SAFETY: the descriptor restricts the call to the matching fixed C
+        // ABI shape selected below.
+        unsafe {
+            match args {
+                [] => {
+                    let symbol = self.symbol::<unsafe extern "C" fn() -> f64>(name)?;
+                    Ok(symbol())
+                }
+                [arg] => self.call_f64_1(name, *arg),
+                [first, second] => self.call_f64_2(name, *first, *second),
+                _ => unreachable!("signature validation limits f64 calls to two arguments"),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -437,6 +474,18 @@ mod tests {
         }
         .expect_err("incompatible signature must be rejected");
         assert!(error.to_string().contains("unsupported i64 FFI signature"));
+    }
+
+    #[test]
+    fn typed_f64_call_rejects_an_incompatible_signature_before_lookup() {
+        let path = std::env::current_exe().expect("test executable path");
+        let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
+        let signature = FfiSignature::new(vec![FfiScalar::I64], FfiScalar::F64);
+        let error = unsafe {
+            library.call_f64_signature(b"zun_missing_symbol", &signature, &[1.0])
+        }
+        .expect_err("incompatible signature must be rejected");
+        assert!(error.to_string().contains("unsupported f64 FFI signature"));
     }
 
     #[test]
