@@ -929,3 +929,5 @@ non-allocating length queries for `ArrayBuffer`, `DataView`, `Uint8Array`,
 `Uint16Array`, `Uint32Array`, and `Float64Array`, with interpreter/JIT
 equivalence. View construction remains a Tier 0 fallback until precise
 native-frame safepoints are connected.
+The same boundary now distinguishes element `length` from byte `byteLength`
+for `DataView` and all four typed-array view kinds.
