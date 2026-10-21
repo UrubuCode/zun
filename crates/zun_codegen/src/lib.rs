@@ -1080,7 +1080,7 @@ pub extern "C" fn zun_jit_number_is_safe_integer(value: f64) -> i32 {
 
 use std::collections::{HashMap, HashSet};
 
-use cranelift_codegen::ir::AbiParam;
+use cranelift_codegen::ir::{types, AbiParam};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -1568,15 +1568,26 @@ impl Jit {
         self.module.clear_context(&mut self.ctx);
 
         let sig = self.sigs[&rid].clone();
-        let shim_id = shim::define_shim(
-            &mut self.module,
-            &mut self.ctx,
-            &mut self.fb_ctx,
-            &format!("m{rid}_shim"),
-            self.func_ids[&rid],
-            &sig.param_kinds,
-            sig.returns,
-        )
+        let shim_id = if sig.returns == Some(JitKind::Other) {
+            shim::define_any_return_shim(
+                &mut self.module,
+                &mut self.ctx,
+                &mut self.fb_ctx,
+                &format!("m{rid}_any_shim"),
+                self.func_ids[&rid],
+                &sig.param_kinds,
+            )
+        } else {
+            shim::define_shim(
+                &mut self.module,
+                &mut self.ctx,
+                &mut self.fb_ctx,
+                &format!("m{rid}_shim"),
+                self.func_ids[&rid],
+                &sig.param_kinds,
+                sig.returns,
+            )
+        }
         .map_err(|detail| JitError::Compile {
             method_rid: rid,
             detail,
@@ -1980,8 +1991,14 @@ fn body_signature<M: ClifModule>(
             .push(AbiParam::new(clif_ty(JitKind::from_byte(k))));
     }
     if body.returns_value {
-        sig.returns
-            .push(AbiParam::new(clif_ty(JitKind::from_byte(body.return_kind))));
+        let return_kind = JitKind::from_byte(body.return_kind);
+        if return_kind == JitKind::Other {
+            // `Any` is a stable two-word carrier: tag followed by payload.
+            sig.returns.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+        } else {
+            sig.returns.push(AbiParam::new(clif_ty(return_kind)));
+        }
     }
     sig
 }

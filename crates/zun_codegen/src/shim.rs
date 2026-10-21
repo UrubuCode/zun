@@ -79,6 +79,58 @@ pub fn define_shim(
     Ok(shim_id)
 }
 
+/// Build a shim for the two-word `Any` return ABI.
+///
+/// `JitKind::Other` remains ineligible until its arguments and call sites are
+/// lowered as carriers too; this function establishes the return-side ABI so
+/// that future lowering cannot accidentally collapse `tag` and `payload`.
+pub fn define_any_return_shim(
+    module: &mut dyn ClifModule,
+    ctx: &mut Context,
+    fb_ctx: &mut FunctionBuilderContext,
+    name: &str,
+    real: FuncId,
+    param_kinds: &[JitKind],
+) -> Result<FuncId, String> {
+    let conv = module.isa().default_call_conv();
+    let ptr_ty = module.isa().pointer_type();
+    let mut shim_sig = cranelift_codegen::ir::Signature::new(conv);
+    shim_sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
+    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    let shim_id = module
+        .declare_function(name, Linkage::Local, &shim_sig)
+        .map_err(|e| e.to_string())?;
+
+    ctx.func.signature = shim_sig;
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fb_ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        let args_ptr = b.block_params(entry)[0];
+        let mut args = Vec::with_capacity(param_kinds.len());
+        for (i, &kind) in param_kinds.iter().enumerate() {
+            let raw = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, (i * 8) as i32);
+            args.push(unpack_arg(&mut b, raw, kind));
+        }
+        let fref = module.declare_func_in_func(real, b.func);
+        let inst = b.ins().call(fref, &args);
+        let results = b.inst_results(inst).to_vec();
+        if results.len() != 2 {
+            return Err("Any return function must produce tag and payload".into());
+        }
+        b.ins().return_(&[results[0], results[1]]);
+        b.finalize();
+    }
+    module
+        .define_function(shim_id, ctx)
+        .map_err(|e| e.to_string())?;
+    module.clear_context(ctx);
+    Ok(shim_id)
+}
+
 /// Convert a raw i64 value into a value of kind `k` (shared with field loads).
 pub(crate) fn unpack_arg(b: &mut FunctionBuilder, raw: Value, k: JitKind) -> Value {
     match k {
