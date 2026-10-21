@@ -112,6 +112,15 @@ fn tiering_calls_a_heap_eligible_object_field_reader() {
 }
 
 #[test]
+fn tiering_calls_a_heap_eligible_object_field_writer() {
+    let out = run_source(
+        "class Box { value: number; set(value: number): number { this.value = value; return this.value; } }\n\
+         function main() { let box = new Box(0.0); print(box.set(41.0)); print(box.set(42.0)); print(box.value); }",
+    );
+    assert_eq!(out, ["41", "42", "42"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
