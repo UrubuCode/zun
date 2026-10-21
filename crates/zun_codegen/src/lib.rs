@@ -401,6 +401,20 @@ pub extern "C" fn zun_jit_array_load_u64(address: i64, index: i64) -> i64 {
     })
 }
 
+/// Read an object-valued dynamic array element through the managed pointer ABI.
+#[inline]
+pub extern "C" fn zun_jit_array_load_object(address: i64, index: i64) -> i64 {
+    if index < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.array_get(object, index as usize)
+            .and_then(|value| value.as_object())
+            .unwrap_or(0) as i64
+    })
+}
+
 /// Store a numeric array element without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_array_store_f64(address: i64, index: i64, value: f64) -> i32 {
@@ -422,6 +436,20 @@ pub extern "C" fn zun_jit_array_store_u64(address: i64, index: i64, value: i64) 
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
         heap.array_set(object, index as usize, zun_core::Any::int(value)).is_some() as i32
+    })
+}
+
+/// Store an object-valued dynamic array element and apply the write barrier.
+#[inline]
+pub extern "C" fn zun_jit_array_store_object(address: i64, index: i64, value: i64) -> i32 {
+    if index < 0 || value == 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    let child = unsafe { zun_gc::Obj::from_addr(value as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_set(object, index as usize, zun_core::Any::object(child.addr() as usize))
+            .is_some() as i32
     })
 }
 
@@ -886,8 +914,10 @@ impl Jit {
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
     builder.symbol("zun_jit_array_load_u64", zun_jit_array_load_u64 as *const u8);
+    builder.symbol("zun_jit_array_load_object", zun_jit_array_load_object as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);
+    builder.symbol("zun_jit_array_store_object", zun_jit_array_store_object as *const u8);
         builder.symbol("zun_jit_store_ref", zun_jit_store_ref as *const u8);
     builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);
     builder.symbol("zun_jit_array_push_f64", zun_jit_array_push_f64 as *const u8);
@@ -1583,8 +1613,9 @@ fn body_signature<M: ClifModule>(
 #[cfg(test)]
 mod tests {
     use super::{
-        zun_jit_array_load_any, zun_jit_array_store_any, zun_jit_map_size, zun_jit_set_size,
-        zun_jit_store_ref, JitAnyAbi,
+        zun_jit_array_load_any, zun_jit_array_load_object, zun_jit_array_store_any,
+        zun_jit_array_store_object, zun_jit_map_size, zun_jit_set_size, zun_jit_store_ref,
+        JitAnyAbi,
     };
 
     #[test]
@@ -1636,6 +1667,17 @@ mod tests {
             Some(child.addr() as usize)
         );
         assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+    }
+
+    #[test]
+    fn object_array_helpers_round_trip_managed_pointer() {
+        let mut heap = zun_gc::Heap::new();
+        let array = heap.alloc_array(1);
+        let child = heap.alloc(1, 0);
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+
+        assert_eq!(zun_jit_array_store_object(array.addr() as i64, 0, child.addr() as i64), 1);
+        assert_eq!(zun_jit_array_load_object(array.addr() as i64, 0), child.addr() as i64);
     }
 
     #[test]

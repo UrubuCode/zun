@@ -1038,13 +1038,18 @@ impl Translator<'_> {
                         _ => return Err("array index must be an integer".into()),
                     };
                     let load_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
-                    let load = if load_u64 {
+                    let load_object = self.method_return_kind == JitKind::Object;
+                    let load = if load_object {
+                        self.array_load_object_fref()
+                    } else if load_u64 {
                         self.array_load_u64_fref()
                     } else {
                         self.array_load_f64_fref()
                     };
                     let result = self.builder.ins().call(load, &[array, index]);
-                    let kind = if load_u64 {
+                    let kind = if load_object {
+                        JitKind::Object
+                    } else if load_u64 {
                         JitKind::Num(NumKind::U64)
                     } else {
                         JitKind::Num(NumKind::F64)
@@ -1055,9 +1060,10 @@ impl Translator<'_> {
                     let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
                     let (index, index_kind) = stack.pop().ok_or("stack underflow")?;
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
+                    let store_object = value_kind == JitKind::Object;
                     let store_u64 = value_kind == JitKind::Num(NumKind::U64);
                     if array_kind != JitKind::Object
-                        || (!store_u64 && value_kind != JitKind::Num(NumKind::F64))
+                        || (!store_object && !store_u64 && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array store requires object and f64/u64 value".into());
                     }
@@ -1067,7 +1073,9 @@ impl Translator<'_> {
                         ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
                         _ => return Err("array index must be an integer".into()),
                     };
-                    let store = if store_u64 {
+                    let store = if store_object {
+                        self.array_store_object_fref()
+                    } else if store_u64 {
                         self.array_store_u64_fref()
                     } else {
                         self.array_store_f64_fref()
@@ -1417,6 +1425,18 @@ impl Translator<'_> {
         self.module.declare_func_in_func(func, self.builder.func)
     }
 
+    fn array_load_object_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_array_load_object", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_load_object");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
     fn array_store_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
@@ -1442,6 +1462,19 @@ impl Translator<'_> {
             .declare_function("zun_jit_array_store_u64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_u64");
         self.module.declare_func_in_func(func, self.builder.func)
+    }
+
+    fn array_store_object_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_array_store_object", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_store_object");
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     fn store_ref_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
