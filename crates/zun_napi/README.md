@@ -22,6 +22,19 @@ Status codes are exported as `ZUN_HOST_OK`, `ZUN_HOST_INVALID_ARGUMENT`,
 
 The C declarations are available in [`include/zun_napi.h`](include/zun_napi.h).
 
+Zun source can declare a scalar native export explicitly and bind it through
+the same typed `MemberRef` path used by the VM:
+
+```ts
+extern function GetCurrentProcessId(): i64 from "kernel32";
+```
+
+The compiler checks the declaration against the host-provided linker signature
+and the VM validates the encoded scalar signature before dispatch. The current
+direct ABI supports homogeneous `i64` and `f64` calls plus zero-argument
+boolean results; strings, buffers, aggregates, and callbacks remain separate
+generated-marshalling work.
+
 On platforms that require an import library, provide the Node N-API library at
 build time:
 
