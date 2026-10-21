@@ -37,12 +37,6 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
-            name: "mapHasF64",
-            params: &[Map, F64],
-            ret: Bool,
-            imp: unavailable,
-        },
-        NativeFn {
             name: "mapSize",
             params: &[Map],
             ret: U64,
@@ -51,12 +45,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn {
             name: "mapDelete",
             params: &[Map, Opaque],
-            ret: Bool,
-            imp: unavailable,
-        },
-        NativeFn {
-            name: "mapDeleteF64",
-            params: &[Map, F64],
             ret: Bool,
             imp: unavailable,
         },
@@ -87,20 +75,8 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
-            name: "setAddF64",
-            params: &[Set, F64],
-            ret: Bool,
-            imp: unavailable,
-        },
-        NativeFn {
             name: "setHas",
             params: &[Set, Opaque],
-            ret: Bool,
-            imp: unavailable,
-        },
-        NativeFn {
-            name: "setHasF64",
-            params: &[Set, F64],
             ret: Bool,
             imp: unavailable,
         },
@@ -113,12 +89,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn {
             name: "setDelete",
             params: &[Set, Opaque],
-            ret: Bool,
-            imp: unavailable,
-        },
-        NativeFn {
-            name: "setDeleteF64",
-            params: &[Set, F64],
             ret: Bool,
             imp: unavailable,
         },
@@ -239,5 +209,11 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Void,
             imp: unavailable,
         },
+        // Append new intrinsics so existing positional native IDs remain stable.
+        NativeFn { name: "mapHasF64", params: &[Map, F64], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapDeleteF64", params: &[Map, F64], ret: Bool, imp: unavailable },
+        NativeFn { name: "setAddF64", params: &[Set, F64], ret: Bool, imp: unavailable },
+        NativeFn { name: "setHasF64", params: &[Set, F64], ret: Bool, imp: unavailable },
+        NativeFn { name: "setDeleteF64", params: &[Set, F64], ret: Bool, imp: unavailable },
     ],
 };
