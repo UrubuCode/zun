@@ -939,6 +939,13 @@ impl Translator<'_> {
                         return Err("stack underflow at newobj".into());
                     }
                     let args: Vec<Slot> = stack.split_off(stack.len() - count);
+                    // Allocation may reach the GC. Keep reference-valued
+                    // initializers live while the new object is being built.
+                    for &(value, kind) in &args {
+                        if kind == JitKind::Object {
+                            self.builder.declare_value_needs_stack_map(value);
+                        }
+                    }
                     // ptr = zun_rt_alloc(type_rid, count)
                     let alloc = self.alloc_fref();
                     let trid = self.builder.ins().iconst(types::I32, type_rid as i64);
@@ -1106,6 +1113,8 @@ impl Translator<'_> {
                     let (val, _) = stack.pop().ok_or("stack underflow")?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
                     if kind == JitKind::Object {
+                        self.builder.declare_value_needs_stack_map(ptr);
+                        self.builder.declare_value_needs_stack_map(val);
                         let store = self.store_ref_fref();
                         let field = self.builder.ins().iconst(types::I64, slot as i64);
                         self.builder.ins().call(store, &[ptr, field, val]);
