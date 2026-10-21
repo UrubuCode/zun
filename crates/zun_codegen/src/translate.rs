@@ -782,6 +782,27 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::F64),
                                 types::F64,
                             ),
+                            Some("dataViewSetU32") => (
+                                "zun_jit_data_view_set_u32",
+                                4,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("dataViewSetU16") => (
+                                "zun_jit_data_view_set_u16",
+                                4,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("dataViewSetF64") => (
+                                "zun_jit_data_view_set_f64",
+                                4,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
                             _ => return Err("unsupported builtin".into()),
                         };
                     if stack.len() < arg_count {
@@ -795,6 +816,9 @@ impl Translator<'_> {
                         "zun_jit_data_view_get_u32" => vec![types::I64, types::I64, types::I32],
                         "zun_jit_data_view_get_u16" => vec![types::I64, types::I64, types::I32],
                         "zun_jit_data_view_get_f64" => vec![types::I64, types::I64, types::I32],
+                        "zun_jit_data_view_set_u32" => vec![types::I64, types::I64, types::I32, types::I32],
+                        "zun_jit_data_view_set_u16" => vec![types::I64, types::I64, types::I16, types::I32],
+                        "zun_jit_data_view_set_f64" => vec![types::I64, types::I64, types::F64, types::I32],
                         _ => vec![arg_type; arg_count],
                     };
                     let fid = if let Some(&fid) = builtin_ids.get(name) {

@@ -84,7 +84,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "dataViewSetU16",
-            params: &[Opaque, U64, U16, Bool],
+            params: &[DataView, U64, U16, Bool],
             ret: Bool,
             imp: unavailable,
         },
@@ -96,7 +96,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "dataViewSetF64",
-            params: &[Opaque, U64, F64, Bool],
+            params: &[DataView, U64, F64, Bool],
             ret: Bool,
             imp: unavailable,
         },

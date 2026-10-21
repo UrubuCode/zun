@@ -362,6 +362,38 @@ fn data_view_u16_and_f64_reads_use_width_specific_abis() {
 }
 
 #[test]
+fn data_view_scalar_writes_use_width_specific_abis() {
+    let module = compile(
+        "import { dataViewSetU32, dataViewSetU16, dataViewSetF64 } from \"zun:buffer\"; function setU32(view: DataView, offset: u64, value: u32, little: boolean): boolean { return dataViewSetU32(view, offset, value, little); } function setU16(view: DataView, offset: u64, value: u16, little: boolean): boolean { return dataViewSetU16(view, offset, value, little); } function setF64(view: DataView, offset: u64, value: number, little: boolean): boolean { return dataViewSetF64(view, offset, value, little); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("data view writer") as u32
+            + 1
+    };
+    let u32_rid = find("setU32");
+    let u16_rid = find("setU16");
+    let f64_rid = find("setF64");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(u32_rid));
+    assert!(jit.is_compiled(u16_rid));
+    assert!(jit.is_compiled(f64_rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(16);
+    let view = heap.alloc_data_view(buffer, 0, 16).expect("data view");
+    assert!(matches!(jit.call_packed_with_heap(u32_rid, &[view.addr() as u64, 0, 0xfeed_beef, 1], &mut heap), Ok(1)));
+    assert!(matches!(jit.call_packed_with_heap(u16_rid, &[view.addr() as u64, 4, 0xbeef, 1], &mut heap), Ok(1)));
+    assert!(matches!(jit.call_packed_with_heap(f64_rid, &[view.addr() as u64, 8, 2.5f64.to_bits(), 1], &mut heap), Ok(1)));
+    assert_eq!(heap.data_view_get_u32(view, 0, true), Some(0xfeed_beef));
+    assert_eq!(heap.data_view_get_u16(view, 4, true), Some(0xbeef));
+    assert_eq!(heap.data_view_get_f64(view, 8, true), Some(2.5));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

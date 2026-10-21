@@ -86,7 +86,10 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "bufferWriteF64"
                 | "dataViewGetU32"
                 | "dataViewGetU16"
-                | "dataViewGetF64",
+                | "dataViewGetF64"
+                | "dataViewSetU32"
+                | "dataViewSetU16"
+                | "dataViewSetF64",
         )
     )
 }

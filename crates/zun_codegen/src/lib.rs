@@ -173,6 +173,60 @@ pub extern "C" fn zun_jit_data_view_get_f64(
     })
 }
 
+/// Store a u32 in a managed DataView without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_u32(
+    address: i64,
+    offset: i64,
+    value: i32,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_u32(object, offset as usize, value as u32, little_endian != 0)
+            .unwrap_or(false) as i32
+    })
+}
+
+/// Store a u16 in a managed DataView without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_u16(
+    address: i64,
+    offset: i64,
+    value: i16,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_u16(object, offset as usize, value as u16, little_endian != 0)
+            .unwrap_or(false) as i32
+    })
+}
+
+/// Store an f64 in a managed DataView without allocating or collecting.
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_f64(
+    address: i64,
+    offset: i64,
+    value: f64,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_f64(object, offset as usize, value, little_endian != 0)
+            .unwrap_or(false) as i32
+    })
+}
+
 /// Read a managed Map length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
@@ -702,6 +756,9 @@ impl Jit {
     builder.symbol("zun_jit_data_view_get_u32", zun_jit_data_view_get_u32 as *const u8);
     builder.symbol("zun_jit_data_view_get_u16", zun_jit_data_view_get_u16 as *const u8);
     builder.symbol("zun_jit_data_view_get_f64", zun_jit_data_view_get_f64 as *const u8);
+    builder.symbol("zun_jit_data_view_set_u32", zun_jit_data_view_set_u32 as *const u8);
+    builder.symbol("zun_jit_data_view_set_u16", zun_jit_data_view_set_u16 as *const u8);
+    builder.symbol("zun_jit_data_view_set_f64", zun_jit_data_view_set_f64 as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
