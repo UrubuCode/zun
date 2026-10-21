@@ -3126,6 +3126,41 @@ fn gc_preserves_and_reclaims_a_jit_allocated_object_by_root_contract() {
 }
 
 #[test]
+fn gc_traces_references_inside_a_jit_allocated_object() {
+    let module = compile(
+        "class Box { value: int; }
+         class Holder { box: Box; }
+         function make(): Holder { let value = new Box(7); return new Holder(value); }
+         function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "make")
+        .map(|index| index as u32 + 1)
+        .expect("make method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles nested allocation");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let bits = jit
+        .call_packed_with_heap(rid, &[], &mut heap)
+        .expect("jit nested allocation");
+    let holder = unsafe { zun_gc::Obj::from_addr(bits as *mut u64) };
+    let box_object = unsafe { zun_gc::Obj::from_addr(holder.field(0) as *mut u64) };
+    assert_eq!(box_object.field(0), 7);
+    let holder_type = holder.type_rid();
+    assert_eq!(
+        unsafe { heap.collect(&[holder], &|type_rid| {
+            (type_rid == holder_type).then_some(vec![0]).unwrap_or_default()
+        }) },
+        0
+    );
+    assert_eq!(box_object.field(0), 7);
+    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+}
+
+#[test]
 fn generator_session_yields_and_resumes_in_tier0() {
     let module = zun_compiler::compile(
         "function* count(): int { yield 1; yield 2; return 3; }",
