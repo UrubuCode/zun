@@ -517,15 +517,27 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             continue;
         }
         if instrs.iter().any(|i| i.opcode == Opcode::ConstStr) {
-            // The first literal ABI slice is deliberately limited to a direct
-            // literal receiver call. More general locals/control flow need a
-            // literal-handle liveness contract at every safepoint.
-            if !allow_const_str
-                || !instrs.iter().all(|i| {
-                    matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret)
-                })
-                || instrs.iter().filter(|i| i.opcode == Opcode::CallVirt).count() != 1
-            {
+            // Runtime JIT literals are stable interned handles. Keep the
+            // relocatable/AOT path conservative, but allow the allocation and
+            // field path whose handles have explicit typed representations.
+            let extended_literal_path = instrs.iter().all(|i| {
+                matches!(
+                    i.opcode,
+                    Opcode::Nop
+                        | Opcode::ConstStr
+                        | Opcode::NewObj
+                        | Opcode::LoadLocal
+                        | Opcode::StoreLocal
+                        | Opcode::LoadField
+                        | Opcode::StoreField
+                        | Opcode::Pop
+                        | Opcode::Ret
+                )
+            }) && !instrs.iter().any(|i| i.opcode == Opcode::CallVirt);
+            let direct_literal_callvirt = instrs.iter().all(|i| {
+                matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret)
+            }) && instrs.iter().filter(|i| i.opcode == Opcode::CallVirt).count() == 1;
+            if !allow_const_str || (!extended_literal_path && !direct_literal_callvirt) {
                 continue;
             }
         }
