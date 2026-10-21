@@ -747,6 +747,11 @@ two-word `Any` carrier. Object payloads are covered by a GC root test through
 the containing array; aggregate Cranelift stack lowering remains intentionally
 gated until conditional reference metadata can be represented safely.
 
+The GC now records a young/old generation on every live allocation and promotes
+survivors at full-collection boundaries. This is preparatory metadata only: a
+minor nursery collector still requires an old-to-young remembered set and write
+barrier, so it is not counted as generational GC completion.
+
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
 consumer are implemented), true OSR frame replacement, compacting GC,
