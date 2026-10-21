@@ -36,7 +36,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "bufferReadU32",
-            params: &[Opaque, U64],
+            params: &[Buffer, U64],
             ret: U32,
             imp: unavailable,
         },
@@ -48,7 +48,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "bufferReadF64",
-            params: &[Opaque, U64],
+            params: &[Buffer, U64],
             ret: F64,
             imp: unavailable,
         },

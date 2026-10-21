@@ -726,6 +726,20 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::U8),
                                 types::I8,
                             ),
+                            Some("bufferReadU32") => (
+                                "zun_jit_buffer_read_u32",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::U32),
+                                types::I32,
+                            ),
+                            Some("bufferReadF64") => (
+                                "zun_jit_buffer_read_f64",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
                             _ => return Err("unsupported builtin".into()),
                         };
                     if stack.len() < arg_count {

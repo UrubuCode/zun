@@ -74,7 +74,10 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
     };
     matches!(
         zun_natives::by_id(id as u32).map(|f| f.name),
-        Some("mapSize" | "setSize" | "bufferLength" | "bufferGetU8")
+        Some(
+            "mapSize" | "setSize" | "bufferLength" | "bufferGetU8" | "bufferReadU32"
+                | "bufferReadF64",
+        )
     )
 }
 

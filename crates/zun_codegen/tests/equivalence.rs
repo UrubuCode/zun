@@ -231,6 +231,39 @@ fn array_buffer_u8_read_uses_the_scalar_managed_abi() {
 }
 
 #[test]
+fn array_buffer_numeric_reads_use_width_specific_managed_abis() {
+    let module = compile(
+        "import { bufferReadU32, bufferReadF64 } from \"zun:buffer\"; function readU32(buffer: ArrayBuffer, offset: u64): u32 { return bufferReadU32(buffer, offset); } function readF64(buffer: ArrayBuffer, offset: u64): number { return bufferReadF64(buffer, offset); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("buffer reader method") as u32
+            + 1
+    };
+    let u32_rid = find("readU32");
+    let f64_rid = find("readF64");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(u32_rid));
+    assert!(jit.is_compiled(f64_rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(16);
+    heap.buffer_write_u32(buffer, 0, 0xfeed_beef);
+    heap.buffer_write_f64(buffer, 8, 2.5);
+    assert!(matches!(
+        jit.call_packed_with_heap(u32_rid, &[buffer.addr() as u64, 0], &mut heap),
+        Ok(0xfeed_beef)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(f64_rid, &[buffer.addr() as u64, 8], &mut heap),
+        Ok(value) if f64::from_bits(value) == 2.5
+    ));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",
