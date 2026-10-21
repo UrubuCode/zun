@@ -278,6 +278,22 @@ mod tests {
         assert!(matches!(jit, Value::Int(2, zun_il::NumKind::U64)));
     }
 
+    #[test]
+    fn jit_allocation_safepoint_preserves_interpreter_jit_equivalence() {
+        let source = "class Box { value: int; } function allocate(): int { let index: int = 0; while (index < 300) { let item = new Box(0); item.value = index; index = index + 1; } return index; } function main(): int { return allocate(); }";
+        let bytes = zun_compiler::compile(source).unwrap().write();
+        let module = load(&bytes).expect("load allocation module");
+
+        let mut interpreter_output = zun_interp::CaptureOutput::default();
+        let interpreted = zun_interp::run(&module, &mut interpreter_output)
+            .expect("interpreter allocation loop");
+        let mut jit_output = zun_interp::CaptureOutput::default();
+        let jitted = execute_with(&bytes, &mut jit_output).expect("JIT allocation loop");
+
+        assert!(matches!(interpreted, Value::Int(300, zun_il::NumKind::I32)));
+        assert!(matches!(jitted, Value::Int(300, zun_il::NumKind::I32)));
+    }
+
     #[cfg(windows)]
     #[test]
     fn native_execution_routes_external_member_ref_to_the_registered_hook() {
