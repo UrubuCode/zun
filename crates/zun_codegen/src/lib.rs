@@ -1676,12 +1676,15 @@ impl Jit {
     /// method's parameter count and kinds. Object arguments must be valid
     /// managed pointers for the current GC heap.
     pub fn call_packed(&self, method_rid: u32, args: &[u64]) -> Result<u64, JitError> {
-        let param_kinds = self
+        let signature = self
             .sigs
             .get(&method_rid)
             .ok_or(JitError::Ineligible(method_rid))?
-            .param_kinds
             .clone();
+        if signature.returns == Some(JitKind::Other) {
+            return Err(JitError::Ineligible(method_rid));
+        }
+        let param_kinds = signature.param_kinds;
         if param_kinds.len() != args.len() {
             return Err(JitError::Arity {
                 expected: param_kinds.len(),
@@ -1709,6 +1712,50 @@ impl Jit {
             .ok_or(JitError::Ineligible(method_rid))?;
         let ptr = self.module.get_finalized_function(id);
         let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
+        Ok(f(args.as_ptr()))
+    }
+
+    /// Call a compiled method using the explicit two-word `Any` return ABI.
+    ///
+    /// This is intentionally separate from [`Self::call_packed`], whose
+    /// scalar return contract is exactly one `u64`. `Any` methods remain
+    /// outside the eligibility set until their parameters and internal calls
+    /// are lowered to the same carrier ABI.
+    pub fn call_packed_any(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+    ) -> Result<JitAnyAbi, JitError> {
+        let signature = self
+            .sigs
+            .get(&method_rid)
+            .ok_or(JitError::Ineligible(method_rid))?
+            .clone();
+        if signature.returns != Some(JitKind::Other) {
+            return Err(JitError::Ineligible(method_rid));
+        }
+        if signature.param_kinds.len() != args.len() {
+            return Err(JitError::Arity {
+                expected: signature.param_kinds.len(),
+                found: args.len(),
+            });
+        }
+        let native_roots: Vec<zun_gc::Obj> = args
+            .iter()
+            .zip(signature.param_kinds)
+            .filter_map(|(&arg, kind)| {
+                (kind == JitKind::Object)
+                    .then(|| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
+            })
+            .collect();
+        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
+        let id = *self
+            .shim_ids
+            .get(&method_rid)
+            .ok_or(JitError::Ineligible(method_rid))?;
+        let ptr = self.module.get_finalized_function(id);
+        let f: extern "C" fn(*const u64) -> JitAnyAbi = unsafe { std::mem::transmute(ptr) };
         Ok(f(args.as_ptr()))
     }
 
