@@ -952,7 +952,7 @@ impl Interp<'_> {
                         let obj = h.alloc(token.rid(), field_count);
                         for (i, arg) in args.iter().enumerate() {
                             let raw = value::encode_field(kinds[i], arg, h);
-                            obj.set_field(i, raw);
+                            h.store_field(obj, i, raw, kinds[i] == value::FIELD_OBJECT);
                         }
                         obj
                     });
@@ -982,9 +982,10 @@ impl Interp<'_> {
                     let kind = field.kind;
                     let value = pop(&mut stack)?;
                     let obj = pop(&mut stack)?.as_object();
-                    let raw =
-                        zun_gc::with_current_heap_mut(|h| value::encode_field(kind, &value, h));
-                    obj.set_field(slot, raw);
+                    zun_gc::with_current_heap_mut(|h| {
+                        let raw = value::encode_field(kind, &value, h);
+                        h.store_field(obj, slot, raw, kind == value::FIELD_OBJECT);
+                    });
                     stack.push(value);
                 }
                 Opcode::CallVirt => {

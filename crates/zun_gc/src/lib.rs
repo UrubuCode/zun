@@ -20,7 +20,7 @@
 //! interpreter and JIT must not outlive it. Within that lifetime the heap never
 //! moves or frees a block, so raw access through [`Obj`] is sound.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 mod handles;
@@ -129,6 +129,11 @@ pub struct Heap {
     free: HashMap<usize, Vec<usize>>,
     /// Monotonic identity hashes. Zero is reserved as the uninitialized value.
     next_identity_hash: u64,
+    /// Old objects that have received a reference to a young object.
+    ///
+    /// This is the remembered-set boundary for the future minor collector;
+    /// full collections still trace the complete heap today.
+    remembered_set: HashSet<usize>,
 }
 
 impl Heap {
@@ -141,6 +146,38 @@ impl Heap {
                 records::Generation::Old => (young, old + 1),
             },
         )
+    }
+
+    /// Store a raw field and record an old-to-young reference when applicable.
+    /// The caller has already resolved the field's metadata; this helper only
+    /// owns the GC write-barrier bookkeeping.
+    pub fn store_field(&mut self, owner: Obj, index: usize, value: u64, is_reference: bool) {
+        owner.set_field(index, value);
+        if is_reference {
+            self.write_barrier(owner, value);
+        }
+    }
+
+    /// Apply the generational write barrier for a raw object reference.
+    pub fn write_barrier(&mut self, owner: Obj, value: u64) {
+        let Some(&owner_index) = self.by_addr.get(&(owner.addr() as usize)) else {
+            return;
+        };
+        let Some(&child_index) = self.by_addr.get(&(value as usize)) else {
+            return;
+        };
+        if self.records[owner_index].alive
+            && self.records[child_index].alive
+            && self.records[owner_index].generation == records::Generation::Old
+            && self.records[child_index].generation == records::Generation::Young
+        {
+            self.remembered_set.insert(owner.addr() as usize);
+        }
+    }
+
+    /// Number of old objects currently recorded in the remembered set.
+    pub fn remembered_set_len(&self) -> usize {
+        self.remembered_set.len()
     }
 
     pub fn data_view_get_f64(
@@ -825,6 +862,20 @@ mod tests {
         assert_eq!(heap.generation_counts(), (0, 1));
         assert!(heap.by_addr.contains_key(&(keep.addr() as usize)));
         assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
+    }
+
+    #[test]
+    fn write_barrier_remembers_old_objects_pointing_to_young_objects() {
+        let mut heap = Heap::new();
+        let old = heap.alloc(7, 1);
+        unsafe { heap.collect(&[old], &|_| Vec::new()) };
+        let young = heap.alloc(8, 0);
+
+        heap.store_field(old, 0, young.addr() as u64, true);
+        assert_eq!(heap.remembered_set_len(), 1);
+
+        heap.store_field(old, 0, 0, true);
+        assert_eq!(heap.remembered_set_len(), 1);
     }
 
     #[test]
