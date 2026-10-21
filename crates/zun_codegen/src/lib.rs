@@ -1812,7 +1812,7 @@ impl Jit {
         let expected_words: usize = signature
             .param_kinds
             .iter()
-            .map(|&kind| if kind == JitKind::Other { 2 } else { 1 })
+            .map(|&kind| any_abi::abi_word_count(kind))
             .sum();
         if expected_words != args.len() {
             return Err(JitError::Arity {
@@ -1835,7 +1835,7 @@ impl Jit {
                     native_roots.push(unsafe { zun_gc::Obj::from_addr(payload as *mut u64) });
                 }
             }
-            word += if kind == JitKind::Other { 2 } else { 1 };
+            word += any_abi::abi_word_count(kind);
         }
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };

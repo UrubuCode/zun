@@ -1,5 +1,13 @@
 //! Two-word carrier used when managed `Any` values cross the JIT boundary.
 
+use zun_il::JitKind;
+
+/// Number of machine words occupied by one logical JIT argument.
+#[inline]
+pub const fn abi_word_count(kind: JitKind) -> usize {
+    if matches!(kind, JitKind::Other) { 2 } else { 1 }
+}
+
 /// C-ABI representation of [`zun_core::Any`].
 ///
 /// The tag and payload are intentionally separate machine words. Keeping this
@@ -62,7 +70,14 @@ impl JitAnyAbi {
 
 #[cfg(test)]
 mod tests {
-    use super::JitAnyAbi;
+    use super::{abi_word_count, JitAnyAbi};
+    use zun_il::{JitKind, NumKind};
+
+    #[test]
+    fn any_carrier_width_is_two_words() {
+        assert_eq!(abi_word_count(JitKind::Other), 2);
+        assert_eq!(abi_word_count(JitKind::Num(NumKind::I64)), 1);
+    }
 
     #[test]
     fn carrier_roundtrips_any_without_collapsing_two_words() {

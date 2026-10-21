@@ -118,10 +118,10 @@ pub fn define_any_return_shim(
                 let payload = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, offset + 8);
                 args.push(raw);
                 args.push(payload);
-                offset += 16;
+                offset += (crate::any_abi::abi_word_count(kind) * 8) as i32;
             } else {
                 args.push(unpack_arg(&mut b, raw, kind));
-                offset += 8;
+                offset += (crate::any_abi::abi_word_count(kind) * 8) as i32;
             }
         }
         let fref = module.declare_func_in_func(real, b.func);
