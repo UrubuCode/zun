@@ -187,9 +187,9 @@ contrato observável no código e um teste que o exercite.
   manifesto binário e geração do manifesto pelo compiler.
 - **Entregue parcialmente:** Tier 1 Cranelift para valores numéricos, booleanos
   e objetos com fields numéricos; equivalência interp↔JIT coberta por testes.
-  Um caminho estreito para arrays de objetos também baixa `ldelem` seguido de
-  `castclass` exato para a ABI de ponteiro gerenciado; casts herdados e o
-  portador agregado `Any` continuam deliberadamente no Tier 0.
+  Um caminho estreito para arrays de objetos também baixa leituras e escritas
+  de ponteiros gerenciados, com equivalência coberta no JIT; casts herdados e
+  o portador agregado `Any` continuam deliberadamente no Tier 0.
   Intrinsics numÃ©ricos de `zun:date` e `zun:math` usam uma ABI C estÃ¡vel e
   lowering direto para imports do JIT. Chamadas virtuais com override ainda
   ficam no Tier 0.
