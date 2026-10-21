@@ -4851,6 +4851,44 @@ fn interned_string_field_read_is_jit_equivalent() {
 }
 
 #[test]
+fn interned_string_field_constructor_is_jit_equivalent() {
+    let src = "class Named { tag: string; }\n\
+               function make(value: string): Named { return new Named(value); }\n\
+               function read(value: string): string { return make(value).tag; }\n\
+               function main(): int { return 1; }";
+    let module = compile(src);
+    let make_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "make")
+        .map(|index| index as u32 + 1)
+        .expect("make method");
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(jit.is_compiled(make_rid), "string-field constructor should be eligible");
+    assert!(jit.is_compiled(read_rid), "string-field read should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let handle = heap.intern_string(std::rc::Rc::from("hello"));
+    let object = jit
+        .call_packed_with_heap(make_rid, &[handle as u64], &mut heap)
+        .expect("jit string-field constructor");
+    let object = unsafe { zun_gc::Obj::from_addr(object as *mut u64) };
+    assert_eq!(object.field(0), handle as u64);
+    let result = jit
+        .call_packed_with_heap(read_rid, &[handle as u64], &mut heap)
+        .expect("jit string-field read after construction");
+    assert_eq!(result, handle as u64);
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn ineligible_methods_are_not_compiled() {
     let module = compile(r#"function main() { print("hi"); }"#);
     let entry = module.entry_point.unwrap().rid();
