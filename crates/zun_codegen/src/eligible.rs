@@ -71,6 +71,13 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
                 || string_builtin(instr)))
 }
 
+/// Checked operations are not eligible until Cranelift can route their
+/// exceptions through the same handler model as the interpreter. Keep this
+/// rule centralized instead of growing type- or container-specific allowlists.
+fn requires_exception_bridge(op: Opcode) -> bool {
+    matches!(op, Opcode::CastClass)
+}
+
 fn string_builtin(instr: &zun_il::Instruction) -> bool {
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(
@@ -408,6 +415,9 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
+        if instrs.iter().any(|instruction| requires_exception_bridge(instruction.opcode)) {
+            continue;
+        }
         if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
             continue;
         }
