@@ -664,6 +664,10 @@ The following runtime contracts are implemented and covered by tests:
   distinct native receiver types and scalar `get`/`set` operations through
   that boundary; aggregate values and DataView construction remain separate
   managed-runtime gates.
+- Primitive-backed `String` scalar queries (`length`, `contains`, `charCodeAt`,
+  `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `count`, and `compare`)
+  now use direct Cranelift helpers with interpreter/JIT equivalence coverage;
+  string-producing operations remain on the interpreter path.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
