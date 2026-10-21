@@ -446,6 +446,17 @@ impl Heap {
         unsafe { self.collect(&all_roots, ref_slots) }
     }
 
+    /// Young-only counterpart to [`Heap::collect_with_native_roots`].
+    pub unsafe fn collect_young_with_native_roots(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        let mut all_roots = roots.to_vec();
+        append_native_roots(&mut all_roots);
+        unsafe { self.collect_young(&all_roots, ref_slots) }
+    }
+
     /// Collect using roots described by a stopped JIT frame's stack map.
     ///
     /// # Safety
@@ -462,6 +473,20 @@ impl Heap {
         let mut all_roots = roots.to_vec();
         all_roots.extend(unsafe { registry.roots_at(pc, sp) });
         unsafe { self.collect(&all_roots, ref_slots) }
+    }
+
+    /// Young-only counterpart to [`Heap::collect_with_native_frame`].
+    pub unsafe fn collect_young_with_native_frame(
+        &mut self,
+        roots: &[Obj],
+        registry: &StackMapRegistry,
+        pc: usize,
+        sp: *const u8,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        let mut all_roots = roots.to_vec();
+        all_roots.extend(unsafe { registry.roots_at(pc, sp) });
+        unsafe { self.collect_young(&all_roots, ref_slots) }
     }
 
     /// Collect using the innermost stack-map registry active on this thread.
@@ -484,6 +509,31 @@ impl Heap {
             let mut all_roots = roots.to_vec();
             append_native_roots(&mut all_roots);
             unsafe { self.collect_with_native_frame(&all_roots, registry, pc, sp, ref_slots) }
+        })
+    }
+
+    /// Collect young objects from the stopped JIT frame at the current
+    /// allocation safepoint.
+    ///
+    /// # Safety
+    /// `pc` and `sp` must identify the stopped frame covered by the active
+    /// stack-map registry for this thread.
+    pub unsafe fn collect_young_with_active_native_frame(
+        &mut self,
+        roots: &[Obj],
+        pc: usize,
+        sp: *const u8,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        super::with_active_stack_map_registry(|registry| {
+            let Some(registry) = registry else {
+                return unsafe { self.collect_young_with_native_roots(roots, ref_slots) };
+            };
+            let mut all_roots = roots.to_vec();
+            append_native_roots(&mut all_roots);
+            unsafe {
+                self.collect_young_with_native_frame(&all_roots, registry, pc, sp, ref_slots)
+            }
         })
     }
 

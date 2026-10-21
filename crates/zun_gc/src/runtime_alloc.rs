@@ -59,7 +59,7 @@ pub unsafe extern "C" fn zun_rt_alloc(
                 // SAFETY: the active frame and all registered roots remain
                 // stopped and valid for this allocation slow path.
                 unsafe {
-                    heap.collect_with_active_native_frame(
+                    heap.collect_young_with_active_native_frame(
                         &[],
                         pc,
                         caller_sp as *const u8,
