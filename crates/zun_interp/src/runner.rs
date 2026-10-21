@@ -491,6 +491,18 @@ impl Interp<'_> {
         parent: Option<&super::RootLink>,
     ) -> Result<Value, RunError> {
         if let Some(hook) = self.hook {
+            // A JIT allocation may collect while the interpreter caller is
+            // parked in this dispatch. Publish the caller chain as native
+            // roots for that interval; the active Cranelift stack map covers
+            // the JIT frame itself.
+            let mut native_roots = Vec::new();
+            super::roots::collect_frame_roots(&args, &[], &mut native_roots);
+            let mut link = parent;
+            while let Some(frame) = link {
+                super::roots::collect_frame_roots(frame.stack, frame.locals, &mut native_roots);
+                link = frame.parent;
+            }
+            let _native_roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
             if let Some(result) = hook.try_call(method_rid, &args) {
                 return Ok(result);
             }
