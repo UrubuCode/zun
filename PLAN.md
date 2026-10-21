@@ -694,7 +694,8 @@ The following runtime contracts are implemented and covered by tests:
   receivers also have that ABI for read-only size queries; numeric `Map.has`
   and `Set.has` now use typed `f64` membership helpers; `Set.add(f64)` also
   crosses the scalar mutation boundary, while generic keys, values,
-  `Map.delete(f64)` and `Set.delete(f64)` now use the same scalar ABI, while
+  `Map.set(f64, f64)` now returns an explicit insertion flag through the same
+  scalar ABI, and `Map.delete(f64)` and `Set.delete(f64)` use it as well, while
   other mutating methods remain on the interpreter path until the aggregate
   `Any` ABI is lowered; broader managed values still require the remaining
   precise-GC and write-barrier work.
