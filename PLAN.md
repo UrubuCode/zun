@@ -656,8 +656,10 @@ The following runtime contracts are implemented and covered by tests:
   chunks and releases the old chunks. In the current single-thread runtime,
   the allocation helper is the safepoint: it captures `(PC, SP)` and consumes
   the registered JIT stack map. Multi-thread suspension remains deferred;
-  normal-GC policy integration and relocation of live borrowed interpreter
-  roots remain pending; owned suspended interpreter frames now expose a
+  normal full-GC integration now compacts and rewrites top-level interpreter
+  stacks/locals at safe points; nested live borrowed interpreter frame chains
+  remain on the conservative mark/sweep path until they can be rewritten as a
+  unit. Owned suspended interpreter frames now expose a
   recursive rewrite path; object-tagged `Any` values are included in precise
   frame roots, and the opt-in compaction path exposes a forwarding callback so
   owned suspended frames can rewrite their values before old chunks release;
