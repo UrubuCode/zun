@@ -111,11 +111,16 @@
     }
 
     #[test]
-    fn generator_is_not_lowered_as_a_normal_call() {
-        let message = first_error(
-            "function* values(): int { yield 1; return 0; } function main(): int { return values(); }",
+    fn generator_call_lowers_to_iterator_creation() {
+        let (hir, diagnostics) = check_src(
+            "function* values(): int { yield 1; return 0; } function main(): any { return values(); }",
         );
-        assert!(message.contains("not callable as a normal function"), "{message}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(matches!(
+            hir.functions[1].body.last(),
+            Some(hir::Stmt::Return(Some(expr)))
+                if matches!(expr.kind, hir::ExprKind::CallBuiltin { .. })
+        ));
     }
 
     #[test]

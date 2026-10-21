@@ -531,8 +531,12 @@ impl<'a> Interp<'a> {
                 ))
             }
             "generatorIteratorNew" => {
-                if let Some(Value::Int(method_rid, _)) = args.first() {
-                    return self.create_generator(*method_rid as u32, &[]);
+                if let Some(method_rid) = args.first().and_then(|value| match value {
+                    Value::Int(value, _) => Some(*value as u32),
+                    Value::Float(value, _) => Some(*value as u32),
+                    _ => None,
+                }) {
+                    return self.create_generator(method_rid, &[]);
                 }
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;

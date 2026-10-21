@@ -1460,6 +1460,17 @@ mod method_tests {
     }
 
     #[test]
+    fn runs_generator_call_through_for_of() {
+        let module = zun_compiler::compile(
+            "function* values(): int { yield 7; return 9; } function main(): any { for (let value of values()) { return value; } return 0; }",
+        )
+        .expect("compile generator for-of");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run generator for-of");
+        assert!(matches!(result, Value::Float(7.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn owned_generator_session_injects_context_per_resume() {
         let module = zun_compiler::compile("function* main(): int { yield 7; return 9; }")
             .expect("compile generator function");
