@@ -569,9 +569,11 @@ The following runtime contracts are implemented and covered by tests:
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
-  reference-slot rewriting as a tested contract. Rewriting interpreter roots,
-  auxiliary stores, raw fields, and native stack-map slots, followed by actual
-  movement, are still required before compaction is enabled;
+  reference-slot rewriting as a tested contract, and the heap can rewrite
+  metadata-declared object reference fields. Rewriting interpreter roots,
+  auxiliary stores, raw fields outside ordinary object fields, and native
+  stack-map slots, followed by actual movement, are still required before
+  compaction is enabled;
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
