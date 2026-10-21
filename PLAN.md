@@ -847,7 +847,7 @@ This activates the first generational policy while leaving nursery allocation,
 card-table scaling, and precise JIT-frame safepoints as later completion work.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
-stress/equivalence coverage for the automatic collection policy at the
+additional platform coverage for the automatic collection policy at the
 now-published precise JIT-frame safepoint, true OSR frame replacement, compacting GC
 integration with the live execution coordinator,
  non-blittable FFI marshalling, production Node N-API bindings, AOT/R2R support
