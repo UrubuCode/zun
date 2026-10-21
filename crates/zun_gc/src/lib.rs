@@ -909,6 +909,22 @@ mod tests {
     }
 
     #[test]
+    fn side_table_reference_writes_enter_the_remembered_set() {
+        let mut heap = Heap::new();
+        let array = heap.alloc_array(1);
+        let map = heap.alloc_map();
+        let set = heap.alloc_set();
+        unsafe { heap.collect(&[array, map, set], &|_| Vec::new()) };
+        let child = heap.alloc(8, 0);
+
+        assert!(heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)).is_some());
+        heap.map_insert(map, zun_core::Any::object(child.addr() as usize), zun_core::Any::int(1));
+        heap.set_add(set, zun_core::Any::object(child.addr() as usize));
+
+        assert_eq!(heap.remembered_set_len(), 3);
+    }
+
+    #[test]
     fn collection_reuses_freed_blocks() {
         let mut heap = Heap::new();
         let keep = heap.alloc(1, 2);

@@ -10,7 +10,14 @@ impl Heap {
     pub fn map_insert(&mut self, object: Obj, key: zun_core::Any, value: zun_core::Any) -> Option<zun_core::Any> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
-        self.maps.get_mut(&(object.addr() as usize))?.insert(key, value, hash, |candidate| any_same_value_zero(candidate, key, strings))
+        let result = self.maps.get_mut(&(object.addr() as usize))?.insert(key, value, hash, |candidate| any_same_value_zero(candidate, key, strings));
+        if let Some(child) = key.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        if let Some(child) = value.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        result
     }
 
     pub fn map_get(&self, object: Obj, key: zun_core::Any) -> Option<zun_core::Any> {

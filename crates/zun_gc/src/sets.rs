@@ -14,6 +14,9 @@ impl Heap {
         let existed = set.get(hash, |candidate| any_same_value_zero(candidate, value, strings)).is_some();
         if !existed {
             set.insert(value, zun_core::Any::bool(true), hash, |candidate| any_same_value_zero(candidate, value, strings));
+            if let Some(child) = value.as_object() {
+                self.write_barrier(object, child as u64);
+            }
         }
         Some(!existed)
     }
