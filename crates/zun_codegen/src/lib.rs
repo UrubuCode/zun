@@ -866,6 +866,22 @@ impl Jit {
         Ok(f(args.as_ptr()))
     }
 
+    /// Call a compiled method while registering `heap` as the current managed
+    /// heap for runtime allocation and helper calls.
+    ///
+    /// This is the explicit host boundary for JIT code that can allocate or
+    /// otherwise access managed storage. The scope is restored before return,
+    /// so nested hosts keep ownership of their previous heap registration.
+    pub fn call_packed_with_heap(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+        heap: &mut zun_gc::Heap,
+    ) -> Result<u64, JitError> {
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_packed(method_rid, args)
+    }
+
     /// Call a compiled zero-argument method (an entry point), returning its
     /// result tagged by kind.
     ///

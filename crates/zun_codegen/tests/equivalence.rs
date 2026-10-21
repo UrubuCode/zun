@@ -3034,10 +3034,9 @@ fn numeric_array_allocation_is_jit_equivalent() {
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array allocation");
     assert!(jit.is_compiled(rid));
     let mut heap = zun_gc::Heap::new();
-    let bits = {
-        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
-        jit.call_packed(rid, &[3]).expect("jit array allocation")
-    };
+    let bits = jit
+        .call_packed_with_heap(rid, &[3], &mut heap)
+        .expect("jit array allocation");
     let array = unsafe { zun_gc::Obj::from_addr(bits as *mut u64) };
     assert_eq!(heap.array_len(array), Some(3));
     assert!(matches!(interp_entry(&module), Value::Object(_)));
