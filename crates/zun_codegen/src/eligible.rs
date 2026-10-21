@@ -60,7 +60,6 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::NewArray
             | Opcode::LoadArray
             | Opcode::StoreArray
-            | Opcode::CastClass
             | Opcode::ArrayPop
             | Opcode::ArrayPush
     );
@@ -288,7 +287,6 @@ fn scalar_u64_array_access_only(
                     | Opcode::StoreLocal
                     | Opcode::LoadArray
                     | Opcode::StoreArray
-                    | Opcode::CastClass
                     | Opcode::Ret
             )
         })
@@ -316,7 +314,6 @@ fn object_array_access_only(
                     | Opcode::StoreLocal
                     | Opcode::LoadArray
                     | Opcode::StoreArray
-                    | Opcode::CastClass
                     | Opcode::Ret
             )
         })
