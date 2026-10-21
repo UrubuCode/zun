@@ -426,3 +426,35 @@ fn unpack_value(bits: u64, ret: Option<JitKind>) -> Value {
         Some(JitKind::Other) => Value::Void,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compacting_rewrites_osr_object_and_closure_roots() {
+        let module = zun_compiler::compile("function main(): int { return 1; }").unwrap();
+        let module = crate::load(&module.write()).unwrap();
+        let jit = Jit::new(&module).unwrap();
+        let hook = JitHook::with_threshold(jit, &module, 1);
+        let object = unsafe { zun_gc::Obj::from_addr(0x1000usize as *mut u64) };
+        let closure = zun_core::FunctionHandle::new(1, Some(0x1000));
+        hook.osr_snapshots.borrow_mut().push(OsrSnapshot {
+            method_rid: 1,
+            target_pc: 0,
+            pc: 0,
+            stack: vec![Value::Object(object)],
+            locals: vec![Value::Function(closure)],
+        });
+
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert_addresses(0x1000, 0x2000);
+        assert_eq!(hook.rewrite_osr_snapshot_roots(&relocation), 2);
+        let snapshots = hook.take_osr_snapshots();
+        assert_eq!(snapshots[0].stack[0].as_object().addr() as usize, 0x2000);
+        let Value::Function(handle) = snapshots[0].locals[0] else {
+            panic!("expected closure handle");
+        };
+        assert_eq!(handle.environment(), Some(0x2000));
+    }
+}
