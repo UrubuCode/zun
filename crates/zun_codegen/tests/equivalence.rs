@@ -3099,6 +3099,33 @@ fn numeric_array_allocation_is_jit_equivalent() {
 }
 
 #[test]
+fn gc_preserves_and_reclaims_a_jit_allocated_object_by_root_contract() {
+    let module = compile(
+        "class Box { value: int; }
+         function make(): Box { return new Box(7); }
+         function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "make")
+        .map(|index| index as u32 + 1)
+        .expect("make method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object allocation");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let bits = jit
+        .call_packed_with_heap(rid, &[], &mut heap)
+        .expect("jit object allocation");
+    let object = unsafe { zun_gc::Obj::from_addr(bits as *mut u64) };
+    assert_eq!(object.field(0), 7);
+    assert_eq!(unsafe { heap.collect(&[object], &|_| Vec::new()) }, 0);
+    assert_eq!(object.field(0), 7);
+    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+}
+
+#[test]
 fn generator_session_yields_and_resumes_in_tier0() {
     let module = zun_compiler::compile(
         "function* count(): int { yield 1; yield 2; return 3; }",
