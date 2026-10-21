@@ -719,9 +719,10 @@ The following runtime contracts are implemented and covered by tests:
   `Map.set(f64, f64)` now returns an explicit insertion flag through the same
   scalar ABI, and `Map.delete(f64)` and `Set.delete(f64)` use it as well, while
   `Map.getF64Or` provides a typed numeric read with an explicit fallback.
-  Other mutating methods and the generic `Map.get` remain on the interpreter path until the aggregate
-  `Any` ABI is lowered; broader managed values still require the remaining
-  precise-GC and write-barrier work.
+  Other mutating methods remain on the interpreter path. Generic `Map.get`
+  now has a narrow non-allocating out-pointer `Any` ABI for direct methods,
+  including mixed scalar-return calls; broader managed values and mutation
+  still require the remaining precise-GC and write-barrier work.
   `DataView` now has a distinct native receiver type, and its scalar
   `dataViewGetU32`, `dataViewGetU16`, and `dataViewGetF64` reads, plus scalar
   writes `dataViewSetU32`, `dataViewSetU16`, and `dataViewSetF64`, are covered
