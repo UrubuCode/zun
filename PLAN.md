@@ -686,9 +686,8 @@ The following runtime contracts are implemented and covered by tests:
 - Generator lowering preserves `yield` through HIR and verified IL, accepts
   `function*` declarations, and resumes owned Tier 0 frames. Managed generator
   objects are GC-traced, expose `next()`/`done` intrinsics, and work with
-  source-level `for...of` for zero-argument generators. The interpreter is the
-  explicit JIT fallback; argumentful generator calls and broader Cranelift
-  suspension support remain pending.
+  source-level `for...of` for argumentful generators. The interpreter is the
+  explicit JIT fallback; broader Cranelift suspension support remains pending.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
@@ -911,9 +910,8 @@ an optimization gate.
    safepoints, true OSR, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering, managed iterator
-   objects, `next()`, and `for...of` integration are implemented for
-   zero-argument generators. Argumentful generator calls and broader JIT
-   support remain pending. Module-hygiene splits are
+   objects, `next()`, and `for...of` integration are implemented, including
+   argument arrays. Broader JIT support remains pending. Module-hygiene splits are
    maintained separately by the reviewer and are not part of this execution
    backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
