@@ -842,8 +842,9 @@ automatic precise JIT-frame safepoints (the stack-map metadata and registered
 stopped-frame consumer are implemented), true OSR frame replacement, compacting GC
 integration with the live execution coordinator,
  non-blittable FFI marshalling, production Node N-API bindings, AOT/R2R support
- for the full runtime surface, and the deferred
-language surfaces listed in section 4.4.2. Each gate requires a runtime test
+ for the full runtime surface, BigInt, and the remaining Group 3 type-level
+ features. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
+ are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
 
 Behavior-preserving parser concern splits now cover helper extraction for
