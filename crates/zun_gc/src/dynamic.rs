@@ -16,11 +16,19 @@ impl Heap {
     }
 
     pub fn dynamic_set(&mut self, object: Obj, name: impl Into<String>, value: zun_core::Any) -> Option<zun_core::Any> {
-        self.dynamic_objects.get_mut(&(object.addr() as usize))?.set(name, value)
+        let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set(name, value);
+        if let Some(child) = value.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        result
     }
 
     pub fn dynamic_set_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId, value: zun_core::Any) -> Option<zun_core::Any> {
-        self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol(symbol, value)
+        let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol(symbol, value);
+        if let Some(child) = value.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        result
     }
 
     pub fn dynamic_get_symbol_function(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
@@ -33,12 +41,20 @@ impl Heap {
     }
 
     pub fn dynamic_set_symbol_function(&mut self, object: Obj, symbol: zun_core::SymbolId, function: zun_core::FunctionHandle) -> Option<zun_core::FunctionHandle> {
-        self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol_function(symbol, function)
+        let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol_function(symbol, function);
+        if let Some(environment) = function.environment() {
+            self.write_barrier(object, environment as u64);
+        }
+        result
     }
     pub fn dynamic_set_function(&mut self, object: Obj, name: impl Into<String>, function: zun_core::FunctionHandle) -> Option<zun_core::FunctionHandle> {
-        self.dynamic_objects
+        let result = self.dynamic_objects
             .get_mut(&(object.addr() as usize))
-            .and_then(|properties| properties.set_function(name, function))
+            .and_then(|properties| properties.set_function(name, function));
+        if let Some(environment) = function.environment() {
+            self.write_barrier(object, environment as u64);
+        }
+        result
     }
 
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {

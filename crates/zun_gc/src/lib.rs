@@ -914,14 +914,22 @@ mod tests {
         let array = heap.alloc_array(1);
         let map = heap.alloc_map();
         let set = heap.alloc_set();
-        unsafe { heap.collect(&[array, map, set], &|_| Vec::new()) };
+        let dynamic = heap.alloc_dynamic();
+        let promise = heap.alloc_promise();
+        unsafe { heap.collect(&[array, map, set, dynamic, promise], &|_| Vec::new()) };
         let child = heap.alloc(8, 0);
 
         assert!(heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)).is_some());
+        assert_eq!(heap.remembered_set_len(), 1);
         heap.map_insert(map, zun_core::Any::object(child.addr() as usize), zun_core::Any::int(1));
+        assert_eq!(heap.remembered_set_len(), 2);
         heap.set_add(set, zun_core::Any::object(child.addr() as usize));
-
         assert_eq!(heap.remembered_set_len(), 3);
+        heap.dynamic_set(dynamic, "child", zun_core::Any::object(child.addr() as usize));
+        assert_eq!(heap.remembered_set_len(), 4);
+        heap.promise_resolve(promise, zun_core::Any::object(child.addr() as usize));
+
+        assert_eq!(heap.remembered_set_len(), 5);
     }
 
     #[test]

@@ -13,6 +13,8 @@ impl Heap {
     pub fn alloc_proxy(&mut self, target: Obj, handler: Obj) -> Obj {
         let proxy = self.alloc(0, 0);
         self.proxies.insert(proxy.addr() as usize, ProxyRecord { target, handler });
+        self.write_barrier(proxy, target.addr() as u64);
+        self.write_barrier(proxy, handler.addr() as u64);
         proxy
     }
 

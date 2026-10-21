@@ -93,9 +93,13 @@ impl Heap {
     }
 
     pub fn promise_resolve(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
-        self.promises
+        let result = self.promises
             .get_mut(&(object.addr() as usize))
-            .map(|promise| promise.resolve(value))
+            .map(|promise| promise.resolve(value));
+        if let Some(child) = value.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        result
     }
 
     pub fn promise_reject(&mut self, object: Obj, error: impl Into<String>) -> Option<bool> {
