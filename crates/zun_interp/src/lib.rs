@@ -1319,6 +1319,30 @@ mod method_tests {
     }
 
     #[test]
+    fn generator_session_exposes_iterator_result_contract() {
+        let module = zun_compiler::compile(
+            "function* main(): int { yield 7; return 9; }",
+        )
+        .expect("compile generator function");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut generator = GeneratorSession::new(&module, entry.rid(), Vec::new(), &mut output)
+            .expect("create generator session");
+
+        let first = generator.next_result().expect("first generator result");
+        assert!(matches!(first.value, Value::Float(value, zun_il::NumKind::F64) if value == 7.0));
+        assert!(!first.done);
+
+        let second = generator.next_result().expect("completion generator result");
+        assert!(matches!(second.value, Value::Int(9, zun_il::NumKind::I32)));
+        assert!(second.done);
+
+        let terminal = generator.next_result().expect("sticky completion result");
+        assert!(matches!(terminal.value, Value::Int(9, zun_il::NumKind::I32)));
+        assert!(terminal.done);
+    }
+
+    #[test]
     fn resumable_session_suspends_and_resumes_on_promise_settlement() {
         let module = zun_compiler::compile(
             "async function main(): Promise { let p = new Promise(); await p; return p; }",
