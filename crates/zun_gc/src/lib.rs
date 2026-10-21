@@ -436,6 +436,23 @@ impl Heap {
         rewritten
     }
 
+    /// Run every heap-owned relocation pass in dependency order.
+    ///
+    /// Native roots and stopped JIT frames are intentionally not implicit:
+    /// callers must invoke [`rewrite_native_roots`] and
+    /// [`StackMapRegistry::rewrite_slots_at`] while those frames are stopped.
+    pub fn rewrite_all_references(
+        &mut self,
+        relocation: &RelocationMap,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        self.rewrite_object_references(relocation, ref_slots)
+            + self.rewrite_auxiliary_references(relocation)
+            + self.rewrite_iterator_references(relocation)
+            + self.rewrite_weak_references(relocation)
+            + self.rewrite_runtime_references(relocation)
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -1227,6 +1244,26 @@ mod tests {
         assert_eq!(rewritten, 1);
         assert_eq!(owner.field(0), new_target.addr() as u64);
         assert_eq!(owner.addr(), owner_addr);
+    }
+
+    #[test]
+    fn relocation_coordinator_runs_heap_owned_passes() {
+        let mut heap = Heap::new();
+        let owner = heap.alloc(1, 1);
+        let child = heap.alloc(2, 0);
+        let new_owner = unsafe { Obj::from_addr(0x5000 as *mut u64) };
+        let new_child = unsafe { Obj::from_addr(0x6000 as *mut u64) };
+        heap.store_field(owner, 0, child.addr() as u64, true);
+        let mut relocation = RelocationMap::new();
+        relocation.insert(owner, new_owner);
+        relocation.insert(child, new_child);
+
+        assert_eq!(heap.rewrite_all_references(&relocation, &|type_rid| {
+            if type_rid == 1 { vec![0] } else { vec![] }
+        }), 3);
+        assert_eq!(heap.by_addr.get(&(new_owner.addr() as usize)), Some(&0));
+        assert_eq!(heap.by_addr.get(&(new_child.addr() as usize)), Some(&1));
+        assert_eq!(owner.field(0), new_child.addr() as u64);
     }
 
     #[test]
