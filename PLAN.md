@@ -918,8 +918,8 @@ an optimization gate.
    optional property/method chaining, nullish coalescing, `switch`, loops,
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
-6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
-   safepoints, true OSR frame replacement, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
+6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
+   replacement, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering, managed iterator
    objects, `next()`, and `for...of` integration are implemented, including
