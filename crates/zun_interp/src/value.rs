@@ -33,6 +33,57 @@ pub enum Value {
 }
 
 impl Value {
+    /// Rewrite this value's managed references after a moving collection.
+    ///
+    /// The interpreter owns the actual frame storage, so callers must invoke
+    /// this while execution is stopped and while the relocation map is valid.
+    pub fn rewrite_managed_reference(&mut self, relocation: &zun_gc::RelocationMap) -> bool {
+        match self {
+            Value::Object(object) => {
+                let old = object.addr() as usize;
+                let new = relocation.relocate_address(old);
+                if old == new {
+                    false
+                } else {
+                    *object = unsafe { zun_gc::Obj::from_addr(new as *mut u64) };
+                    true
+                }
+            }
+            Value::Any(any) if any.as_object().is_some() => {
+                let old = any.as_object().expect("object Any payload") as usize;
+                let new = relocation.relocate_address(old);
+                if old == new {
+                    false
+                } else {
+                    *any = any.map_object_address(|_| new);
+                    true
+                }
+            }
+            Value::Function(handle) => {
+                let Some(old) = handle.environment() else { return false };
+                let new = relocation.relocate_address(old);
+                if old == new {
+                    false
+                } else {
+                    *handle = handle.relocate_environment(Some(new));
+                    true
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Rewrite every managed reference in an owned interpreter value slice.
+    pub fn rewrite_managed_references(
+        values: &mut [Value],
+        relocation: &zun_gc::RelocationMap,
+    ) -> usize {
+        values
+            .iter_mut()
+            .map(|value| usize::from(value.rewrite_managed_reference(relocation)))
+            .sum()
+    }
+
     /// Box a typed value into the runtime's explicit dynamic representation.
     pub fn box_any(&self, heap: &mut zun_gc::Heap) -> Option<zun_core::Any> {
         match self {
@@ -302,5 +353,26 @@ mod tests {
             decode_field(FIELD_STRING, slot, &heap),
             Value::Str(text) if &*text == "zun"
         ));
+    }
+
+    #[test]
+    fn moving_collection_rewrites_owned_value_references() {
+        let old = unsafe { zun_gc::Obj::from_addr(0x1000usize as *mut u64) };
+        let new = unsafe { zun_gc::Obj::from_addr(0x2000usize as *mut u64) };
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert(old, new);
+        relocation.insert_addresses(0x3000, 0x4000);
+
+        let mut values = vec![
+            Value::Object(old),
+            Value::Any(zun_core::Any::object(0x1000)),
+            Value::Function(zun_core::FunctionHandle::new(7, Some(0x3000))),
+            Value::Int(1, zun_il::NumKind::I32),
+        ];
+        assert_eq!(Value::rewrite_managed_references(&mut values, &relocation), 3);
+        assert!(matches!(values[0], Value::Object(object) if object.addr() as usize == 0x2000));
+        assert!(matches!(values[1], Value::Any(any) if any.as_object() == Some(0x2000)));
+        assert!(matches!(values[2], Value::Function(handle) if handle.environment() == Some(0x4000)));
+        assert!(matches!(values[3], Value::Int(1, zun_il::NumKind::I32)));
     }
 }
