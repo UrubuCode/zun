@@ -75,7 +75,7 @@ fn string_builtin(instr: &zun_il::Instruction) -> bool {
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(
         zun_natives::by_id(id as u32).map(|f| f.name),
-        Some("length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith")
+        Some("length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf")
     )
 }
 
@@ -241,7 +241,7 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
         .is_some_and(|method| {
             matches!(
                 module.strings.get(method.name),
-                "length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith"
+                "length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf"
             )
         })
     {

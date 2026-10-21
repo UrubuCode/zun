@@ -399,6 +399,18 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::Bool));
                                 continue;
                             }
+                            Some("indexOf") => {
+                                let (needle, needle_kind) = stack.pop().ok_or("string indexOf needle")?;
+                                let (receiver, receiver_kind) = stack.pop().ok_or("string indexOf receiver")?;
+                                if receiver_kind != JitKind::String || needle_kind != JitKind::String {
+                                    return Err("string indexOf expects string arguments".into());
+                                }
+                                let helper = self.string_index_of_fref();
+                                let call = self.builder.ins().call(helper, &[receiver, needle]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Num(NumKind::I32)));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -516,6 +528,13 @@ impl Translator<'_> {
                                 2,
                                 types::I64,
                                 JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("indexOf") => (
+                                "zun_jit_string_index_of",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
                                 types::I32,
                             ),
                             Some("isValid") => (
@@ -1547,6 +1566,18 @@ impl Translator<'_> {
 
     fn string_ends_with_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         self.string_predicate_fref("zun_jit_string_ends_with")
+    }
+
+    fn string_index_of_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_index_of", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_index_of");
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     fn string_predicate_fref(&mut self, name: &str) -> cranelift_codegen::ir::FuncRef {
