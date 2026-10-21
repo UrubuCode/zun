@@ -662,13 +662,12 @@ The following runtime contracts are implemented and covered by tests:
   absolute-path policy are implemented. `FfiSignature` now describes the
   supported blittable `i64`, `f64`, and zero-argument `bool` C shapes, and
   validates them before dispatching to fixed-arity thunks. Compiler/IL
-  external `MemberRef` calls now carry their arity and can be intercepted by a
-  host `CallHook`; `zun_vm` provides an explicit `NativeCallHook` and
-  `execute_with_native` boundary that bind registered scalar signatures to the
-  resolver and typed thunks while retaining JIT tiering. Source-level
-  declarations and non-blittable marshalling remain separate gates;
-  source-level P/Invoke-style declarations and typed IL calls are still
-  pending.
+  external `MemberRef` calls now carry their arity and scalar parameter/return
+  tags and can be intercepted by a host `CallHook`; `zun_vm` provides an
+  explicit `NativeCallHook` and `execute_with_native` boundary that validates
+  registered scalar signatures against that metadata before invoking typed
+  thunks while retaining JIT tiering. Source-level P/Invoke-style declarations
+  and non-blittable marshalling remain separate gates.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
