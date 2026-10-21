@@ -750,7 +750,10 @@ gated until conditional reference metadata can be represented safely.
 The GC now records a young/old generation on every live allocation and promotes
 survivors at full-collection boundaries. This is preparatory metadata only: a
 minor nursery collector still requires an old-to-young remembered set and write
-barrier, so it is not counted as generational GC completion.
+barrier, so it is not counted as generational GC completion. Interpreter and
+Cranelift reference-field stores now route through that barrier; array and
+dynamic-reference stores remain on their explicit managed ABI boundaries until
+their corresponding card/remembered-set hooks are wired.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
