@@ -12,7 +12,7 @@ mod promise;
 mod verify_module;
 
 use zun_interp::value::Value;
-use zun_interp::{run_with, Output, RunError, StdoutOutput};
+use zun_interp::{run_with, CallHook, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
 pub use ffi::{
@@ -78,6 +78,65 @@ pub fn execute_with(bytes: &[u8], output: &mut dyn Output) -> Result<Value, VmEr
             run_with(&module, output, Some(&hook)).map_err(VmError::Run)
         }
         Err(_) => run_with(&module, output, None).map_err(VmError::Run),
+    }
+}
+
+/// Load and run a module with explicit scalar native bindings while retaining
+/// the normal JIT tiering hook. Native bindings are consulted only for
+/// registered external `MemberRef` calls.
+pub fn execute_with_native(
+    bytes: &[u8],
+    output: &mut dyn Output,
+    native: &NativeCallHook,
+) -> Result<Value, VmError> {
+    let module = load(bytes)?;
+    let jit = zun_codegen::Jit::new(&module).ok().map(|jit| JitHook::new(jit, &module));
+    let hook = CombinedCallHook { jit, native };
+    run_with(&module, output, Some(&hook)).map_err(VmError::Run)
+}
+
+struct CombinedCallHook<'a> {
+    jit: Option<JitHook<'a>>,
+    native: &'a NativeCallHook,
+}
+
+impl CallHook for CombinedCallHook<'_> {
+    fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value> {
+        self.jit.as_ref()?.try_call(method_rid, args)
+    }
+
+    fn try_call_external(
+        &self,
+        module: &str,
+        name: &str,
+        args: &[Value],
+    ) -> Option<Result<Value, RunError>> {
+        self.native.try_call_external(module, name, args)
+    }
+
+    fn append_roots(&self, roots: &mut Vec<zun_gc::Obj>) {
+        if let Some(jit) = &self.jit {
+            jit.append_roots(roots);
+        }
+    }
+
+    fn on_backedge(&self, method_rid: u32, target_pc: usize) {
+        if let Some(jit) = &self.jit {
+            jit.on_backedge(method_rid, target_pc);
+        }
+    }
+
+    fn on_backedge_state(
+        &self,
+        method_rid: u32,
+        target_pc: usize,
+        pc: usize,
+        stack: &[Value],
+        locals: &[Value],
+    ) {
+        if let Some(jit) = &self.jit {
+            jit.on_backedge_state(method_rid, target_pc, pc, stack, locals);
+        }
     }
 }
 
@@ -169,6 +228,17 @@ mod tests {
         assert!(matches!(
             execute_manifest(&loader, &manifest, &mut output).unwrap(),
             zun_interp::value::Value::Int(23, zun_il::NumKind::I32)
+        ));
+    }
+
+    #[test]
+    fn native_execution_keeps_the_jit_hook_when_no_native_call_is_used() {
+        let bytes = zun_compiler::compile("function main(): int { return 31; }").unwrap().write();
+        let native = NativeCallHook::new();
+        let mut output = zun_interp::CaptureOutput::default();
+        assert!(matches!(
+            execute_with_native(&bytes, &mut output, &native).unwrap(),
+            zun_interp::value::Value::Int(31, zun_il::NumKind::I32)
         ));
     }
 
