@@ -304,14 +304,13 @@ o JIT já possui dispatch virtual por slot para os métodos elegíveis sem overr
 dispatch dinâmico completo e chamadas virtuais com fallback continuam sendo
 fronteiras separadas, preservando a resolução de tokens e a tabela de métodos.
 
-Depois do dispatch virtual, permanece a integração operacional de raízes precisas:
-safepoints automáticos no interpretador/JIT e a captura de `(PC, SP)` nos pontos
-em que uma coleta pode ocorrer (a metadata de slots do Cranelift já está pronta).
-O runtime já publica o registry da chamada JIT no thread atual e oferece uma
-entrada de coleta que o consome; ainda falta ligar essa entrada a um safepoint
-de polling que pare o frame no PC/SP correspondente.
-Esse é o maior risco de memória e deve ser implementado isoladamente, com sua
-própria suíte de equivalência e testes de coleta durante chamadas JIT.
+Depois do dispatch virtual, a integração operacional de raízes precisas está
+implementada: safepoints automáticos no interpretador/JIT capturam `(PC, SP)`
+na slow path de alocação, publicam o frame parado e consomem a metadata de
+slots do Cranelift. A coleta/compactação reescreve os slots registrados, com
+equivalência e testes de coleta durante chamadas JIT. Permanecem apenas
+extensões de cobertura multiplataforma e a coordenação multi-thread, que está
+explicitamente deferida até o VM ter múltiplos mutators.
 
 O benchmark de Tier 0 também cobre loops de leitura/escrita de campos e dispatch
 virtual. Os lookups de metadata desses caminhos são pré-resolvidos na carga do
