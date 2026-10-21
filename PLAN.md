@@ -17,8 +17,10 @@ Dynamic override dispatch in the JIT is implemented through compact inherited
 virtual-slot tables. Precise interpreter roots, native/JIT stack-map metadata,
 Promise/microtask primitives (including settlement-preserving `finally`), `Any`/`DynamicObject`, scalar external-library
 calls, interpreted backedge observation, and conservative reachability-based
-trimming are also implemented. The remaining gates are complete typed FFI/ABI
-integration, N-API hosting, AOT/R2R object emission, true OSR frame replacement,
+trimming are also implemented. Scalar typed FFI/ABI integration now covers
+source declarations, typed MemberRef metadata, host resolution, and direct
+blittable dispatch. The remaining gates are non-blittable marshalling,
+production N-API hosting, AOT/R2R object emission, true OSR frame replacement,
 and production-grade
 trimming diagnostics and metadata removal.
 
@@ -838,8 +840,8 @@ The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and registered
 stopped-frame consumer are implemented), true OSR frame replacement, compacting GC
 integration with the live execution coordinator,
-complete typed FFI/ABI integration, production Node
-N-API bindings, AOT/R2R support for the full runtime surface, and the deferred
+ non-blittable FFI marshalling, production Node N-API bindings, AOT/R2R support
+ for the full runtime surface, and the deferred
 language surfaces listed in section 4.4.2. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
 
@@ -904,7 +906,7 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
-   safepoints, true OSR, compaction, source/IL typed FFI and production N-API, AOT/R2R, and the
+   safepoints, true OSR, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering and frame
    resumption are implemented, while managed iterator-object/`next()`
