@@ -128,3 +128,26 @@ impl CallHook for NativeCallHook {
         Some(self.invoke(module, name, signature, args))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn calls_a_system_library_through_the_registered_scalar_abi() {
+        let mut hook = NativeCallHook::new();
+        hook.register("kernel32", "GetCurrentProcessId", FfiSignature::new([], FfiScalar::I64));
+        let result = hook
+            .try_call_external("kernel32", "GetCurrentProcessId", &[])
+            .expect("registered native export")
+            .expect("system call succeeds");
+        assert!(matches!(result, Value::Int(pid, NumKind::I64) if pid > 0));
+    }
+
+    #[test]
+    fn unregistered_exports_are_not_intercepted() {
+        let hook = NativeCallHook::new();
+        assert!(hook.try_call_external("kernel32", "missing", &[]).is_none());
+    }
+}
