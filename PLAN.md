@@ -955,7 +955,8 @@ set each time, so a program that keeps O(n) objects live pays roughly
 O(n^2 / 256) in GC over the run. For large live sets this dominates everything.
 The adaptive GC interval is implemented: it scales the next safepoint with the
 live-set and increases the interval when a collection reclaims nothing. This
-removes the fixed-256 policy, but does not eliminate the underlying whole-heap
+now also increases the nursery budget when the observed young survival rate is
+high. This removes the fixed-256 policy, but does not eliminate the underlying whole-heap
 scan. A generational/incremental collector remains the long-term fix; precise
 JIT-frame stack maps and safe native-frame scanning are also still required
 before hot managed code can leave Tier 0. This remains the real performance
