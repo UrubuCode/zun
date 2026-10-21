@@ -564,6 +564,12 @@ pub enum ExprKind {
         /// Array expression containing the rest arguments.
         args: Box<Expr>,
     },
+    /// Create a managed generator iterator with its initial arguments.
+    GeneratorCall {
+        func: FuncIndex,
+        args: Vec<Expr>,
+        native_id: u32,
+    },
     /// Invoke a function-valued expression indirectly.
     IndirectCall {
         /// Function value expression.

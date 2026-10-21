@@ -1214,23 +1214,12 @@ impl Checker<'_> {
 
                 if let Some(&func) = self.by_name.get(&name) {
                     if self.signatures[func as usize].is_generator {
-                        if !args.is_empty() {
-                            self.error(span, "generator calls with arguments are not lowered yet");
-                            return self.poison(span);
-                        }
-                        let Some((id, _)) = zun_natives::resolve("zun:buffer", "generatorIteratorNew") else {
+                        let Some((native_id, _)) = zun_natives::resolve("zun:buffer", "generatorIteratorNewArgs") else {
                             self.error(span, "missing generator iterator intrinsic");
                             return self.poison(span);
                         };
                         return hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin {
-                                id,
-                                args: vec![hir::Expr {
-                                    kind: hir::ExprKind::Number((func + 1) as f64),
-                                    ty: Ty::F64,
-                                    span,
-                                }],
-                            },
+                            kind: hir::ExprKind::GeneratorCall { func, args, native_id },
                             ty: Ty::Any,
                             span,
                         };

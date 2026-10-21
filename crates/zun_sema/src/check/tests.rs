@@ -119,7 +119,7 @@
         assert!(matches!(
             hir.functions[1].body.last(),
             Some(hir::Stmt::Return(Some(expr)))
-                if matches!(expr.kind, hir::ExprKind::CallBuiltin { .. })
+                if matches!(expr.kind, hir::ExprKind::GeneratorCall { .. })
         ));
     }
 

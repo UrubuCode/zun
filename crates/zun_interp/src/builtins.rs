@@ -132,6 +132,7 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "mapIteratorNext",
         "mapIteratorDone",
         "generatorIteratorNew",
+        "generatorIteratorNewArgs",
         "generatorIteratorNext",
         "generatorIteratorDone",
     ] {

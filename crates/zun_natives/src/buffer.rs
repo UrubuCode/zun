@@ -237,6 +237,7 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn { name: "generatorIteratorNew", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "generatorIteratorNewArgs", params: &[U32, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "generatorIteratorNext", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "generatorIteratorDone", params: &[Opaque], ret: Bool, imp: unavailable },
     ],

@@ -542,6 +542,24 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(generator))
             }
+            "generatorIteratorNewArgs" => {
+                let method_rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let values = zun_gc::with_current_heap(|heap| {
+                    let length = heap.array_len(array)?;
+                    (0..length).map(|index| heap.array_get(array, index)).collect::<Option<Vec<_>>>()
+                })
+                .ok_or(RunError::BadToken)?;
+                let generator = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_generator(0, method_rid, values)
+                });
+                Ok(Value::Object(generator))
+            }
             "generatorIteratorDone" => {
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
