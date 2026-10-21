@@ -643,6 +643,24 @@ pub extern "C" fn zun_jit_set_add_f64(address: i64, value: f64) -> i32 {
     })
 }
 
+/// Delete a numeric key from a managed Map without materializing an `Any` carrier.
+#[inline]
+pub extern "C" fn zun_jit_map_delete_f64(address: i64, key: f64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.map_remove(object, zun_core::Any::float(key)).is_some() as i32
+    })
+}
+
+/// Delete a numeric value from a managed Set without materializing an `Any` carrier.
+#[inline]
+pub extern "C" fn zun_jit_set_delete_f64(address: i64, value: f64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.set_remove(object, zun_core::Any::float(value)).unwrap_or(false) as i32
+    })
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -1239,6 +1257,8 @@ impl Jit {
     builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
     builder.symbol("zun_jit_set_has_f64", zun_jit_set_has_f64 as *const u8);
     builder.symbol("zun_jit_set_add_f64", zun_jit_set_add_f64 as *const u8);
+    builder.symbol("zun_jit_map_delete_f64", zun_jit_map_delete_f64 as *const u8);
+    builder.symbol("zun_jit_set_delete_f64", zun_jit_set_delete_f64 as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);

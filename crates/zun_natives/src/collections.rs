@@ -55,6 +55,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "mapDeleteF64",
+            params: &[Map, F64],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "mapClear",
             params: &[Map],
             ret: Void,
@@ -107,6 +113,12 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn {
             name: "setDelete",
             params: &[Set, Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "setDeleteF64",
+            params: &[Set, F64],
             ret: Bool,
             imp: unavailable,
         },
