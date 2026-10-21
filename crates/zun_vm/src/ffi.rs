@@ -7,6 +7,46 @@ use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Scalar types supported by the first, blittable FFI ABI.
+///
+/// These types have a stable C representation on the host ABI. Strings,
+/// buffers, aggregates, and callbacks require generated marshalling stubs and
+/// are deliberately not represented by this descriptor yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiScalar {
+    I64,
+    F64,
+    Bool,
+}
+
+/// A validated signature for a direct C-ABI call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FfiSignature {
+    params: Vec<FfiScalar>,
+    result: FfiScalar,
+}
+
+impl FfiSignature {
+    pub fn new(params: impl Into<Vec<FfiScalar>>, result: FfiScalar) -> Self {
+        Self {
+            params: params.into(),
+            result,
+        }
+    }
+
+    pub fn params(&self) -> &[FfiScalar] {
+        &self.params
+    }
+
+    pub fn result(&self) -> FfiScalar {
+        self.result
+    }
+
+    pub fn arity(&self) -> usize {
+        self.params.len()
+    }
+}
+
 /// Return the platform library-name candidates for a logical native library.
 ///
 /// Names that already contain a path separator or a recognized suffix are
@@ -334,6 +374,20 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(resolver.len(), 0);
         assert!(!resolver.contains("zun-library-that-does-not-exist"));
+    }
+
+    #[test]
+    fn ffi_signature_preserves_the_blittable_call_shape() {
+        let signature = FfiSignature::new(
+            vec![FfiScalar::I64, FfiScalar::F64, FfiScalar::Bool],
+            FfiScalar::I64,
+        );
+        assert_eq!(signature.arity(), 3);
+        assert_eq!(
+            signature.params(),
+            &[FfiScalar::I64, FfiScalar::F64, FfiScalar::Bool]
+        );
+        assert_eq!(signature.result(), FfiScalar::I64);
     }
 
     #[test]
