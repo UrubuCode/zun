@@ -33,7 +33,9 @@ use stack::{
 };
 use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
 use runner::run_method_with;
-pub use runner::{GeneratorResult, GeneratorSession, ResumableSession, ResumeResult};
+pub use runner::{
+    GeneratorIteratorResult, GeneratorResult, GeneratorSession, ResumableSession, ResumeResult,
+};
 
 /// Read the result of a settled managed Promise for the synchronous await
 /// fast path. Pending promises deliberately return `None` and must be routed

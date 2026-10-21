@@ -21,6 +21,17 @@ pub enum GeneratorResult {
     Complete(Value),
 }
 
+/// Iterator-shaped result returned by a generator `next()` operation.
+///
+/// Keeping the terminal return value alongside `done` is important for the
+/// JavaScript iterator contract: the value yielded before completion and the
+/// value returned by the generator are distinct observations.
+#[derive(Clone, Debug)]
+pub struct GeneratorIteratorResult {
+    pub value: Value,
+    pub done: bool,
+}
+
 /// Persistent interpreter boundary for async executions.
 ///
 /// The heap and suspended frame outlive an individual poll, matching the
@@ -111,6 +122,17 @@ impl<'a> GeneratorSession<'a> {
             ResumeResult::Suspended => Err(RunError::Malformed(
                 "generator suspended without yielding a value".into(),
             )),
+        }
+    }
+
+    /// Advance the generator using the source-level iterator result shape.
+    pub fn next_result(&mut self) -> Result<GeneratorIteratorResult, RunError> {
+        match self.next()? {
+            GeneratorResult::Yielded(value) => Ok(GeneratorIteratorResult {
+                value,
+                done: false,
+            }),
+            GeneratorResult::Complete(value) => Ok(GeneratorIteratorResult { value, done: true }),
         }
     }
 

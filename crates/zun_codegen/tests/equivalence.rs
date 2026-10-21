@@ -3293,6 +3293,36 @@ fn generator_session_implements_host_iterator_protocol() {
 }
 
 #[test]
+fn generator_session_exposes_iterator_result_shape() {
+    let module = zun_compiler::compile(
+        "function* count(): int { yield 4; return 6; }",
+    )
+    .expect("compile generator");
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "count")
+        .map(|index| index as u32 + 1)
+        .expect("generator method");
+    let mut output = CaptureOutput::default();
+    let mut session = zun_interp::GeneratorSession::new(&module, rid, Vec::new(), &mut output)
+        .expect("create generator session");
+
+    let yielded = session.next_result().expect("yield result");
+    assert!(!yielded.done);
+    assert!(matches!(yielded.value, Value::Float(value, _) if value == 4.0));
+
+    let completed = session.next_result().expect("completion result");
+    assert!(completed.done);
+    assert!(matches!(completed.value, Value::Int(value, _) if value == 6));
+
+    let sticky = session.next_result().expect("sticky completion result");
+    assert!(sticky.done);
+    assert!(matches!(sticky.value, Value::Int(value, _) if value == 6));
+}
+
+#[test]
 fn generator_session_rejects_a_regular_method() {
     let module = zun_compiler::compile("function plain(): int { return 1; }")
         .expect("compile regular method");
