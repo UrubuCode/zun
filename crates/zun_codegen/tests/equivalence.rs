@@ -3087,6 +3087,23 @@ fn generator_session_implements_host_iterator_protocol() {
 }
 
 #[test]
+fn generator_session_rejects_a_regular_method() {
+    let module = zun_compiler::compile("function plain(): int { return 1; }")
+        .expect("compile regular method");
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "plain")
+        .map(|index| index as u32 + 1)
+        .expect("regular method");
+    let mut output = CaptureOutput::default();
+    let error = zun_interp::GeneratorSession::new(&module, rid, Vec::new(), &mut output)
+        .expect_err("regular method must not create a generator session");
+    assert!(matches!(error, zun_interp::RunError::Malformed(message) if message.contains("requires a method containing yield")));
+}
+
+#[test]
 fn non_overridden_virtual_call_is_jit_eligible() {
     let src = "class Counter { n: int; get(): int { return this.n; } }\n\
                function read(c: Counter): int { return c.get(); }\n\
