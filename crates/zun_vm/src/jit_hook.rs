@@ -129,6 +129,39 @@ impl<'a> JitHook<'a> {
     pub fn take_osr_snapshots(&self) -> Vec<OsrSnapshot> {
         self.osr_snapshots.borrow_mut().drain(..).collect()
     }
+
+    /// Check that a captured snapshot can be mapped back to the method's IL
+    /// body before an OSR backend attempts frame replacement.
+    pub fn is_valid_osr_snapshot(&self, snapshot: &OsrSnapshot) -> bool {
+        if snapshot.method_rid == 0 || snapshot.target_pc > snapshot.pc {
+            return false;
+        }
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get(snapshot.method_rid as usize - 1)
+        else {
+            return false;
+        };
+        let Ok(body) = zun_module::read_body(&self.module.code, method.body_offset) else {
+            return false;
+        };
+        if snapshot.locals.len() != body.local_count as usize {
+            return false;
+        }
+        let Ok(instrs) = zun_il::decode_all(body.code) else {
+            return false;
+        };
+        let mut offset = 0usize;
+        let mut boundaries = std::collections::HashSet::new();
+        for instr in instrs {
+            boundaries.insert(offset);
+            offset += instr.encoded_len();
+        }
+        boundaries.insert(offset);
+        boundaries.contains(&snapshot.target_pc) && boundaries.contains(&snapshot.pc)
+    }
 }
 
 impl CallHook for JitHook<'_> {
