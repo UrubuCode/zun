@@ -286,6 +286,11 @@ impl<'a> GeneratorSession<'a> {
         self.owned.heap_mut()
     }
 
+    /// Compact the generator's owned heap between iterator steps.
+    pub fn compact_pending_frames(&mut self) -> Option<zun_gc::CompactionResult> {
+        self.owned.compact_pending_frames()
+    }
+
     /// Return the value produced by the most recent successful `next` call.
     /// The value is cleared once the generator completes, matching the
     /// iterator contract described by the runtime design.
