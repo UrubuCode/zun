@@ -87,10 +87,22 @@ fn check_impl(
     external_functions: &[ExternalFunction],
     allow_external_modules: bool,
 ) -> hir::Program {
-    let external_by_name: HashMap<_, _> = external_functions
-        .iter()
-        .map(|function| (function.name.clone(), function.clone()))
-        .collect();
+    let mut external_by_name: HashMap<String, ExternalFunction> = HashMap::new();
+    for function in external_functions {
+        if let Some(previous) = external_by_name.get(&function.name) {
+            if previous.module != function.module {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "external symbol `{}` is ambiguous between `{}` and `{}`",
+                        function.name, previous.module, function.module
+                    ))
+                    .with_code("SEM0001"),
+                );
+                continue;
+            }
+        }
+        external_by_name.insert(function.name.clone(), function.clone());
+    }
     let mut checker = Checker {
         source,
         diagnostics,

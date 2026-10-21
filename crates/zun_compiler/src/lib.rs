@@ -489,6 +489,29 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ambiguous_external_symbol_bindings() {
+        let diagnostics = compile_with_externals(
+            "import { answer } from \"core\"; function main(): i64 { return answer(); }",
+            &[
+                zun_sema::check::ExternalFunction {
+                    module: "core".into(),
+                    name: "answer".into(),
+                    params: Vec::new(),
+                    return_ty: zun_sema::Ty::Int(zun_sema::hir::IntKind::I64),
+                },
+                zun_sema::check::ExternalFunction {
+                    module: "other".into(),
+                    name: "answer".into(),
+                    params: Vec::new(),
+                    return_ty: zun_sema::Ty::Int(zun_sema::hir::IntKind::I64),
+                },
+            ],
+        )
+        .expect_err("ambiguous external symbols must be rejected");
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "SEM0001"));
+    }
+
+    #[test]
     fn rejects_external_call_with_mismatched_signature() {
         let diagnostics = compile_with_externals(
             "import { answer } from \"core\"; function main(): int { return answer(\"wrong\"); }",
