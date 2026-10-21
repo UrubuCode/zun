@@ -34,6 +34,7 @@ pub struct GeneratorIteratorResult {
 
 /// Owned Tier 0 generator state. Host callbacks are supplied only for the
 /// duration of `resume`, so no borrowed execution context is retained.
+#[derive(Debug)]
 pub struct OwnedGeneratorSession<'a> {
     module: &'a Module,
     heap: zun_gc::Heap,
