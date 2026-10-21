@@ -46,6 +46,16 @@ pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
     zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length as usize).addr() as i64)
 }
 
+/// Observe a Tier 1 loop backedge and replenish its local OSR counter.
+///
+/// Frame replacement is intentionally not performed here yet; keeping the
+/// counter in native code establishes the patchpoint contract without
+/// changing execution semantics.
+#[inline]
+pub extern "C" fn zun_jit_osr_poll(counter: i64) -> i64 {
+    if counter <= 0 { 1000 } else { counter }
+}
+
 /// Read a numeric dynamic array element without allocating or collecting.
 ///
 /// This helper is intentionally limited to numeric `Any` values. Array
@@ -451,6 +461,7 @@ impl Jit {
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
+    builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);

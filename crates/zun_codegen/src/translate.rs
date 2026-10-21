@@ -116,6 +116,9 @@ pub fn translate_body(
         let z = typed_zero(&mut builder, local_kinds[i]);
         builder.def_var(vars[i], z);
     }
+    let osr_counter = builder.declare_var(types::I64);
+    let initial_osr_counter = builder.ins().iconst(types::I64, 1000);
+    builder.def_var(osr_counter, initial_osr_counter);
 
     let mut t = Translator {
         builder,
@@ -127,6 +130,7 @@ pub fn translate_body(
         virtual_table_ptrs,
         module,
         zm,
+        osr_counter,
     };
     t.run(&instrs, &offset_of_index, &index_of_offset)?;
     t.builder.finalize();
@@ -187,6 +191,7 @@ struct Translator<'a> {
     zm: &'a ZmModule,
     types: &'a TypeSystem,
     virtual_table_ptrs: *const u64,
+    osr_counter: Variable,
 }
 
 impl Translator<'_> {
@@ -280,16 +285,25 @@ impl Translator<'_> {
                 Opcode::CmpGe => self.compare(&mut stack, Cmp::Ge)?,
                 Opcode::Branch => {
                     let target = self.target(instr, i, offset_of_index, index_of_offset)?;
+                    if self.is_backedge(instr, i, offset_of_index, index_of_offset)? {
+                        self.poll_backedge();
+                    }
                     self.builder.ins().jump(target, &[]);
                 }
                 Opcode::BranchTrue => {
                     let target = self.target(instr, i, offset_of_index, index_of_offset)?;
+                    if self.is_backedge(instr, i, offset_of_index, index_of_offset)? {
+                        self.poll_backedge();
+                    }
                     let (cond, _) = stack.pop().ok_or("stack underflow")?;
                     let ft = self.fallthrough(i)?;
                     self.builder.ins().brif(cond, target, &[], ft, &[]);
                 }
                 Opcode::BranchFalse => {
                     let target = self.target(instr, i, offset_of_index, index_of_offset)?;
+                    if self.is_backedge(instr, i, offset_of_index, index_of_offset)? {
+                        self.poll_backedge();
+                    }
                     let (cond, _) = stack.pop().ok_or("stack underflow")?;
                     let ft = self.fallthrough(i)?;
                     // Taken when false: the true edge is the fall-through.
@@ -1024,6 +1038,33 @@ impl Translator<'_> {
             .ok_or_else(|| "target not a leader".into())
     }
 
+    fn is_backedge(
+        &self,
+        instr: &zun_il::Instruction,
+        i: usize,
+        offset_of_index: &[usize],
+        index_of_offset: &BTreeMap<usize, usize>,
+    ) -> Result<bool, String> {
+        let disp = match instr.operand {
+            Operand::Branch(d) => d,
+            _ => return Err("branch operand".into()),
+        };
+        let end = offset_of_index[i] + instr.encoded_len();
+        let target = (end as i64 + disp as i64) as usize;
+        let &idx = index_of_offset.get(&target).ok_or("bad branch target")?;
+        Ok(idx <= i)
+    }
+
+    fn poll_backedge(&mut self) {
+        let counter = self.builder.use_var(self.osr_counter);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let decremented = self.builder.ins().isub(counter, one);
+        let fref = self.osr_poll_fref();
+        let call = self.builder.ins().call(fref, &[decremented]);
+        let replenished = self.builder.inst_results(call)[0];
+        self.builder.def_var(self.osr_counter, replenished);
+    }
+
     fn fallthrough(&self, i: usize) -> Result<Block, String> {
         self.blocks
             .get(&(i + 1))
@@ -1043,6 +1084,17 @@ impl Translator<'_> {
             .module
             .declare_function("zun_rt_alloc", Linkage::Import, &sig)
             .expect("declare zun_rt_alloc");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn osr_poll_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_osr_poll", Linkage::Import, &sig)
+            .expect("declare zun_jit_osr_poll");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
