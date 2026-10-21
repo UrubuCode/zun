@@ -713,8 +713,9 @@ The following runtime contracts are implemented and covered by tests:
   path.
 - The scalar string conversions `toInt`, `toFloat`, and `toBoolean` now have
   direct `CallBuiltin` Cranelift helpers with equivalence coverage. Their
-  instance-method form remains Tier 0 until method-owner metadata can
-  distinguish primitive-backed String methods from homonymous Number methods.
+  instance-method form is also explicitly bound to `zun:string` in semantic
+  analysis, so primitive-backed String calls do not collide with homonymous
+  Number methods.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
