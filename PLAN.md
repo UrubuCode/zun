@@ -907,7 +907,7 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
-   safepoints, true OSR, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
+   safepoints, true OSR frame replacement, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering, managed iterator
    objects, `next()`, and `for...of` integration are implemented, including
@@ -915,6 +915,12 @@ an optimization gate.
    maintained separately by the reviewer and are not part of this execution
    backlog.
 7. Keep this section and the section 5 ledger up to date as items land.
+
+The pre-OSR eager-JIT step is complete: `JitHook` compiles every eligible
+method containing a backedge at its normal entry point before execution. This
+recovers Tier 1 execution for whole loop methods without transferring a
+suspended interpreter frame. True mid-frame OSR remains deferred until the
+planned partial-method/live-in ABI is implemented.
 
 Stop condition: stop only on a real environment blocker, a design decision not
 covered by the plan, or completion of the whole backlog.
@@ -976,7 +982,7 @@ Ranked by payoff:
 | Idea | measurement | verdict |
 |---|---|---|
 | **Generational GC (nursery)** | full mark-sweep is O(n²) over a run (4× N → **16×** time); a nursery that scans only the young is **~22× faster** at N=40k and the gap grows with N | **highest** — the real ceiling (§7.2); a gen0 with bump alloc + cheap minor GC (doc 09/01, 09/03) is the fix, not just the adaptive interval |
-| **OSR / eager-JIT-for-loops** | a hot loop stuck in Tier 0 runs at ~217 ns/iter vs **0.49 ns/iter** in the JIT — a **~440×** gap | **highest** — a loop in `main` never leaves Tier 0 today; OSR (doc 06) or "compile any method with a loop straight to Tier 1" recovers it |
+| **OSR / eager-JIT-for-loops** | a hot loop stuck in Tier 0 runs at ~217 ns/iter vs **0.49 ns/iter** in the JIT — a **~440×** gap | **eager-JIT complete** — eligible loop methods now compile at normal entry; true OSR (doc 06) remains deferred until frame-transfer ABI and precise live-in maps exist |
 | **Interpreter superinstructions** | fusing a hot opcode sequence on the same tagged-stack VM: **~4–5×** fewer-dispatch speedup | **medium** — helps startup, cold code, everything before it is hot; stable Rust (no computed-goto); pairs with a leaner stack value |
 | **Cache the compiled std/prelude (R2R-lite)** | compiling a trivial program costs **~39 µs**, almost all of it the std/prelude, **paid at every process start** | **medium/low effort** — persist the compiled std `.zm` (the format already reserves an R2R extension header, doc 02/05) for fast cold start |
 | **Escape analysis to elide `any` box/unbox** | scalar `Any` box/unbox overhead is **~0.03 ns** (negligible — `Any` is a value type) | **low for scalars** — not worth a pass on its own; the real dynamic cost is heap object allocation, which is covered by generational GC (#1), not escape analysis |
