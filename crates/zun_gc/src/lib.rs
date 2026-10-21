@@ -287,6 +287,65 @@ impl Heap {
         rewritten
     }
 
+    /// Relocate weak metadata without changing its weak/ephemeron liveness
+    /// rules. Targets are translated only so the next collection can still
+    /// observe the same registrations after object movement.
+    pub fn rewrite_weak_references(&mut self, relocation: &RelocationMap) -> usize {
+        let map = |address: usize| relocation.relocate_address(address);
+        let mut rewritten = 0;
+        for weak in &mut self.weak_refs {
+            if let Some(target) = weak.target {
+                let mapped = map(target);
+                if mapped != target { rewritten += 1; weak.target = Some(mapped); }
+            }
+        }
+        for ephemeron in &mut self.weak_maps {
+            for (key, value) in &mut ephemeron.entries {
+                let mapped_key = map(*key);
+                let mapped_value = map(*value);
+                if mapped_key != *key { rewritten += 1; *key = mapped_key; }
+                if mapped_value != *value { rewritten += 1; *value = mapped_value; }
+            }
+        }
+        let owners = std::mem::take(&mut self.weak_map_objects);
+        let mut mapped_owners = HashMap::with_capacity(owners.len());
+        for (owner, id) in owners {
+            let mapped = map(owner);
+            if mapped != owner { rewritten += 1; }
+            mapped_owners.insert(mapped, id);
+        }
+        self.weak_map_objects = mapped_owners;
+        for finalizer in &mut self.finalizers {
+            let mapped = map(finalizer.target);
+            if mapped != finalizer.target { rewritten += 1; finalizer.target = mapped; }
+            if let Some(callback) = finalizer.callback {
+                if let Some(environment) = callback.environment() {
+                    let mapped_environment = map(environment);
+                    if mapped_environment != environment {
+                        rewritten += 1;
+                        finalizer.callback = Some(zun_core::FunctionHandle::new(
+                            callback.method_rid(), Some(mapped_environment),
+                        ));
+                    }
+                }
+            }
+        }
+        for record in &mut self.finalization_queue {
+            if let Some(callback) = record.callback {
+                if let Some(environment) = callback.environment() {
+                    let mapped_environment = map(environment);
+                    if mapped_environment != environment {
+                        rewritten += 1;
+                        record.callback = Some(zun_core::FunctionHandle::new(
+                            callback.method_rid(), Some(mapped_environment),
+                        ));
+                    }
+                }
+            }
+        }
+        rewritten
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -1118,6 +1177,29 @@ mod tests {
         assert_eq!(heap.array_iterator_done(new_iterator), Some(true));
         assert_eq!(new_iterator.field(0), new_array.addr() as u64);
         assert!(heap.array_iterator_done(iterator).is_none());
+    }
+
+    #[test]
+    fn relocation_rewrites_weak_metadata_without_promoting_it() {
+        let mut heap = Heap::new();
+        let weak_owner = heap.alloc_weak_map();
+        let new_owner = heap.alloc_weak_map();
+        let old_key = heap.alloc(1, 0);
+        let new_key = heap.alloc(2, 0);
+        let old_value = heap.alloc(3, 0);
+        let new_value = heap.alloc(4, 0);
+        assert!(heap.weak_map_set_object(weak_owner, old_key, old_value));
+        let weak_ref = heap.weak_ref_new(old_key);
+
+        let mut relocation = RelocationMap::new();
+        relocation.insert(weak_owner, new_owner);
+        relocation.insert(old_key, new_key);
+        relocation.insert(old_value, new_value);
+        assert_eq!(heap.rewrite_weak_references(&relocation), 4);
+
+        assert_eq!(heap.weak_ref_get(weak_ref).map(|object| object.addr()), Some(new_key.addr()));
+        assert_eq!(heap.weak_map_get_object(new_owner).map(|(key, value)| (key.addr(), value.addr())), Some((new_key.addr(), new_value.addr())));
+        assert!(heap.weak_map_get_object(weak_owner).is_none());
     }
 
     #[test]
