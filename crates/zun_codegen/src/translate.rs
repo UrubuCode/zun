@@ -459,6 +459,32 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("substring") => {
+                                let (end, end_kind) = stack.pop().ok_or("substring end")?;
+                                let (start, start_kind) = stack.pop().ok_or("substring start")?;
+                                let (receiver, receiver_kind) = stack.pop().ok_or("substring receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || !matches!(start_kind, JitKind::Num(kind) if kind.int_parts().is_some())
+                                    || !matches!(end_kind, JitKind::Num(kind) if kind.int_parts().is_some())
+                                {
+                                    return Err("substring expects string and integer arguments".into());
+                                }
+                                let start = match clif_ty(start_kind) {
+                                    types::I64 => start,
+                                    ty if ty.is_int() => self.builder.ins().uextend(types::I64, start),
+                                    _ => return Err("substring start must be an integer".into()),
+                                };
+                                let end = match clif_ty(end_kind) {
+                                    types::I64 => end,
+                                    ty if ty.is_int() => self.builder.ins().uextend(types::I64, end),
+                                    _ => return Err("substring end must be an integer".into()),
+                                };
+                                let helper = self.string_substring_fref();
+                                let call = self.builder.ins().call(helper, &[receiver, start, end]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -609,6 +635,13 @@ impl Translator<'_> {
                             Some("concat") => (
                                 "zun_jit_string_concat",
                                 2,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("substring") => (
+                                "zun_jit_string_substring",
+                                3,
                                 types::I64,
                                 JitKind::String,
                                 types::I64,
@@ -1701,6 +1734,19 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_concat", Linkage::Import, &sig)
             .expect("declare zun_jit_string_concat");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_substring_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_substring", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_substring");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

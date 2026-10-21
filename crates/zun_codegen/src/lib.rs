@@ -169,6 +169,22 @@ pub extern "C" fn zun_jit_string_concat(left: i64, right: i64) -> i64 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_substring(handle: i64, start: i64, end: i64) -> i64 {
+    if start < 0 || end < 0 {
+        return 0;
+    }
+    zun_gc::with_current_heap_mut(|heap| {
+        let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
+        let units: Vec<u16> = value.encode_utf16().collect();
+        let start = (start as usize).min(units.len());
+        let end = (end as usize).min(units.len());
+        let (start, end) = if start <= end { (start, end) } else { (end, start) };
+        let result = String::from_utf16_lossy(&units[start..end]);
+        heap.intern_string(std::rc::Rc::from(result)).into()
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -1034,6 +1050,7 @@ impl Jit {
         builder.symbol("zun_jit_string_count", zun_jit_string_count as *const u8);
         builder.symbol("zun_jit_string_compare", zun_jit_string_compare as *const u8);
         builder.symbol("zun_jit_string_concat", zun_jit_string_concat as *const u8);
+        builder.symbol("zun_jit_string_substring", zun_jit_string_substring as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
