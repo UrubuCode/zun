@@ -1093,9 +1093,10 @@ The adaptive GC interval is implemented: it scales the next safepoint with the
 live-set and increases the interval when a collection reclaims nothing. This
 now also increases the nursery budget when the observed young survival rate is
 high. This removes the fixed-256 policy, but does not eliminate the underlying whole-heap
-  scan. A generational/incremental collector remains the long-term fix; moving
-  compaction still requires a relocation bridge for interpreter `Value`s. This
-  remains the real performance
+  scan. The current collector already has a young/old policy, remembered-set barriers,
+  and an opt-in moving compaction path with relocation of interpreter values and
+  registered native/JIT roots. A fully incremental/generational collector remains the
+  long-term fix for avoiding repeated whole-heap scans. This remains the real performance
 ceiling for large programs today, independent of any individual data structure.
 
 ### 7.3 Benchmarked opportunity sizing (2026-10-20)
