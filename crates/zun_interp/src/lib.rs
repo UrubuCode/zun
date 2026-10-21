@@ -136,6 +136,41 @@ pub fn run_method_loaded(
 }
 
 impl Interp<'_> {
+    /// Create the managed identity of a generator invocation. The execution
+    /// body is deliberately not entered here; `generatorIteratorNext` owns
+    /// resume and stores the suspended state after the first yield.
+    pub(crate) fn create_generator(
+        &mut self,
+        method_rid: u32,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
+        let method = self
+            .module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+            .ok_or(RunError::BadToken)?;
+        let body = read_body(&self.module.code, method.body_offset)
+            .map_err(|error| RunError::Malformed(error.to_string()))?;
+        let mut offset = 0;
+        let mut is_generator = false;
+        while offset < body.code.len() {
+            let (instruction, size) = decode_one(&body.code[offset..])
+                .map_err(|error| RunError::Malformed(error.to_string()))?;
+            is_generator |= instruction.opcode == Opcode::Yield;
+            offset += size;
+        }
+        if !is_generator {
+            return Err(RunError::BadToken);
+        }
+        let boxed = zun_gc::with_current_heap_mut(|heap| {
+            args.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+        })
+        .ok_or(RunError::BadToken)?;
+        let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_generator(0, method_rid, boxed));
+        Ok(Value::Object(object))
+    }
+
     /// Call the method at `method_rid` (1-based) with `args`, returning its
     /// result ([`Value::Void`] for a void method).
     fn call(
