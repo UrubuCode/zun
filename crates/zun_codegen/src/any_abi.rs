@@ -2,6 +2,12 @@
 
 use zun_il::JitKind;
 
+/// Native layout of the two-word managed `Any` carrier.
+pub const TAG_OFFSET: i32 = 0;
+pub const PAYLOAD_OFFSET: i32 = 8;
+pub const CARRIER_SIZE: u32 = TAG_OFFSET as u32 + 16;
+pub const CARRIER_ALIGN_SHIFT: u8 = 3;
+
 /// Number of machine words occupied by one logical JIT argument.
 #[inline]
 pub const fn abi_word_count(kind: JitKind) -> usize {
@@ -70,7 +76,7 @@ impl JitAnyAbi {
 
 #[cfg(test)]
 mod tests {
-    use super::{abi_word_count, JitAnyAbi};
+    use super::{abi_word_count, JitAnyAbi, CARRIER_ALIGN_SHIFT, CARRIER_SIZE, PAYLOAD_OFFSET, TAG_OFFSET};
     use zun_il::{JitKind, NumKind};
 
     #[test]
@@ -81,6 +87,10 @@ mod tests {
 
     #[test]
     fn carrier_roundtrips_any_without_collapsing_two_words() {
+        assert_eq!(TAG_OFFSET, 0);
+        assert_eq!(PAYLOAD_OFFSET, 8);
+        assert_eq!(CARRIER_SIZE, 16);
+        assert_eq!(CARRIER_ALIGN_SHIFT, 3);
         let value = zun_core::Any::object(0x1234);
         let carrier = JitAnyAbi::from_any(value);
         assert_eq!(carrier.into_any(), Some(value));

@@ -1547,7 +1547,12 @@ impl Translator<'_> {
                         let payload = self
                             .builder
                             .ins()
-                            .load(types::I64, MemFlags::trusted(), value.0, 8);
+                            .load(
+                                types::I64,
+                                MemFlags::trusted(),
+                                value.0,
+                                crate::any_abi::PAYLOAD_OFFSET,
+                            );
                         let kind = self.method_return_kind;
                         if !matches!(kind, JitKind::Num(_) | JitKind::Bool) {
                             return Err("unbox.any carrier target must be scalar".into());
@@ -1610,8 +1615,8 @@ impl Translator<'_> {
                     if carrier_load {
                         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,
-                            16,
-                            3,
+                            crate::any_abi::CARRIER_SIZE,
+                            crate::any_abi::CARRIER_ALIGN_SHIFT,
                         ));
                         let carrier = self.builder.ins().stack_addr(types::I64, slot, 0);
                         let load = self.array_load_any_fref();
