@@ -75,7 +75,7 @@ fn string_builtin(instr: &zun_il::Instruction) -> bool {
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(
         zun_natives::by_id(id as u32).map(|f| f.name),
-        Some("length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf" | "lastIndexOf" | "count" | "compare" | "concat" | "substring" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "repeat" | "reverse" | "padStart" | "padEnd" | "replace")
+        Some("length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf" | "lastIndexOf" | "count" | "compare" | "concat" | "substring" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "repeat" | "reverse" | "padStart" | "padEnd" | "replace" | "toInt" | "toFloat" | "toBoolean")
     )
 }
 

@@ -816,6 +816,27 @@ impl Translator<'_> {
                                 JitKind::String,
                                 types::I64,
                             ),
+                            Some("toInt") => (
+                                "zun_jit_string_to_int",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("toFloat") => (
+                                "zun_jit_string_to_float",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::F64),
+                                types::F64,
+                            ),
+                            Some("toBoolean") => (
+                                "zun_jit_string_to_boolean",
+                                1,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
                             Some("isValid") => (
                                 "zun_jit_date_is_valid",
                                 1,

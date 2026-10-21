@@ -507,6 +507,29 @@ fn primitive_string_replace_uses_the_managed_string_abi() {
 }
 
 #[test]
+fn primitive_string_builtin_conversions_use_the_managed_string_abi() {
+    let module = compile(
+        "import { toInt, toFloat, toBoolean } from \"zun:string\"; function asInt(value: string): int { return toInt(value); } function asFloat(value: string): number { return toFloat(value); } function asBool(value: string): boolean { return toBoolean(value); } function main(): int { return 0; }",
+    );
+    let rid = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("method") as u32 + 1;
+    let int_rid = rid("asInt");
+    let float_rid = rid("asFloat");
+    let bool_rid = rid("asBool");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(int_rid));
+    assert!(jit.is_compiled(float_rid));
+    assert!(jit.is_compiled(bool_rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let int_value = heap.intern_string(std::rc::Rc::from(" -42 "));
+    let float_value = heap.intern_string(std::rc::Rc::from(" 3.5 "));
+    let bool_value = heap.intern_string(std::rc::Rc::from(" true "));
+    assert_eq!(jit.call_packed_with_heap(int_rid, &[int_value as u64], &mut heap).unwrap() as i32, -42);
+    assert_eq!(f64::from_bits(jit.call_packed_with_heap(float_rid, &[float_value as u64], &mut heap).unwrap()), 3.5);
+    assert_eq!(jit.call_packed_with_heap(bool_rid, &[bool_value as u64], &mut heap).unwrap(), 1);
+}
+
+#[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {
     let module = compile(
         "function* values(): int { yield 7; return 9; } function main(): any { for (let value of values()) { return value; } return 0; }",

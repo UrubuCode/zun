@@ -288,6 +288,21 @@ pub extern "C" fn zun_jit_string_replace(handle: i64, needle: i64, replacement: 
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_to_int(handle: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| heap.try_string(handle as u32).and_then(|value| value.trim().parse::<i64>().ok()).unwrap_or(0) as i32)
+}
+
+#[inline]
+pub extern "C" fn zun_jit_string_to_float(handle: i64) -> f64 {
+    zun_gc::with_current_heap(|heap| heap.try_string(handle as u32).and_then(|value| value.trim().parse::<f64>().ok()).unwrap_or(f64::NAN))
+}
+
+#[inline]
+pub extern "C" fn zun_jit_string_to_boolean(handle: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| matches!(heap.try_string(handle as u32).map(|value| value.trim()), Some("true")) as i32)
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -1164,6 +1179,9 @@ impl Jit {
         builder.symbol("zun_jit_string_pad_start", zun_jit_string_pad_start as *const u8);
         builder.symbol("zun_jit_string_pad_end", zun_jit_string_pad_end as *const u8);
         builder.symbol("zun_jit_string_replace", zun_jit_string_replace as *const u8);
+        builder.symbol("zun_jit_string_to_int", zun_jit_string_to_int as *const u8);
+        builder.symbol("zun_jit_string_to_float", zun_jit_string_to_float as *const u8);
+        builder.symbol("zun_jit_string_to_boolean", zun_jit_string_to_boolean as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
