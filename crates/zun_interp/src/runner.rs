@@ -117,6 +117,29 @@ impl<'a> OwnedGeneratorSession<'a> {
         self.pending = Some(frame);
         Some(result)
     }
+
+    /// Collect unreachable objects and compact the owned generator heap
+    /// between iterator steps.
+    pub fn collect_and_compact_pending_frames(
+        &mut self,
+    ) -> Option<zun_gc::CollectionCompactionResult> {
+        let mut frame = self.pending.take()?;
+        let mut roots = Vec::new();
+        frame.append_managed_roots(&mut roots);
+        let types = self.types.clone();
+        let mut rewrite = |relocation: &zun_gc::RelocationMap| {
+            frame.rewrite_managed_references(relocation);
+        };
+        let result = unsafe {
+            self.heap.collect_and_compact_with_relocation(
+                &mut roots,
+                &|type_rid| types.reference_slots(type_rid),
+                &mut rewrite,
+            )
+        };
+        self.pending = Some(frame);
+        Some(result)
+    }
 }
 
 /// Persistent interpreter boundary for async executions.
@@ -289,6 +312,13 @@ impl<'a> GeneratorSession<'a> {
     /// Compact the generator's owned heap between iterator steps.
     pub fn compact_pending_frames(&mut self) -> Option<zun_gc::CompactionResult> {
         self.owned.compact_pending_frames()
+    }
+
+    /// Collect unreachable objects and compact between iterator steps.
+    pub fn collect_and_compact_pending_frames(
+        &mut self,
+    ) -> Option<zun_gc::CollectionCompactionResult> {
+        self.owned.collect_and_compact_pending_frames()
     }
 
     /// Return the value produced by the most recent successful `next` call.

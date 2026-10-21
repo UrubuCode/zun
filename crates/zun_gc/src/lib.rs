@@ -413,6 +413,30 @@ impl Heap {
         }
     }
 
+    /// Run mark/sweep and compact while exposing the forwarding map to an
+    /// owner of managed values stored outside the heap.
+    ///
+    /// # Safety
+    /// The caller must stop managed execution and rewrite every external
+    /// managed reference from the callback before it returns.
+    pub unsafe fn collect_and_compact_with_relocation(
+        &mut self,
+        roots: &mut Vec<Obj>,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        on_relocation: &mut dyn FnMut(&RelocationMap),
+    ) -> CollectionCompactionResult {
+        let mark_roots = roots.clone();
+        let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
+        let compacted = unsafe {
+            self.compact_with_relocation(roots, ref_slots, on_relocation)
+        };
+        CollectionCompactionResult {
+            reclaimed_objects,
+            moved_objects: compacted.moved_objects,
+            rewritten_references: compacted.rewritten_references,
+        }
+    }
+
     /// Run mark/sweep and compaction using interpreter roots plus every
     /// stopped native frame currently registered at the GC boundary.
     ///
