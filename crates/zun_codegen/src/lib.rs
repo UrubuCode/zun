@@ -1341,6 +1341,27 @@ impl Jit {
         self.call_packed(method_rid, args)
     }
 
+    /// Call a compiled method while publishing caller-supplied native
+    /// safepoint coordinates, assuming the caller already registered the
+    /// managed heap with [`zun_gc::HeapScope`].
+    ///
+    /// # Safety
+    /// The frame coordinates and packed arguments must satisfy the same
+    /// contract as [`Self::call_packed_with_heap_and_native_frame`], and a
+    /// current heap must already be installed for any runtime helper calls.
+    pub unsafe fn call_packed_with_native_frame(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+        pc: usize,
+        sp: *mut u8,
+    ) -> Result<u64, JitError> {
+        let _frame = unsafe {
+            zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp)
+        };
+        self.call_packed(method_rid, args)
+    }
+
     /// Call a compiled zero-argument method (an entry point), returning its
     /// result tagged by kind.
     ///
