@@ -887,6 +887,14 @@ impl Translator<'_> {
                         return Err("builtin stack underflow".into());
                     }
                     let args: Vec<Slot> = stack.split_off(stack.len() - arg_count);
+                    // Every imported helper is a potential GC boundary. Keep
+                    // managed receivers/arguments visible before the call,
+                    // regardless of whether the helper currently allocates.
+                    for &(value, kind) in &args {
+                        if kind == JitKind::Object {
+                            self.builder.declare_value_needs_stack_map(value);
+                        }
+                    }
                     let arg_types = match name {
                         "zun_jit_buffer_set_u8" => vec![types::I64, types::I64, types::I8],
                         "zun_jit_buffer_write_u32" => vec![types::I64, types::I64, types::I32],
@@ -926,6 +934,9 @@ impl Translator<'_> {
                     let values: Vec<Value> = args.iter().map(|(value, _)| *value).collect();
                     let inst = self.builder.ins().call(fref, &values);
                     let result = self.builder.inst_results(inst)[0];
+                    if result_kind == JitKind::Object {
+                        self.builder.declare_value_needs_stack_map(result);
+                    }
                     stack.push((result, result_kind));
                 }
                 Opcode::NewObj => {
