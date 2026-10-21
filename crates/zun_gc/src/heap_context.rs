@@ -37,3 +37,12 @@ pub fn with_current_heap_mut<R>(f: impl FnOnce(&mut Heap) -> R) -> R {
 pub fn with_current_heap<R>(f: impl FnOnce(&Heap) -> R) -> R {
     with_current_heap_mut(|heap| f(heap))
 }
+
+/// Return the thread-local heap pointer for native/JIT boundaries.
+///
+/// The pointer is valid only while the corresponding [`HeapScope`] remains
+/// alive. Callers must not retain it beyond that scope.
+pub fn current_heap_ptr() -> Option<*mut Heap> {
+    let ptr = CURRENT_HEAP.with(|cell| cell.get());
+    (!ptr.is_null()).then_some(ptr)
+}

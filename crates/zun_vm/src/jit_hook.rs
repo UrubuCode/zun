@@ -160,7 +160,8 @@ impl CallHook for JitHook<'_> {
             .zip(kinds)
             .map(|(v, &k)| pack_value(v, k))
             .collect();
-        let result = jit.call_packed(method_rid, &packed).ok()?;
+        let heap = zun_gc::current_heap_ptr()?;
+        let result = unsafe { jit.call_packed_with_heap(method_rid, &packed, &mut *heap).ok()? };
         Some(unpack_value(result, jit.return_kind(method_rid)))
     }
 

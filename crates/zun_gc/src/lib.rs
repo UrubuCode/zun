@@ -28,7 +28,7 @@ mod heap_context;
 mod native_roots;
 mod runtime_alloc;
 mod stack_maps;
-pub use heap_context::{with_current_heap, with_current_heap_mut, HeapScope};
+pub use heap_context::{current_heap_ptr, with_current_heap, with_current_heap_mut, HeapScope};
 pub use native_roots::{append_native_roots, NativeRootScope};
 pub use runtime_alloc::{zun_gc_alloc, zun_rt_alloc};
 pub use stack_maps::{

@@ -49,6 +49,15 @@ fn user_function_call_with_args() {
 }
 
 #[test]
+fn tiering_calls_a_heap_eligible_array_reader() {
+    let out = run_source(
+        "function read(values: Array): u64 { return values[0] as u64; }\n\
+         function main() { let values = new Array(1); values[0] = 41 as u64; print(read(values)); print(read(values)); }",
+    );
+    assert_eq!(out, ["41", "41"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
