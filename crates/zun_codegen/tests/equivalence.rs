@@ -699,7 +699,7 @@ fn managed_map_and_set_size_methods_use_typed_object_receivers() {
 #[test]
 fn numeric_map_and_set_has_use_typed_jit_abis() {
     let module = compile(
-        "import { mapHasF64, setHasF64 } from \"zun:collections\"; function mapContains(value: Map, key: number): boolean { return mapHasF64(value, key); } function setContains(value: Set, key: number): boolean { return setHasF64(value, key); } function main(): u64 { return 0; }",
+        "import { mapHasF64, setHasF64, setAddF64 } from \"zun:collections\"; function mapContains(value: Map, key: number): boolean { return mapHasF64(value, key); } function setContains(value: Set, key: number): boolean { return setHasF64(value, key); } function setInsert(value: Set, key: number): boolean { return setAddF64(value, key); } function main(): u64 { return 0; }",
     );
     let map_rid = module
         .tables
@@ -715,9 +715,17 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
         .position(|method| module.strings.get(method.name) == "setContains")
         .expect("setContains method") as u32
         + 1;
+    let insert_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "setInsert")
+        .expect("setInsert method") as u32
+        + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(map_rid));
     assert!(jit.is_compiled(set_rid));
+    assert!(jit.is_compiled(insert_rid));
 
     let mut heap = zun_gc::Heap::new();
     let map = heap.alloc_map();
@@ -727,6 +735,8 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
     let key = 7.5f64.to_bits();
     assert_eq!(jit.call_packed_with_heap(map_rid, &[map.addr() as u64, key], &mut heap).unwrap(), 1);
     assert_eq!(jit.call_packed_with_heap(set_rid, &[set.addr() as u64, key], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(insert_rid, &[set.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(set_rid, &[set.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 1);
     assert_eq!(jit.call_packed_with_heap(map_rid, &[map.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 0);
 }
 

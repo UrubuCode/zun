@@ -81,6 +81,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "setAddF64",
+            params: &[Set, F64],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "setHas",
             params: &[Set, Opaque],
             ret: Bool,
