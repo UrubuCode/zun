@@ -148,6 +148,44 @@ fn managed_collections_preserve_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn managed_map_and_set_size_methods_use_typed_object_receivers() {
+    let module = compile(
+        "function mapSize(value: Map): u64 { return value.size(); } function setSize(value: Set): u64 { return value.size(); } function main(): u64 { return 0; }",
+    );
+    let map_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "mapSize")
+        .expect("mapSize method") as u32
+        + 1;
+    let set_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "setSize")
+        .expect("setSize method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(map_rid));
+    assert!(jit.is_compiled(set_rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    let set = heap.alloc_set();
+    heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::int(2));
+    heap.set_add(set, zun_core::Any::int(3));
+    assert!(matches!(
+        jit.call_packed_with_heap(map_rid, &[map.addr() as u64], &mut heap),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(set_rid, &[set.addr() as u64], &mut heap),
+        Ok(1)
+    ));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",
