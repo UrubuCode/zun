@@ -616,6 +616,24 @@ pub extern "C" fn zun_jit_set_size(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.set_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+/// Test a numeric key in a managed Map without materializing an `Any` carrier.
+#[inline]
+pub extern "C" fn zun_jit_map_has_f64(address: i64, key: f64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.map_has(object, zun_core::Any::float(key)).unwrap_or(false) as i32
+    })
+}
+
+/// Test a numeric value in a managed Set without materializing an `Any` carrier.
+#[inline]
+pub extern "C" fn zun_jit_set_has_f64(address: i64, value: f64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.set_has(object, zun_core::Any::float(value)).unwrap_or(false) as i32
+    })
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -1209,6 +1227,8 @@ impl Jit {
     builder.symbol("zun_jit_f64_array_set", zun_jit_f64_array_set as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
+    builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
+    builder.symbol("zun_jit_set_has_f64", zun_jit_set_has_f64 as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);

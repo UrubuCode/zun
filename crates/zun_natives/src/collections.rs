@@ -37,6 +37,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "mapHasF64",
+            params: &[Map, F64],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "mapSize",
             params: &[Map],
             ret: U64,
@@ -77,6 +83,12 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn {
             name: "setHas",
             params: &[Set, Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "setHasF64",
+            params: &[Set, F64],
             ret: Bool,
             imp: unavailable,
         },
