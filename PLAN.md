@@ -735,6 +735,9 @@ interpreter/JIT equivalence coverage. `Any`-valued and reference-valued array
 access remains Tier 0 until the two-word managed-value ABI and its precise
 GC/write-barrier contract are complete.
 
+The same scalar boundary now covers `Array.push` and `Array.pop` for `f64` and
+`u64`, including hot calls through `JitHook` with the active interpreter heap.
+
 The dynamic array ABI now has validated load and store helpers for the explicit
 two-word `Any` carrier. Object payloads are covered by a GC root test through
 the containing array; aggregate Cranelift stack lowering remains intentionally
