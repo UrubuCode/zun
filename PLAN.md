@@ -969,9 +969,10 @@ now-published precise JIT-frame safepoint, true OSR frame replacement, and
 features. Runtime JIT string literals now use an explicit literal-handle ABI:
 the JIT owns stable UTF-8 bytes and interns them through the active heap scope;
 the interpreter/JIT equivalence path covers literal `String` methods. The
-relocatable/AOT backend still rejects `ConstStr`, because it needs a relocatable
-literal pool rather than a process-local pointer. Parameter/field string
-handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
+runtime JIT now also carries those literals through `newobj` and typed string
+fields. The relocatable/AOT backend still rejects `ConstStr`, because it needs
+a relocatable literal pool rather than a process-local pointer. Parameter/field
+string handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
 are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
 
