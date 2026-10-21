@@ -916,13 +916,14 @@ interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
 The narrow scalar array ABI is also implemented: Cranelift lowers `LoadArray`
-and `StoreArray` for `f64` and `u64` values through heap-scoped helpers, with
-interpreter/JIT equivalence coverage. `Any`-valued and reference-valued array
-access remains Tier 0 until the two-word managed-value ABI and its precise
-GC/write-barrier contract are complete.
+and `StoreArray` for `f64`, `u64`, and `boolean` values through heap-scoped
+helpers, with interpreter/JIT equivalence coverage. The same scalar boundary
+covers `Array.push` and `Array.pop` for all three scalar kinds. `Any`-valued
+and reference-valued array access remains Tier 0 until the two-word
+managed-value ABI and its precise GC/write-barrier contract are complete.
 
-The same boundary now covers `Array.push` and `Array.pop` for `f64` and `u64`,
-  plus managed-object `Array.push`/`Array.pop` through the pointer ABI, including
+The same boundary also covers managed-object `Array.push`/`Array.pop` through
+the pointer ABI, including
   hot calls through `JitHook` with the active interpreter heap. The object
   stack-operation path has direct interpreter/JIT equivalence coverage.
 
