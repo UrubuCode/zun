@@ -262,7 +262,8 @@ Decisões de semântica:
 
 ## 4.3 GC e objetos no JIT (plano — o maior item restante)
 
-Hoje o JIT compila só o subconjunto numérico/bool; métodos que tocam o heap
+Hoje o JIT compila o subconjunto numérico/bool e a leitura sem alocação do
+comprimento de strings internadas; métodos que tocam o heap
 (string, objeto, `ldfld`/`stfld`/`newobj`/`callvirt`) caem no interpretador,
 que usa `Rc<RefCell<Vec<Value>>>` para objetos. Para levar objetos ao JIT,
 interpretador e JIT precisam compartilhar um **heap de ponteiros crus**. Ordem
@@ -292,11 +293,13 @@ de implementação:
    §21). Compactação (mover objetos) fica para depois, pois exige reescrever
    referências e stack maps mais ricos.
 
-Estado: alocação, layout, acesso a fields e coleta mark-sweep estão implementados
+Estado: alocação, layout, acesso a fields, comprimento de strings internadas e
+coleta mark-sweep estão implementados
 e testados. O JIT já suporta `newobj`, `ldfld` e `stfld` para campos numéricos e
 mantém equivalência com o interpretador. Resultados de `newobj` são marcados como
 referências gerenciadas nos mapas precisos do Cranelift e foram cobertos enquanto
-o objeto permanece vivo através de uma chamada JIT. `callvirt` ainda é executado no Tier 0;
+o objeto permanece vivo através de uma chamada JIT. `callvirt` geral ainda é executado no Tier 0;
+`String.length()` é uma exceção direta por handle internado;
 o JIT já possui dispatch virtual por slot para os métodos elegíveis sem override;
 dispatch dinâmico completo e chamadas virtuais com fallback continuam sendo
 fronteiras separadas, preservando a resolução de tokens e a tabela de métodos.
