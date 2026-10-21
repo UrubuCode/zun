@@ -4876,6 +4876,34 @@ fn interned_string_field_read_is_jit_equivalent() {
 }
 
 #[test]
+fn string_field_length_uses_the_typed_jit_builtin() {
+    let src = "import { length } from \"zun:string\";\n\
+               class Named { tag: string; }\n\
+               function measure(n: Named): u64 { return length(n.tag); }\n\
+               function main(): u64 { return 1; }";
+    let module = compile(src);
+    let measure_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .map(|index| index as u32 + 1)
+        .expect("measure method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(jit.is_compiled(measure_rid));
+    let mut heap = zun_gc::Heap::new();
+    let named = heap.alloc(1, 1);
+    let handle = heap.intern_string(std::rc::Rc::from("field value"));
+    named.set_field(0, handle as u64);
+    assert_eq!(
+        jit.call_packed_with_heap(measure_rid, &[named.addr() as u64], &mut heap)
+            .expect("jit field string length"),
+        11
+    );
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn interned_string_field_constructor_is_jit_equivalent() {
     let src = "class Named { tag: string; }\n\
                function make(): Named { return new Named(\"hello\"); }\n\
