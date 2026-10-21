@@ -573,7 +573,9 @@ The following runtime contracts are implemented and covered by tests:
   the first OSR integration boundary; hot `(method_rid, target_pc)` transfer
   requests are published and deduplicated by `JitHook`, and the hook now
   captures the Tier 0 PC, evaluation stack, and locals for each hot boundary.
-  Native frame replacement remains pending.
+  Snapshots validate method-local layout and IL boundaries before consumption;
+  a Cranelift entrypoint accepting the captured frame state and native frame
+  replacement remain pending.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
   `.zm` module retained as the fallback for ineligible methods.
 - Cranelift managed-heap entry boundaries now expose explicit
