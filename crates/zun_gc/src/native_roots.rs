@@ -1,6 +1,7 @@
 //! Native/JIT frame root registration for precise GC safepoints.
 
 use super::Obj;
+use super::RelocationMap;
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -53,4 +54,45 @@ pub fn append_native_roots(roots: &mut Vec<Obj>) {
             roots.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) });
         }
     });
+}
+
+/// Rewrite object pointers held by active native root scopes after relocation.
+///
+/// # Safety
+/// The active scopes must still satisfy the lifetime guarantees documented by
+/// [`NativeRootScope::enter`].
+pub unsafe fn rewrite_native_roots(relocation: &RelocationMap) -> usize {
+    NATIVE_ROOTS.with(|registered| {
+        let mut rewritten = 0;
+        for &(_, ptr, len) in registered.borrow().iter() {
+            let roots = unsafe { std::slice::from_raw_parts_mut(ptr as *mut Obj, len) };
+            for root in roots {
+                let address = root.addr() as usize;
+                let mapped = relocation.relocate_address(address);
+                if mapped != address {
+                    *root = unsafe { Obj::from_addr(mapped as *mut u64) };
+                    rewritten += 1;
+                }
+            }
+        }
+        rewritten
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rewrite_native_roots, NativeRootScope};
+    use crate::{Obj, RelocationMap};
+
+    #[test]
+    fn rewrites_active_native_root_slots() {
+        let old = 0x1000usize;
+        let new = 0x2000usize;
+        let roots = [unsafe { Obj::from_addr(old as *mut u64) }];
+        let mut relocation = RelocationMap::new();
+        relocation.insert_addresses(old, new);
+        let _scope = unsafe { NativeRootScope::enter(&roots) };
+        assert_eq!(unsafe { rewrite_native_roots(&relocation) }, 1);
+        assert_eq!(roots[0].addr() as usize, new);
+    }
 }

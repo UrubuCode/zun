@@ -1,6 +1,7 @@
 //! Native/JIT stack-map contracts at the GC boundary.
 
 use std::cell::RefCell;
+use super::RelocationMap;
 
 thread_local! {
     static ACTIVE_REGISTRIES: RefCell<Vec<*const StackMapRegistry>> = const { RefCell::new(Vec::new()) };
@@ -19,6 +20,27 @@ pub struct NativeStackMap {
 #[derive(Debug, Default)]
 pub struct StackMapRegistry {
     maps: Vec<NativeStackMap>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NativeStackMap, StackMapRegistry};
+    use crate::RelocationMap;
+
+    #[test]
+    fn rewrites_reference_slots_at_a_stopped_safepoint() {
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 10, span: 4, reference_slots: vec![8] }]);
+        let mut frame = [0u8; 16];
+        let old = 0x1000usize;
+        let new = 0x2000usize;
+        unsafe { (frame.as_mut_ptr().add(8) as *mut u64).write_unaligned(old as u64); }
+        let mut relocation = RelocationMap::new();
+        relocation.insert_addresses(old, new);
+
+        assert_eq!(unsafe { registry.rewrite_slots_at(10, frame.as_mut_ptr(), &relocation) }, 1);
+        assert_eq!(unsafe { (frame.as_ptr().add(8) as *const u64).read_unaligned() }, new as u64);
+    }
 }
 
 /// Guard that publishes one JIT registry while its native entry point runs.
@@ -109,5 +131,25 @@ impl StackMapRegistry {
                     .then(|| unsafe { super::Obj::from_addr(value as *mut u64) })
             })
             .collect()
+    }
+
+    /// Rewrite managed references in the stopped native frame at `pc`.
+    ///
+    /// # Safety
+    /// `sp` must identify a stopped frame covered by this registry, and every
+    /// stack-map slot must be a valid writable reference slot.
+    pub unsafe fn rewrite_slots_at(
+        &self,
+        pc: usize,
+        sp: *mut u8,
+        relocation: &RelocationMap,
+    ) -> usize {
+        let Some(map) = self.lookup(pc) else { return 0; };
+        map.reference_slots
+            .iter()
+            .filter(|&&offset| unsafe {
+                relocation.rewrite_slot(sp.add(offset as usize) as *mut u64)
+            })
+            .count()
     }
 }
