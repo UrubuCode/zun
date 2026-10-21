@@ -265,6 +265,28 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn native_execution_routes_source_extern_function_to_the_registered_hook() {
+        let bytes = zun_compiler::compile_with_externals(
+            "extern function GetCurrentProcessId(): i64 from \"kernel32\"; function main(): i64 { return GetCurrentProcessId(); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "kernel32".into(),
+                name: "GetCurrentProcessId".into(),
+                params: Vec::new(),
+                return_ty: zun_sema::Ty::Int(zun_sema::hir::IntKind::I64),
+            }],
+        )
+        .expect("compile source extern function")
+        .write();
+        let mut native = NativeCallHook::new();
+        native.register("kernel32", "GetCurrentProcessId", FfiSignature::new([], FfiScalar::I64));
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = execute_with_native(&bytes, &mut output, &native)
+            .expect("run source extern function");
+        assert!(matches!(result, Value::Int(pid, zun_il::NumKind::I64) if pid > 0));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn native_execution_routes_f64_external_member_ref() {
         let bytes = zun_compiler::compile_with_externals(
             "import { sqrt } from \"msvcrt\"; function main(): number { return sqrt(9.0); }",
