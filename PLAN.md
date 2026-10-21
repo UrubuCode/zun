@@ -907,9 +907,10 @@ finalizer callback environments are explicit roots during both collection modes.
 This activates the first generational policy while leaving nursery allocation
 and card-table scaling as later completion work. JIT allocation safepoints now
 capture the x86-64 return PC from the pre-call SP, publish the stopped frame,
-and consume the corresponding Cranelift stack map during collection; multi-
-threaded stop-the-world coordination remains deferred until the VM has
-multiple mutator threads.
+consume the corresponding Cranelift stack map during collection, and compact
+the heap at a conservative periodic boundary while rewriting registered JIT
+slots. Multi-threaded stop-the-world coordination remains deferred until the
+VM has multiple mutator threads.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 additional platform coverage for the automatic collection policy at the
