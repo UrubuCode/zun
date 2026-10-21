@@ -4404,6 +4404,18 @@ fn generic_map_get_preserves_the_two_word_carrier() {
         .expect("jit generic mapGet missing key");
     assert_eq!(result.into_any(), Some(zun_core::Any::void()));
 
+    let string_handle = heap.intern_string(std::rc::Rc::from("mapped"));
+    heap.map_insert(
+        map,
+        zun_core::Any::int(10),
+        zun_core::Any::string(string_handle),
+    );
+    let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(10));
+    let result = jit
+        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .expect("jit generic mapGet string");
+    assert_eq!(result.into_any(), Some(zun_core::Any::string(string_handle)));
+
     let interpreter_module = compile(
         "import { mapGet } from \"zun:collections\";\n\
          function main(): any { let map = new Map(); return mapGet(map, box_any(99)); }",
