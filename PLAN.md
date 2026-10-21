@@ -711,6 +711,10 @@ The following runtime contracts are implemented and covered by tests:
   `padStart`, `padEnd`, and `replace`) also use heap-handle helpers with
   equivalence coverage. Aggregate/dynamic values remain on the interpreter
   path.
+- The scalar string conversions `toInt`, `toFloat`, and `toBoolean` now have
+  direct `CallBuiltin` Cranelift helpers with equivalence coverage. Their
+  instance-method form remains Tier 0 until method-owner metadata can
+  distinguish primitive-backed String methods from homonymous Number methods.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
