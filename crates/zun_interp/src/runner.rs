@@ -114,6 +114,17 @@ impl<'a> GeneratorSession<'a> {
     }
 }
 
+impl Iterator for GeneratorSession<'_> {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match GeneratorSession::next(self).ok()? {
+            GeneratorResult::Yielded(value) => Some(value),
+            GeneratorResult::Complete(_) => None,
+        }
+    }
+}
+
 impl core::fmt::Debug for ResumableSession<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter

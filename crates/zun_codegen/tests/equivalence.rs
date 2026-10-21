@@ -3064,6 +3064,29 @@ fn generator_session_yields_and_resumes_in_tier0() {
 }
 
 #[test]
+fn generator_session_implements_host_iterator_protocol() {
+    let module = zun_compiler::compile(
+        "function* count(): int { yield 4; yield 5; return 6; }",
+    )
+    .expect("compile generator");
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "count")
+        .map(|index| index as u32 + 1)
+        .expect("generator method");
+    let mut output = CaptureOutput::default();
+    let session = zun_interp::GeneratorSession::new(&module, rid, Vec::new(), &mut output)
+        .expect("create generator session");
+    let values: Vec<_> = session.collect();
+    assert!(matches!(values.as_slice(), [
+        Value::Float(first, _),
+        Value::Float(second, _)
+    ] if *first == 4.0 && *second == 5.0));
+}
+
+#[test]
 fn non_overridden_virtual_call_is_jit_eligible() {
     let src = "class Counter { n: int; get(): int { return this.n; } }\n\
                function read(c: Counter): int { return c.get(); }\n\
