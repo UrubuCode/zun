@@ -46,6 +46,20 @@ impl FfiSignature {
         self.params.len()
     }
 
+    /// Validate that this signature belongs to the currently implemented
+    /// direct-call ABI. Non-blittable shapes must use a generated marshalling
+    /// stub instead of reaching the fixed-arity thunks.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
+            Ok(())
+        } else {
+            Err(format!(
+                "unsupported direct FFI signature: {} parameter(s) returning {:?}",
+                self.arity(), self.result
+            ))
+        }
+    }
+
     fn matches_i64_call(&self) -> bool {
         self.result == FfiScalar::I64
             && self.params.iter().all(|param| *param == FfiScalar::I64)

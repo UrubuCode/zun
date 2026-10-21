@@ -36,6 +36,19 @@ impl NativeCallHook {
             .insert((module.into(), export.into()), signature);
     }
 
+    /// Register a signature while rejecting ABI shapes that need generated
+    /// marshalling. The infallible `register` remains for host compatibility.
+    pub fn register_checked(
+        &mut self,
+        module: impl Into<String>,
+        export: impl Into<String>,
+        signature: FfiSignature,
+    ) -> Result<(), String> {
+        signature.validate()?;
+        self.register(module, export, signature);
+        Ok(())
+    }
+
     pub fn resolver(&self) -> &RefCell<NativeLibraryResolver> {
         &self.resolver
     }
@@ -195,5 +208,14 @@ mod tests {
             .expect("registered export must be intercepted")
             .expect_err("metadata must reject an f64 result for an i64 registration");
         assert!(result.to_string().contains("signature mismatch"));
+    }
+
+    #[test]
+    fn checked_registration_rejects_mixed_scalar_shapes() {
+        let mut hook = NativeCallHook::new();
+        let error = hook
+            .register_checked("test", "mixed", FfiSignature::new([FfiScalar::I64], FfiScalar::F64))
+            .expect_err("mixed direct ABI must require a marshalling stub");
+        assert!(error.contains("unsupported direct FFI signature"));
     }
 }
