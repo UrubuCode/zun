@@ -506,7 +506,7 @@ impl Interp<'_> {
                         if let Some(hook) = self.hook {
                             hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
                         }
-                        self.poll_gc(&stack, &locals, parent);
+                        self.poll_gc(&mut stack, locals, parent);
                     }
                     *pc = target;
                 }
@@ -517,7 +517,7 @@ impl Interp<'_> {
                             if let Some(hook) = self.hook {
                                 hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
                             }
-                            self.poll_gc(&stack, &locals, parent);
+                            self.poll_gc(&mut stack, locals, parent);
                         }
                         *pc = target;
                     }
@@ -529,7 +529,7 @@ impl Interp<'_> {
                             if let Some(hook) = self.hook {
                                 hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
                             }
-                            self.poll_gc(&stack, &locals, parent);
+                            self.poll_gc(&mut stack, locals, parent);
                         }
                         *pc = target;
                     }
@@ -1037,7 +1037,7 @@ impl Interp<'_> {
                     // the current frame plus the ancestor root chain (no JIT
                     // frame is executing at this point).
                     self.allocs += 1;
-                    self.poll_gc(&stack, &locals, parent);
+                    self.poll_gc(&mut stack, locals, parent);
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
                     let args = pop_n(&mut stack, field_count)?;
@@ -1333,12 +1333,25 @@ impl Interp<'_> {
     /// Run a mark-sweep collection with precise roots: the object references in
     /// the current frame's stack and locals, plus every ancestor frame in the
     /// `parent` chain. Reference fields are traced via the module's type layout.
-    fn collect(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>, full: bool) -> usize {
+    fn collect(&mut self, stack: &mut [Value], locals: &mut [Value], parent: Option<&RootLink>, full: bool) -> usize {
         let mut extra_roots = Vec::new();
         if let Some(hook) = self.hook {
             hook.append_roots(&mut extra_roots);
         }
-        if full {
+        if full && parent.is_none() {
+            let hook = self.hook;
+            roots::collect_and_compact_current(
+                &self.types,
+                stack,
+                locals,
+                &extra_roots,
+                &mut |relocation| {
+                    if let Some(hook) = hook {
+                        hook.rewrite_managed_roots(relocation);
+                    }
+                },
+            )
+        } else if full {
             roots::collect(&self.types, stack, locals, parent, &extra_roots)
         } else {
             roots::collect_young(&self.types, stack, locals, parent, &extra_roots)
@@ -1349,7 +1362,7 @@ impl Interp<'_> {
     ///
     /// Backedges and allocation sites are both safe because the current frame
     /// and its caller chain are fully materialized for precise root scanning.
-    fn poll_gc(&mut self, stack: &[Value], locals: &[Value], parent: Option<&RootLink>) {
+    fn poll_gc(&mut self, stack: &mut [Value], locals: &mut [Value], parent: Option<&RootLink>) {
         if self.allocs < self.gc_interval {
             return;
         }
@@ -1371,6 +1384,17 @@ impl Interp<'_> {
 mod method_tests {
     use super::*;
     use crate::roots::{collect as collect_roots, collect_frame_roots};
+
+    #[test]
+    fn full_interpreter_gc_compacts_and_rewrites_current_locals() {
+        let module = zun_compiler::compile(
+            "class Box { value: int; } function main(): int { let live = new Box(7); let i: u64 = 0; while (i < 2300) { let garbage = new Box(1); i = i + 1; } return live.value; }",
+        )
+        .expect("compile compaction workload");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run compaction workload");
+        assert!(matches!(result, Value::Int(value, _) if value == 7));
+    }
 
     #[test]
     fn extra_osr_roots_keep_managed_objects_alive() {

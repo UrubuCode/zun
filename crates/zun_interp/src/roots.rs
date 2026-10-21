@@ -23,6 +23,36 @@ pub(super) fn collect_young(
     collect_with_policy(types, stack, locals, parent, extra_roots, true)
 }
 
+/// Run a full collection and compact the heap while the current activation's
+/// value storage is exclusively borrowed by the interpreter. Caller frames
+/// are intentionally excluded; nested execution remains on mark/sweep until
+/// its owned frame chain can be rewritten as one unit.
+pub(super) fn collect_and_compact_current(
+    types: &zun_types::TypeSystem,
+    stack: &mut [Value],
+    locals: &mut [Value],
+    extra_roots: &[zun_gc::Obj],
+    rewrite_external: &mut dyn FnMut(&zun_gc::RelocationMap),
+) -> usize {
+    let mut roots = Vec::new();
+    roots.extend_from_slice(extra_roots);
+    collect_frame_roots(stack, locals, &mut roots);
+    let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
+    let mut rewritten = 0;
+    zun_gc::with_current_heap_mut(|heap| unsafe {
+        let result = heap.collect_and_compact_with_relocation(
+            &mut roots,
+            &ref_fn,
+            &mut |relocation| {
+                rewritten += Value::rewrite_managed_references(stack, relocation);
+                rewritten += Value::rewrite_managed_references(locals, relocation);
+                rewrite_external(relocation);
+            },
+        );
+        result.reclaimed_objects + rewritten
+    })
+}
+
 fn collect_with_policy(
     types: &zun_types::TypeSystem,
     stack: &[Value],
