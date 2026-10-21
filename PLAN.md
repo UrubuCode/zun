@@ -1051,7 +1051,9 @@ an optimization gate.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
    replacement, non-blittable FFI marshalling (deferred; ownership modes are
    specified in section 4.4), production N-API, AOT/R2R, and the
-   remaining performance backlog. Async/await source lowering is complete in
+   remaining performance backlog (the first OrderedMap and generational-GC
+   policies are complete; only their measured scaling follow-ups remain).
+   Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering, managed iterator
    objects, `next()`, and `for...of` integration are implemented, including
    argument arrays. Broader JIT support remains pending. Module-hygiene splits are
