@@ -663,8 +663,9 @@ The following runtime contracts are implemented and covered by tests:
   supported blittable `i64`, `f64`, and zero-argument `bool` C shapes, and
   validates them before dispatching to fixed-arity thunks. Compiler/IL
   external `MemberRef` calls now carry their arity and can be intercepted by a
-  host `CallHook`; native-library resolver binding, declarations, and
-  marshalling for external symbols remain separate gates;
+  host `CallHook`; `zun_vm` provides an explicit `NativeCallHook` that binds
+  registered scalar signatures to the resolver and typed thunks. Source-level
+  declarations and non-blittable marshalling remain separate gates;
   source-level P/Invoke-style declarations and typed IL calls are still
   pending.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
