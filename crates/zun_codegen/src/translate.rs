@@ -569,6 +569,22 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("replace") => {
+                                let (replacement, replacement_kind) = stack.pop().ok_or("replace replacement")?;
+                                let (needle, needle_kind) = stack.pop().ok_or("replace needle")?;
+                                let (receiver, receiver_kind) = stack.pop().ok_or("replace receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || needle_kind != JitKind::String
+                                    || replacement_kind != JitKind::String
+                                {
+                                    return Err("replace expects three strings".into());
+                                }
+                                let helper = self.string_replace_fref();
+                                let call = self.builder.ins().call(helper, &[receiver, needle, replacement]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -788,6 +804,13 @@ impl Translator<'_> {
                             ),
                             Some("padEnd") => (
                                 "zun_jit_string_pad_end",
+                                3,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("replace") => (
+                                "zun_jit_string_replace",
                                 3,
                                 types::I64,
                                 JitKind::String,
@@ -1960,6 +1983,14 @@ impl Translator<'_> {
         sig.returns.push(AbiParam::new(types::I64));
         let symbol = if name == "padEnd" { "zun_jit_string_pad_end" } else { "zun_jit_string_pad_start" };
         let id = self.module.declare_function(symbol, Linkage::Import, &sig).expect("declare string pad helper");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_replace_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        for _ in 0..3 { sig.params.push(AbiParam::new(types::I64)); }
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self.module.declare_function("zun_jit_string_replace", Linkage::Import, &sig).expect("declare zun_jit_string_replace");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

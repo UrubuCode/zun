@@ -278,6 +278,16 @@ pub extern "C" fn zun_jit_string_pad_end(handle: i64, target: i64, fill: i64) ->
     jit_pad_string(handle, target, fill, false)
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_replace(handle: i64, needle: i64, replacement: i64) -> i64 {
+    zun_gc::with_current_heap_mut(|heap| {
+        let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
+        let Some(needle) = heap.try_string(needle as u32).cloned() else { return 0 };
+        let Some(replacement) = heap.try_string(replacement as u32).cloned() else { return 0 };
+        heap.intern_string(std::rc::Rc::from(value.replacen(needle.as_ref(), replacement.as_ref(), 1))).into()
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -1153,6 +1163,7 @@ impl Jit {
         builder.symbol("zun_jit_string_reverse", zun_jit_string_reverse as *const u8);
         builder.symbol("zun_jit_string_pad_start", zun_jit_string_pad_start as *const u8);
         builder.symbol("zun_jit_string_pad_end", zun_jit_string_pad_end as *const u8);
+        builder.symbol("zun_jit_string_replace", zun_jit_string_replace as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
