@@ -294,6 +294,22 @@ mod tests {
         assert!(matches!(jitted, Value::Int(300, zun_il::NumKind::I32)));
     }
 
+    #[test]
+    fn jit_managed_object_return_matches_interpreter() {
+        let source = "class Box { value: int; } function make(): Box { return new Box(42); } function main(): int { let item = make(); return item.value; }";
+        let bytes = zun_compiler::compile(source).unwrap().write();
+        let module = load(&bytes).expect("load managed-return module");
+
+        let mut interpreter_output = zun_interp::CaptureOutput::default();
+        let interpreted = zun_interp::run(&module, &mut interpreter_output)
+            .expect("interpreter managed return");
+        let mut jit_output = zun_interp::CaptureOutput::default();
+        let jitted = execute_with(&bytes, &mut jit_output).expect("JIT managed return");
+
+        assert!(matches!(interpreted, Value::Int(42, zun_il::NumKind::I32)));
+        assert!(matches!(jitted, Value::Int(42, zun_il::NumKind::I32)));
+    }
+
     #[cfg(windows)]
     #[test]
     fn native_execution_routes_external_member_ref_to_the_registered_hook() {
