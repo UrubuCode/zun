@@ -238,6 +238,16 @@ pub extern "C" fn zun_jit_string_repeat(handle: i64, count: i64) -> i64 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_reverse(handle: i64) -> i64 {
+    zun_gc::with_current_heap_mut(|heap| {
+        let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
+        let mut units: Vec<u16> = value.encode_utf16().collect();
+        units.reverse();
+        heap.intern_string(std::rc::Rc::from(String::from_utf16_lossy(&units))).into()
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -1110,6 +1120,7 @@ impl Jit {
         builder.symbol("zun_jit_string_to_lower_case", zun_jit_string_to_lower_case as *const u8);
         builder.symbol("zun_jit_string_to_upper_case", zun_jit_string_to_upper_case as *const u8);
         builder.symbol("zun_jit_string_repeat", zun_jit_string_repeat as *const u8);
+        builder.symbol("zun_jit_string_reverse", zun_jit_string_reverse as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);

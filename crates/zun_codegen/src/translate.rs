@@ -537,6 +537,17 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("reverse") => {
+                                let (receiver, receiver_kind) = stack.pop().ok_or("reverse receiver")?;
+                                if receiver_kind != JitKind::String {
+                                    return Err("reverse expects a string receiver".into());
+                                }
+                                let helper = self.string_reverse_fref();
+                                let call = self.builder.ins().call(helper, &[receiver]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -736,6 +747,13 @@ impl Translator<'_> {
                             Some("repeat") => (
                                 "zun_jit_string_repeat",
                                 2,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("reverse") => (
+                                "zun_jit_string_reverse",
+                                1,
                                 types::I64,
                                 JitKind::String,
                                 types::I64,
@@ -1887,6 +1905,17 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_repeat", Linkage::Import, &sig)
             .expect("declare zun_jit_string_repeat");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_reverse_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_reverse", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_reverse");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

@@ -445,6 +445,29 @@ fn primitive_string_repeat_uses_the_managed_string_abi() {
     assert_eq!(heap.string(handle as u32).as_ref(), "zunzunzun");
 }
 
+#[test]
+fn primitive_string_reverse_uses_the_managed_string_abi() {
+    let module = compile(
+        "import { reverse } from \"zun:string\"; class String { extern reverse(): string; } function measure(value: string): string { return value.reverse(); } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun"));
+    let handle = jit
+        .call_packed_with_heap(rid, &[value as u64], &mut heap)
+        .expect("reverse call");
+    assert_eq!(heap.string(handle as u32).as_ref(), "nuz");
+}
+
 
 #[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {
