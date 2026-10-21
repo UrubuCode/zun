@@ -108,6 +108,19 @@ impl ExecutionFrame {
         self.state = FrameState::Runnable;
         Some(promise)
     }
+
+    /// Rewrite all managed values in this owned frame and its caller chain.
+    pub(super) fn rewrite_managed_references(
+        &mut self,
+        relocation: &zun_gc::RelocationMap,
+    ) -> usize {
+        let mut rewritten = Value::rewrite_managed_references(&mut self.stack, relocation);
+        rewritten += Value::rewrite_managed_references(&mut self.locals, relocation);
+        if let Some(parent) = self.parent.as_mut() {
+            rewritten += parent.rewrite_managed_references(relocation);
+        }
+        rewritten
+    }
 }
 
 #[cfg(test)]
@@ -139,5 +152,22 @@ mod tests {
         assert!(matches!(outcome, ExecutionOutcome::Complete(Value::Bool(true))));
         let result = ExecutionOutcome::from_result(Err(RunError::BadToken)).into_result();
         assert!(matches!(result, Err(RunError::BadToken)));
+    }
+
+    #[test]
+    fn moving_collection_rewrites_owned_frame_chains() {
+        let old = unsafe { Obj::from_addr(0x1000usize as *mut u64) };
+        let new = unsafe { Obj::from_addr(0x2000usize as *mut u64) };
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert(old, new);
+
+        let mut frame = ExecutionFrame::new(1, vec![Value::Object(old)]);
+        frame.stack.push(Value::Any(zun_core::Any::object(0x1000)));
+        frame.parent = Some(Box::new(ExecutionFrame::new(2, vec![Value::Object(old)])));
+
+        assert_eq!(frame.rewrite_managed_references(&relocation), 3);
+        assert!(matches!(frame.locals[0], Value::Object(object) if object == new));
+        assert!(matches!(frame.stack[0], Value::Any(any) if any.as_object() == Some(0x2000)));
+        assert!(matches!(frame.parent.as_ref().unwrap().locals[0], Value::Object(object) if object == new));
     }
 }
