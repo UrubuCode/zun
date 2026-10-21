@@ -351,6 +351,66 @@ impl Heap {
     pub fn rewrite_runtime_references(&mut self, relocation: &RelocationMap) -> usize {
         let map = |address| relocation.relocate_address(address);
         let mut rewritten = 0;
+
+        let buffers = std::mem::take(&mut self.buffers);
+        let mut mapped_buffers = HashMap::with_capacity(buffers.len());
+        for (address, buffer) in buffers {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            mapped_buffers.insert(mapped, buffer);
+        }
+        self.buffers = mapped_buffers;
+
+        let data_views = std::mem::take(&mut self.data_views);
+        let mut mapped_data_views = HashMap::with_capacity(data_views.len());
+        for (address, view) in data_views {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            mapped_data_views.insert(mapped, view);
+        }
+        self.data_views = mapped_data_views;
+
+        let dates = std::mem::take(&mut self.dates);
+        let mut mapped_dates = HashMap::with_capacity(dates.len());
+        for (address, value) in dates {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            mapped_dates.insert(mapped, value);
+        }
+        self.dates = mapped_dates;
+
+        let errors = std::mem::take(&mut self.errors);
+        let mut mapped_errors = HashMap::with_capacity(errors.len());
+        for (address, value) in errors {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            mapped_errors.insert(mapped, value);
+        }
+        self.errors = mapped_errors;
+
+        let regexes = std::mem::take(&mut self.regexes);
+        let mut mapped_regexes = HashMap::with_capacity(regexes.len());
+        for (address, value) in regexes {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            mapped_regexes.insert(mapped, value);
+        }
+        self.regexes = mapped_regexes;
+
+        let records = &mut self.records;
+        for record in records.iter_mut().filter(|record| record.alive) {
+            let address = record.addr as usize;
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; record.addr = mapped as *mut u64; }
+        }
+        let by_addr = std::mem::take(&mut self.by_addr);
+        let mut mapped_by_addr = HashMap::with_capacity(by_addr.len());
+        for (address, index) in by_addr {
+            mapped_by_addr.insert(map(address), index);
+        }
+        self.by_addr = mapped_by_addr;
+        self.remembered_set = self.remembered_set.iter().map(|&address| map(address)).collect();
+
         let promises = std::mem::take(&mut self.promises);
         let mut mapped_promises = HashMap::with_capacity(promises.len());
         for (address, mut promise) in promises {
@@ -1251,7 +1311,7 @@ mod tests {
         relocation.insert(proxy, new_proxy);
         relocation.insert(target, new_target);
         relocation.insert(handler, new_handler);
-        assert_eq!(heap.rewrite_runtime_references(&relocation), 5);
+        assert_eq!(heap.rewrite_runtime_references(&relocation), 9);
 
         assert_eq!(heap.promise_result(new_promise).and_then(|value| value.as_object()), Some(new_target.addr() as usize));
         assert_eq!(heap.proxy_target(new_proxy), Some(new_target));
