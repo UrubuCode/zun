@@ -4191,6 +4191,30 @@ fn proven_numeric_array_unbox_remains_jit_eligible() {
 }
 
 #[test]
+fn proven_float_array_unbox_is_jit_equivalent() {
+    let src = "function read(values: Array): number { return values[0] as number; }\n\
+               function main(): number { let values = new Array(1); values[0] = 2.5; return read(values); }";
+    let module = compile(src);
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles float unbox");
+    assert!(jit.is_compiled(read_rid), "proven float UnboxAny should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    heap.array_set(array, 0, zun_core::Any::float(2.5));
+    let jit_value = jit
+        .call_packed_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit float unbox");
+    assert_eq!(f64::from_bits(jit_value), 2.5);
+    assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 2.5));
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";
