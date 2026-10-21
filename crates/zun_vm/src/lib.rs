@@ -310,6 +310,22 @@ mod tests {
         assert!(matches!(jitted, Value::Int(42, zun_il::NumKind::I32)));
     }
 
+    #[test]
+    fn jit_managed_reference_field_matches_interpreter() {
+        let source = "class Leaf { value: int; } class Node { child: Leaf; value: int; } function make(): Node { let leaf = new Leaf(7); return new Node(leaf, 0); } function main(): int { let root = make(); return root.child.value; }";
+        let bytes = zun_compiler::compile(source).unwrap().write();
+        let module = load(&bytes).expect("load managed-reference module");
+
+        let mut interpreter_output = zun_interp::CaptureOutput::default();
+        let interpreted = zun_interp::run(&module, &mut interpreter_output)
+            .expect("interpreter managed reference");
+        let mut jit_output = zun_interp::CaptureOutput::default();
+        let jitted = execute_with(&bytes, &mut jit_output).expect("JIT managed reference");
+
+        assert!(matches!(interpreted, Value::Int(7, zun_il::NumKind::I32)));
+        assert!(matches!(jitted, Value::Int(7, zun_il::NumKind::I32)));
+    }
+
     #[cfg(windows)]
     #[test]
     fn native_execution_routes_external_member_ref_to_the_registered_hook() {
