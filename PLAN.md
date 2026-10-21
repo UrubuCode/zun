@@ -576,7 +576,7 @@ The following runtime contracts are implemented and covered by tests:
   still required before compaction is enabled; promise and proxy side-table
   state and address-keyed runtime carriers (buffers, views, dates, errors,
   regexes, records, and remembered-set entries) are now covered alongside the
-  other strong references;
+  other strong references; DataView buffer fields are explicitly rewritten;
   iterator/typed-view side tables and weak metadata translation are covered,
   while weak liveness remains a separate phase. Active native root scopes and
   stopped frames can now rewrite their reference slots through the forwarding
