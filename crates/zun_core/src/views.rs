@@ -232,6 +232,10 @@ impl TypedArrayView {
         self.view.len() / self.element.size()
     }
 
+    pub fn byte_len(self) -> usize {
+        self.view.len()
+    }
+
     pub fn element(self) -> TypedElement {
         self.element
     }

@@ -9,6 +9,14 @@ impl Heap {
         self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.len())
     }
 
+    pub fn data_view_byte_len(&self, object: Obj) -> Option<usize> {
+        self.data_views.get(&(object.addr() as usize)).map(|view| view.len())
+    }
+
+    pub fn typed_array_byte_len(&self, object: Obj) -> Option<usize> {
+        self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.byte_len())
+    }
+
     pub fn data_view_get_u32(&self, object: Obj, relative: usize, little_endian: bool) -> Option<u32> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
         self.data_views.get(&(object.addr() as usize))?.get_u32(

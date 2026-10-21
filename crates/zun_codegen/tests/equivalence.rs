@@ -210,7 +210,7 @@ fn array_buffer_length_uses_the_managed_object_abi() {
 #[test]
 fn managed_view_lengths_use_typed_object_abis() {
     let module = compile(
-        "import { dataViewLength, u8ArrayLength, u16ArrayLength, u32ArrayLength, f64ArrayLength } from \"zun:buffer\"; function data(view: DataView): u64 { return dataViewLength(view); } function u8(view: Uint8Array): u64 { return u8ArrayLength(view); } function u16(view: Uint16Array): u64 { return u16ArrayLength(view); } function u32(view: Uint32Array): u64 { return u32ArrayLength(view); } function f64(view: Float64Array): u64 { return f64ArrayLength(view); } function main(): u64 { return 0; }",
+        "import { dataViewLength, dataViewByteLength, u8ArrayLength, u8ArrayByteLength, u16ArrayLength, u16ArrayByteLength, u32ArrayLength, u32ArrayByteLength, f64ArrayLength, f64ArrayByteLength } from \"zun:buffer\"; function data(view: DataView): u64 { return dataViewLength(view); } function dataBytes(view: DataView): u64 { return dataViewByteLength(view); } function u8(view: Uint8Array): u64 { return u8ArrayLength(view); } function u8Bytes(view: Uint8Array): u64 { return u8ArrayByteLength(view); } function u16(view: Uint16Array): u64 { return u16ArrayLength(view); } function u16Bytes(view: Uint16Array): u64 { return u16ArrayByteLength(view); } function u32(view: Uint32Array): u64 { return u32ArrayLength(view); } function u32Bytes(view: Uint32Array): u64 { return u32ArrayByteLength(view); } function f64(view: Float64Array): u64 { return f64ArrayLength(view); } function f64Bytes(view: Float64Array): u64 { return f64ArrayByteLength(view); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| {
         module
@@ -222,16 +222,26 @@ fn managed_view_lengths_use_typed_object_abis() {
             + 1
     };
     let data = find("data");
+    let data_bytes = find("dataBytes");
     let u8 = find("u8");
+    let u8_bytes = find("u8Bytes");
     let u16 = find("u16");
+    let u16_bytes = find("u16Bytes");
     let u32 = find("u32");
+    let u32_bytes = find("u32Bytes");
     let f64 = find("f64");
+    let f64_bytes = find("f64Bytes");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(data));
+    assert!(jit.is_compiled(data_bytes));
     assert!(jit.is_compiled(u8));
+    assert!(jit.is_compiled(u8_bytes));
     assert!(jit.is_compiled(u16));
+    assert!(jit.is_compiled(u16_bytes));
     assert!(jit.is_compiled(u32));
+    assert!(jit.is_compiled(u32_bytes));
     assert!(jit.is_compiled(f64));
+    assert!(jit.is_compiled(f64_bytes));
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(32);
     let data_view = heap.alloc_data_view(buffer, 0, 12).expect("data view");
@@ -240,10 +250,15 @@ fn managed_view_lengths_use_typed_object_abis() {
     let u32_view = heap.alloc_u32_array(buffer, 0, 8).expect("u32 view");
     let f64_view = heap.alloc_f64_array(buffer, 0, 16).expect("f64 view");
     assert!(matches!(jit.call_packed_with_heap(data, &[data_view.addr() as u64], &mut heap), Ok(12)));
+    assert!(matches!(jit.call_packed_with_heap(data_bytes, &[data_view.addr() as u64], &mut heap), Ok(12)));
     assert!(matches!(jit.call_packed_with_heap(u8, &[u8_view.addr() as u64], &mut heap), Ok(5)));
+    assert!(matches!(jit.call_packed_with_heap(u8_bytes, &[u8_view.addr() as u64], &mut heap), Ok(5)));
     assert!(matches!(jit.call_packed_with_heap(u16, &[u16_view.addr() as u64], &mut heap), Ok(4)));
+    assert!(matches!(jit.call_packed_with_heap(u16_bytes, &[u16_view.addr() as u64], &mut heap), Ok(8)));
     assert!(matches!(jit.call_packed_with_heap(u32, &[u32_view.addr() as u64], &mut heap), Ok(2)));
+    assert!(matches!(jit.call_packed_with_heap(u32_bytes, &[u32_view.addr() as u64], &mut heap), Ok(8)));
     assert!(matches!(jit.call_packed_with_heap(f64, &[f64_view.addr() as u64], &mut heap), Ok(2)));
+    assert!(matches!(jit.call_packed_with_heap(f64_bytes, &[f64_view.addr() as u64], &mut heap), Ok(16)));
 }
 
 #[test]

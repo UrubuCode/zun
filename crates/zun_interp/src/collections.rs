@@ -141,6 +141,10 @@ impl<'a> Interp<'a> {
                 let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_len(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
             }
+            "dataViewByteLength" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_byte_len(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+            }
             "dataViewGetU32" => {
                 let view =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -282,6 +286,10 @@ impl<'a> Interp<'a> {
             "u32ArrayLength" | "u8ArrayLength" | "f64ArrayLength" | "u16ArrayLength" => {
                 let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.typed_array_len(array)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+            }
+            "u32ArrayByteLength" | "u8ArrayByteLength" | "f64ArrayByteLength" | "u16ArrayByteLength" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.typed_array_byte_len(array)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
             }
             "u32ArrayGet" => {
                 let array =

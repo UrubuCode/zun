@@ -86,6 +86,7 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "bufferWriteF64"
                 | "dataViewGetU32"
                 | "dataViewLength"
+                | "dataViewByteLength"
                 | "dataViewGetU16"
                 | "dataViewGetF64"
                 | "dataViewSetU32"
@@ -93,15 +94,19 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "dataViewSetF64"
                 | "u8ArrayGet"
                 | "u8ArrayLength"
+                | "u8ArrayByteLength"
                 | "u8ArraySet"
                 | "u16ArrayGet"
                 | "u16ArrayLength"
+                | "u16ArrayByteLength"
                 | "u16ArraySet"
                 | "u32ArrayGet"
                 | "u32ArrayLength"
+                | "u32ArrayByteLength"
                 | "u32ArraySet"
                 | "f64ArrayGet"
                 | "f64ArrayLength"
+                | "f64ArrayByteLength"
                 | "f64ArraySet",
         )
     )

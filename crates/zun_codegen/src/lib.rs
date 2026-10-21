@@ -56,6 +56,18 @@ pub extern "C" fn zun_jit_typed_array_length(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.typed_array_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+#[inline]
+pub extern "C" fn zun_jit_data_view_byte_length(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.data_view_byte_len(object).map(|len| len as i64).unwrap_or(-1))
+}
+
+#[inline]
+pub extern "C" fn zun_jit_typed_array_byte_length(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.typed_array_byte_len(object).map(|len| len as i64).unwrap_or(-1))
+}
+
 /// Read one byte from a managed ArrayBuffer without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_get_u8(address: i64, index: i64) -> i8 {
@@ -846,6 +858,8 @@ impl Jit {
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
+    builder.symbol("zun_jit_data_view_byte_length", zun_jit_data_view_byte_length as *const u8);
+    builder.symbol("zun_jit_typed_array_byte_length", zun_jit_typed_array_byte_length as *const u8);
     builder.symbol("zun_jit_buffer_get_u8", zun_jit_buffer_get_u8 as *const u8);
     builder.symbol("zun_jit_buffer_read_u32", zun_jit_buffer_read_u32 as *const u8);
     builder.symbol("zun_jit_buffer_read_f64", zun_jit_buffer_read_f64 as *const u8);
