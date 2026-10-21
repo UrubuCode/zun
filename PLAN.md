@@ -562,10 +562,10 @@ The following runtime contracts are implemented and covered by tests:
   stack-map reference-slot metadata; object-producing JIT values are registered
   in those maps and the GC can consume a stopped native frame through `(PC, SP)`.
   JIT allocation, field-store barriers, managed calls, and imported builtins
-  now retain object operands across their call boundaries, with nested
-  native-frame collection coverage tested; interpreter safepoints now select
-  minor/full collection policy and native `(PC, SP)` capture remains the
-  pending JIT-specific path;
+  now retain object operands across their call boundaries, and field loads
+  retain their receivers in stack maps; nested native-frame collection
+  coverage is tested. Interpreter safepoints now select minor/full collection
+  policy, while automatic native `(PC, SP)` discovery remains pending;
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
