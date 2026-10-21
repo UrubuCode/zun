@@ -563,9 +563,10 @@ impl Interp<'_> {
                                     return Err(RunError::BadToken);
                                 }
                                 let start = stack.len() - arity;
-                                if let Some(result) = hook.try_call_external(
+                                if let Some(result) = hook.try_call_external_typed(
                                     module_name,
                                     member_name,
+                                    signature,
                                     &stack[start..],
                                 ) {
                                     stack.truncate(start);

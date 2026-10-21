@@ -127,6 +127,41 @@ impl CallHook for NativeCallHook {
         let signature = self.signatures.get(&(module.to_owned(), name.to_owned()))?;
         Some(self.invoke(module, name, signature, args))
     }
+
+    fn try_call_external_typed(
+        &self,
+        module: &str,
+        name: &str,
+        encoded: &[u8],
+        args: &[Value],
+    ) -> Option<Result<Value, RunError>> {
+        let signature = self.signatures.get(&(module.to_owned(), name.to_owned()))?;
+        if encoded.len() >= 2 {
+            let arity = usize::from(encoded[0]);
+            let expected_len = arity.checked_add(2)?;
+            if arity != args.len() || encoded.len() != expected_len {
+                return Some(Err(RunError::Native("native metadata signature arity mismatch".into())));
+            }
+            let expected = encoded[1..]
+                .iter()
+                .map(|tag| match tag {
+                    1 => Some(FfiScalar::I64),
+                    2 => Some(FfiScalar::F64),
+                    3 => Some(FfiScalar::Bool),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(expected) = expected else {
+                return Some(Err(RunError::Native("unsupported native metadata type".into())));
+            };
+            let result = expected.last().copied();
+            let params = &expected[..expected.len() - 1];
+            if result != Some(signature.result()) || params != signature.params() {
+                return Some(Err(RunError::Native("native metadata signature mismatch".into())));
+            }
+        }
+        Some(self.invoke(module, name, signature, args))
+    }
 }
 
 #[cfg(test)]
@@ -149,5 +184,16 @@ mod tests {
     fn unregistered_exports_are_not_intercepted() {
         let hook = NativeCallHook::new();
         assert!(hook.try_call_external("kernel32", "missing", &[]).is_none());
+    }
+
+    #[test]
+    fn rejects_a_native_call_when_metadata_types_do_not_match() {
+        let mut hook = NativeCallHook::new();
+        hook.register("test", "answer", FfiSignature::new([], FfiScalar::I64));
+        let result = hook
+            .try_call_external_typed("test", "answer", &[0, 2], &[])
+            .expect("registered export must be intercepted")
+            .expect_err("metadata must reject an f64 result for an i64 registration");
+        assert!(result.to_string().contains("signature mismatch"));
     }
 }

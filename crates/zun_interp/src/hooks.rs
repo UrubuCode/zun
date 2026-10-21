@@ -14,6 +14,18 @@ pub trait CallHook {
         None
     }
 
+    /// Typed variant used by native hosts. The default preserves compatibility
+    /// with hooks that only need the module/export name and runtime values.
+    fn try_call_external_typed(
+        &self,
+        module: &str,
+        name: &str,
+        _signature: &[u8],
+        args: &[Value],
+    ) -> Option<Result<Value, super::RunError>> {
+        self.try_call_external(module, name, args)
+    }
+
     /// Append managed references retained by a tiering backend, such as OSR
     /// frame snapshots, to the interpreter's precise root set.
     fn append_roots(&self, _roots: &mut Vec<zun_gc::Obj>) {}

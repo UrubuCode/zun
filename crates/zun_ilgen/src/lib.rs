@@ -71,6 +71,15 @@ pub(crate) fn numkind_of(ty: Ty) -> Option<NumKind> {
     })
 }
 
+fn ffi_type_tag(ty: Ty) -> u8 {
+    match ty {
+        Ty::Int(IntKind { bits: 64, .. }) => 1,
+        Ty::Float(FloatKind::F64) => 2,
+        Ty::Boolean => 3,
+        _ => 0,
+    }
+}
+
 /// Tokens a lowered program needs to reference its own metadata.
 struct Layout {
     /// TypeDef token per class index.
@@ -1081,7 +1090,14 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     .tables
                     .add_module_ref(ModuleRef { name: module_name });
                 let arity = u8::try_from(args.len()).expect("external call arity exceeds metadata limit");
-                let signature = self.module.blobs.intern(&[arity]);
+                // Keep arity first for the verifier, followed by scalar type
+                // tags for the typed native-call boundary. Zero denotes a
+                // managed/non-blittable type at the explicit stub boundary.
+                let mut signature_bytes = Vec::with_capacity(args.len() + 2);
+                signature_bytes.push(arity);
+                signature_bytes.extend(args.iter().map(|arg| ffi_type_tag(arg.ty)));
+                signature_bytes.push(ffi_type_tag(e.ty));
+                let signature = self.module.blobs.intern(&signature_bytes);
                 let member_ref = self.module.tables.add_member_ref(MemberRef {
                     parent: module_ref,
                     name: member_name,
