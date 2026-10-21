@@ -24,6 +24,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::ConstF64
             | Opcode::ConstTrue
             | Opcode::ConstFalse
+            | Opcode::ConstStr
             | Opcode::Conv
             | Opcode::UnboxAny
             | Opcode::BoxAny
@@ -412,6 +413,13 @@ fn object_array_stack_only(instrs: &[zun_il::Instruction], body: &zun_module::Me
 
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
+    eligible_methods_with_literals(module, false)
+}
+
+/// Compute runtime-JIT eligibility when the JIT owns stable copies of module
+/// string bytes. Relocatable/AOT objects must keep the default false mode:
+/// their code cannot embed a process-local module-string pointer.
+pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) -> HashSet<u32> {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
         methods_by_name
@@ -443,6 +451,19 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
+        if instrs.iter().any(|i| i.opcode == Opcode::ConstStr) {
+            // The first literal ABI slice is deliberately limited to a direct
+            // literal receiver call. More general locals/control flow need a
+            // literal-handle liveness contract at every safepoint.
+            if !allow_const_str
+                || !instrs.iter().all(|i| {
+                    matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret)
+                })
+                || instrs.iter().filter(|i| i.opcode == Opcode::CallVirt).count() != 1
+            {
+                continue;
+            }
+        }
         if instrs.iter().any(|instruction| requires_exception_bridge(instruction.opcode)) {
             continue;
         }

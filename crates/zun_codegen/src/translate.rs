@@ -62,6 +62,7 @@ pub fn translate_body(
     func_ids: &HashMap<u32, FuncId>,
     types: &TypeSystem,
     virtual_table_ptrs: *const u64,
+    literal_ptrs: *const u64,
     body: &MethodBody<'_>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
@@ -128,6 +129,7 @@ pub fn translate_body(
         func_ids,
         types,
         virtual_table_ptrs,
+        literal_ptrs,
         module,
         zm,
         osr_counter,
@@ -192,6 +194,7 @@ struct Translator<'a> {
     zm: &'a ZmModule,
     types: &'a TypeSystem,
     virtual_table_ptrs: *const u64,
+    literal_ptrs: *const u64,
     osr_counter: Variable,
     method_return_kind: JitKind,
 }
@@ -241,6 +244,26 @@ impl Translator<'_> {
                 Opcode::ConstFalse => {
                     let c = self.builder.ins().iconst(types::I32, 0);
                     stack.push((c, JitKind::Bool));
+                }
+                Opcode::ConstStr => {
+                    let Operand::StringRef(index) = instr.operand else {
+                        return Err("const.str operand".into());
+                    };
+                    if self.literal_ptrs.is_null() {
+                        return Err("const.str requires runtime literal storage".into());
+                    }
+                    let ptr = unsafe { *self.literal_ptrs.add(index as usize) };
+                    let len = self
+                        .zm
+                        .strings
+                        .get(zun_metadata::StringIndex(index))
+                        .len();
+                    let ptr = self.builder.ins().iconst(types::I64, ptr as i64);
+                    let len = self.builder.ins().iconst(types::I64, len as i64);
+                    let literal = self.string_literal_fref();
+                    let call = self.builder.ins().call(literal, &[ptr, len]);
+                    let result = self.builder.inst_results(call)[0];
+                    stack.push((result, JitKind::String));
                 }
                 Opcode::Conv => {
                     let target = NumKind::from_imm(imm32(&instr.operand)).ok_or("bad conv kind")?;
@@ -1941,6 +1964,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_length", Linkage::Import, &sig)
             .expect("declare zun_jit_string_length");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_literal_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_literal", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_literal");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

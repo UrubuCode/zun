@@ -954,12 +954,12 @@ now-published precise JIT-frame safepoint, true OSR frame replacement, and
  non-blittable FFI marshalling (deferred; its ownership ABI is specified in
  section 4.4), production Node N-API bindings, AOT/R2R support
  for the full runtime surface, BigInt, and the remaining Group 3 type-level
-features. String-producing JIT paths also require an explicit literal-handle
-ABI: `ConstStr` currently has only a metadata string index, while the native
-backend receives no module string-pool/heap context. Until that boundary is
-designed, source string literals and methods that depend on them remain an
-intentional Tier 0 fallback; parameter/field string handles use the existing
-typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
+features. Runtime JIT string literals now use an explicit literal-handle ABI:
+the JIT owns stable UTF-8 bytes and interns them through the active heap scope;
+the interpreter/JIT equivalence path covers literal `String` methods. The
+relocatable/AOT backend still rejects `ConstStr`, because it needs a relocatable
+literal pool rather than a process-local pointer. Parameter/field string
+handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
 are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
 

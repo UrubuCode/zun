@@ -110,6 +110,22 @@ fn primitive_string_length_callvirt_uses_the_direct_handle_path() {
 }
 
 #[test]
+fn string_literal_callvirt_uses_the_runtime_literal_abi() {
+    let module = compile(
+        "import { contains } from \"zun:string\"; class String { extern contains(needle: string): boolean; } function main(): boolean { return \"zun\".contains(\"u\"); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(entry));
+    let mut heap = zun_gc::Heap::new();
+    let jit_result = jit
+        .call_entry_with_heap(entry, &mut heap)
+        .expect("jit call");
+    assert_eq!(jit_result, RetVal::Bool(true));
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn primitive_string_contains_uses_the_managed_string_abi() {
     let module = compile(
         "import { contains } from \"zun:string\"; class String { extern contains(needle: string): boolean; } function measure(value: string, needle: string): boolean { return value.contains(needle); } function main(): boolean { return false; }",

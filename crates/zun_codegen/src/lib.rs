@@ -16,7 +16,7 @@ mod any_abi;
 mod shim;
 mod translate;
 
-pub use eligible::eligible_methods;
+pub use eligible::{eligible_methods, eligible_methods_with_literals};
 pub use any_abi::JitAnyAbi;
 pub use zun_il::{JitKind, NumKind};
 
@@ -44,6 +44,19 @@ pub extern "C" fn zun_jit_string_length(handle: i64) -> i64 {
         heap.try_string(handle as u32)
             .map(|value| value.encode_utf16().count() as i64)
             .unwrap_or(-1)
+    })
+}
+
+/// Intern JIT-owned UTF-8 literal bytes and return the stable managed handle.
+#[inline]
+pub extern "C" fn zun_jit_string_literal(bytes: i64, len: i64) -> i64 {
+    if bytes == 0 || len < 0 {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(bytes as *const u8, len as usize) };
+    let value = String::from_utf8_lossy(bytes);
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.intern_string(std::rc::Rc::from(value.as_ref())).into()
     })
 }
 
@@ -1288,6 +1301,8 @@ pub struct Jit {
     types: zun_types::TypeSystem,
     virtual_tables: Vec<Box<[u64]>>,
     virtual_table_ptrs: Box<[u64]>,
+    _literal_storage: Vec<Box<[u8]>>,
+    literal_ptrs: Box<[u64]>,
     stack_maps: HashMap<u32, Vec<StackMapInfo>>,
     stack_map_registry: zun_gc::StackMapRegistry,
 }
@@ -1332,6 +1347,7 @@ impl Jit {
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
         builder.symbol("zun_jit_string_length", zun_jit_string_length as *const u8);
+        builder.symbol("zun_jit_string_literal", zun_jit_string_literal as *const u8);
         builder.symbol("zun_jit_string_contains", zun_jit_string_contains as *const u8);
         builder.symbol("zun_jit_string_char_code_at", zun_jit_string_char_code_at as *const u8);
         builder.symbol("zun_jit_string_starts_with", zun_jit_string_starts_with as *const u8);
@@ -1482,7 +1498,28 @@ impl Jit {
         );
         let module = JITModule::new(builder);
 
-        let eligible = eligible_methods(zm);
+        let mut literal_storage = Vec::new();
+        let mut string_offset = 0usize;
+        while string_offset < zm.strings.as_bytes().len() {
+            let value = zm
+                .strings
+                .get(zun_metadata::StringIndex(string_offset as u32));
+            literal_storage.push(value.as_bytes().to_vec().into_boxed_slice());
+            string_offset += value.len() + 1;
+        }
+        let mut literal_ptrs = vec![0u64; zm.strings.as_bytes().len()];
+        let mut string_offset = 0usize;
+        let mut storage_index = 0usize;
+        while string_offset < zm.strings.as_bytes().len() {
+            literal_ptrs[string_offset] = literal_storage[storage_index].as_ptr() as u64;
+            let value = zm
+                .strings
+                .get(zun_metadata::StringIndex(string_offset as u32));
+            string_offset += value.len() + 1;
+            storage_index += 1;
+        }
+        let literal_ptrs = literal_ptrs.into_boxed_slice();
+        let eligible = eligible_methods_with_literals(zm, true);
         let types =
             zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
         let virtual_tables: Vec<Box<[u64]>> = (1..=types.len() as u32)
@@ -1514,6 +1551,8 @@ impl Jit {
             types,
             virtual_tables,
             virtual_table_ptrs: virtual_table_ptrs.into_boxed_slice(),
+            _literal_storage: literal_storage,
+            literal_ptrs,
             stack_maps: HashMap::new(),
             stack_map_registry: zun_gc::StackMapRegistry::new(),
         };
@@ -1651,6 +1690,7 @@ impl Jit {
             &self.func_ids,
             &self.types,
             self.virtual_table_ptrs.as_ptr(),
+            self.literal_ptrs.as_ptr(),
             &body,
         )
         .map_err(|detail| JitError::Compile {
@@ -2117,6 +2157,7 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
             &mut fb_ctx,
             &func_ids,
             &types,
+            core::ptr::null(),
             core::ptr::null(),
             &body,
         )
