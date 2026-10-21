@@ -487,6 +487,13 @@ impl Heap {
         for (address, view) in data_views {
             let mapped = map(address);
             if mapped != address { rewritten += 1; }
+            let object = unsafe { Obj::from_addr(mapped as *mut u64) };
+            let old_buffer = object.field(0) as usize;
+            let new_buffer = map(old_buffer);
+            if new_buffer != old_buffer {
+                object.set_field(0, new_buffer as u64);
+                rewritten += 1;
+            }
             mapped_data_views.insert(mapped, view);
         }
         self.data_views = mapped_data_views;
@@ -1478,6 +1485,20 @@ mod tests {
         assert_eq!(result.moved_objects, 1);
         assert_eq!(result.rewritten_references, 1);
         assert_eq!(unsafe { (frame.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
+    }
+
+    #[test]
+    fn compaction_rewrites_data_view_buffer_fields_and_indexes() {
+        let mut heap = Heap::new();
+        let buffer = heap.alloc_buffer(8);
+        let view = heap.alloc_data_view(buffer, 0, 8).unwrap();
+        let mut roots = vec![view];
+
+        unsafe { heap.compact(&mut roots, &|type_rid| if type_rid == 0 { vec![0] } else { vec![] }); }
+
+        let moved_buffer = roots[0].field(0) as usize;
+        assert!(heap.buffers.contains_key(&moved_buffer));
+        assert!(heap.data_views.contains_key(&(roots[0].addr() as usize)));
     }
 
     #[test]
