@@ -757,7 +757,10 @@ their corresponding card/remembered-set hooks are wired. An opt-in
 `Heap::collect_young` policy now reclaims unreachable young objects, promotes
 survivors, preserves old objects, and clears dead young weak references. It is
 not connected to interpreter safepoints until side-table stores for arrays,
-maps, sets, promises, proxies, and closure environments also publish barriers.
+maps, sets, promises, proxies, weak-map ephemerons, and closure environments
+also publish barriers; those current runtime side tables now do publish them,
+leaving the safepoint policy switch and finalizer-root audit as the remaining
+activation gate.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
