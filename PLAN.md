@@ -542,9 +542,11 @@ Consequences for the design:
 - The JIT runtime now exposes a non-allocating, out-parameter helper for
   copying an array element into that two-word carrier; this establishes the
   ABI boundary without claiming managed-value lowering is complete.
-- The Cranelift carrier remains intentionally gated: `ArrayLoad` must preserve
-  both words and register object/string payloads with precise GC metadata before
-  it can leave Tier 0.
+- The aggregate Cranelift carrier remains intentionally gated: general
+  `ArrayLoad` must preserve both words and register object/string payloads with
+  precise GC metadata before it can leave Tier 0. A narrow single-pointer
+  object-array load/store ABI now leaves Tier 0 with a managed write barrier;
+  mixed and aggregate `Any` array operations remain on the interpreter path.
 - Interpreter safepoints already poll allocation sites and backedges with the
   current frame and caller chain as precise roots; native `(PC, SP)` capture is
   still pending.
