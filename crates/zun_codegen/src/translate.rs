@@ -967,9 +967,15 @@ impl Translator<'_> {
                     // Store each field as a full i64 slot (same encoding the
                     // interpreter uses), at the shared core layout offset.
                     for (i, (val, kind)) in args.into_iter().enumerate() {
-                        let raw = crate::shim::pack_result(&mut self.builder, val, kind);
-                        let off = zun_core::field_offset(i) as i32;
-                        self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
+                        if kind == JitKind::Object {
+                            let store = self.store_ref_fref();
+                            let field = self.builder.ins().iconst(types::I64, i as i64);
+                            self.builder.ins().call(store, &[ptr, field, val]);
+                        } else {
+                            let raw = crate::shim::pack_result(&mut self.builder, val, kind);
+                            let off = zun_core::field_offset(i) as i32;
+                            self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
+                        }
                     }
                     stack.push((ptr, JitKind::Object));
                 }
