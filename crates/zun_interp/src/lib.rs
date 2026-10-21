@@ -1501,6 +1501,32 @@ mod method_tests {
     }
 
     #[test]
+    fn generator_compaction_preserves_pending_object_state() {
+        let module = zun_compiler::compile(
+            "class Box { value: int; } function* main(): Box { let value = new Box(7); yield value; return value; }",
+        )
+        .expect("compile generator object state");
+        let entry = module.entry_point.expect("entry point");
+        let mut session = GeneratorSession::new(
+            &module,
+            entry.rid(),
+            Vec::new(),
+            &mut CaptureOutput::default(),
+        )
+        .expect("create generator session");
+        let yielded = session.next().expect("yielded object");
+        assert!(matches!(yielded, GeneratorResult::Yielded(Value::Object(_))));
+        let compacted = session
+            .compact_pending_frames()
+            .expect("pending frame compaction");
+        assert_eq!(compacted.moved_objects, 1);
+        assert!(matches!(
+            session.next().expect("completed object"),
+            GeneratorResult::Complete(Value::Object(_))
+        ));
+    }
+
+    #[test]
     fn resumable_session_suspends_and_resumes_on_promise_settlement() {
         let module = zun_compiler::compile(
             "async function main(): Promise { let p = new Promise(); await p; return p; }",
