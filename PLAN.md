@@ -599,9 +599,11 @@ The following runtime contracts are implemented and covered by tests:
   stopped frames can now rewrite their reference slots through the forwarding
   map; `Heap::rewrite_all_references` coordinates the heap-owned passes, and an
   explicit stop-the-world `Heap::compact` now copies live objects into fresh
-  chunks and releases the old chunks. Automatic frame discovery/stop and
-  normal-GC policy integration and stopped JIT stack-map coordination remain
-  pending; an opt-in
+  chunks and releases the old chunks. In the current single-thread runtime,
+  the allocation helper is the safepoint: it captures `(PC, SP)` and consumes
+  the registered JIT stack map. Multi-thread suspension remains deferred;
+  normal-GC policy integration and interpreter-root relocation remain pending.
+  An opt-in
   `collect_and_compact` API now runs mark/sweep followed by that explicit
   movement path for interpreter roots and active `NativeRootScope` roots.
   `compact_with_native_frame` and `compact_with_native_frames` rewrite stopped
@@ -609,8 +611,7 @@ The following runtime contracts are implemented and covered by tests:
   `compact_with_registered_native_frames` consumes the active-frame registry
   without requiring the coordinator to rebuild the frame list. Ordinary
   mark/sweep, young collection, and `collect_and_compact` now also scan those
-  registered frames and preserve their slots through relocation. Automatic suspension remains
-  pending; the coordinator-facing explicit frame-list API, the thread-local
+  registered frames and preserve their slots through relocation. The coordinator-facing explicit frame-list API, the thread-local
   convenience path, and the heap-backed JIT call boundary now share the same
   mark/relocate implementation; packed and zero-argument JIT entry boundaries
   can publish the coordinator's `(PC, SP)` pair, with packed calls also
