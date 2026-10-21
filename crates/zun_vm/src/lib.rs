@@ -311,6 +311,22 @@ mod tests {
     }
 
     #[test]
+    fn jit_allocation_safepoint_keeps_interpreter_argument_rooted() {
+        let source = "class Box { value: int; } function consume(root: Box): int { let index: int = 0; while (index < 300) { let temporary = new Box(index); index = index + 1; } return root.value; } function main(): int { let root = new Box(9); return consume(root); }";
+        let bytes = zun_compiler::compile(source).unwrap().write();
+        let module = load(&bytes).expect("load interpreter-root module");
+
+        let mut interpreter_output = zun_interp::CaptureOutput::default();
+        let interpreted = zun_interp::run(&module, &mut interpreter_output)
+            .expect("interpreter argument-root loop");
+        let mut jit_output = zun_interp::CaptureOutput::default();
+        let jitted = execute_with(&bytes, &mut jit_output).expect("JIT argument-root loop");
+
+        assert!(matches!(interpreted, Value::Int(9, zun_il::NumKind::I32)));
+        assert!(matches!(jitted, Value::Int(9, zun_il::NumKind::I32)));
+    }
+
+    #[test]
     fn jit_managed_object_return_matches_interpreter() {
         let source = "class Box { value: int; } function make(): Box { return new Box(42); } function main(): int { let item = make(); return item.value; }";
         let bytes = zun_compiler::compile(source).unwrap().write();
