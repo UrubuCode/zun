@@ -74,3 +74,21 @@ pub(crate) fn collect_frame_roots(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::collect_frame_roots;
+    use crate::value::Value;
+
+    #[test]
+    fn object_tagged_any_values_are_frame_roots() {
+        let mut roots = Vec::new();
+        collect_frame_roots(
+            &[Value::Any(zun_core::Any::object(0x1000))],
+            &[],
+            &mut roots,
+        );
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].addr() as usize, 0x1000);
+    }
+}
