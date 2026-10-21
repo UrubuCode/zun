@@ -788,7 +788,8 @@ The following runtime contracts are implemented and covered by tests:
   Checked `UnboxAny` remains an explicit Tier 0 boundary because a tag mismatch
   can throw and Cranelift exception bridging is not implemented; eligibility is
   governed by the no-throw/exception-bridge rule rather than per-array-type
-  allowlists.
+  allowlists. Checked `CastClass` follows the same rule and remains Tier 0 until
+  the Cranelift exception bridge exists.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
   tracing of managed keys and values. Source-level `Map` and `Set` classes
