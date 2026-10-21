@@ -753,7 +753,11 @@ minor nursery collector still requires an old-to-young remembered set and write
 barrier, so it is not counted as generational GC completion. Interpreter and
 Cranelift reference-field stores now route through that barrier; array and
 dynamic-reference stores remain on their explicit managed ABI boundaries until
-their corresponding card/remembered-set hooks are wired.
+their corresponding card/remembered-set hooks are wired. An opt-in
+`Heap::collect_young` policy now reclaims unreachable young objects, promotes
+survivors, preserves old objects, and clears dead young weak references. It is
+not connected to interpreter safepoints until side-table stores for arrays,
+maps, sets, promises, proxies, and closure environments also publish barriers.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
