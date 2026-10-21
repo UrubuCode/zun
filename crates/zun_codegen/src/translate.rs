@@ -984,11 +984,12 @@ impl Translator<'_> {
                             self.builder.declare_value_needs_stack_map(value);
                         }
                     }
-                    // ptr = zun_rt_alloc(type_rid, count)
+                    // ptr = zun_rt_alloc(type_rid, count, caller_sp)
                     let alloc = self.alloc_fref();
                     let trid = self.builder.ins().iconst(types::I32, type_rid as i64);
                     let nfields = self.builder.ins().iconst(types::I64, count as i64);
-                    let inst = self.builder.ins().call(alloc, &[trid, nfields]);
+                    let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
+                    let inst = self.builder.ins().call(alloc, &[trid, nfields, caller_sp]);
                     let ptr = self.builder.inst_results(inst)[0];
                     self.builder.declare_value_needs_stack_map(ptr);
                     // Store each field as a full i64 slot (same encoding the
@@ -1377,12 +1378,14 @@ impl Translator<'_> {
             .ok_or_else(|| "missing fall-through block".into())
     }
 
-    /// Import `zun_rt_alloc(type_rid: i32, field_count: i64) -> ptr` into the
-    /// current function.
+    /// Import `zun_rt_alloc(type_rid: i32, field_count: i64, caller_sp: i64) ->
+    /// ptr` into the current function. The caller SP lets the allocation
+    /// safepoint publish the stopped JIT frame without guessing its layout.
     fn alloc_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let conv = self.module.isa().default_call_conv();
         let mut sig = cranelift_codegen::ir::Signature::new(conv);
         sig.params.push(AbiParam::new(types::I32));
+        sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
         let id = self
