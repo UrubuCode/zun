@@ -571,8 +571,9 @@ The following runtime contracts are implemented and covered by tests:
   and GC tracing of object-tagged dynamic values;
 - interpreted backedge observation plus Tier 1 local backedge poll counters as
   the first OSR integration boundary; hot `(method_rid, target_pc)` transfer
-  requests are now published and deduplicated by `JitHook`. Frame capture and
-  replacement remain pending.
+  requests are published and deduplicated by `JitHook`, and the hook now
+  captures the Tier 0 PC, evaluation stack, and locals for each hot boundary.
+  Native frame replacement remains pending.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
   `.zm` module retained as the fallback for ineligible methods.
 - Cranelift managed-heap entry boundaries now expose explicit
