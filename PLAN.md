@@ -604,7 +604,9 @@ The following runtime contracts are implemented and covered by tests:
   the registered JIT stack map. Multi-thread suspension remains deferred;
   normal-GC policy integration and relocation of live borrowed interpreter
   roots remain pending; owned suspended interpreter frames now expose a
-  recursive rewrite path.
+  recursive rewrite path; object-tagged `Any` values are included in precise
+  frame roots, and the opt-in compaction path exposes a forwarding callback so
+  owned suspended frames can rewrite their values before old chunks release.
   An opt-in
   `collect_and_compact` API now runs mark/sweep followed by that explicit
   movement path for interpreter roots and active `NativeRootScope` roots.
