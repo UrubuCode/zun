@@ -2,6 +2,21 @@
 
 use super::{with_active_stack_map_registry, with_current_heap_mut, ActiveNativeFrameScope, Heap};
 
+#[inline]
+unsafe fn safepoint_pc(caller_sp: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Cranelift materializes the caller's SP immediately before the ABI
+        // call. The call pushes its return address at SP - 8 on x86-64.
+        unsafe { (caller_sp as *const usize).sub(1).read_unaligned() }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = caller_sp;
+        0
+    }
+}
+
 /// Allocate through a raw `Heap` pointer for the `newobj` runtime call.
 ///
 /// # Safety
@@ -25,17 +40,7 @@ pub unsafe extern "C" fn zun_rt_alloc(
     field_count: usize,
     caller_sp: usize,
 ) -> *mut u64 {
-    #[cfg(target_arch = "x86_64")]
-    let pc = {
-        let address: usize;
-        // Read the return address at the allocation helper's ABI entry. This
-        // must be done here rather than in a nested Rust function, otherwise
-        // the captured address would identify that nested call site.
-        unsafe { core::arch::asm!("mov {}, [rsp]", out(reg) address, options(nostack, preserves_flags)); }
-        address
-    };
-    #[cfg(not(target_arch = "x86_64"))]
-    let pc = 0;
+    let pc = unsafe { safepoint_pc(caller_sp) };
 
     with_active_stack_map_registry(|registry| {
         let Some(registry) = registry else {
