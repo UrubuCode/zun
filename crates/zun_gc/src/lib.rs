@@ -85,6 +85,13 @@ pub struct CompactionPlan {
     pub reclaimable_slots: usize,
 }
 
+/// Result of an explicit stop-the-world heap compaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionResult {
+    pub moved_objects: usize,
+    pub rewritten_references: usize,
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -176,6 +183,66 @@ impl Heap {
                 plan
             },
         )
+    }
+
+    /// Compact live objects into fresh chunks and rewrite all heap-owned
+    /// references before the old chunks are released.
+    ///
+    /// # Safety
+    /// The caller must stop all managed execution and rewrite any native/JIT
+    /// roots separately using the forwarding map before resuming execution.
+    /// `roots` must contain every interpreter root, and `ref_slots` must
+    /// describe every managed reference field in each object type.
+    pub unsafe fn compact(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> CompactionResult {
+        fn allocate(
+            chunks: &mut Vec<Box<[u64]>>,
+            cursor: &mut usize,
+            slots: usize,
+        ) -> *mut u64 {
+            if chunks.is_empty() || *cursor + slots > CHUNK_SLOTS {
+                chunks.push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
+                *cursor = 0;
+            }
+            let chunk = chunks.last_mut().expect("just pushed a chunk");
+            let base = unsafe { chunk.as_mut_ptr().add(*cursor) };
+            *cursor += slots;
+            base
+        }
+
+        let mut new_chunks = Vec::new();
+        let mut new_cursor = 0;
+        let mut relocation = RelocationMap::new();
+        let mut moved_objects = 0;
+        for record in self.records.iter_mut() {
+            if !record.alive { continue; }
+            let slots = zun_core::OBJECT_HEADER_SLOTS + record.field_count;
+            let old = record.addr;
+            let new = allocate(&mut new_chunks, &mut new_cursor, slots);
+            unsafe { std::ptr::copy_nonoverlapping(old, new, slots); }
+            relocation.insert_addresses(old as usize, new as usize);
+            record.addr = new;
+            moved_objects += 1;
+        }
+
+        for root in roots {
+            let address = root.addr() as usize;
+            let mapped = relocation.relocate_address(address);
+            if mapped != address {
+                *root = unsafe { Obj::from_addr(mapped as *mut u64) };
+            }
+        }
+        let rewritten_references = self.rewrite_all_references(&relocation, ref_slots);
+        for record in self.records.iter_mut().filter(|record| !record.alive) {
+            record.addr = std::ptr::null_mut();
+        }
+        self.free.clear();
+        self.chunks = new_chunks;
+        self.cursor = new_cursor;
+        CompactionResult { moved_objects, rewritten_references }
     }
 
     /// Rewrite managed references stored in object fields using a forwarding
@@ -1264,6 +1331,32 @@ mod tests {
         assert_eq!(heap.by_addr.get(&(new_owner.addr() as usize)), Some(&0));
         assert_eq!(heap.by_addr.get(&(new_child.addr() as usize)), Some(&1));
         assert_eq!(owner.field(0), new_child.addr() as u64);
+    }
+
+    #[test]
+    fn compaction_moves_live_objects_and_rewrites_interpreter_roots() {
+        let mut heap = Heap::new();
+        let owner = heap.alloc(1, 1);
+        let child = heap.alloc(2, 0);
+        let old_owner = owner.addr();
+        let old_child = child.addr();
+        heap.store_field(owner, 0, child.addr() as u64, true);
+        let mut roots = vec![owner];
+
+        let result = unsafe {
+            heap.compact(&mut roots, &|type_rid| {
+                if type_rid == 1 { vec![0] } else { vec![] }
+            })
+        };
+
+        assert_eq!(result.moved_objects, 2);
+        assert_eq!(result.rewritten_references, 1);
+        assert_ne!(roots[0].addr(), old_owner);
+        let new_child = roots[0].field(0) as *mut u64;
+        assert_ne!(new_child, old_child);
+        assert!(heap.by_addr.contains_key(&(roots[0].addr() as usize)));
+        assert!(heap.by_addr.contains_key(&(new_child as usize)));
+        assert_eq!(heap.live_count(), 2);
     }
 
     #[test]
