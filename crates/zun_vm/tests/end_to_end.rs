@@ -531,7 +531,7 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
         .iter()
         .all(|request| request.method_rid == spin_rid));
     assert!(hook.take_osr_requests().is_empty());
-    let snapshots = hook.take_osr_snapshots();
+    let snapshots = hook.take_valid_osr_snapshots();
     assert!(!snapshots.is_empty());
     assert!(snapshots.iter().all(|snapshot| snapshot.stack.is_empty()));
     assert!(snapshots.iter().all(|snapshot| {

@@ -130,6 +130,17 @@ impl<'a> JitHook<'a> {
         self.osr_snapshots.borrow_mut().drain(..).collect()
     }
 
+    /// Drain only snapshots that satisfy the OSR frame-map contract. Invalid
+    /// snapshots are discarded rather than handed to a future frame-transfer
+    /// bridge, so a partial compiler can never jump from an ambiguous state.
+    pub fn take_valid_osr_snapshots(&self) -> Vec<OsrSnapshot> {
+        let snapshots: Vec<_> = self.osr_snapshots.borrow_mut().drain(..).collect();
+        snapshots
+            .into_iter()
+            .filter(|snapshot| self.is_valid_osr_snapshot(snapshot))
+            .collect()
+    }
+
     /// Check that a captured snapshot can be mapped back to the method's IL
     /// body before an OSR backend attempts frame replacement.
     pub fn is_valid_osr_snapshot(&self, snapshot: &OsrSnapshot) -> bool {
