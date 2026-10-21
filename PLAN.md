@@ -748,19 +748,15 @@ the containing array; aggregate Cranelift stack lowering remains intentionally
 gated until conditional reference metadata can be represented safely.
 
 The GC now records a young/old generation on every live allocation and promotes
-survivors at full-collection boundaries. This is preparatory metadata only: a
-minor nursery collector still requires an old-to-young remembered set and write
-barrier, so it is not counted as generational GC completion. Interpreter and
-Cranelift reference-field stores now route through that barrier; array and
-dynamic-reference stores remain on their explicit managed ABI boundaries until
-their corresponding card/remembered-set hooks are wired. An opt-in
-`Heap::collect_young` policy now reclaims unreachable young objects, promotes
-survivors, preserves old objects, and clears dead young weak references. It is
-not connected to interpreter safepoints until side-table stores for arrays,
-maps, sets, promises, proxies, weak-map ephemerons, and closure environments
-also publish barriers; those current runtime side tables now do publish them,
-leaving the safepoint policy switch and finalizer-root audit as the remaining
-activation gate.
+survivors at full-collection boundaries. Interpreter and Cranelift reference
+stores, plus array, map, set, promise, proxy, weak-map ephemeron, and closure
+environment side tables, publish old-to-young remembered-set barriers.
+`Heap::collect_young` reclaims unreachable young objects, promotes survivors,
+preserves old objects, and clears dead young weak references. Interpreter GC
+safepoints now use seven minor collections followed by a full collection, and
+finalizer callback environments are explicit roots during both collection modes.
+This activates the first generational policy while leaving nursery allocation,
+card-table scaling, and precise JIT-frame safepoints as later completion work.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
