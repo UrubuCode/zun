@@ -4156,6 +4156,19 @@ fn object_array_push_and_pop_are_jit_equivalent() {
 }
 
 #[test]
+fn checked_string_array_unbox_keeps_interpreter_fallback() {
+    let src = "function read(values: Array): string { return values[0] as string; }\n\
+               function main(): string { let values = new Array(1); values[0] = box_any(\"ok\"); return read(values); }";
+    let module = compile(src);
+    let read_rid = module.tables.method_defs.iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1).expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles with fallback");
+    assert!(!jit.is_compiled(read_rid), "checked UnboxAny must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Str(_)));
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";
