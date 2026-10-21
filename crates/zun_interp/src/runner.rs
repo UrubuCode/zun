@@ -37,6 +37,7 @@ pub struct ResumableSession<'a> {
 pub struct GeneratorSession<'a> {
     inner: ResumableSession<'a>,
     done: bool,
+    current: Option<Value>,
     completion: Option<Value>,
 }
 
@@ -82,6 +83,7 @@ impl<'a> GeneratorSession<'a> {
         Ok(Self {
             inner: ResumableSession::new(module, method_rid, args, output, None, None)?,
             done: false,
+            current: None,
             completion: None,
         })
     }
@@ -96,9 +98,13 @@ impl<'a> GeneratorSession<'a> {
             ));
         }
         match self.inner.poll()? {
-            ResumeResult::Yielded(value) => Ok(GeneratorResult::Yielded(value)),
+            ResumeResult::Yielded(value) => {
+                self.current = Some(value.clone());
+                Ok(GeneratorResult::Yielded(value))
+            }
             ResumeResult::Complete(value) => {
                 self.done = true;
+                self.current = None;
                 self.completion = Some(value.clone());
                 Ok(GeneratorResult::Complete(value))
             }
@@ -111,6 +117,18 @@ impl<'a> GeneratorSession<'a> {
     /// Access the generator heap for host integration.
     pub fn heap_mut(&mut self) -> &mut zun_gc::Heap {
         self.inner.heap_mut()
+    }
+
+    /// Return the value produced by the most recent successful `next` call.
+    /// The value is cleared once the generator completes, matching the
+    /// iterator contract described by the runtime design.
+    pub fn current(&self) -> Option<&Value> {
+        self.current.as_ref()
+    }
+
+    /// Report whether the generator has reached its terminal result.
+    pub fn is_done(&self) -> bool {
+        self.done
     }
 }
 

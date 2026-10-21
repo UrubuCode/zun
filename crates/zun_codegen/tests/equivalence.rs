@@ -3050,13 +3050,17 @@ fn generator_session_yields_and_resumes_in_tier0() {
         &mut output,
     )
     .expect("create generator session");
+    assert!(!session.is_done());
     assert!(matches!(session.next().expect("first generator next"), zun_interp::GeneratorResult::Yielded(Value::Float(value, _)) if value == 1.0));
+    assert!(matches!(session.current(), Some(Value::Float(value, _)) if *value == 1.0));
     assert!(matches!(
         session.next().expect("second generator next"),
         zun_interp::GeneratorResult::Yielded(Value::Float(value, _)) if value == 2.0
     ));
     let complete = session.next().expect("generator completion");
     assert!(matches!(complete, zun_interp::GeneratorResult::Complete(Value::Int(value, _)) if value == 3), "{complete:?}");
+    assert!(session.is_done());
+    assert!(session.current().is_none());
     assert!(matches!(
         session.next().expect("sticky generator completion"),
         zun_interp::GeneratorResult::Complete(Value::Int(value, _)) if value == 3
