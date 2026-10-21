@@ -178,6 +178,32 @@ impl Heap {
         )
     }
 
+    /// Rewrite managed references stored in object fields using a forwarding
+    /// map. This is the object-heap portion of a future relocate phase;
+    /// interpreter roots, side tables, and native stack-map slots are handled
+    /// by their respective owners before compaction is enabled.
+    pub fn rewrite_object_references(
+        &mut self,
+        relocation: &RelocationMap,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        let mut rewritten = 0;
+        for record in self.records.iter().filter(|record| record.alive) {
+            let object = Obj(record.addr);
+            for field in ref_slots(object.type_rid()) {
+                let slot = unsafe {
+                    object
+                        .addr()
+                        .add(zun_core::OBJECT_HEADER_SLOTS + field)
+                };
+                if unsafe { relocation.rewrite_slot(slot) } {
+                    rewritten += 1;
+                }
+            }
+        }
+        rewritten
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -949,6 +975,26 @@ mod tests {
         assert_eq!(plan.reclaimable_slots, zun_core::OBJECT_HEADER_SLOTS + 3);
         assert_eq!(live.addr(), live_addr);
         assert!(!heap.by_addr.contains_key(&(dead.addr() as usize)));
+    }
+
+    #[test]
+    fn relocation_rewrites_reference_fields_without_moving_objects() {
+        let mut heap = Heap::new();
+        let owner = heap.alloc(1, 1);
+        let owner_addr = owner.addr();
+        let old_target = heap.alloc(2, 0);
+        let new_target = heap.alloc(3, 0);
+        heap.store_field(owner, 0, old_target.addr() as u64, true);
+
+        let mut relocation = RelocationMap::new();
+        relocation.insert(old_target, new_target);
+        let rewritten = heap.rewrite_object_references(&relocation, &|type_rid| {
+            if type_rid == 1 { vec![0] } else { vec![] }
+        });
+
+        assert_eq!(rewritten, 1);
+        assert_eq!(owner.field(0), new_target.addr() as u64);
+        assert_eq!(owner.addr(), owner_addr);
     }
 
     #[test]
