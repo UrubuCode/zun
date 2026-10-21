@@ -924,3 +924,8 @@ elision is **not** worth pursuing on its own.
 
 ---
 *Plano gerado a partir da análise de `.docs-dotnet/`; cada seção cita a pasta correspondente para aprofundamento.*
+Implementation note (2026-10-20): the managed-object JIT ABI now also supports
+non-allocating length queries for `ArrayBuffer`, `DataView`, `Uint8Array`,
+`Uint16Array`, `Uint32Array`, and `Float64Array`, with interpreter/JIT
+equivalence. View construction remains a Tier 0 fallback until precise
+native-frame safepoints are connected.
