@@ -1397,6 +1397,17 @@ mod method_tests {
     }
 
     #[test]
+    fn nested_interpreter_gc_preserves_caller_roots() {
+        let module = zun_compiler::compile(
+            "class Box { value: int; } function allocate(): int { let i: u64 = 0; while (i < 2300) { let garbage = new Box(1); i = i + 1; } return 0; } function main(): int { let live = new Box(9); allocate(); return live.value; }",
+        )
+        .expect("compile nested compaction workload");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run nested compaction workload");
+        assert!(matches!(result, Value::Int(value, _) if value == 9));
+    }
+
+    #[test]
     fn extra_osr_roots_keep_managed_objects_alive() {
         let module = zun_compiler::compile("class Box { value: int; } function main() { }")
             .expect("compile root test module");
