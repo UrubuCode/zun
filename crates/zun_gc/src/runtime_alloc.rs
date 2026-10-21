@@ -74,6 +74,8 @@ pub unsafe extern "C" fn zun_rt_alloc(
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ActiveStackMapScope, Heap, HeapScope, NativeStackMap, StackMapRegistry};
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn safepoint_pc_reads_return_address_from_pre_call_stack_pointer() {
@@ -84,5 +86,30 @@ mod tests {
         let pc = unsafe { super::safepoint_pc(pre_call_sp) };
 
         assert_eq!(pc, call_frame[0]);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_allocation_helper_collects_using_the_registered_stack_map() {
+        let mut heap = Heap::new();
+        let live = heap.alloc(1, 0);
+        let return_pc = 0x4321usize;
+        let mut native_frame = [return_pc, live.addr() as usize];
+        let caller_sp = unsafe { native_frame.as_mut_ptr().add(1) as usize };
+
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap {
+            pc: return_pc,
+            span: 1,
+            reference_slots: vec![0],
+        }]);
+        let _registry_scope = unsafe { ActiveStackMapScope::enter(&registry) };
+        let _heap_scope = unsafe { HeapScope::enter(&mut heap) };
+
+        for _ in 0..256 {
+            unsafe { super::zun_rt_alloc(2, 0, caller_sp) };
+        }
+
+        assert!(heap.by_addr.contains_key(&(live.addr() as usize)));
     }
 }
