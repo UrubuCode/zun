@@ -1108,6 +1108,7 @@ impl Translator<'_> {
                 Opcode::LoadField => {
                     let (kind, slot) = self.field_info(&instr.operand)?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
+                    self.builder.declare_value_needs_stack_map(ptr);
                     let off = zun_core::field_offset(slot) as i32;
                     let raw = self
                         .builder
