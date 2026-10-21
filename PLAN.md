@@ -687,8 +687,9 @@ The following runtime contracts are implemented and covered by tests:
   accepts `function*` declarations, and resumes Tier 0 frames through the
   persistent interpreter session. The session exposes yielded values and final
   completion, and retains the native-hook/module-loader execution context
-  across polls. A managed generator iterator object and source-level `next()`
-  binding remain a separate integration gate.
+  across polls. The VM state-machine contract also exposes `current()` and
+  terminal `dispose()` semantics. A managed generator iterator object and
+  source-level `next()` binding remain a separate integration gate.
 - Positional `CoreTypeId`/`CoreTypes` bindings resolved once while loading
   `zun:core`, with O(1) access to the frozen core-type anchors.
 - Explicit `extern` method declarations bound to imported native functions;
