@@ -440,7 +440,7 @@ impl Interp<'_> {
                     let target = branch_target(next, &instr.operand);
                     if target < *pc {
                         if let Some(hook) = self.hook {
-                            hook.on_backedge(method_rid, target);
+                            hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
                         }
                         self.poll_gc(&stack, &locals, parent);
                     }
@@ -451,7 +451,7 @@ impl Interp<'_> {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
-                                hook.on_backedge(method_rid, target);
+                                hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
                             }
                             self.poll_gc(&stack, &locals, parent);
                         }
@@ -463,7 +463,7 @@ impl Interp<'_> {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
-                                hook.on_backedge(method_rid, target);
+                                hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
                             }
                             self.poll_gc(&stack, &locals, parent);
                         }

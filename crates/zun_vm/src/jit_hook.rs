@@ -29,6 +29,16 @@ pub struct OsrRequest {
     pub target_pc: usize,
 }
 
+/// Tier 0 state captured at a hot loop boundary for a future OSR transfer.
+#[derive(Debug, Clone)]
+pub struct OsrSnapshot {
+    pub method_rid: u32,
+    pub target_pc: usize,
+    pub pc: usize,
+    pub stack: Vec<Value>,
+    pub locals: Vec<Value>,
+}
+
 /// Bridges the interpreter to a lazily-compiled [`Jit`].
 pub struct JitHook<'a> {
     jit: RefCell<Jit>,
@@ -36,6 +46,7 @@ pub struct JitHook<'a> {
     counts: RefCell<HashMap<u32, u32>>,
     loop_counts: RefCell<HashMap<(u32, usize), u64>>,
     osr_requests: RefCell<Vec<OsrRequest>>,
+    osr_snapshots: RefCell<Vec<OsrSnapshot>>,
     threshold: u32,
 }
 
@@ -66,6 +77,7 @@ impl<'a> JitHook<'a> {
             counts: RefCell::new(HashMap::new()),
             loop_counts: RefCell::new(HashMap::new()),
             osr_requests: RefCell::new(Vec::new()),
+            osr_snapshots: RefCell::new(Vec::new()),
             threshold,
         }
     }
@@ -111,6 +123,11 @@ impl<'a> JitHook<'a> {
     /// The active frame continues in Tier 0 until frame transfer is available.
     pub fn take_osr_requests(&self) -> Vec<OsrRequest> {
         self.osr_requests.borrow_mut().drain(..).collect()
+    }
+
+    /// Drain the latest captured Tier 0 state for hot loop boundaries.
+    pub fn take_osr_snapshots(&self) -> Vec<OsrSnapshot> {
+        self.osr_snapshots.borrow_mut().drain(..).collect()
     }
 }
 
@@ -197,6 +214,32 @@ impl CallHook for JitHook<'_> {
             {
                 requests.push(OsrRequest { method_rid, target_pc });
             }
+        }
+    }
+
+    fn on_backedge_state(
+        &self,
+        method_rid: u32,
+        target_pc: usize,
+        pc: usize,
+        stack: &[Value],
+        locals: &[Value],
+    ) {
+        self.on_backedge(method_rid, target_pc);
+        if self.is_loop_hot(method_rid, target_pc)
+            && self.jit.borrow().is_defined(method_rid)
+        {
+            let mut snapshots = self.osr_snapshots.borrow_mut();
+            snapshots.retain(|snapshot| {
+                snapshot.method_rid != method_rid || snapshot.target_pc != target_pc
+            });
+            snapshots.push(OsrSnapshot {
+                method_rid,
+                target_pc,
+                pc,
+                stack: stack.to_vec(),
+                locals: locals.to_vec(),
+            });
         }
     }
 }

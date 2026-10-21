@@ -531,6 +531,14 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
         .iter()
         .all(|request| request.method_rid == spin_rid));
     assert!(hook.take_osr_requests().is_empty());
+    let snapshots = hook.take_osr_snapshots();
+    assert!(!snapshots.is_empty());
+    assert!(snapshots.iter().all(|snapshot| {
+        snapshot.method_rid == spin_rid
+            && !snapshot.locals.is_empty()
+            && snapshot.pc >= snapshot.target_pc
+    }));
+    assert!(hook.take_osr_snapshots().is_empty());
 }
 
 #[test]
