@@ -485,6 +485,17 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("trim") => {
+                                let (receiver, receiver_kind) = stack.pop().ok_or("trim receiver")?;
+                                if receiver_kind != JitKind::String {
+                                    return Err("trim expects a string receiver".into());
+                                }
+                                let helper = self.string_trim_fref();
+                                let call = self.builder.ins().call(helper, &[receiver]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -642,6 +653,13 @@ impl Translator<'_> {
                             Some("substring") => (
                                 "zun_jit_string_substring",
                                 3,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("trim") => (
+                                "zun_jit_string_trim",
+                                1,
                                 types::I64,
                                 JitKind::String,
                                 types::I64,
@@ -1747,6 +1765,17 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_substring", Linkage::Import, &sig)
             .expect("declare zun_jit_string_substring");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_trim_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_trim", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_trim");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
