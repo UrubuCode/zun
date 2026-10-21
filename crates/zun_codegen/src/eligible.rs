@@ -215,6 +215,37 @@ fn scalar_array_length_only(instrs: &[zun_il::Instruction], body: &zun_module::M
         })
 }
 
+/// Allow a narrow integer array ABI without making general collection code
+/// eligible. The helper is intentionally limited to scalar instructions and
+/// one element access; resizing, iteration, and reference values remain Tier 0.
+fn scalar_u64_array_access_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
+    body.returns_value
+        && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::U64)
+        && instrs.iter().any(|instruction| {
+            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
+        })
+        && instrs.iter().all(|instruction| {
+            matches!(
+                instruction.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::Conv
+                    | Opcode::UnboxAny
+                    | Opcode::BoxAny
+                    | Opcode::Pop
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::LoadArray
+                    | Opcode::StoreArray
+                    | Opcode::Ret
+            )
+        })
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
@@ -251,17 +282,19 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
             continue;
         }
-        // The managed array helper currently has a stable f64 ABI only. Keep
-        // integer and reference-valued array consumers in Tier 0.
+        // Array access has stable f64 and narrow u64 scalar ABIs. Keep
+        // reference-valued and general collection consumers in Tier 0.
         if instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
             && (!body.returns_value
-                || JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64))
+                || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
+                    && !scalar_u64_array_access_only(&instrs, &body)))
         {
             continue;
         }
         if instrs.iter().any(|i| i.opcode == Opcode::StoreArray)
             && (!body.returns_value
-                || JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64))
+                || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
+                    && !scalar_u64_array_access_only(&instrs, &body)))
         {
             continue;
         }

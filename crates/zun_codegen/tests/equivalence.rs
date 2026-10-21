@@ -3024,6 +3024,54 @@ fn numeric_array_store_is_jit_equivalent() {
 }
 
 #[test]
+fn u64_array_load_is_jit_equivalent() {
+    let src = "function read(values: Array): u64 { return values[1] as u64; }\n\
+               function main(): u64 { let values = new Array(2); values[1] = 41; return read(values); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles u64 array load");
+    assert!(jit.is_compiled(rid), "u64 array reader should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(2);
+    heap.array_set(array, 1, zun_core::Any::int(41));
+    let value = jit
+        .call_packed_with_heap(rid, &[array.addr() as u64], &mut heap)
+        .expect("jit u64 array load");
+    assert_eq!(value, 41);
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 41));
+}
+
+#[test]
+fn u64_array_store_is_jit_equivalent() {
+    let src = "function write(values: Array, value: u64): u64 { values[1] = value; return value; }\n\
+               function main(): u64 { let values = new Array(2); return write(values, 41); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "write")
+        .map(|index| index as u32 + 1)
+        .expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles u64 array store");
+    assert!(jit.is_compiled(rid), "u64 array writer should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(2);
+    let value = jit
+        .call_packed_with_heap(rid, &[array.addr() as u64, 41], &mut heap)
+        .expect("jit u64 array store");
+    assert_eq!(value, 41);
+    assert_eq!(heap.array_get(array, 1).and_then(|item| item.as_int()), Some(41));
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 41));
+}
+
+#[test]
 fn numeric_array_pop_is_jit_equivalent() {
     let src = "function pop_value(values: Array): number { return values.pop() as number; }\n\
                function main(): number { let values = new Array(1); values[0] = box_any(41.0); return pop_value(values); }";
