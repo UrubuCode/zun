@@ -1313,6 +1313,34 @@ impl Jit {
         self.call_packed(method_rid, args)
     }
 
+    /// Call a compiled method while publishing the caller-supplied native
+    /// safepoint coordinates to the GC boundary.
+    ///
+    /// The host must provide a stopped frame stack pointer and a program
+    /// counter covered by [`Self::stack_map_registry`]. This is the explicit
+    /// coordinator path; automatic machine-context discovery remains a host
+    /// responsibility.
+    ///
+    /// # Safety
+    /// `pc` and `sp` must identify a live native frame whose stack memory stays
+    /// valid for the complete call and remains stopped whenever the GC scans
+    /// it. The packed arguments must satisfy the same contract as
+    /// [`Self::call_packed`].
+    pub unsafe fn call_packed_with_heap_and_native_frame(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+        heap: &mut zun_gc::Heap,
+        pc: usize,
+        sp: *mut u8,
+    ) -> Result<u64, JitError> {
+        let _frame = unsafe {
+            zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp)
+        };
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_packed(method_rid, args)
+    }
+
     /// Call a compiled zero-argument method (an entry point), returning its
     /// result tagged by kind.
     ///
