@@ -624,9 +624,10 @@ The following runtime contracts are implemented and covered by tests:
   indexing, indexed assignment, `length`, `push`, and `pop` lower to verified
   IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
 - Array instructions have verifier fixtures and explicit interpreter/JIT
-  equivalence coverage. Read-only `ArrayLength` and numeric `LoadArray` now
-  lower through Cranelift helpers; numeric allocation and indexed mutation use
-  the narrow non-reference value ABI, while reference-valued loads/stores and
+  equivalence coverage. Read-only `ArrayLength` and scalar `f64`/`u64`
+  `LoadArray`/`StoreArray` now lower through Cranelift helpers; numeric
+  allocation and indexed mutation use the narrow non-reference value ABI, while
+  dynamic/reference-valued loads/stores and
   collection-triggering allocation remain Tier 0 pending managed JIT value
   lowering, precise safepoints, and write barriers.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
@@ -727,6 +728,12 @@ ns/iteration for field load/store and 429.886 ns/iteration for virtual
 dispatch. These figures are machine-specific and should be re-run after
 interpreter or OSR changes; the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
+
+The narrow scalar array ABI is also implemented: Cranelift lowers `LoadArray`
+and `StoreArray` for `f64` and `u64` values through heap-scoped helpers, with
+interpreter/JIT equivalence coverage. `Any`-valued and reference-valued array
+access remains Tier 0 until the two-word managed-value ABI and its precise
+GC/write-barrier contract are complete.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
