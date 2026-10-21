@@ -3147,6 +3147,29 @@ fn numeric_array_allocation_is_jit_equivalent() {
 }
 
 #[test]
+fn jit_reads_length_from_an_existing_managed_array() {
+    let src = "function length(values: Array): u64 { return values.length; }\n\
+               function main(): u64 { let values = new Array(3); return length(values); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "length")
+        .map(|index| index as u32 + 1)
+        .expect("length method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles array length");
+    assert!(jit.is_compiled(rid), "array length reader should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(3);
+    let value = jit
+        .call_packed_with_heap(rid, &[array.addr() as u64], &mut heap)
+        .expect("jit array length");
+    assert_eq!(value, 3);
+    assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 3));
+}
+
+#[test]
 fn gc_preserves_and_reclaims_a_jit_allocated_object_by_root_contract() {
     let module = compile(
         "class Box { value: int; }
