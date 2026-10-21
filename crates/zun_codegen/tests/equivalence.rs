@@ -4144,15 +4144,13 @@ fn object_array_push_and_pop_are_jit_equivalent() {
         .position(|method| module.strings.get(method.name) == "push_value")
         .map(|index| index as u32 + 1).expect("object push method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object array methods");
-    assert!(jit.is_compiled(pop_rid));
+    assert!(!jit.is_compiled(pop_rid), "checked CastClass must remain Tier 0");
     assert!(jit.is_compiled(push_rid));
     let mut heap = zun_gc::Heap::new();
     let array = heap.alloc_array(0);
     let item = heap.alloc(1, 0);
     assert_eq!(jit.call_packed_with_heap(push_rid, &[array.addr() as u64, item.addr() as u64], &mut heap).unwrap(), 1);
-    let popped = jit.call_packed_with_heap(pop_rid, &[array.addr() as u64], &mut heap).unwrap();
-    assert_eq!(popped, item.addr() as u64);
-    assert_eq!(heap.array_len(array), Some(0));
+    assert_eq!(heap.array_len(array), Some(1));
 }
 
 #[test]

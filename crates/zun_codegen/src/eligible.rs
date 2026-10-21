@@ -27,7 +27,6 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::Conv
             | Opcode::UnboxAny
             | Opcode::BoxAny
-            | Opcode::CastClass
             | Opcode::LoadLocal
             | Opcode::StoreLocal
             | Opcode::Pop
@@ -370,7 +369,7 @@ fn object_array_stack_only(instrs: &[zun_il::Instruction], body: &zun_module::Me
     (body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Object
         && instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
         && instrs.iter().all(|i| matches!(i.opcode,
-            Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPop | Opcode::CastClass | Opcode::Ret)))
+            Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPop | Opcode::Ret)))
         || (body.returns_value && instrs.iter().any(|i| i.opcode == Opcode::ArrayPush)
             && instrs.iter().all(|i| matches!(i.opcode,
                 Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPush | Opcode::Ret)))
