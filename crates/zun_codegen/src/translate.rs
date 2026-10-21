@@ -548,6 +548,27 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("padStart" | "padEnd") => {
+                                let (fill, fill_kind) = stack.pop().ok_or("pad fill")?;
+                                let (target, target_kind) = stack.pop().ok_or("pad target")?;
+                                let (receiver, receiver_kind) = stack.pop().ok_or("pad receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || fill_kind != JitKind::String
+                                    || !matches!(target_kind, JitKind::Num(kind) if kind.int_parts().is_some())
+                                {
+                                    return Err("pad expects string, integer, and string arguments".into());
+                                }
+                                let target = match clif_ty(target_kind) {
+                                    types::I64 => target,
+                                    ty if ty.is_int() => self.builder.ins().uextend(types::I64, target),
+                                    _ => return Err("pad target must be an integer".into()),
+                                };
+                                let helper = self.string_pad_fref(method_name.unwrap_or("padStart"));
+                                let call = self.builder.ins().call(helper, &[receiver, target, fill]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -754,6 +775,20 @@ impl Translator<'_> {
                             Some("reverse") => (
                                 "zun_jit_string_reverse",
                                 1,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("padStart") => (
+                                "zun_jit_string_pad_start",
+                                3,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("padEnd") => (
+                                "zun_jit_string_pad_end",
+                                3,
                                 types::I64,
                                 JitKind::String,
                                 types::I64,
@@ -1916,6 +1951,15 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_reverse", Linkage::Import, &sig)
             .expect("declare zun_jit_string_reverse");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_pad_fref(&mut self, name: &str) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        for _ in 0..3 { sig.params.push(AbiParam::new(types::I64)); }
+        sig.returns.push(AbiParam::new(types::I64));
+        let symbol = if name == "padEnd" { "zun_jit_string_pad_end" } else { "zun_jit_string_pad_start" };
+        let id = self.module.declare_function(symbol, Linkage::Import, &sig).expect("declare string pad helper");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

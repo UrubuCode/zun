@@ -468,6 +468,27 @@ fn primitive_string_reverse_uses_the_managed_string_abi() {
     assert_eq!(heap.string(handle as u32).as_ref(), "nuz");
 }
 
+#[test]
+fn primitive_string_padding_uses_the_managed_string_abi() {
+    let module = compile(
+        "import { padStart, padEnd } from \"zun:string\"; class String { extern padStart(target: u64, fill: string): string; extern padEnd(target: u64, fill: string): string; } function left(value: string, fill: string): string { return value.padStart(5, fill); } function right(value: string, fill: string): string { return value.padEnd(5, fill); } function main(): int { return 0; }",
+    );
+    let left_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "left").expect("left method") as u32 + 1;
+    let right_rid = left_rid + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(left_rid));
+    assert!(jit.is_compiled(right_rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun"));
+    let zero = heap.intern_string(std::rc::Rc::from("0"));
+    let bang = heap.intern_string(std::rc::Rc::from("!"));
+    let left = jit.call_packed_with_heap(left_rid, &[value as u64, zero as u64], &mut heap).expect("pad start call");
+    let right = jit.call_packed_with_heap(right_rid, &[value as u64, bang as u64], &mut heap).expect("pad end call");
+    assert_eq!(heap.string(left as u32).as_ref(), "00zun");
+    assert_eq!(heap.string(right as u32).as_ref(), "zun!!");
+}
+
 
 #[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {
