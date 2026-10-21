@@ -7,6 +7,7 @@
 
 mod ffi;
 mod jit_hook;
+mod native_hook;
 mod promise;
 mod verify_module;
 
@@ -19,6 +20,7 @@ pub use ffi::{
     NativeLibraryResolver,
 };
 pub use jit_hook::{JitHook, OsrRequest, OsrSnapshot};
+pub use native_hook::NativeCallHook;
 pub use promise::{
     AsyncStateMachine, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
     PromiseAwaiter, PromiseState, Scheduler,
