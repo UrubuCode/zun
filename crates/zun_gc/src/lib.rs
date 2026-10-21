@@ -92,6 +92,14 @@ pub struct CompactionResult {
     pub rewritten_references: usize,
 }
 
+/// Outcome of the opt-in mark/sweep plus compaction path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionCompactionResult {
+    pub reclaimed_objects: usize,
+    pub moved_objects: usize,
+    pub rewritten_references: usize,
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -243,6 +251,26 @@ impl Heap {
         self.chunks = new_chunks;
         self.cursor = new_cursor;
         CompactionResult { moved_objects, rewritten_references }
+    }
+
+    /// Run a full collection and immediately compact its survivors.
+    ///
+    /// This is opt-in until the runtime has a stop-the-world coordinator for
+    /// every native/JIT frame. Native roots must be rewritten separately while
+    /// stopped; `roots` contains the interpreter roots owned by this call.
+    pub unsafe fn collect_and_compact(
+        &mut self,
+        roots: &mut Vec<Obj>,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> CollectionCompactionResult {
+        let mark_roots = roots.clone();
+        let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
+        let compacted = unsafe { self.compact(roots, ref_slots) };
+        CollectionCompactionResult {
+            reclaimed_objects,
+            moved_objects: compacted.moved_objects,
+            rewritten_references: compacted.rewritten_references,
+        }
     }
 
     /// Rewrite managed references stored in object fields using a forwarding
@@ -1357,6 +1385,31 @@ mod tests {
         assert!(heap.by_addr.contains_key(&(roots[0].addr() as usize)));
         assert!(heap.by_addr.contains_key(&(new_child as usize)));
         assert_eq!(heap.live_count(), 2);
+    }
+
+    #[test]
+    fn collect_and_compact_reclaims_dead_objects_before_moving_survivors() {
+        let mut heap = Heap::new();
+        let owner = heap.alloc(1, 1);
+        let child = heap.alloc(2, 0);
+        let dead = heap.alloc(3, 0);
+        let old_child = child.addr();
+        let dead_addr = dead.addr();
+        heap.store_field(owner, 0, child.addr() as u64, true);
+        let mut roots = vec![owner];
+
+        let result = unsafe {
+            heap.collect_and_compact(&mut roots, &|type_rid| {
+                if type_rid == 1 { vec![0] } else { vec![] }
+            })
+        };
+
+        assert_eq!(result.reclaimed_objects, 1);
+        assert_eq!(result.moved_objects, 2);
+        assert_eq!(heap.live_count(), 2);
+        assert!(!heap.by_addr.contains_key(&(dead_addr as usize)));
+        assert_ne!(roots[0], owner);
+        assert_ne!(roots[0].field(0) as *mut u64, old_child);
     }
 
     #[test]
