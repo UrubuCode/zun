@@ -928,9 +928,12 @@ the pointer ABI, including
   stack-operation path has direct interpreter/JIT equivalence coverage.
 
 The dynamic array ABI now has validated load and store helpers for the explicit
-two-word `Any` carrier. Object payloads are covered by a GC root test through
-the containing array; aggregate Cranelift stack lowering remains intentionally
-gated until conditional reference metadata can be represented safely.
+two-word `Any` carrier. Proven scalar `UnboxAny` reads use a temporary
+two-word carrier slot in Cranelift before extracting the payload; checked
+reference/string unboxing and general carrier arguments/returns remain Tier 0.
+Object payloads are covered by a GC root test through the containing array;
+aggregate carrier lowering remains intentionally gated until conditional
+reference metadata can be represented safely.
 
 The GC now records a young/old generation on every live allocation and promotes
 survivors at full-collection boundaries. Interpreter and Cranelift reference

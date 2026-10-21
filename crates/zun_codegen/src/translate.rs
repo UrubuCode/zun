@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, Block, InstBuilder, MemFlags, Signature, Type, Value,
+    types, AbiParam, Block, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind, Type,
+    Value,
 };
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -1543,9 +1544,33 @@ impl Translator<'_> {
                 Opcode::UnboxAny => {
                     let value = stack.pop().ok_or("stack underflow")?;
                     if value.1 == JitKind::Other {
-                        return Err("unbox.any requires a typed JIT value".into());
+                        let payload = self
+                            .builder
+                            .ins()
+                            .load(types::I64, MemFlags::trusted(), value.0, 8);
+                        let kind = self.method_return_kind;
+                        if !matches!(kind, JitKind::Num(_) | JitKind::Bool) {
+                            return Err("unbox.any carrier target must be scalar".into());
+                        }
+                        let result = match kind {
+                            JitKind::Bool => self.builder.ins().ireduce(types::I32, payload),
+                            JitKind::Num(NumKind::I8 | NumKind::U8) => self.builder.ins().ireduce(types::I8, payload),
+                            JitKind::Num(NumKind::I16 | NumKind::U16) => self.builder.ins().ireduce(types::I16, payload),
+                            JitKind::Num(NumKind::I32 | NumKind::U32) => self.builder.ins().ireduce(types::I32, payload),
+                            JitKind::Num(NumKind::F32) => {
+                                let bits = self.builder.ins().ireduce(types::I32, payload);
+                                self.builder.ins().bitcast(types::F32, MemFlags::new(), bits)
+                            }
+                            JitKind::Num(NumKind::F64) => {
+                                self.builder.ins().bitcast(types::F64, MemFlags::new(), payload)
+                            }
+                            JitKind::Num(NumKind::I64 | NumKind::U64) => payload,
+                            _ => unreachable!(),
+                        };
+                        stack.push((result, kind));
+                    } else {
+                        stack.push(value);
                     }
-                    stack.push(value);
                 }
                 Opcode::CastClass => {
                     let value = stack.pop().ok_or("stack underflow")?;
@@ -1577,9 +1602,23 @@ impl Translator<'_> {
                         ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
                         _ => return Err("array index must be an integer".into()),
                     };
+                    let carrier_load = self.method_return_kind != JitKind::Other
+                        && instrs.get(i + 1).is_some_and(|next| next.opcode == Opcode::UnboxAny);
                     let load_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
                     let load_bool = self.method_return_kind == JitKind::Bool;
                     let load_object = self.method_return_kind == JitKind::Object;
+                    if carrier_load {
+                        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            16,
+                            3,
+                        ));
+                        let carrier = self.builder.ins().stack_addr(types::I64, slot, 0);
+                        let load = self.array_load_any_fref();
+                        self.builder.ins().call(load, &[array, index, carrier]);
+                        stack.push((carrier, JitKind::Other));
+                        continue;
+                    }
                     let load = if load_object {
                         self.array_load_object_fref()
                     } else if load_bool {
@@ -2228,6 +2267,19 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_load_object", Linkage::Import, &sig)
             .expect("declare zun_jit_array_load_object");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn array_load_any_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_array_load_any", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_load_any");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
