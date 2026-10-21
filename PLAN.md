@@ -674,6 +674,10 @@ and cancellation before enqueue; source-level `WeakMap` bindings are available
 while callback scheduling remains a separate gate.
 - adaptive interpreter GC intervals that increase when a collection reclaims
   nothing, with weak-collection stress coverage at repeated safepoints;
+  generational remembered-set coverage now includes raw fields, arrays,
+  dynamic properties, Map/Set entries, Promise results, and WeakMap writes,
+  with minor-collection retention tests; moving compaction remains pending
+  until every raw and auxiliary reference source has a relocation pass;
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
   intrinsic substrate for `ArrayBuffer` and typed-array views. Little-endian
   `u16`, `u32`, and `f64` view operations are covered; source-level view
