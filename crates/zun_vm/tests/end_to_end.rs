@@ -76,6 +76,15 @@ fn tiering_calls_a_heap_eligible_f64_array_writer() {
 }
 
 #[test]
+fn tiering_calls_a_heap_eligible_u64_array_writer() {
+    let out = run_source(
+        "function write(values: Array, value: u64): u64 { values[0] = value; return value; }\n\
+         function main() { let values = new Array(1); print(write(values, 41 as u64)); print(write(values, 42 as u64)); print(values[0] as u64); }",
+    );
+    assert_eq!(out, ["41", "42", "42"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
