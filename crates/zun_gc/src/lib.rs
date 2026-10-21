@@ -225,6 +225,68 @@ impl Heap {
         rewritten
     }
 
+    /// Rewrite strong references in iterator and typed-view side tables,
+    /// including their address-keyed indexes and object header fields.
+    pub fn rewrite_iterator_references(&mut self, relocation: &RelocationMap) -> usize {
+        fn relocated(relocation: &RelocationMap, object: Obj) -> Obj {
+            unsafe { Obj::from_addr(relocation.relocate_address(object.addr() as usize) as *mut u64) }
+        }
+
+        let mut rewritten = 0;
+        let mut arrays = std::mem::take(&mut self.array_iterators);
+        let mut new_arrays = HashMap::with_capacity(arrays.len());
+        for (address, (array, state)) in arrays.drain() {
+            let iterator = unsafe { Obj::from_addr(address as *mut u64) };
+            let new_iterator = relocated(relocation, iterator);
+            let new_array = relocated(relocation, array);
+            if new_iterator.addr() != iterator.addr() { rewritten += 1; }
+            if new_array.addr() != array.addr() { rewritten += 1; }
+            new_iterator.set_field(0, new_array.addr() as u64);
+            new_arrays.insert(new_iterator.addr() as usize, (new_array, state));
+        }
+        self.array_iterators = new_arrays;
+
+        let mut sets = std::mem::take(&mut self.set_iterators);
+        let mut new_sets = HashMap::with_capacity(sets.len());
+        for (address, (set, state)) in sets.drain() {
+            let iterator = unsafe { Obj::from_addr(address as *mut u64) };
+            let new_iterator = relocated(relocation, iterator);
+            let new_set = relocated(relocation, set);
+            if new_iterator.addr() != iterator.addr() { rewritten += 1; }
+            if new_set.addr() != set.addr() { rewritten += 1; }
+            new_iterator.set_field(0, new_set.addr() as u64);
+            new_sets.insert(new_iterator.addr() as usize, (new_set, state));
+        }
+        self.set_iterators = new_sets;
+
+        let mut maps = std::mem::take(&mut self.map_iterators);
+        let mut new_maps = HashMap::with_capacity(maps.len());
+        for (address, (map, state)) in maps.drain() {
+            let iterator = unsafe { Obj::from_addr(address as *mut u64) };
+            let new_iterator = relocated(relocation, iterator);
+            let new_map = relocated(relocation, map);
+            if new_iterator.addr() != iterator.addr() { rewritten += 1; }
+            if new_map.addr() != map.addr() { rewritten += 1; }
+            new_iterator.set_field(0, new_map.addr() as u64);
+            new_maps.insert(new_iterator.addr() as usize, (new_map, state));
+        }
+        self.map_iterators = new_maps;
+
+        let mut views = std::mem::take(&mut self.typed_views);
+        let mut new_views = HashMap::with_capacity(views.len());
+        for (address, (buffer, view)) in views.drain() {
+            let object = unsafe { Obj::from_addr(address as *mut u64) };
+            let new_object = relocated(relocation, object);
+            let new_buffer = relocated(relocation, buffer);
+            if new_object.addr() != object.addr() { rewritten += 1; }
+            if new_buffer.addr() != buffer.addr() { rewritten += 1; }
+            new_object.set_field(0, new_buffer.addr() as u64);
+            new_views.insert(new_object.addr() as usize, (new_buffer, view));
+        }
+        self.typed_views = new_views;
+        rewritten
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -1039,6 +1101,23 @@ mod tests {
         let entries = heap.map_entries(map).unwrap();
         assert_eq!(entries[0].0.as_object(), Some(new_target.addr() as usize));
         assert_eq!(entries[0].1.as_object(), Some(new_target.addr() as usize));
+    }
+
+    #[test]
+    fn relocation_rewrites_iterator_indexes_and_targets() {
+        let mut heap = Heap::new();
+        let old_array = heap.alloc_array(0);
+        let new_array = heap.alloc_array(0);
+        let iterator = heap.alloc_array_iterator(old_array).unwrap();
+        let new_iterator = heap.alloc(0, 1);
+        let mut relocation = RelocationMap::new();
+        relocation.insert(old_array, new_array);
+        relocation.insert(iterator, new_iterator);
+
+        assert_eq!(heap.rewrite_iterator_references(&relocation), 2);
+        assert_eq!(heap.array_iterator_done(new_iterator), Some(true));
+        assert_eq!(new_iterator.field(0), new_array.addr() as u64);
+        assert!(heap.array_iterator_done(iterator).is_none());
     }
 
     #[test]
