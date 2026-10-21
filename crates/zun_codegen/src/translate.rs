@@ -518,6 +518,25 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
+                            Some("repeat") => {
+                                let (count, count_kind) = stack.pop().ok_or("repeat count")?;
+                                let (receiver, receiver_kind) = stack.pop().ok_or("repeat receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || !matches!(count_kind, JitKind::Num(kind) if kind.int_parts().is_some())
+                                {
+                                    return Err("repeat expects a string and integer count".into());
+                                }
+                                let count = match clif_ty(count_kind) {
+                                    types::I64 => count,
+                                    ty if ty.is_int() => self.builder.ins().uextend(types::I64, count),
+                                    _ => return Err("repeat count must be an integer".into()),
+                                };
+                                let helper = self.string_repeat_fref();
+                                let call = self.builder.ins().call(helper, &[receiver, count]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -710,6 +729,13 @@ impl Translator<'_> {
                             Some("toUpperCase") => (
                                 "zun_jit_string_to_upper_case",
                                 1,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("repeat") => (
+                                "zun_jit_string_repeat",
+                                2,
                                 types::I64,
                                 JitKind::String,
                                 types::I64,
@@ -1849,6 +1875,18 @@ impl Translator<'_> {
             .module
             .declare_function(symbol, Linkage::Import, &sig)
             .expect("declare string case helper");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_repeat_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_repeat", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_repeat");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
