@@ -737,8 +737,9 @@ while callback scheduling remains a separate gate.
   nothing, with weak-collection stress coverage at repeated safepoints;
   generational remembered-set coverage now includes raw fields, arrays,
   dynamic properties, Map/Set entries, Promise results, and WeakMap writes,
-  with minor-collection retention tests; moving compaction remains pending
-  until every raw and auxiliary reference source has a relocation pass;
+  with minor-collection retention tests; moving compaction now rewrites heap,
+  native-frame, interpreter-frame, generator, promise, proxy, iterator, and
+  typed-view references through the relocation map;
 - Contiguous `ByteBuffer` storage with bounds-checked heap access, forming the
   intrinsic substrate for `ArrayBuffer` and typed-array views. Little-endian
   `u16`, `u32`, and `f64` view operations are covered; source-level view
@@ -856,8 +857,7 @@ card-table scaling, and precise JIT-frame safepoints as later completion work.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 additional platform coverage for the automatic collection policy at the
-now-published precise JIT-frame safepoint, true OSR frame replacement, compacting GC
-integration with the live execution coordinator,
+now-published precise JIT-frame safepoint, true OSR frame replacement, and
  non-blittable FFI marshalling, production Node N-API bindings, AOT/R2R support
  for the full runtime surface, BigInt, and the remaining Group 3 type-level
  features. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
@@ -925,7 +925,7 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
-   replacement, compaction, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
+   replacement, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering, managed iterator
    objects, `next()`, and `for...of` integration are implemented, including
