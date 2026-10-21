@@ -32,6 +32,40 @@ impl<'a> Interp<'a> {
         }
         rewritten
     }
+
+    /// Compact the heap while suspended interpreter frames are owned and
+    /// stopped, rewriting their managed values during the forwarding pass.
+    ///
+    /// # Safety
+    /// The caller must ensure no managed execution is active while this
+    /// operation runs. The current interpreter is single-threaded, so this is
+    /// an explicit opt-in boundary rather than an automatic GC policy.
+    pub(super) unsafe fn compact_suspended_frames(
+        &mut self,
+    ) -> Option<zun_gc::CompactionResult> {
+        let mut roots = Vec::new();
+        if let Some(frame) = self.suspended.as_ref() {
+            super::roots::collect_frame_roots(&frame.stack, &frame.locals, &mut roots);
+        }
+        if let Some(frame) = self.resume_frame.as_ref() {
+            super::roots::collect_frame_roots(&frame.stack, &frame.locals, &mut roots);
+        }
+        if roots.is_empty() {
+            return None;
+        }
+
+        let types = self.types.clone();
+        let mut rewrite = |relocation: &zun_gc::RelocationMap| {
+            self.rewrite_suspended_frames(relocation);
+        };
+        Some(zun_gc::with_current_heap_mut(|heap| unsafe {
+            heap.compact_with_relocation(
+                &mut roots,
+                &|type_rid| types.reference_slots(type_rid),
+                &mut rewrite,
+            )
+        }))
+    }
 }
 
 /// A link in the chain of suspended caller frames, used to find precise GC

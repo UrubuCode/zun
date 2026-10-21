@@ -60,6 +60,11 @@ pub(crate) fn collect_frame_roots(
     for value in stack.iter().chain(locals.iter()) {
         match value {
             Value::Object(object) => roots.push(*object),
+            Value::Any(any) => {
+                if let Some(address) = any.as_object() {
+                    roots.push(unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                }
+            }
             Value::Function(handle) => {
                 if let Some(address) = handle.environment() {
                     roots.push(unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
