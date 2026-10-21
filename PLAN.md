@@ -596,8 +596,10 @@ Plan:
   mixed and aggregate `Any` array operations remain on the interpreter path.
   The Cranelift method signature and shim now preserve an `Any` return as two
   `i64` values, and `call_packed_any` is separate from the scalar `u64` API;
-  `Any` parameters, internal calls, and eligibility remain gated until the
-  carrier is propagated end to end.
+  its parameter layout also accepts each `Any` argument as the same two-word
+  `(tag, payload)` carrier and roots object-tagged payloads at the host
+  boundary. Internal calls, aggregate lowering, and eligibility remain gated
+  until the carrier is propagated end to end.
 - Interpreter safepoints already poll allocation sites and backedges with the
   current frame and caller chain as precise roots. JIT allocation calls now
   pass the pre-call SP, derive the x86-64 return PC, and publish the stopped
