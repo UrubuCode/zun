@@ -574,8 +574,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         {
             continue;
         }
-        // Reject methods whose field/newobj operands touch non-JIT types
-        // (e.g. string fields).
+        // Reject methods whose field/newobj operands touch non-JIT types.
         if !instrs.iter().all(|i| instr_fields_ok(module, i)) {
             continue;
         }
