@@ -56,6 +56,7 @@ mod buffers;
 mod weak_state;
 mod regexes;
 mod proxies;
+mod relocation;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
 pub use weak_state::FinalizationRecord;
@@ -67,6 +68,7 @@ use weak_state::{Ephemeron, FinalizerEntry, WeakSlot};
 const CHUNK_SLOTS: usize = 64 * 1024;
 
 pub use object::Obj;
+pub use relocation::RelocationMap;
 /// The size of one object slot in bytes.
 pub use zun_core::SLOT_SIZE;
 
