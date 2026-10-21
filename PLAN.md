@@ -561,8 +561,9 @@ The following runtime contracts are implemented and covered by tests:
 - mark-sweep GC with interpreter roots, native root scopes, and precise JIT
   stack-map reference-slot metadata; object-producing JIT values are registered
   in those maps and the GC can consume a stopped native frame through `(PC, SP)`,
-  while nested native-frame collection coverage is tested and automatic
-  safepoint capture remains pending;
+  while nested native-frame collection coverage is tested; interpreter
+  safepoints now select minor/full collection policy and native `(PC, SP)`
+  capture remains the pending JIT-specific path;
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
