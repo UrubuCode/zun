@@ -67,6 +67,15 @@ fn tiering_calls_a_heap_eligible_f64_array_reader() {
 }
 
 #[test]
+fn tiering_calls_a_heap_eligible_f64_array_writer() {
+    let out = run_source(
+        "function write(values: Array, value: number): number { values[0] = value; return value; }\n\
+         function main() { let values = new Array(1); print(write(values, 41.0)); print(write(values, 42.0)); print(values[0]); }",
+    );
+    assert_eq!(out, ["41", "42", "42"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
