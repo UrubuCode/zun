@@ -598,7 +598,8 @@ The following runtime contracts are implemented and covered by tests:
   without requiring the coordinator to rebuild the frame list. Ordinary
   mark/sweep and `collect_and_compact` now also scan those registered frames
   and preserve their slots through relocation. Automatic suspension remains
-  pending.
+  pending; the coordinator-facing explicit frame-list API and the thread-local
+  convenience path now share the same mark/relocate implementation.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
