@@ -130,6 +130,16 @@ fn tiering_calls_a_heap_eligible_non_overridden_virtual_method() {
 }
 
 #[test]
+fn tiering_returns_a_jit_allocated_object_through_the_vm() {
+    let out = run_source(
+        "class Box { value: number; }\n\
+         function make(): Box { return new Box(41.0); }\n\
+         function main() { let first = make(); let second = make(); print(first.value); print(second.value); }",
+    );
+    assert_eq!(out, ["41", "41"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
