@@ -94,6 +94,29 @@ impl<'a> OwnedGeneratorSession<'a> {
     }
 
     pub fn heap_mut(&mut self) -> &mut zun_gc::Heap { &mut self.heap }
+
+    /// Compact the owned generator heap between resume steps.
+    ///
+    /// This is an explicit maintenance operation. It is safe to use only
+    /// while the session is not executing a resume step.
+    pub fn compact_pending_frames(&mut self) -> Option<zun_gc::CompactionResult> {
+        let mut frame = self.pending.take()?;
+        let mut roots = Vec::new();
+        frame.append_managed_roots(&mut roots);
+        let types = self.types.clone();
+        let mut rewrite = |relocation: &zun_gc::RelocationMap| {
+            frame.rewrite_managed_references(relocation);
+        };
+        let result = unsafe {
+            self.heap.compact_with_relocation(
+                &mut roots,
+                &|type_rid| types.reference_slots(type_rid),
+                &mut rewrite,
+            )
+        };
+        self.pending = Some(frame);
+        Some(result)
+    }
 }
 
 /// Persistent interpreter boundary for async executions.
