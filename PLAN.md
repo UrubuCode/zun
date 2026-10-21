@@ -574,6 +574,7 @@ The following runtime contracts are implemented and covered by tests:
   requests are published and deduplicated by `JitHook`, and the hook now
   captures the Tier 0 PC, evaluation stack, and locals for each hot boundary.
   Snapshots validate method-local layout and IL boundaries before consumption;
+  references retained by pending snapshots participate in interpreter GC roots,
   a Cranelift entrypoint accepting the captured frame state and native frame
   replacement remain pending.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
