@@ -36,6 +36,8 @@ pub struct ResumableSession<'a> {
 /// Tier 0 generator boundary with an iterator-shaped next operation.
 pub struct GeneratorSession<'a> {
     inner: ResumableSession<'a>,
+    done: bool,
+    completion: Option<Value>,
 }
 
 impl core::fmt::Debug for GeneratorSession<'_> {
@@ -44,6 +46,7 @@ impl core::fmt::Debug for GeneratorSession<'_> {
             .debug_struct("GeneratorSession")
             .field("method_rid", &self.inner.method_rid)
             .field("suspended", &self.inner.pending.is_some())
+            .field("done", &self.done)
             .finish()
     }
 }
@@ -78,14 +81,27 @@ impl<'a> GeneratorSession<'a> {
         }
         Ok(Self {
             inner: ResumableSession::new(module, method_rid, args, output, None, None)?,
+            done: false,
+            completion: None,
         })
     }
 
     /// Advance the generator once.
     pub fn next(&mut self) -> Result<GeneratorResult, RunError> {
+        if self.done {
+            return Ok(GeneratorResult::Complete(
+                self.completion
+                    .clone()
+                    .expect("completed generator stores its result"),
+            ));
+        }
         match self.inner.poll()? {
             ResumeResult::Yielded(value) => Ok(GeneratorResult::Yielded(value)),
-            ResumeResult::Complete(value) => Ok(GeneratorResult::Complete(value)),
+            ResumeResult::Complete(value) => {
+                self.done = true;
+                self.completion = Some(value.clone());
+                Ok(GeneratorResult::Complete(value))
+            }
             ResumeResult::Suspended => Err(RunError::Malformed(
                 "generator suspended without yielding a value".into(),
             )),

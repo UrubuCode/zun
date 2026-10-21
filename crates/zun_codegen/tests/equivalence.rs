@@ -3057,6 +3057,10 @@ fn generator_session_yields_and_resumes_in_tier0() {
     ));
     let complete = session.next().expect("generator completion");
     assert!(matches!(complete, zun_interp::GeneratorResult::Complete(Value::Int(value, _)) if value == 3), "{complete:?}");
+    assert!(matches!(
+        session.next().expect("sticky generator completion"),
+        zun_interp::GeneratorResult::Complete(Value::Int(value, _)) if value == 3
+    ));
 }
 
 #[test]
