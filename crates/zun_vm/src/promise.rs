@@ -95,7 +95,7 @@ pub struct GeneratorStateMachine<T, F> {
     state: usize,
     done: bool,
     step: F,
-    _value: core::marker::PhantomData<fn() -> T>,
+    current: Option<T>,
 }
 
 impl<T, F> core::fmt::Debug for GeneratorStateMachine<T, F> {
@@ -108,10 +108,10 @@ impl<T, F> core::fmt::Debug for GeneratorStateMachine<T, F> {
     }
 }
 
-impl<T, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T, F> {
+impl<T: Clone, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T, F> {
     /// Create a generator at its entry state.
     pub fn new(step: F) -> Self {
-        Self { state: 0, done: false, step, _value: core::marker::PhantomData }
+        Self { state: 0, done: false, step, current: None }
     }
 
     /// Advance once. Completion is sticky, as required by iterator semantics.
@@ -120,6 +120,11 @@ impl<T, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T, F> {
             return GeneratorStep::Complete;
         }
         let result = (self.step)(&mut self.state);
+        if let GeneratorStep::Yielded(value) = &result {
+            self.current = Some(value.clone());
+        } else {
+            self.current = None;
+        }
         if matches!(result, GeneratorStep::Complete) {
             self.done = true;
         }
@@ -128,6 +133,19 @@ impl<T, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T, F> {
 
     /// Current generated state, useful to a runtime resume hook.
     pub fn state(&self) -> usize { self.state }
+
+    /// Return the value produced by the most recent successful advancement.
+    pub fn current(&self) -> Option<&T> { self.current.as_ref() }
+
+    /// Dispose the state machine and release the current value.
+    ///
+    /// The compiler-generated state machine uses this hook to run any
+    /// state-specific cleanup before the iterator becomes terminal.
+    pub fn dispose(&mut self) {
+        self.current = None;
+        self.done = true;
+        self.state = usize::MAX;
+    }
 }
 
 impl<T: Clone + Send + 'static, F: FnMut(&mut usize) -> Poll<T>> AsyncStateMachine<T, F> {
@@ -813,8 +831,14 @@ mod tests {
         });
         assert_eq!(machine.next(), GeneratorStep::Yielded(10));
         assert_eq!(machine.state(), 1);
+        assert_eq!(machine.current(), Some(&10));
         assert_eq!(machine.next(), GeneratorStep::Yielded(20));
+        assert_eq!(machine.current(), Some(&20));
         assert_eq!(machine.next(), GeneratorStep::Complete);
+        assert_eq!(machine.current(), None);
+        assert_eq!(machine.next(), GeneratorStep::Complete);
+        machine.dispose();
+        assert_eq!(machine.current(), None);
         assert_eq!(machine.next(), GeneratorStep::Complete);
     }
 
