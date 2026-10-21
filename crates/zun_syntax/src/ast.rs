@@ -66,6 +66,8 @@ pub struct Function {
     pub return_type: Option<TypeAnnotation>,
     /// Whether this declaration is implemented by a runtime intrinsic.
     pub is_extern: bool,
+    /// Native library for a top-level source declaration.
+    pub external_module: Option<String>,
     /// Whether this declaration uses the source-level `async` modifier.
     pub is_async: bool,
     /// Whether this declaration uses generator syntax (`function*`).

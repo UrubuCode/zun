@@ -451,6 +451,29 @@ mod tests {
     }
 
     #[test]
+    fn compiles_source_extern_function_to_typed_member_reference() {
+        let module = compile_with_externals(
+            "extern function answer(value: i64): i64 from \"core\"; function main(): i64 { return answer(41); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "core".into(),
+                name: "answer".into(),
+                params: vec![zun_sema::Ty::Int(zun_sema::hir::IntKind::I64)],
+                return_ty: zun_sema::Ty::Int(zun_sema::hir::IntKind::I64),
+            }],
+        )
+        .expect("compile source extern function");
+        assert_eq!(module.tables.member_refs.len(), 2);
+        let signature = module
+            .tables
+            .member_refs
+            .iter()
+            .map(|member| module.blobs.get(member.signature))
+            .find(|signature| *signature == [1, 1, 1])
+            .expect("typed external signature blob");
+        assert_eq!(signature, &[1, 1, 1]);
+    }
+
+    #[test]
     fn rejects_external_call_with_mismatched_signature() {
         let diagnostics = compile_with_externals(
             "import { answer } from \"core\"; function main(): int { return answer(\"wrong\"); }",

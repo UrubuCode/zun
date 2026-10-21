@@ -97,10 +97,14 @@ impl Parser<'_> {
         while !self.at(TokenKind::Eof) {
             match self.peek().kind {
                 TokenKind::KwImport => imports.push(self.import()),
-                TokenKind::KwFunction => functions.push(self.function(false)),
+                TokenKind::KwFunction => functions.push(self.function(false, false)),
+                TokenKind::KwExtern if self.peek_n(1).kind == TokenKind::KwFunction => {
+                    self.bump();
+                    functions.push(self.function(false, true));
+                }
                 TokenKind::KwAsync if self.peek_n(1).kind == TokenKind::KwFunction => {
                     self.bump();
-                    functions.push(self.function(true));
+                    functions.push(self.function(true, false));
                 }
                 TokenKind::KwClass => classes.push(self.class()),
                 _ => {
@@ -233,6 +237,7 @@ impl Parser<'_> {
             params,
             return_type,
             is_extern,
+            external_module: None,
             is_async: false,
             is_generator: false,
             body,
@@ -240,7 +245,7 @@ impl Parser<'_> {
         }
     }
 
-    fn function(&mut self, is_async: bool) -> Function {
+    fn function(&mut self, is_async: bool, is_extern: bool) -> Function {
         let start = self.bump().span; // `function`
         let is_generator = self.eat(TokenKind::Star);
         let name = self.name("a function name");
@@ -269,13 +274,29 @@ impl Parser<'_> {
         self.expect(TokenKind::RParen, "`)`");
 
         let return_type = self.optional_type_annotation();
-        let body = self.block();
+        let external_module = if is_extern {
+            self.expect(TokenKind::KwFrom, "`from` after extern function")
+                .and_then(|_| self.expect(TokenKind::String, "a native library string"))
+                .map(|token| decode_string(self.text(token)))
+        } else {
+            None
+        };
+        let body = if is_extern {
+            let end = self
+                .expect(TokenKind::Semi, "`;` after extern function")
+                .map(|token| token.span)
+                .unwrap_or(name.span);
+            Block { statements: Vec::new(), span: name.span.to(end) }
+        } else {
+            self.block()
+        };
         let span = start.to(body.span);
         Function {
             name,
             params,
             return_type,
-            is_extern: false,
+            is_extern,
+            external_module,
             is_async,
             is_generator,
             body,

@@ -367,7 +367,64 @@ impl Checker<'_> {
         }
         self.collect_mutated_names(&f.body.statements, &mut cx.mutated_names);
 
-        let body = if f.is_extern {
+        let body = if f.is_extern && f.external_module.is_some() {
+            let module = f.external_module.as_deref().unwrap_or_default();
+            let external = self
+                .external_functions
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| {
+                    self.error(
+                        f.name.span,
+                        format!("extern function `{name}` is missing a linker signature"),
+                    );
+                    ExternalFunction {
+                        module: module.to_owned(),
+                        name: name.clone(),
+                        params: param_tys.clone(),
+                        return_ty,
+                    }
+                });
+            if external.module != module {
+                self.error(
+                    f.name.span,
+                    format!(
+                        "extern function `{name}` declares module `{module}` but linker resolved `{}`",
+                        external.module
+                    ),
+                );
+            }
+            if external.params != param_tys {
+                self.error(
+                    f.name.span,
+                    format!("extern function `{name}` parameter types do not match the linker signature"),
+                );
+            }
+            if external.return_ty != return_ty {
+                self.error(
+                    f.name.span,
+                    format!("extern function `{name}` return type does not match the linker signature"),
+                );
+            }
+            let args = param_tys
+                .iter()
+                .enumerate()
+                .map(|(slot, &ty)| hir::Expr {
+                    kind: hir::ExprKind::Local(slot as hir::LocalSlot),
+                    ty,
+                    span: f.name.span,
+                })
+                .collect();
+            vec![hir::Stmt::Return(Some(hir::Expr {
+                kind: hir::ExprKind::ExternalCall {
+                    module: external.module,
+                    name: external.name,
+                    args,
+                },
+                ty: return_ty,
+                span: f.name.span,
+            }))]
+        } else if f.is_extern {
             let Some((intrinsic_id, intrinsic)) = self.imports.get(&name).copied() else {
                 self.error(
                     f.name.span,
