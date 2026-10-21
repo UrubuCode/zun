@@ -64,6 +64,29 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn interned_string_length_uses_the_typed_jit_abi() {
+    let module = compile(
+        "import { length } from \"zun:string\"; function measure(value: string): u64 { return length(value); } function main(): u64 { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "measure RID {rid}, methods: {:?}", module.tables.method_defs);
+
+    let mut heap = zun_gc::Heap::new();
+    let handle = heap.intern_string(std::rc::Rc::from("hé"));
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[handle as u64], &mut heap),
+        Ok(2)
+    ));
+}
+
+#[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {
     let module = compile(
         "function* values(): int { yield 7; return 9; } function main(): any { for (let value of values()) { return value; } return 0; }",
