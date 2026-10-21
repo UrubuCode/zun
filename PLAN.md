@@ -613,9 +613,12 @@ The following runtime contracts are implemented and covered by tests:
   `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
 - Typed scalar FFI calls are exercised against a real Windows system library;
   logical-library candidate resolution, aggregated load errors, and an
-  absolute-path policy are implemented. Compiler/IL declarations and
-  marshalling for external symbols remain separate gates; source-level
-  P/Invoke-style declarations and typed IL calls are still pending.
+  absolute-path policy are implemented. `FfiSignature` now describes the
+  supported blittable `i64`, `f64`, and zero-argument `bool` C shapes, and
+  validates them before dispatching to fixed-arity thunks. Compiler/IL
+  declarations and marshalling for external symbols remain separate gates;
+  source-level P/Invoke-style declarations and typed IL calls are still
+  pending.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
@@ -847,7 +850,7 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: managed Cranelift values, automatic precise JIT
-   safepoints, true OSR, compaction, typed FFI/N-API, AOT/R2R, and the
+   safepoints, true OSR, compaction, source/IL typed FFI and production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering and frame
    resumption are implemented, while managed iterator-object/`next()`
