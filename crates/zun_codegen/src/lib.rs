@@ -68,6 +68,24 @@ pub extern "C" fn zun_jit_string_char_code_at(handle: i64, index: i64) -> i32 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_starts_with(value: i64, prefix: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| {
+        let Some(value) = heap.try_string(value as u32) else { return 0 };
+        let Some(prefix) = heap.try_string(prefix as u32) else { return 0 };
+        i32::from(value.starts_with(prefix.as_ref()))
+    })
+}
+
+#[inline]
+pub extern "C" fn zun_jit_string_ends_with(value: i64, suffix: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| {
+        let Some(value) = heap.try_string(value as u32) else { return 0 };
+        let Some(suffix) = heap.try_string(suffix as u32) else { return 0 };
+        i32::from(value.ends_with(suffix.as_ref()))
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -926,6 +944,8 @@ impl Jit {
         builder.symbol("zun_jit_string_length", zun_jit_string_length as *const u8);
         builder.symbol("zun_jit_string_contains", zun_jit_string_contains as *const u8);
         builder.symbol("zun_jit_string_char_code_at", zun_jit_string_char_code_at as *const u8);
+        builder.symbol("zun_jit_string_starts_with", zun_jit_string_starts_with as *const u8);
+        builder.symbol("zun_jit_string_ends_with", zun_jit_string_ends_with as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);

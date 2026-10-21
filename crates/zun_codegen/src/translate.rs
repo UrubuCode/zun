@@ -379,6 +379,26 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::Num(NumKind::U32)));
                                 continue;
                             }
+                            Some("startsWith") | Some("endsWith") => {
+                                let (needle, needle_kind) =
+                                    stack.pop().ok_or("string prefix/suffix")?;
+                                let (receiver, receiver_kind) =
+                                    stack.pop().ok_or("string prefix/suffix receiver")?;
+                                if receiver_kind != JitKind::String
+                                    || needle_kind != JitKind::String
+                                {
+                                    return Err("string prefix/suffix expects string arguments".into());
+                                }
+                                let helper = if method_name == Some("startsWith") {
+                                    self.string_starts_with_fref()
+                                } else {
+                                    self.string_ends_with_fref()
+                                };
+                                let call = self.builder.ins().call(helper, &[receiver, needle]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Bool));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -482,6 +502,20 @@ impl Translator<'_> {
                                 2,
                                 types::I64,
                                 JitKind::Num(NumKind::U32),
+                                types::I32,
+                            ),
+                            Some("startsWith") => (
+                                "zun_jit_string_starts_with",
+                                2,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("endsWith") => (
+                                "zun_jit_string_ends_with",
+                                2,
+                                types::I64,
+                                JitKind::Bool,
                                 types::I32,
                             ),
                             Some("isValid") => (
@@ -1504,6 +1538,26 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_char_code_at", Linkage::Import, &sig)
             .expect("declare zun_jit_string_char_code_at");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_starts_with_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        self.string_predicate_fref("zun_jit_string_starts_with")
+    }
+
+    fn string_ends_with_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        self.string_predicate_fref("zun_jit_string_ends_with")
+    }
+
+    fn string_predicate_fref(&mut self, name: &str) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function(name, Linkage::Import, &sig)
+            .expect("declare string predicate");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
