@@ -339,6 +339,15 @@ P/Invoke):
   .NET e o `extern "C"` sobre libs do Rust. NÃO é o mesmo que intrinsic: o
   intrinsic é implementado por nós; a FFI chama código de terceiros.
 
+  Non-blittable string marshalling is explicitly deferred and must declare
+  ownership in the signature. Zun strings are converted between internal
+  UTF-16 and UTF-8 at the boundary. Inputs use call-scoped native temporary
+  storage and pass either `(pointer, length)` or a declared NUL-terminated
+  form. Returns must explicitly declare borrowed data with a length source,
+  `owned(free_fn)`, or `out_buffer(capacity)` (preferred where supported).
+  No return ownership mode is inferred; every native pointer is copied before
+  the call boundary ends.
+
 Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
 } from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
 vincula os nomes com suas assinaturas e baixa chamadas para `call.builtin <id>`.
@@ -935,7 +944,8 @@ VM has multiple mutator threads.
 The remaining completion gates are broader JIT lowering for managed heap values,
 additional platform coverage for the automatic collection policy at the
 now-published precise JIT-frame safepoint, true OSR frame replacement, and
- non-blittable FFI marshalling, production Node N-API bindings, AOT/R2R support
+ non-blittable FFI marshalling (deferred; its ownership ABI is specified in
+ section 4.4), production Node N-API bindings, AOT/R2R support
  for the full runtime surface, BigInt, and the remaining Group 3 type-level
  features. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
  are implemented with Tier 0 fallback. Each gate requires a runtime test
@@ -1002,7 +1012,8 @@ an optimization gate.
    short-circuit operators, ternary expressions, and labelled loop control.
    Getters/setters, `static` members, and private `#fields` remain pending.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
-   replacement, non-blittable FFI marshalling and production N-API, AOT/R2R, and the
+   replacement, non-blittable FFI marshalling (deferred; ownership modes are
+   specified in section 4.4), production N-API, AOT/R2R, and the
    remaining performance backlog. Async/await source lowering is complete in
    the Tier 0 state-machine path; generator source lowering, managed iterator
    objects, `next()`, and `for...of` integration are implemented, including
