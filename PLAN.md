@@ -696,7 +696,8 @@ The following runtime contracts are implemented and covered by tests:
   crosses the scalar mutation boundary, while generic keys, values,
   `Map.set(f64, f64)` now returns an explicit insertion flag through the same
   scalar ABI, and `Map.delete(f64)` and `Set.delete(f64)` use it as well, while
-  other mutating methods remain on the interpreter path until the aggregate
+  `Map.getF64Or` provides a typed numeric read with an explicit fallback.
+  Other mutating methods and the generic `Map.get` remain on the interpreter path until the aggregate
   `Any` ABI is lowered; broader managed values still require the remaining
   precise-GC and write-barrier work.
   `DataView` now has a distinct native receiver type, and its scalar
