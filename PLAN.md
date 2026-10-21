@@ -706,9 +706,11 @@ The following runtime contracts are implemented and covered by tests:
 - Primitive-backed `String` scalar queries (`length`, `contains`, `charCodeAt`,
   `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `count`, and `compare`)
   now use direct Cranelift helpers with interpreter/JIT equivalence coverage.
-  The managed string-producing `concat` and `substring` operations also use
-  heap-handle helpers with equivalence coverage; other string-producing
-  operations remain on the interpreter path.
+  Managed string-producing operations (`concat`, `substring`, `trim`,
+  `trimStart`, `trimEnd`, `toLowerCase`, `toUpperCase`, `repeat`, `reverse`,
+  `padStart`, `padEnd`, and `replace`) also use heap-handle helpers with
+  equivalence coverage. Aggregate/dynamic values remain on the interpreter
+  path.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
