@@ -243,6 +243,31 @@ impl Heap {
         unsafe { self.compact_impl(roots, ref_slots, frames) }
     }
 
+    /// Compact using every native frame currently registered by the runtime's
+    /// stop-the-world coordinator.
+    ///
+    /// # Safety
+    /// The caller must stop managed execution and ensure that every registered
+    /// frame remains stopped until this method returns. Each registration must
+    /// point to a live [`StackMapRegistry`] and stack memory described by it.
+    pub unsafe fn compact_with_registered_native_frames(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> CompactionResult {
+        with_active_native_frames(|active| {
+            let frames: Vec<_> = active
+                .iter()
+                .map(|frame| StoppedNativeFrame {
+                    registry: unsafe { &*frame.registry },
+                    pc: frame.pc,
+                    sp: frame.sp,
+                })
+                .collect();
+            unsafe { self.compact_with_native_frames(roots, ref_slots, &frames) }
+        })
+    }
+
     unsafe fn compact_impl(
         &mut self,
         roots: &mut [Obj],
@@ -1536,6 +1561,26 @@ mod tests {
         assert_eq!(result.rewritten_references, 2);
         assert_eq!(unsafe { (first.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
         assert_eq!(unsafe { (second.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
+    }
+
+    #[test]
+    fn compaction_rewrites_registered_native_frame_stack_map() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut frame = [0u8; 8];
+        unsafe { (frame.as_mut_ptr() as *mut u64).write_unaligned(object.addr() as u64); }
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 50, span: 1, reference_slots: vec![0] }]);
+        let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 50, frame.as_mut_ptr()) };
+        let mut roots = vec![object];
+
+        let result = unsafe {
+            heap.compact_with_registered_native_frames(&mut roots, &|_| Vec::new())
+        };
+
+        assert_eq!(result.moved_objects, 1);
+        assert_eq!(result.rewritten_references, 1);
+        assert_eq!(unsafe { (frame.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
     }
 
     #[test]
