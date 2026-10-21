@@ -94,6 +94,15 @@ fn tiering_calls_a_heap_eligible_f64_array_push() {
 }
 
 #[test]
+fn tiering_calls_a_heap_eligible_f64_array_pop() {
+    let out = run_source(
+        "function pop(values: Array): number { return values.pop() as number; }\n\
+         function main() { let values = new Array(2); values[0] = 41.0; values[1] = 42.0; print(pop(values)); print(pop(values)); print(values.length); }",
+    );
+    assert_eq!(out, ["42", "41", "0"]);
+}
+
+#[test]
 fn while_loop_sums() {
     let out = run_source(
         "function main() {\n\
