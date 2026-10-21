@@ -17,6 +17,23 @@ pub(super) struct Interp<'a> {
     pub(super) yielded: Option<Value>,
 }
 
+impl<'a> Interp<'a> {
+    /// Rewrite owned suspended frames after a moving collection.
+    pub(super) fn rewrite_suspended_frames(
+        &mut self,
+        relocation: &zun_gc::RelocationMap,
+    ) -> usize {
+        let mut rewritten = 0;
+        if let Some(frame) = self.suspended.as_mut() {
+            rewritten += frame.rewrite_managed_references(relocation);
+        }
+        if let Some(frame) = self.resume_frame.as_mut() {
+            rewritten += frame.rewrite_managed_references(relocation);
+        }
+        rewritten
+    }
+}
+
 /// A link in the chain of suspended caller frames, used to find precise GC
 /// roots.
 pub(super) struct RootLink<'a> {
