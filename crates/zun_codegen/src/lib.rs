@@ -124,6 +124,30 @@ pub extern "C" fn zun_jit_string_last_index_of(value: i64, needle: i64) -> i32 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_count(value: i64, needle: i64) -> i32 {
+    zun_gc::with_current_heap(|heap| {
+        let Some(value) = heap.try_string(value as u32) else { return 0 };
+        let Some(needle) = heap.try_string(needle as u32) else { return 0 };
+        let value_units: Vec<u16> = value.encode_utf16().collect();
+        let needle_units: Vec<u16> = needle.encode_utf16().collect();
+        if needle_units.is_empty() {
+            return 0;
+        }
+        let mut total = 0i32;
+        let mut start = 0usize;
+        while start + needle_units.len() <= value_units.len() {
+            if value_units[start..start + needle_units.len()] == needle_units {
+                total += 1;
+                start += needle_units.len();
+            } else {
+                start += 1;
+            }
+        }
+        total
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -986,6 +1010,7 @@ impl Jit {
         builder.symbol("zun_jit_string_ends_with", zun_jit_string_ends_with as *const u8);
         builder.symbol("zun_jit_string_index_of", zun_jit_string_index_of as *const u8);
         builder.symbol("zun_jit_string_last_index_of", zun_jit_string_last_index_of as *const u8);
+        builder.symbol("zun_jit_string_count", zun_jit_string_count as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);

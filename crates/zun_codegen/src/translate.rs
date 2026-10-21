@@ -423,6 +423,18 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::Num(NumKind::I32)));
                                 continue;
                             }
+                            Some("count") => {
+                                let (needle, needle_kind) = stack.pop().ok_or("string count needle")?;
+                                let (receiver, receiver_kind) = stack.pop().ok_or("string count receiver")?;
+                                if receiver_kind != JitKind::String || needle_kind != JitKind::String {
+                                    return Err("string count expects string arguments".into());
+                                }
+                                let helper = self.string_count_fref();
+                                let call = self.builder.ins().call(helper, &[receiver, needle]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::Num(NumKind::I32)));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -551,6 +563,13 @@ impl Translator<'_> {
                             ),
                             Some("lastIndexOf") => (
                                 "zun_jit_string_last_index_of",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("count") => (
+                                "zun_jit_string_count",
                                 2,
                                 types::I64,
                                 JitKind::Num(NumKind::I32),
@@ -1608,6 +1627,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_last_index_of", Linkage::Import, &sig)
             .expect("declare zun_jit_string_last_index_of");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_count_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_count", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_count");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
