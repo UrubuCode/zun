@@ -4350,7 +4350,9 @@ mod method_tests {
         )
         .expect("create generator with host context");
 
-        let yielded = generator.next_result().expect("poll generator");
+        let yielded = generator
+            .next_result_with_context(&mut output, Some(&hook), None)
+            .expect("poll generator");
         assert!(matches!(yielded.value, Value::Int(42, zun_il::NumKind::I32)));
         assert!(!yielded.done);
     }

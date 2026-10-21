@@ -110,7 +110,6 @@ pub struct ResumableSession<'a> {
 
 /// Tier 0 generator boundary with an iterator-shaped next operation.
 pub struct GeneratorSession<'a> {
-    inner: ResumableSession<'a>,
     owned: OwnedGeneratorSession<'a>,
     done: bool,
     current: Option<Value>,
@@ -121,8 +120,8 @@ impl core::fmt::Debug for GeneratorSession<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("GeneratorSession")
-            .field("method_rid", &self.inner.method_rid)
-            .field("suspended", &self.inner.pending.is_some())
+            .field("method_rid", &self.owned.method_rid)
+            .field("suspended", &self.owned.pending.is_some())
             .field("done", &self.done)
             .finish()
     }
@@ -134,9 +133,9 @@ impl<'a> GeneratorSession<'a> {
         module: &'a Module,
         method_rid: u32,
         args: Vec<Value>,
-        output: &'a mut dyn Output,
+        _output: &mut dyn Output,
     ) -> Result<Self, RunError> {
-        Self::new_with_context(module, method_rid, args, output, None, None)
+        Self::new_with_context(module, method_rid, args, _output, None, None)
     }
 
     /// Create a generator while preserving the host/JIT context used by its
@@ -147,9 +146,9 @@ impl<'a> GeneratorSession<'a> {
         module: &'a Module,
         method_rid: u32,
         args: Vec<Value>,
-        output: &'a mut dyn Output,
-        hook: Option<&'a dyn CallHook>,
-        loader: Option<&'a zun_loader::ModuleLoader>,
+        _output: &mut dyn Output,
+        _hook: Option<&dyn CallHook>,
+        _loader: Option<&zun_loader::ModuleLoader>,
     ) -> Result<Self, RunError> {
         let method = module
             .tables
@@ -171,10 +170,8 @@ impl<'a> GeneratorSession<'a> {
                 "generator session requires a method containing yield".into(),
             ));
         }
-        let owned_args = args.clone();
         Ok(Self {
-            inner: ResumableSession::new(module, method_rid, args, output, hook, loader)?,
-            owned: OwnedGeneratorSession::new(module, method_rid, owned_args)?,
+            owned: OwnedGeneratorSession::new(module, method_rid, args)?,
             done: false,
             current: None,
             completion: None,
@@ -190,7 +187,8 @@ impl<'a> GeneratorSession<'a> {
                     .expect("completed generator stores its result"),
             ));
         }
-        match self.inner.poll()? {
+        let mut output = super::CaptureOutput::default();
+        match self.owned.resume(&mut output, None, None)? {
             ResumeResult::Yielded(value) => {
                 self.current = Some(value.clone());
                 Ok(GeneratorResult::Yielded(value))
@@ -262,7 +260,7 @@ impl<'a> GeneratorSession<'a> {
 
     /// Access the generator heap for host integration.
     pub fn heap_mut(&mut self) -> &mut zun_gc::Heap {
-        self.inner.heap_mut()
+        self.owned.heap_mut()
     }
 
     /// Return the value produced by the most recent successful `next` call.
