@@ -4167,6 +4167,22 @@ fn checked_string_array_unbox_keeps_interpreter_fallback() {
 }
 
 #[test]
+fn proven_numeric_array_unbox_remains_jit_eligible() {
+    let src = "function read(values: Array): u64 { return values[0] as u64; }\n\
+               function main(): u64 { return 0; }";
+    let module = compile(src);
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric unbox");
+    assert!(jit.is_compiled(read_rid), "proven numeric UnboxAny should be eligible");
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";
