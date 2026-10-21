@@ -4889,6 +4889,32 @@ fn interned_string_field_constructor_is_jit_equivalent() {
 }
 
 #[test]
+fn interned_string_field_store_is_jit_equivalent() {
+    let src = "class Named { tag: string; }\n\
+               function set(n: Named, value: string): string { n.tag = value; return n.tag; }\n\
+               function main(): int { return 1; }";
+    let module = compile(src);
+    let set_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "set")
+        .map(|index| index as u32 + 1)
+        .expect("set method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(jit.is_compiled(set_rid), "interned string field store should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let named = heap.alloc(1, 1);
+    let handle = heap.intern_string(std::rc::Rc::from("updated"));
+    let result = jit
+        .call_packed_with_heap(set_rid, &[named.addr() as u64, handle as u64], &mut heap)
+        .expect("jit string field store");
+    assert_eq!(result, handle as u64);
+    assert_eq!(named.field(0), handle as u64);
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+
+#[test]
 fn ineligible_methods_are_not_compiled() {
     let module = compile(r#"function main() { print("hi"); }"#);
     let entry = module.entry_point.unwrap().rid();
