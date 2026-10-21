@@ -3774,6 +3774,38 @@ fn overridden_virtual_call_is_jit_eligible_and_dispatches_dynamically() {
 }
 
 #[test]
+fn object_array_store_is_jit_eligible_and_preserves_pointer_abi() {
+    let src = "function write(values: Array, value: Array): Array { values[0] = value; return values; }\n\
+               function main(): boolean { return true; }";
+    let module = compile(src);
+    let write_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "write")
+        .map(|index| index as u32 + 1)
+        .expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object array store");
+    assert!(jit.is_compiled(write_rid), "object array writer should be eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let value = heap.alloc_array(0);
+    let result = jit
+        .call_packed_with_heap(
+            write_rid,
+            &[array.addr() as u64, value.addr() as u64],
+            &mut heap,
+        )
+        .expect("jit object array store");
+    assert_eq!(result as usize, array.addr() as usize);
+    assert_eq!(
+        heap.array_get(array, 0).and_then(|any| any.as_object()),
+        Some(value.addr() as usize)
+    );
+}
+
+#[test]
 fn string_field_method_is_not_jit_eligible() {
     // A method touching a string field must stay on the interpreter.
     let src = "class Named { tag: string; }\n\
@@ -3845,3 +3877,4 @@ fn template_literals_parse_expression_interpolations() {
     );
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "sum=3"));
 }
+

@@ -314,6 +314,7 @@ fn object_array_access_only(
                     | Opcode::StoreLocal
                     | Opcode::LoadArray
                     | Opcode::StoreArray
+                    | Opcode::Pop
                     | Opcode::Ret
             )
         })
