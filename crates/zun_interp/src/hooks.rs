@@ -30,6 +30,11 @@ pub trait CallHook {
     /// frame snapshots, to the interpreter's precise root set.
     fn append_roots(&self, _roots: &mut Vec<zun_gc::Obj>) {}
 
+    /// Rewrite managed references retained by deferred tiering state after a
+    /// compacting collection. Implementations that retain no snapshots can
+    /// keep the default no-op.
+    fn rewrite_managed_roots(&self, _relocation: &zun_gc::RelocationMap) {}
+
     fn on_backedge(&self, _method_rid: u32, _target_pc: usize) {}
 
     /// Observe a hot loop together with the live Tier 0 evaluation state.

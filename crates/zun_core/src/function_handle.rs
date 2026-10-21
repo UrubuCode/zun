@@ -15,4 +15,10 @@ impl FunctionHandle {
     pub const fn environment(self) -> Option<usize> {
         if self.environment == 0 { None } else { Some(self.environment) }
     }
+
+    /// Return this handle with its managed closure environment relocated.
+    pub const fn relocate_environment(self, address: Option<usize>) -> Self {
+        Self::new(self.method_rid(), address)
+    }
+
 }

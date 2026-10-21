@@ -120,6 +120,12 @@ impl CallHook for CombinedCallHook<'_> {
         }
     }
 
+    fn rewrite_managed_roots(&self, relocation: &zun_gc::RelocationMap) {
+        if let Some(jit) = &self.jit {
+            jit.rewrite_managed_roots(relocation);
+        }
+    }
+
     fn on_backedge(&self, method_rid: u32, target_pc: usize) {
         if let Some(jit) = &self.jit {
             jit.on_backedge(method_rid, target_pc);

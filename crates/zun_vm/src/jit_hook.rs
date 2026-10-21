@@ -141,6 +141,38 @@ impl<'a> JitHook<'a> {
             .collect()
     }
 
+    /// Rewrite managed references retained by pending OSR snapshots after a
+    /// compacting collection. The coordinator must call this while execution
+    /// is stopped and before consuming a snapshot for frame replacement.
+    pub fn rewrite_osr_snapshot_roots(&self, relocation: &zun_gc::RelocationMap) -> usize {
+        let mut rewritten = 0;
+        let mut snapshots = self.osr_snapshots.borrow_mut();
+        for snapshot in snapshots.iter_mut() {
+            for value in snapshot.stack.iter_mut().chain(snapshot.locals.iter_mut()) {
+                match value {
+                    Value::Object(object) => {
+                        let relocated = relocation.relocate(*object);
+                        if relocated.addr() != object.addr() {
+                            *object = relocated;
+                            rewritten += 1;
+                        }
+                    }
+                    Value::Function(handle) => {
+                        if let Some(environment) = handle.environment() {
+                            let relocated = relocation.relocate_address(environment);
+                            if relocated != environment {
+                                *handle = handle.relocate_environment(Some(relocated));
+                                rewritten += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        rewritten
+    }
+
     /// Check that a captured snapshot can be mapped back to the method's IL
     /// body before an OSR backend attempts frame replacement.
     pub fn is_valid_osr_snapshot(&self, snapshot: &OsrSnapshot) -> bool {
@@ -231,6 +263,10 @@ impl<'a> JitHook<'a> {
 }
 
 impl CallHook for JitHook<'_> {
+    fn rewrite_managed_roots(&self, relocation: &zun_gc::RelocationMap) {
+        self.rewrite_osr_snapshot_roots(relocation);
+    }
+
     fn append_roots(&self, roots: &mut Vec<zun_gc::Obj>) {
         let snapshots = self.osr_snapshots.borrow();
         for snapshot in snapshots.iter() {
