@@ -563,6 +563,15 @@ fn osr_rejects_snapshots_with_a_live_evaluation_stack() {
         locals: Vec::new(),
     };
     assert!(!hook.is_valid_osr_snapshot(&snapshot));
+
+    let snapshot_without_backedge = zun_vm::OsrSnapshot {
+        method_rid: 1,
+        target_pc: 0,
+        pc: 0,
+        stack: Vec::new(),
+        locals: Vec::new(),
+    };
+    assert!(!hook.is_valid_osr_snapshot(&snapshot_without_backedge));
 }
 
 #[test]

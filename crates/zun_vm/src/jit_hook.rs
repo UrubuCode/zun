@@ -178,12 +178,22 @@ impl<'a> JitHook<'a> {
         };
         let mut offset = 0usize;
         let mut boundaries = std::collections::HashSet::new();
+        let mut backedge_targets = std::collections::HashSet::new();
         for instr in instrs {
             boundaries.insert(offset);
-            offset += instr.encoded_len();
+            let end = offset + instr.encoded_len();
+            if let zun_il::Operand::Branch(displacement) = instr.operand {
+                let target = end as i64 + i64::from(displacement);
+                if target >= 0 && (target as usize) < offset {
+                    backedge_targets.insert(target as usize);
+                }
+            }
+            offset = end;
         }
         boundaries.insert(offset);
-        boundaries.contains(&snapshot.target_pc) && boundaries.contains(&snapshot.pc)
+        boundaries.contains(&snapshot.target_pc)
+            && boundaries.contains(&snapshot.pc)
+            && backedge_targets.contains(&snapshot.target_pc)
     }
 
     fn is_osr_patchpoint_allowed(&self, method_rid: u32, target_pc: usize) -> bool {
