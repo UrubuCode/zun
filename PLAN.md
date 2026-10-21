@@ -568,7 +568,8 @@ The following runtime contracts are implemented and covered by tests:
   coverage is tested; a regression also proves a JIT reference store retains a
   young target through minor collection. Interpreter safepoints now select
   minor/full collection policy, while automatic native `(PC, SP)` discovery
-  remains pending;
+  remains pending; the GC boundary now has RAII thread-local registration for
+  nested stopped frames once the JIT entrypoint supplies those coordinates;
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
