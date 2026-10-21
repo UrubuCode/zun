@@ -72,8 +72,10 @@ fn jit_can_allocate_an_array_for_a_scalar_length_result_with_heap_scope() {
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(entry));
     let mut heap = zun_gc::Heap::new();
-    let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
-    assert!(matches!(jit.call_entry(entry), Ok(zun_codegen::RetVal::Int(3))));
+    assert!(matches!(
+        jit.call_entry_with_heap(entry, &mut heap),
+        Ok(zun_codegen::RetVal::Int(3))
+    ));
     assert!(matches!(interp_entry(&module), Value::Int(3, _)));
 }
 

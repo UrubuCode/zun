@@ -945,6 +945,17 @@ impl Jit {
             })
         }
     }
+
+    /// Call a zero-argument entry point with an explicitly registered managed
+    /// heap. This is the entry-point counterpart to [`Self::call_packed_with_heap`].
+    pub fn call_entry_with_heap(
+        &self,
+        method_rid: u32,
+        heap: &mut zun_gc::Heap,
+    ) -> Result<RetVal, JitError> {
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_entry(method_rid)
+    }
 }
 
 /// Emit the JIT-eligible portion of a ZIL module as a relocatable native
