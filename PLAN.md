@@ -596,8 +596,8 @@ The following runtime contracts are implemented and covered by tests:
   JIT frames from their `(PC, SP)` stack maps, and
   `compact_with_registered_native_frames` consumes the active-frame registry
   without requiring the coordinator to rebuild the frame list. Ordinary
-  mark/sweep and `collect_and_compact` now also scan those registered frames
-  and preserve their slots through relocation. Automatic suspension remains
+  mark/sweep, young collection, and `collect_and_compact` now also scan those
+  registered frames and preserve their slots through relocation. Automatic suspension remains
   pending; the coordinator-facing explicit frame-list API and the thread-local
   convenience path now share the same mark/relocate implementation.
 - Promise/microtask scheduling and scalar external-library symbol calls;
