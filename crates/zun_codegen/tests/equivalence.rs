@@ -3271,6 +3271,8 @@ fn object_alloc_and_field_access_in_jit() {
     let src = "class Point { x: int; y: int; }\n\
                function make(): Point { return new Point(3, 4); }\n\
                function observe(p: Point): int { return p.x; }\n\
+               class Holder { point: Point; }\n\
+               function hold(p: Point): Holder { return new Holder(p); }\n\
                function dist2(): int {\n\
                    let p: Point = make();\n\
                    p.x = p.x + 1;\n\
@@ -3296,6 +3298,18 @@ fn object_alloc_and_field_access_in_jit() {
         .expect("make method");
     assert!(jit.is_compiled(dist2_rid), "object method should be eligible");
     assert!(jit.is_compiled(make_rid), "object-returning method should be eligible");
+    let hold_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "hold")
+        .map(|index| index as u32 + 1)
+        .expect("hold method");
+    let hold_maps = jit.stack_maps(hold_rid).expect("nested object method stack maps");
+    assert!(
+        hold_maps.iter().any(|map| !map.reference_slots.is_empty()),
+        "object constructor arguments must be represented across allocation"
+    );
     let maps = jit.stack_maps(dist2_rid).expect("object method stack maps");
     assert!(
         maps.iter().any(|map| !map.reference_slots.is_empty()),
