@@ -1171,4 +1171,22 @@ mod tests {
         assert_eq!(zun_jit_array_store_any(array.addr() as i64, 0, 255, 0), 0);
         assert_eq!(zun_jit_array_store_any(array.addr() as i64, -1, 0, 0), 0);
     }
+
+    #[test]
+    fn dynamic_array_store_helper_keeps_object_payload_traced() {
+        let mut heap = zun_gc::Heap::new();
+        let child = heap.alloc(1, 1);
+        let array = heap.alloc_array(1);
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        assert_eq!(
+            zun_jit_array_store_any(array.addr() as i64, 0, 3, child.addr() as u64),
+            1
+        );
+        assert_eq!(unsafe { heap.collect(&[array], &|_| Vec::new()) }, 0);
+        assert_eq!(
+            heap.array_get(array, 0).and_then(|value| value.as_object()),
+            Some(child.addr() as usize)
+        );
+        assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+    }
 }
