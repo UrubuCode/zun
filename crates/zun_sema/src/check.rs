@@ -155,6 +155,7 @@ struct Signature {
     return_ty: Ty,
     optional_count: usize,
     rest_param: Option<usize>,
+    is_generator: bool,
 }
 
 /// A collected class: its base and its own (not inherited) fields.
@@ -254,6 +255,7 @@ impl Checker<'_> {
                     .take_while(|p| p.default_value.is_some())
                     .count(),
                 rest_param: f.params.iter().position(|parameter| parameter.is_rest),
+                is_generator: f.is_generator,
             });
         }
 
@@ -310,6 +312,7 @@ impl Checker<'_> {
                         .iter()
                         .position(|parameter| parameter.is_rest)
                         .map(|index| index + 1),
+                    is_generator: false,
                 });
             }
         }
@@ -1208,6 +1211,18 @@ impl Checker<'_> {
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
 
+                if let Some(&func) = self.by_name.get(&name) {
+                    if self.signatures[func as usize].is_generator {
+                        self.error(
+                            span,
+                            format!(
+                                "generator `{name}` is not callable as a normal function; use its iterator binding",
+                            ),
+                        );
+                        return self.poison(span);
+                    }
+                }
+
                 if let Some(slot) = cx.lookup(&name) {
                     let function_ty = cx.locals[slot as usize];
                     if let Ty::Function(func) = function_ty {
@@ -1242,6 +1257,7 @@ impl Checker<'_> {
                                 return_ty,
                                 optional_count,
                                 rest_param: self.signatures[func as usize].rest_param,
+                                is_generator: self.signatures[func as usize].is_generator,
                             };
                             if let Some(rest_index) = sig.rest_param {
                                 if args.len() < rest_index {
@@ -1598,6 +1614,7 @@ impl Checker<'_> {
                     return_ty,
                     optional_count,
                     rest_param: self.signatures[func as usize].rest_param,
+                    is_generator: self.signatures[func as usize].is_generator,
                 };
                 let rest_index = sig.rest_param;
                 if let Some(rest_index) = rest_index {
@@ -1969,6 +1986,7 @@ impl Checker<'_> {
                     return_ty,
                     optional_count,
                     rest_param: self.signatures[func as usize].rest_param,
+                    is_generator: self.signatures[func as usize].is_generator,
                 };
                 let rest_index = sig.rest_param;
                 if rest_index.is_some() && call_args.len() < rest_index.unwrap() {
@@ -2591,6 +2609,7 @@ impl Checker<'_> {
                             return_ty,
                             optional_count,
                             rest_param,
+                            is_generator: false,
                         };
                         self.pad_default_args(&mut args, &signature, span);
                         for (arg, &expected) in args.iter_mut().zip(&param_tys) {

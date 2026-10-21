@@ -111,6 +111,14 @@
     }
 
     #[test]
+    fn generator_is_not_lowered_as_a_normal_call() {
+        let message = first_error(
+            "function* values(): int { yield 1; return 0; } function main(): int { return values(); }",
+        );
+        assert!(message.contains("not callable as a normal function"), "{message}");
+    }
+
+    #[test]
     fn await_requires_a_promise_operand() {
         let message = first_error(
             "async function main(): Promise { await 1; return new Promise(); }",
