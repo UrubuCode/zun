@@ -1190,7 +1190,14 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::Convert { value } => {
                 if value.ty == Ty::Any {
                     self.expr(value);
-                    self.emit(Instruction::simple(Opcode::UnboxAny));
+                    if let Ty::Instance(index) = e.ty {
+                        self.emit(Instruction::new(
+                            Opcode::CastClass,
+                            Operand::Token(Token::new(TableKind::TypeDef, index + 1)),
+                        ));
+                    } else {
+                        self.emit(Instruction::simple(Opcode::UnboxAny));
+                    }
                 } else {
                     self.expr(value);
                 }

@@ -93,6 +93,35 @@ fn fixture_valid_any_box_and_unbox() {
 }
 
 #[test]
+fn fixture_valid_cast_class_stack_effect() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+        Instruction::new(
+            Opcode::CastClass,
+            Operand::Token(Token::new(TableKind::TypeDef, 1)),
+        ),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_cast_class_underflow() {
+    let code = asm(&[
+        Instruction::new(
+            Opcode::CastClass,
+            Operand::Token(Token::new(TableKind::TypeDef, 1)),
+        ),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::StackUnderflow
+    );
+}
+
+#[test]
 fn fixture_valid_load_function() {
     let code = asm(&[
         Instruction::new(

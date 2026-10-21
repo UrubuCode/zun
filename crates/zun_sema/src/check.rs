@@ -1959,7 +1959,8 @@ impl Checker<'_> {
                 let numeric = |t: Ty| t.is_int() || t.is_float();
                 if !value.ty.is_error()
                     && !((numeric(value.ty) && numeric(target))
-                        || (value.ty == Ty::Any && (numeric(target) || target == Ty::Array)))
+                        || (value.ty == Ty::Any
+                            && (numeric(target) || target == Ty::Array || matches!(target, Ty::Instance(_)))))
                 {
                     self.error(span, format!("cannot convert {:?} to {target:?}", value.ty));
                     return self.poison(span);

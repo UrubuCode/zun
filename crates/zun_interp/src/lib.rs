@@ -267,6 +267,32 @@ impl Interp<'_> {
                         stack.push(value);
                     }
                 }
+                Opcode::CastClass => {
+                    let token = match instr.operand {
+                        Operand::Token(token)
+                            if token.table() == Some(zun_metadata::TableKind::TypeDef) =>
+                        {
+                            token
+                        }
+                        _ => return Err(RunError::BadToken),
+                    };
+                    let value = pop(&mut stack)?;
+                    let value = if let Value::Any(any) = value {
+                        zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
+                            .ok_or(RunError::BadToken)?
+                    } else {
+                        value
+                    };
+                    match value {
+                        Value::Null => stack.push(Value::Null),
+                        Value::Object(object)
+                            if self.types.is_assignable(object.type_rid(), token.rid()) =>
+                        {
+                            stack.push(Value::Object(object));
+                        }
+                        _ => return Err(RunError::BadToken),
+                    }
+                }
                 Opcode::NewDynamic => {
                     let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                     stack.push(Value::Object(object));
@@ -4115,6 +4141,17 @@ mod method_tests {
         .expect("compile RegExp");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run RegExp");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
+    fn casts_any_to_a_class_with_runtime_type_check() {
+        let module = zun_compiler::compile(
+            "class Item {} function main(): boolean { let value: any = box_any(new Item()); let item: Item = value as Item; return true; }",
+        )
+        .expect("compile Any class cast");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Any class cast");
         assert!(matches!(result, Value::Bool(true)));
     }
 }
