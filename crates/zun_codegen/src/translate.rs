@@ -323,6 +323,26 @@ impl Translator<'_> {
                         Operand::Token(t) => t.rid(),
                         _ => return Err("call operand".into()),
                     };
+                    let method_name = self
+                        .zm
+                        .tables
+                        .method_defs
+                        .get(rid as usize - 1)
+                        .map(|method| self.zm.strings.get(method.name));
+                    if instr.opcode == Opcode::CallVirt
+                        && method_name == Some("length")
+                        && stack.last().is_some_and(|(_, kind)| *kind == JitKind::String)
+                    {
+                        let (receiver, _) = stack.pop().ok_or("string length receiver")?;
+                        let length = self.string_length_fref();
+                        let call = self
+                            .builder
+                            .ins()
+                            .call(length, &[receiver]);
+                        let result = self.builder.inst_results(call)[0];
+                        stack.push((result, JitKind::Num(NumKind::U64)));
+                        continue;
+                    }
                     let callee = read_body(
                         &self.zm.code,
                         self.zm.tables.method_defs[rid as usize - 1].body_offset,
@@ -1392,6 +1412,17 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_length", Linkage::Import, &sig)
             .expect("declare zun_jit_array_length");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_length_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_length", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_length");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

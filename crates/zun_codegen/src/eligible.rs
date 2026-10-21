@@ -226,6 +226,16 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
     let Operand::Token(token) = instr.operand else {
         return false;
     };
+    if module
+        .tables
+        .method_defs
+        .get(token.rid() as usize - 1)
+        .is_some_and(|method| module.strings.get(method.name) == "length")
+    {
+        // Primitive-backed String.length is lowered directly by the JIT and
+        // does not use an object vtable.
+        return true;
+    }
     let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
         return false;
     };
