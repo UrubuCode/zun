@@ -490,7 +490,18 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String {
                                     return Err("trim expects a string receiver".into());
                                 }
-                                let helper = self.string_trim_fref();
+                                let helper = self.string_trim_fref("trim");
+                                let call = self.builder.ins().call(helper, &[receiver]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
+                            Some("trimStart" | "trimEnd") => {
+                                let (receiver, receiver_kind) = stack.pop().ok_or("trim receiver")?;
+                                if receiver_kind != JitKind::String {
+                                    return Err("trim expects a string receiver".into());
+                                }
+                                let helper = self.string_trim_fref(method_name.unwrap_or("trim"));
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
                                 stack.push((result, JitKind::String));
@@ -659,6 +670,20 @@ impl Translator<'_> {
                             ),
                             Some("trim") => (
                                 "zun_jit_string_trim",
+                                1,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("trimStart") => (
+                                "zun_jit_string_trim_start",
+                                1,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
+                            ),
+                            Some("trimEnd") => (
+                                "zun_jit_string_trim_end",
                                 1,
                                 types::I64,
                                 JitKind::String,
@@ -1768,14 +1793,22 @@ impl Translator<'_> {
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
-    fn string_trim_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+    fn string_trim_fref(&mut self, name: &str) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
         let id = self
             .module
-            .declare_function("zun_jit_string_trim", Linkage::Import, &sig)
-            .expect("declare zun_jit_string_trim");
+            .declare_function(
+                match name {
+                    "trimStart" => "zun_jit_string_trim_start",
+                    "trimEnd" => "zun_jit_string_trim_end",
+                    _ => "zun_jit_string_trim",
+                },
+                Linkage::Import,
+                &sig,
+            )
+            .expect("declare string trim helper");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

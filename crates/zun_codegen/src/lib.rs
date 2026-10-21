@@ -197,6 +197,22 @@ pub extern "C" fn zun_jit_string_trim(handle: i64) -> i64 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_string_trim_start(handle: i64) -> i64 {
+    zun_gc::with_current_heap_mut(|heap| {
+        let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
+        heap.intern_string(std::rc::Rc::from(value.trim_start())).into()
+    })
+}
+
+#[inline]
+pub extern "C" fn zun_jit_string_trim_end(handle: i64) -> i64 {
+    zun_gc::with_current_heap_mut(|heap| {
+        let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
+        heap.intern_string(std::rc::Rc::from(value.trim_end())).into()
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -1064,6 +1080,8 @@ impl Jit {
         builder.symbol("zun_jit_string_concat", zun_jit_string_concat as *const u8);
         builder.symbol("zun_jit_string_substring", zun_jit_string_substring as *const u8);
         builder.symbol("zun_jit_string_trim", zun_jit_string_trim as *const u8);
+        builder.symbol("zun_jit_string_trim_start", zun_jit_string_trim_start as *const u8);
+        builder.symbol("zun_jit_string_trim_end", zun_jit_string_trim_end as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
