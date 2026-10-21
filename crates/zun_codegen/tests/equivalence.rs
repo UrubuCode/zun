@@ -506,7 +506,6 @@ fn primitive_string_replace_uses_the_managed_string_abi() {
     assert_eq!(heap.string(handle as u32).as_ref(), "zun runtime");
 }
 
-
 #[test]
 fn generator_for_of_preserves_tier0_fallback_boundary() {
     let module = compile(
