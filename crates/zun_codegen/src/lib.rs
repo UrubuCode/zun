@@ -661,6 +661,17 @@ pub extern "C" fn zun_jit_set_delete_f64(address: i64, value: f64) -> i32 {
     })
 }
 
+/// Insert a numeric key/value pair into a managed Map without an `Any` carrier.
+/// Returns one when the key was new and zero when an existing value was replaced.
+#[inline]
+pub extern "C" fn zun_jit_map_set_f64(address: i64, key: f64, value: f64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.map_insert(object, zun_core::Any::float(key), zun_core::Any::float(value))
+            .is_none() as i32
+    })
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -1259,6 +1270,7 @@ impl Jit {
     builder.symbol("zun_jit_set_add_f64", zun_jit_set_add_f64 as *const u8);
     builder.symbol("zun_jit_map_delete_f64", zun_jit_map_delete_f64 as *const u8);
     builder.symbol("zun_jit_set_delete_f64", zun_jit_set_delete_f64 as *const u8);
+    builder.symbol("zun_jit_map_set_f64", zun_jit_map_set_f64 as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);

@@ -93,6 +93,7 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "setAddF64"
                 | "mapDeleteF64"
                 | "setDeleteF64"
+                | "mapSetF64"
                 | "bufferLength"
                 | "bufferGetU8"
                 | "bufferReadU32"

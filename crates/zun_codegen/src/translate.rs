@@ -1180,6 +1180,13 @@ impl Translator<'_> {
                                 JitKind::Bool,
                                 types::I32,
                             ),
+                            Some("mapSetF64") => (
+                                "zun_jit_map_set_f64",
+                                3,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
                             Some("bufferLength") => (
                                 "zun_jit_buffer_length",
                                 1,
@@ -1384,8 +1391,12 @@ impl Translator<'_> {
                         "zun_jit_f64_array_set" => vec![types::I64, types::I64, types::F64],
                         "zun_jit_map_has_f64" | "zun_jit_set_has_f64"
                         | "zun_jit_set_add_f64" | "zun_jit_map_delete_f64"
-                        | "zun_jit_set_delete_f64" => {
+                        | "zun_jit_set_delete_f64" | "zun_jit_map_set_f64" => {
+                            if name == "zun_jit_map_set_f64" {
+                                vec![types::I64, types::F64, types::F64]
+                            } else {
                             vec![types::I64, types::F64]
+                            }
                         }
                         _ => vec![arg_type; arg_count],
                     };
