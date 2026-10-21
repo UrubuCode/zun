@@ -405,6 +405,12 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
     assert!(matches!(result, zun_interp::value::Value::Int(10, _)));
     assert!(hook.total_loop_backedges(spin_rid) >= 2);
     assert!(hook.jit_is_defined(spin_rid));
+    let requests = hook.take_osr_requests();
+    assert!(!requests.is_empty());
+    assert!(requests
+        .iter()
+        .all(|request| request.method_rid == spin_rid));
+    assert!(hook.take_osr_requests().is_empty());
 }
 
 #[test]

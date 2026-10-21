@@ -20,12 +20,22 @@ use zun_module::Module;
 /// How many interpreted calls a method takes before it is JIT-compiled.
 pub const DEFAULT_THRESHOLD: u32 = 2;
 
+/// A hot loop boundary ready for a future on-stack replacement transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OsrRequest {
+    /// Method containing the active Tier 0 frame.
+    pub method_rid: u32,
+    /// IL program counter identifying the loop target.
+    pub target_pc: usize,
+}
+
 /// Bridges the interpreter to a lazily-compiled [`Jit`].
 pub struct JitHook<'a> {
     jit: RefCell<Jit>,
     module: &'a Module,
     counts: RefCell<HashMap<u32, u32>>,
     loop_counts: RefCell<HashMap<(u32, usize), u64>>,
+    osr_requests: RefCell<Vec<OsrRequest>>,
     threshold: u32,
 }
 
@@ -55,6 +65,7 @@ impl<'a> JitHook<'a> {
             module,
             counts: RefCell::new(HashMap::new()),
             loop_counts: RefCell::new(HashMap::new()),
+            osr_requests: RefCell::new(Vec::new()),
             threshold,
         }
     }
@@ -94,6 +105,12 @@ impl<'a> JitHook<'a> {
                 (rid == method_rid && count >= u64::from(self.threshold.max(1))).then_some(target)
             })
             .collect()
+    }
+
+    /// Drain unique loop-boundary requests that crossed the OSR threshold.
+    /// The active frame continues in Tier 0 until frame transfer is available.
+    pub fn take_osr_requests(&self) -> Vec<OsrRequest> {
+        self.osr_requests.borrow_mut().drain(..).collect()
     }
 }
 
@@ -166,6 +183,19 @@ impl CallHook for JitHook<'_> {
                 .jit
                 .borrow_mut()
                 .ensure_compiled(self.module, method_rid);
+        }
+
+        if count >= u64::from(self.threshold.max(1))
+            && self.jit.borrow().is_compiled(method_rid)
+            && self.jit.borrow().is_defined(method_rid)
+        {
+            let mut requests = self.osr_requests.borrow_mut();
+            if !requests
+                .iter()
+                .any(|request| request.method_rid == method_rid && request.target_pc == target_pc)
+            {
+                requests.push(OsrRequest { method_rid, target_pc });
+            }
         }
     }
 }

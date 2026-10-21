@@ -15,7 +15,7 @@ use zun_interp::{run_with, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
 pub use ffi::{library_name_variants, FfiError, NativeLibrary, NativeLibraryResolver};
-pub use jit_hook::JitHook;
+pub use jit_hook::{JitHook, OsrRequest};
 pub use promise::{
     AsyncStateMachine, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
     PromiseAwaiter, PromiseState, Scheduler,
