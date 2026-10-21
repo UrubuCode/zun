@@ -394,6 +394,35 @@ fn data_view_scalar_writes_use_width_specific_abis() {
 }
 
 #[test]
+fn u8_array_access_uses_the_typed_view_abi() {
+    let module = compile(
+        "import { u8ArrayGet, u8ArraySet } from \"zun:buffer\"; function read(view: Uint8Array, index: u64): u8 { return u8ArrayGet(view, index); } function write(view: Uint8Array, index: u64, value: u8): boolean { return u8ArraySet(view, index, value); } function main(): u64 { return 0; }",
+    );
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .expect("u8 reader") as u32
+        + 1;
+    let write_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "write")
+        .expect("u8 writer") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(read_rid));
+    assert!(jit.is_compiled(write_rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(2);
+    let view = heap.alloc_u8_array(buffer, 0, 2).expect("u8 view");
+    assert!(matches!(jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xcd], &mut heap), Ok(1)));
+    assert!(matches!(jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap), Ok(0xcd)));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

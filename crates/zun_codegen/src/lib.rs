@@ -227,6 +227,33 @@ pub extern "C" fn zun_jit_data_view_set_f64(
     })
 }
 
+/// Read one element from a managed Uint8Array view without allocation.
+#[inline]
+pub extern "C" fn zun_jit_u8_array_get(address: i64, index: i64) -> i8 {
+    if index < 0 {
+        return -1;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.u8_array_get(object, index as usize)
+            .map(|value| value as i8)
+            .unwrap_or(-1)
+    })
+}
+
+/// Write one element to a managed Uint8Array view without allocation.
+#[inline]
+pub extern "C" fn zun_jit_u8_array_set(address: i64, index: i64, value: i8) -> i32 {
+    if index < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.u8_array_set(object, index as usize, value as u8)
+            .unwrap_or(false) as i32
+    })
+}
+
 /// Read a managed Map length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
@@ -759,6 +786,8 @@ impl Jit {
     builder.symbol("zun_jit_data_view_set_u32", zun_jit_data_view_set_u32 as *const u8);
     builder.symbol("zun_jit_data_view_set_u16", zun_jit_data_view_set_u16 as *const u8);
     builder.symbol("zun_jit_data_view_set_f64", zun_jit_data_view_set_f64 as *const u8);
+    builder.symbol("zun_jit_u8_array_get", zun_jit_u8_array_get as *const u8);
+    builder.symbol("zun_jit_u8_array_set", zun_jit_u8_array_set as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);

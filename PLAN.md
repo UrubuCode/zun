@@ -599,6 +599,9 @@ The following runtime contracts are implemented and covered by tests:
   `dataViewGetU32`, `dataViewGetU16`, and `dataViewGetF64` reads, plus scalar
   writes `dataViewSetU32`, `dataViewSetU16`, and `dataViewSetF64`, are covered
   by the same JIT object boundary.
+  `Uint8Array` now has a distinct native receiver type and scalar `get`/`set`
+  operations through that boundary; other typed-array element widths remain
+  subsequent ABI slices.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with

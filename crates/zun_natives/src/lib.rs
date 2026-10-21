@@ -72,6 +72,8 @@ pub enum NativeTy {
     Buffer,
     /// A managed DataView reference.
     DataView,
+    /// A managed Uint8Array view.
+    U8Array,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.
