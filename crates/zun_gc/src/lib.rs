@@ -100,6 +100,14 @@ pub struct CollectionCompactionResult {
     pub rewritten_references: usize,
 }
 
+/// A stopped native frame whose managed slots are described by a stack map.
+#[derive(Debug, Clone, Copy)]
+pub struct StoppedNativeFrame<'a> {
+    pub registry: &'a StackMapRegistry,
+    pub pc: usize,
+    pub sp: *mut u8,
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -206,7 +214,7 @@ impl Heap {
         roots: &mut [Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
     ) -> CompactionResult {
-        unsafe { self.compact_impl(roots, ref_slots, None) }
+        unsafe { self.compact_impl(roots, ref_slots, &[]) }
     }
 
     /// Compact while also rewriting the reference slots of one stopped JIT
@@ -219,14 +227,26 @@ impl Heap {
         pc: usize,
         sp: *mut u8,
     ) -> CompactionResult {
-        unsafe { self.compact_impl(roots, ref_slots, Some((registry, pc, sp))) }
+        let frames = [StoppedNativeFrame { registry, pc, sp }];
+        unsafe { self.compact_impl(roots, ref_slots, &frames) }
+    }
+
+    /// Compact while rewriting all stopped native frames supplied by the
+    /// runtime's stop-the-world coordinator.
+    pub unsafe fn compact_with_native_frames(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        frames: &[StoppedNativeFrame<'_>],
+    ) -> CompactionResult {
+        unsafe { self.compact_impl(roots, ref_slots, frames) }
     }
 
     unsafe fn compact_impl(
         &mut self,
         roots: &mut [Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
-        native_frame: Option<(&StackMapRegistry, usize, *mut u8)>,
+        native_frames: &[StoppedNativeFrame<'_>],
     ) -> CompactionResult {
         fn allocate(
             chunks: &mut Vec<Box<[u64]>>,
@@ -267,8 +287,10 @@ impl Heap {
         }
         let mut rewritten_references = self.rewrite_all_references(&relocation, ref_slots);
         rewritten_references += unsafe { rewrite_native_roots(&relocation) };
-        if let Some((registry, pc, sp)) = native_frame {
-            rewritten_references += unsafe { registry.rewrite_slots_at(pc, sp, &relocation) };
+        for frame in native_frames {
+            rewritten_references += unsafe {
+                frame.registry.rewrite_slots_at(frame.pc, frame.sp, &relocation)
+            };
         }
         for record in self.records.iter_mut().filter(|record| !record.alive) {
             record.addr = std::ptr::null_mut();
@@ -1485,6 +1507,34 @@ mod tests {
         assert_eq!(result.moved_objects, 1);
         assert_eq!(result.rewritten_references, 1);
         assert_eq!(unsafe { (frame.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
+    }
+
+    #[test]
+    fn compaction_rewrites_multiple_stopped_native_frames() {
+        let mut heap = Heap::new();
+        let object = heap.alloc(1, 0);
+        let mut first = [0u8; 8];
+        let mut second = [0u8; 8];
+        unsafe {
+            (first.as_mut_ptr() as *mut u64).write_unaligned(object.addr() as u64);
+            (second.as_mut_ptr() as *mut u64).write_unaligned(object.addr() as u64);
+        }
+        let mut first_registry = StackMapRegistry::new();
+        first_registry.replace([NativeStackMap { pc: 30, span: 1, reference_slots: vec![0] }]);
+        let mut second_registry = StackMapRegistry::new();
+        second_registry.replace([NativeStackMap { pc: 40, span: 1, reference_slots: vec![0] }]);
+        let frames = [
+            StoppedNativeFrame { registry: &first_registry, pc: 30, sp: first.as_mut_ptr() },
+            StoppedNativeFrame { registry: &second_registry, pc: 40, sp: second.as_mut_ptr() },
+        ];
+        let mut roots = vec![object];
+
+        let result = unsafe { heap.compact_with_native_frames(&mut roots, &|_| Vec::new(), &frames) };
+
+        assert_eq!(result.moved_objects, 1);
+        assert_eq!(result.rewritten_references, 2);
+        assert_eq!(unsafe { (first.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
+        assert_eq!(unsafe { (second.as_ptr() as *const u64).read_unaligned() }, roots[0].addr() as u64);
     }
 
     #[test]
