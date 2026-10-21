@@ -4397,6 +4397,12 @@ fn generic_map_get_preserves_the_two_word_carrier() {
         .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
         .expect("jit generic managed mapGet");
     assert_eq!(result.into_any(), Some(zun_core::Any::object(value.addr() as usize)));
+
+    let missing_key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(99));
+    let result = jit
+        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, missing_key.tag, missing_key.payload], &mut heap)
+        .expect("jit generic mapGet missing key");
+    assert_eq!(result.into_any(), Some(zun_core::Any::void()));
 }
 
 #[test]

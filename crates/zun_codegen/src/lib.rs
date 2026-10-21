@@ -712,9 +712,8 @@ pub unsafe extern "C" fn zun_jit_map_get_any(
         return 0;
     };
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    let Some(value) = zun_gc::with_current_heap(|heap| heap.map_get(object, key)) else {
-        return 0;
-    };
+    let value = zun_gc::with_current_heap(|heap| heap.map_get(object, key))
+        .unwrap_or_else(zun_core::Any::void);
     unsafe { out.write(JitAnyAbi::from_any(value)) };
     1
 }

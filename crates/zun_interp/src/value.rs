@@ -95,7 +95,7 @@ impl Value {
             // visible to precise managed-root handling.
             Value::Function(_) => None,
             Value::Str(value) => Some(zun_core::Any::string(heap.intern_string(value.clone()))),
-            Value::Void => None,
+            Value::Void => Some(zun_core::Any::void()),
             Value::Null => Some(zun_core::Any::null()),
             Value::Any(value) => Some(*value),
         }
@@ -123,6 +123,7 @@ impl Value {
                 .and_then(|handle| heap.try_string(handle).cloned())
                 .map(Value::Str),
             zun_core::AnyTag::Null => Some(Value::Null),
+            zun_core::AnyTag::Void => Some(Value::Void),
         }
     }
 
@@ -341,7 +342,8 @@ mod tests {
         assert!(
             matches!(Value::unbox_any(any, &heap), Some(Value::Str(text)) if &*text == "hello")
         );
-        assert!(Value::Void.box_any(&mut heap).is_none());
+        let boxed = Value::Void.box_any(&mut heap).expect("void has an Any tag");
+        assert!(matches!(Value::unbox_any(boxed, &heap), Some(Value::Void)));
     }
 
     #[test]

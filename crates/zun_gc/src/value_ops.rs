@@ -28,5 +28,6 @@ pub(super) fn any_same_value_zero(
         zun_core::AnyTag::Bool => a.as_bool() == b.as_bool(),
         zun_core::AnyTag::Object => a.as_object() == b.as_object(),
         zun_core::AnyTag::Null => true,
+        zun_core::AnyTag::Void => true,
     }
 }

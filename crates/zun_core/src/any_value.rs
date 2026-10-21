@@ -1,7 +1,7 @@
 /// Runtime tag carried by a dynamically typed `Any` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum AnyTag { Int = 0, Float = 1, Bool = 2, Object = 3, String = 4, Null = 5 }
+pub enum AnyTag { Int = 0, Float = 1, Bool = 2, Object = 3, String = 4, Null = 5, Void = 6 }
 
 impl AnyTag {
     /// Decode the stable tag byte used by native/JIT ABI boundaries.
@@ -13,6 +13,7 @@ impl AnyTag {
             3 => Some(Self::Object),
             4 => Some(Self::String),
             5 => Some(Self::Null),
+            6 => Some(Self::Void),
             _ => None,
         }
     }
@@ -24,6 +25,7 @@ impl AnyTag {
 pub struct Any { tag: AnyTag, payload: u64 }
 
 impl Any {
+    pub const fn void() -> Self { Self { tag: AnyTag::Void, payload: 0 } }
     pub const fn null() -> Self { Self { tag: AnyTag::Null, payload: 0 } }
     pub const fn int(value: i64) -> Self { Self { tag: AnyTag::Int, payload: value as u64 } }
     pub const fn float(value: f64) -> Self { Self { tag: AnyTag::Float, payload: value.to_bits() } }
@@ -59,7 +61,7 @@ mod tests {
 
     #[test]
     fn any_abi_roundtrips_tag_and_payload_words() {
-        for value in [Any::int(-7), Any::float(2.5), Any::bool(true), Any::object(0x1234), Any::string(9), Any::null()] {
+        for value in [Any::int(-7), Any::float(2.5), Any::bool(true), Any::object(0x1234), Any::string(9), Any::null(), Any::void()] {
             let (tag, payload) = value.raw_parts();
             assert_eq!(Any::from_raw_parts(tag, payload), Some(value));
         }
@@ -67,5 +69,6 @@ mod tests {
         assert_eq!(core::mem::size_of::<Any>(), 16);
         assert_eq!(core::mem::align_of::<Any>(), 8);
         assert_eq!(AnyTag::from_raw(5), Some(AnyTag::Null));
+        assert_eq!(AnyTag::from_raw(6), Some(AnyTag::Void));
     }
 }

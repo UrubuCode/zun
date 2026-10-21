@@ -14,6 +14,7 @@ impl Heap {
                 self.try_string(value.as_string().unwrap()).map_or(0, |s| hash_bytes(s.as_bytes())) ^ 0x55
             }
             zun_core::AnyTag::Null => 0x66,
+            zun_core::AnyTag::Void => 0x77,
         }
     }
 }
