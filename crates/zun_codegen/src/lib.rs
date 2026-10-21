@@ -415,6 +415,16 @@ pub extern "C" fn zun_jit_array_load_object(address: i64, index: i64) -> i64 {
     })
 }
 
+/// Check an object pointer against a concrete type RID for JIT castclass.
+#[inline]
+pub extern "C" fn zun_jit_cast_object(address: i64, type_rid: i64) -> i64 {
+    if address == 0 || type_rid <= 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    (object.type_rid() == type_rid as u32).then_some(address).unwrap_or(0)
+}
+
 /// Store a numeric array element without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_array_store_f64(address: i64, index: i64, value: f64) -> i32 {
@@ -915,6 +925,7 @@ impl Jit {
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
     builder.symbol("zun_jit_array_load_u64", zun_jit_array_load_u64 as *const u8);
     builder.symbol("zun_jit_array_load_object", zun_jit_array_load_object as *const u8);
+    builder.symbol("zun_jit_cast_object", zun_jit_cast_object as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);
     builder.symbol("zun_jit_array_store_object", zun_jit_array_store_object as *const u8);

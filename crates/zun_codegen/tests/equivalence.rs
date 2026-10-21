@@ -3774,6 +3774,32 @@ fn overridden_virtual_call_is_jit_eligible_and_dispatches_dynamically() {
 }
 
 #[test]
+fn object_array_load_castclass_is_jit_eligible() {
+    let src = "class Item { value: int; }\n\
+               function read(values: Array): Item { return values[0] as Item; }\n\
+               function main(): boolean { return true; }";
+    let module = compile(src);
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object array load");
+    assert!(jit.is_compiled(read_rid), "object array reader should be eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let item = heap.alloc(1, 1);
+    heap.array_set(array, 0, zun_core::Any::object(item.addr() as usize));
+    let value = jit
+        .call_packed_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit object array load");
+    assert_eq!(value as usize, item.addr() as usize);
+}
+
+#[test]
 fn string_field_method_is_not_jit_eligible() {
     // A method touching a string field must stay on the interpreter.
     let src = "class Named { tag: string; }\n\

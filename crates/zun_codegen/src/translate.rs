@@ -1083,6 +1083,19 @@ impl Translator<'_> {
                     self.builder.ins().call(store, &[array, index, value]);
                     stack.push((value, value_kind));
                 }
+                Opcode::CastClass => {
+                    let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
+                    if value_kind != JitKind::Object {
+                        return Err("castclass requires an object value".into());
+                    }
+                    let Operand::Token(token) = instr.operand else {
+                        return Err("castclass operand".into());
+                    };
+                    let cast = self.cast_object_fref();
+                    let target = self.builder.ins().iconst(types::I64, token.rid() as i64);
+                    let result = self.builder.ins().call(cast, &[value, target]);
+                    stack.push((self.builder.inst_results(result)[0], JitKind::Object));
+                }
                 Opcode::ArrayPop => {
                     let (array, kind) = stack.pop().ok_or("stack underflow")?;
                     if kind != JitKind::Object {
@@ -1474,6 +1487,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_store_object", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_object");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn cast_object_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_cast_object", Linkage::Import, &sig)
+            .expect("declare zun_jit_cast_object");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
