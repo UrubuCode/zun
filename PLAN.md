@@ -794,7 +794,10 @@ The following runtime contracts are implemented and covered by tests:
   allocation and indexed mutation use the narrow non-reference value ABI, while
   dynamic/reference-valued loads/stores and
   aggregate `Any` loads/stores remain Tier 0 pending the two-word managed-value
-  ABI. Object allocation, reference fields, precise allocation safepoints, and
+  ABI. Sema-proven numeric `UnboxAny` extraction is the narrow exception:
+  `u64` and `f64` carrier paths have direct interpreter/JIT equivalence tests;
+  checked string/reference unboxing remains Tier 0. Object allocation,
+  reference fields, precise allocation safepoints, and
   write barriers now have Cranelift lowering and interpreter/JIT coverage.
   Checked `UnboxAny` remains an explicit Tier 0 boundary because a tag mismatch
   can throw and Cranelift exception bridging is not implemented; eligibility is
