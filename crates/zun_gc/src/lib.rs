@@ -43,6 +43,7 @@ mod records;
 mod value_ops;
 mod weak;
 mod strings;
+mod generators;
 mod diagnostics;
 mod dynamic;
 mod arrays;
@@ -109,6 +110,16 @@ pub struct StoppedNativeFrame<'a> {
     pub sp: *mut u8,
 }
 
+/// Owned suspended generator state stored by the heap. The interpreter
+/// converts its `Value`s to `Any` slots at suspension points.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorFrame {
+    pub method_rid: u32,
+    pub pc: usize,
+    pub locals: Vec<zun_core::Any>,
+    pub eval_stack: Vec<zun_core::Any>,
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -142,6 +153,8 @@ pub struct Heap {
     typed_views: HashMap<usize, (Obj, zun_core::TypedArrayView)>,
     /// Array iterator state associated with managed iterator objects.
     array_iterators: HashMap<usize, (Obj, zun_core::ArrayIterator)>,
+    /// Suspended generator state associated with managed generator objects.
+    generator_frames: HashMap<usize, GeneratorFrame>,
     /// Set iterator state associated with managed iterator objects.
     set_iterators: HashMap<usize, (Obj, zun_core::SetIterator)>,
     /// Map iterator state associated with managed iterator objects.
@@ -673,6 +686,7 @@ impl Heap {
     ) -> usize {
         self.rewrite_object_references(relocation, ref_slots)
             + self.rewrite_auxiliary_references(relocation)
+            + self.rewrite_generator_frames(relocation)
             + self.rewrite_iterator_references(relocation)
             + self.rewrite_weak_references(relocation)
             + self.rewrite_runtime_references(relocation)
