@@ -884,6 +884,24 @@ pub extern "C" fn zun_jit_array_push_u64(address: i64, value: i64) -> i64 {
     })
 }
 
+#[inline]
+pub extern "C" fn zun_jit_array_pop_object(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_pop(object).and_then(|value| value.as_object()).unwrap_or(0) as i64
+    })
+}
+
+#[inline]
+pub extern "C" fn zun_jit_array_push_object(address: i64, value: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    let child = unsafe { zun_gc::Obj::from_addr(value as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_push(object, zun_core::Any::object(child.addr() as usize))
+            .map(|length| length as i64).unwrap_or(-1)
+    })
+}
+
 /// Copy one dynamic array element into the stable two-word JIT carrier.
 ///
 /// The out-parameter ABI is intentional: it keeps `tag` and `payload`
@@ -1346,6 +1364,8 @@ impl Jit {
     builder.symbol("zun_jit_array_push_f64", zun_jit_array_push_f64 as *const u8);
     builder.symbol("zun_jit_array_pop_u64", zun_jit_array_pop_u64 as *const u8);
     builder.symbol("zun_jit_array_push_u64", zun_jit_array_push_u64 as *const u8);
+    builder.symbol("zun_jit_array_pop_object", zun_jit_array_pop_object as *const u8);
+    builder.symbol("zun_jit_array_push_object", zun_jit_array_push_object as *const u8);
         builder.symbol(
             "zun_jit_array_load_any",
             zun_jit_array_load_any as *const u8,

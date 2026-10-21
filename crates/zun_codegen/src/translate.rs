@@ -1599,28 +1599,40 @@ impl Translator<'_> {
                     }
                     self.builder.declare_value_needs_stack_map(array);
                     let pop_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
-                    let pop = if pop_u64 {
+                    let pop_object = self.method_return_kind == JitKind::Object;
+                    let pop = if pop_object {
+                        self.array_pop_object_fref()
+                    } else if pop_u64 {
                         self.array_pop_u64_fref()
                     } else {
                         self.array_pop_f64_fref()
                     };
                     let inst = self.builder.ins().call(pop, &[array]);
+                    if pop_object {
+                        self.builder.declare_value_needs_stack_map(self.builder.inst_results(inst)[0]);
+                    }
                     stack.push((
                         self.builder.inst_results(inst)[0],
-                        if pop_u64 { JitKind::Num(NumKind::U64) } else { JitKind::Num(NumKind::F64) },
+                        if pop_object { JitKind::Object } else if pop_u64 { JitKind::Num(NumKind::U64) } else { JitKind::Num(NumKind::F64) },
                     ));
                 }
                 Opcode::ArrayPush => {
                     let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
+                    let push_object = value_kind == JitKind::Object;
                     let push_u64 = value_kind == JitKind::Num(NumKind::U64);
                     if array_kind != JitKind::Object
-                        || (!push_u64 && value_kind != JitKind::Num(NumKind::F64))
+                        || (!push_object && !push_u64 && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array push requires object and f64/u64 value".into());
                     }
                     self.builder.declare_value_needs_stack_map(array);
-                    let push = if push_u64 {
+                    if push_object {
+                        self.builder.declare_value_needs_stack_map(value);
+                    }
+                    let push = if push_object {
+                        self.array_push_object_fref()
+                    } else if push_u64 {
                         self.array_push_u64_fref()
                     } else {
                         self.array_push_f64_fref()
@@ -2226,6 +2238,14 @@ impl Translator<'_> {
         self.module.declare_func_in_func(func, self.builder.func)
     }
 
+    fn array_pop_object_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self.module.declare_function("zun_jit_array_pop_object", Linkage::Import, &sig).expect("declare zun_jit_array_pop_object");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
     fn array_push_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
@@ -2249,6 +2269,15 @@ impl Translator<'_> {
             .declare_function("zun_jit_array_push_u64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_push_u64");
         self.module.declare_func_in_func(func, self.builder.func)
+    }
+
+    fn array_push_object_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self.module.declare_function("zun_jit_array_push_object", Linkage::Import, &sig).expect("declare zun_jit_array_push_object");
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     /// Resolve a field token to its `(kind, slot)` using module metadata.

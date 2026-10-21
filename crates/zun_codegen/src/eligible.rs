@@ -365,6 +365,16 @@ fn object_array_access_only(
         })
 }
 
+fn object_array_stack_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+    (body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Object
+        && instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
+        && instrs.iter().all(|i| matches!(i.opcode,
+            Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPop | Opcode::Ret)))
+        || (body.returns_value && instrs.iter().any(|i| i.opcode == Opcode::ArrayPush)
+            && instrs.iter().all(|i| matches!(i.opcode,
+                Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPush | Opcode::Ret)))
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
@@ -407,6 +417,7 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
             && (!body.returns_value
                 || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
                     && !object_array_access_only(&instrs, &body)
+                    && !object_array_stack_only(&instrs, &body)
                     && !scalar_u64_array_access_only(&instrs, &body)))
         {
             continue;
@@ -415,6 +426,7 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
             && (!body.returns_value
                 || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
                     && !object_array_access_only(&instrs, &body)
+                    && !object_array_stack_only(&instrs, &body)
                     && !scalar_u64_array_access_only(&instrs, &body)))
         {
             continue;
@@ -422,7 +434,8 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
         if instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
             && (!body.returns_value
                 || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
-                    && JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::U64)))
+                    && JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::U64)
+                    && !object_array_stack_only(&instrs, &body)))
         {
             continue;
         }
