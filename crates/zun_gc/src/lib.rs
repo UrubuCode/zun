@@ -151,6 +151,10 @@ pub struct Heap {
     finalization_queue: Vec<FinalizationRecord>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
+    /// Reference-field layouts published by the active module/JIT boundary.
+    reference_slots: HashMap<u32, Vec<usize>>,
+    /// Allocations since the last native safepoint collection.
+    native_allocations: usize,
     /// Dynamic property bags associated with dynamic objects.
     dynamic_objects: HashMap<usize, zun_core::DynamicObject>,
     /// Contiguous array storage associated with array objects.
@@ -201,6 +205,21 @@ pub struct Heap {
 }
 
 impl Heap {
+    /// Publish the reference slots for a module type before entering JIT code.
+    pub fn register_reference_slots(&mut self, type_rid: u32, slots: Vec<usize>) {
+        self.reference_slots.insert(type_rid, slots);
+    }
+
+    pub(crate) fn native_allocation_due(&mut self) -> bool {
+        self.native_allocations = self.native_allocations.saturating_add(1);
+        if self.native_allocations >= 256 {
+            self.native_allocations = 0;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Calculate the amount of live and reclaimable object storage.
     ///
     /// This is the first plan-phase primitive for future compaction. It has no

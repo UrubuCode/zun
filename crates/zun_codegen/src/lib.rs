@@ -872,6 +872,15 @@ impl core::fmt::Debug for Jit {
 }
 
 impl Jit {
+    fn register_heap_layouts(&self, heap: &mut zun_gc::Heap) {
+        for type_rid in 1.. {
+            if self.types.get(type_rid).is_none() {
+                break;
+            }
+            heap.register_reference_slots(type_rid, self.types.reference_slots(type_rid));
+        }
+    }
+
     /// Create a JIT for `zm`: determine eligible methods and declare their
     /// Cranelift functions, without compiling any bodies yet. Bodies are
     /// defined on demand by [`Jit::ensure_compiled`] (lazy tiering) or all at
@@ -1350,6 +1359,7 @@ impl Jit {
         args: &[u64],
         heap: &mut zun_gc::Heap,
     ) -> Result<u64, JitError> {
+        self.register_heap_layouts(heap);
         let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
         self.call_packed(method_rid, args)
     }
@@ -1474,6 +1484,7 @@ impl Jit {
         method_rid: u32,
         heap: &mut zun_gc::Heap,
     ) -> Result<RetVal, JitError> {
+        self.register_heap_layouts(heap);
         let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
         self.call_entry(method_rid)
     }
