@@ -73,11 +73,12 @@ impl OrderedMap {
 
     fn rehash(&mut self) {
         let mut buckets = vec![None; self.buckets.len() * 2];
+        let mask = buckets.len() - 1;
         for (index, entry) in self.entries.iter().enumerate() {
             if let Some((_, _, hash)) = entry {
-                let mut slot = (*hash as usize) % buckets.len();
+                let mut slot = *hash as usize & mask;
                 while buckets[slot].is_some() {
-                    slot = (slot + 1) % buckets.len();
+                    slot = (slot + 1) & mask;
                 }
                 buckets[slot] = Some(index);
             }
@@ -92,7 +93,8 @@ impl OrderedMap {
     }
 
     fn find_index(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<usize> {
-        let mut slot = (hash as usize) % self.buckets.len();
+        let mask = self.buckets.len() - 1;
+        let mut slot = hash as usize & mask;
         for _ in 0..self.buckets.len() {
             match self.buckets[slot] {
                 None => return None,
@@ -104,13 +106,14 @@ impl OrderedMap {
                     }
                 }
             }
-            slot = (slot + 1) % self.buckets.len();
+            slot = (slot + 1) & mask;
         }
         None
     }
 
     fn insert_bucket(&mut self, index: usize, hash: u64) {
-        let mut slot = (hash as usize) % self.buckets.len();
+        let mask = self.buckets.len() - 1;
+        let mut slot = hash as usize & mask;
         loop {
             match self.buckets[slot] {
                 None => {
@@ -121,7 +124,7 @@ impl OrderedMap {
                     self.buckets[slot] = Some(index);
                     return;
                 }
-                Some(_) => slot = (slot + 1) % self.buckets.len(),
+                Some(_) => slot = (slot + 1) & mask,
             }
         }
     }
