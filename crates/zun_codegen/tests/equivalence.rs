@@ -3806,6 +3806,32 @@ fn object_array_store_is_jit_eligible_and_preserves_pointer_abi() {
 }
 
 #[test]
+fn boolean_object_field_is_jit_equivalent() {
+    let src = "class Flag { value: boolean; }\n\
+               function read(flag: Flag): boolean { return flag.value; }\n\
+               function main(): boolean { return read(new Flag(true)); }";
+    let module = compile(src);
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles boolean field reader");
+    assert!(jit.is_compiled(read_rid), "boolean field reader should be eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let flag = heap.alloc(1, 1);
+    flag.set_field(0, 1);
+    let jit_value = jit
+        .call_packed_with_heap(read_rid, &[flag.addr() as u64], &mut heap)
+        .expect("jit boolean field read");
+    assert_ne!(jit_value, 0);
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn string_field_method_is_not_jit_eligible() {
     // A method touching a string field must stay on the interpreter.
     let src = "class Named { tag: string; }\n\
