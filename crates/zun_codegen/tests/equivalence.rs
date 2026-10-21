@@ -4366,6 +4366,40 @@ fn direct_any_virtual_call_preserves_the_carrier() {
 }
 
 #[test]
+fn generic_map_get_preserves_the_two_word_carrier() {
+    let module = compile(
+        "import { mapGet } from \"zun:collections\";\n\
+         function read(map: Map, key: any): any { return mapGet(map, key); }\n\
+         function main(): u64 { return 0; }",
+    );
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles generic mapGet");
+    assert!(jit.is_compiled(read_rid));
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    heap.map_insert(map, zun_core::Any::int(7), zun_core::Any::int(42));
+    let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(7));
+    let result = jit
+        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .expect("jit generic mapGet");
+    assert_eq!(result.into_any(), Some(zun_core::Any::int(42)));
+
+    let value = heap.alloc(1, 0);
+    heap.map_insert(map, zun_core::Any::int(8), zun_core::Any::object(value.addr() as usize));
+    let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(8));
+    let result = jit
+        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .expect("jit generic managed mapGet");
+    assert_eq!(result.into_any(), Some(zun_core::Any::object(value.addr() as usize)));
+}
+
+#[test]
 fn proven_float_array_unbox_is_jit_equivalent() {
     let src = "function read(values: Array): number { return values[0] as number; }\n\
                function main(): number { let values = new Array(1); values[0] = 2.5; return read(values); }";

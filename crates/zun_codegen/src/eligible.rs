@@ -103,6 +103,7 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "setDeleteF64"
                 | "mapSetF64"
                 | "mapGetF64Or"
+                | "mapGet"
                 | "mapHasI64"
                 | "mapDeleteI64"
                 | "setAddI64"
@@ -447,6 +448,19 @@ fn any_direct_call_return_only(instrs: &[zun_il::Instruction], body: &zun_module
         && instrs.iter().all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Call | Opcode::CallVirt | Opcode::Ret))
 }
 
+fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+    body.returns_value
+        && JitKind::from_byte(body.return_kind) == JitKind::Other
+        && body.param_count > 0
+        && body.local_kinds[..body.param_count as usize]
+            .iter()
+            .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
+        && instrs.iter().filter(|i| i.opcode == Opcode::CallBuiltin).count() == 1
+        && instrs.iter().all(|i| {
+            matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::CallBuiltin | Opcode::Ret)
+        })
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
@@ -489,6 +503,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         if !body.local_kinds.iter().all(|&k| kind_supported(k))
             && !any_param_return_only(&instrs, &body)
             && !any_direct_call_return_only(&instrs, &body)
+            && !any_map_get_only(&instrs, &body)
         {
             continue;
         }
@@ -497,6 +512,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             && !any_array_return_only(&instrs, &body)
             && !any_param_return_only(&instrs, &body)
             && !any_direct_call_return_only(&instrs, &body)
+            && !any_map_get_only(&instrs, &body)
         {
             continue;
         }

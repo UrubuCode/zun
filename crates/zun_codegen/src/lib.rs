@@ -697,6 +697,28 @@ pub extern "C" fn zun_jit_map_get_f64_or(address: i64, key: f64, fallback: f64) 
     })
 }
 
+/// Read a generic Map value into the stable two-word Any carrier.
+#[inline]
+pub unsafe extern "C" fn zun_jit_map_get_any(
+    address: i64,
+    key_tag: u64,
+    key_payload: u64,
+    out: *mut JitAnyAbi,
+) -> i32 {
+    if out.is_null() {
+        return 0;
+    }
+    let Some(key) = zun_core::Any::from_raw_parts(key_tag as u8, key_payload) else {
+        return 0;
+    };
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    let Some(value) = zun_gc::with_current_heap(|heap| heap.map_get(object, key)) else {
+        return 0;
+    };
+    unsafe { out.write(JitAnyAbi::from_any(value)) };
+    1
+}
+
 #[inline]
 pub extern "C" fn zun_jit_map_has_i64(address: i64, key: i64) -> i32 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
@@ -1405,6 +1427,7 @@ impl Jit {
     builder.symbol("zun_jit_set_delete_f64", zun_jit_set_delete_f64 as *const u8);
     builder.symbol("zun_jit_map_set_f64", zun_jit_map_set_f64 as *const u8);
     builder.symbol("zun_jit_map_get_f64_or", zun_jit_map_get_f64_or as *const u8);
+    builder.symbol("zun_jit_map_get_any", zun_jit_map_get_any as *const u8);
     builder.symbol("zun_jit_map_has_i64", zun_jit_map_has_i64 as *const u8);
     builder.symbol("zun_jit_set_has_i64", zun_jit_set_has_i64 as *const u8);
     builder.symbol("zun_jit_set_add_i64", zun_jit_set_add_i64 as *const u8);
