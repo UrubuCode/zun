@@ -933,6 +933,18 @@ mod tests {
     }
 
     #[test]
+    fn weak_map_writes_remember_an_old_owner_for_minor_ephemeron_scanning() {
+        let mut heap = Heap::new();
+        let weak_map = heap.alloc_weak_map();
+        unsafe { heap.collect(&[weak_map], &|_| Vec::new()) };
+        let key = heap.alloc(8, 0);
+        let value = heap.alloc(9, 0);
+
+        assert!(heap.weak_map_set_object(weak_map, key, value));
+        assert_eq!(heap.remembered_set_len(), 1);
+    }
+
+    #[test]
     fn collection_reuses_freed_blocks() {
         let mut heap = Heap::new();
         let keep = heap.alloc(1, 2);

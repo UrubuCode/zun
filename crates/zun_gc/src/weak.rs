@@ -65,16 +65,25 @@ impl Heap {
         let Some(entry) = self.weak_maps.get_mut(id.0 as usize) else {
             return false;
         };
-        let key = key.addr() as usize;
-        let value = value.addr() as usize;
+        let key_addr = key.addr() as usize;
+        let value_addr = value.addr() as usize;
         if let Some((_, existing_value)) = entry
             .entries
             .iter_mut()
-            .find(|(existing_key, _)| *existing_key == key)
+            .find(|(existing_key, _)| *existing_key == key_addr)
         {
-            *existing_value = value;
+            *existing_value = value_addr;
         } else {
-            entry.entries.push((key, value));
+            entry.entries.push((key_addr, value_addr));
+        }
+        if let Some((&address, _)) = self
+            .weak_map_objects
+            .iter()
+            .find(|(_, candidate)| *candidate == &id)
+        {
+            let owner = unsafe { Obj::from_addr(address as *mut u64) };
+            self.write_barrier(owner, key_addr as u64);
+            self.write_barrier(owner, value_addr as u64);
         }
         true
     }
