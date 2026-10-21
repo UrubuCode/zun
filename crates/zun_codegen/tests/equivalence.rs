@@ -4227,6 +4227,20 @@ fn direct_any_array_load_preserves_the_two_word_return_abi() {
         .call_packed_any_with_heap(read_rid, &[array.addr() as u64], &mut heap)
         .expect("jit Any return");
     assert_eq!(carrier.into_any(), Some(zun_core::Any::int(37)));
+
+    let object = heap.alloc(1, 0);
+    heap.array_set(array, 0, zun_core::Any::object(object.addr() as usize));
+    let carrier = jit
+        .call_packed_any_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit object Any return");
+    assert_eq!(carrier.into_any(), Some(zun_core::Any::object(object.addr() as usize)));
+
+    let string = heap.intern_string(std::rc::Rc::from("carrier"));
+    heap.array_set(array, 0, zun_core::Any::string(string));
+    let carrier = jit
+        .call_packed_any_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit string Any return");
+    assert_eq!(carrier.into_any(), Some(zun_core::Any::string(string)));
 }
 
 #[test]
