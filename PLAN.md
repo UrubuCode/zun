@@ -758,7 +758,11 @@ The typed Cranelift backend now lowers numeric `zun:date`, `zun:math`, and
 `zun:number` predicates through stable C ABI/import entries, with eligibility
 and interp/JIT equivalence coverage. String-returning Date calls, string
 operations, and other managed-value builtins remain Tier 0 until their value
-representations and ABI lowering are defined.
+representations and ABI lowering are defined. The first string exception is
+now explicit: interned string handles have a stable `JitKind::String` ABI and
+the allocation-free `zun:string` `length` intrinsic is lowered through
+Cranelift with equivalence coverage. String-producing operations and
+error-producing indexed operations remain Tier 0.
 
 The source-level core library now includes tested instance methods for String
 classification/validation and quoting, Number predicates/interpolation, and
