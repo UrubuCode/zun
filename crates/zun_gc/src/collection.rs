@@ -3,6 +3,29 @@
 use super::*;
 
 impl Heap {
+    /// Collect using interpreter roots plus every stopped native frame
+    /// currently registered with the GC boundary.
+    ///
+    /// # Safety
+    /// Every registered frame must remain stopped for the duration of the
+    /// collection, and its `(PC, SP)` pair must identify a valid stack-map
+    /// safepoint. The caller must uphold the same root contract as
+    /// [`Heap::collect`].
+    pub unsafe fn collect_with_registered_native_frames(
+        &mut self,
+        roots: &[Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        with_active_native_frames(|active| {
+            let mut all_roots = roots.to_vec();
+            for frame in active {
+                let registry = unsafe { &*frame.registry };
+                all_roots.extend(unsafe { registry.roots_at(frame.pc, frame.sp) });
+            }
+            unsafe { self.collect(&all_roots, ref_slots) }
+        })
+    }
+
     pub unsafe fn collect(
         &mut self,
         roots: &[Obj],
