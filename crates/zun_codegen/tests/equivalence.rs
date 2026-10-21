@@ -423,6 +423,25 @@ fn u8_array_access_uses_the_typed_view_abi() {
 }
 
 #[test]
+fn u16_array_access_uses_the_typed_view_abi() {
+    let module = compile(
+        "import { u16ArrayGet, u16ArraySet } from \"zun:buffer\"; function read(view: Uint16Array, index: u64): u16 { return u16ArrayGet(view, index); } function write(view: Uint16Array, index: u64, value: u16): boolean { return u16ArraySet(view, index, value); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("u16 method") as u32 + 1;
+    let read_rid = find("read");
+    let write_rid = find("write");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(read_rid));
+    assert!(jit.is_compiled(write_rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(4);
+    let view = heap.alloc_u16_array(buffer, 0, 4).expect("u16 view");
+    let write_result = jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xbeef], &mut heap);
+    assert!(matches!(write_result, Ok(1)), "write result: {write_result:?}");
+    assert!(matches!(jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap), Ok(0xbeef)));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

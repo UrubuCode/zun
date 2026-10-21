@@ -74,6 +74,8 @@ pub enum NativeTy {
     DataView,
     /// A managed Uint8Array view.
     U8Array,
+    /// A managed Uint16Array view.
+    U16Array,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.
