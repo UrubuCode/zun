@@ -585,8 +585,11 @@ The following runtime contracts are implemented and covered by tests:
   covers tested numeric array allocation/length, numeric object fields, and
   object-reference field loads/stores with interpreter/JIT equivalence.
   ArrayBuffer now has a dedicated managed type and its non-mutating
-  `bufferLength` query and scalar `bufferGetU8`, `bufferReadU32`, and
-  `bufferReadF64` reads cross the same object ABI.
+  `bufferLength` query, scalar reads (`bufferGetU8`, `bufferReadU32`,
+  `bufferReadF64`), and scalar writes (`bufferSetU8`, `bufferWriteU32`,
+  `bufferWriteF64`) cross the same object ABI. Builtin calls now support
+  position-specific argument widths where a managed intrinsic mixes receiver,
+  offset, and element types.
   Map, Set, and WeakMap
   receivers also have that ABI for read-only size queries, while keys, values,
   and mutating methods remain on the interpreter path until the aggregate

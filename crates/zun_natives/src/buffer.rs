@@ -30,7 +30,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "bufferSetU8",
-            params: &[Opaque, U64, U8],
+            params: &[Buffer, U64, U8],
             ret: Bool,
             imp: unavailable,
         },
@@ -42,7 +42,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "bufferWriteU32",
-            params: &[Opaque, U64, U32],
+            params: &[Buffer, U64, U32],
             ret: Bool,
             imp: unavailable,
         },
@@ -54,7 +54,7 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "bufferWriteF64",
-            params: &[Opaque, U64, F64],
+            params: &[Buffer, U64, F64],
             ret: Bool,
             imp: unavailable,
         },

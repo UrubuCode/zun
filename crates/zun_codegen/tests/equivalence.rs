@@ -264,6 +264,46 @@ fn array_buffer_numeric_reads_use_width_specific_managed_abis() {
 }
 
 #[test]
+fn array_buffer_numeric_writes_use_scalar_managed_abis() {
+    let module = compile(
+        "import { bufferSetU8, bufferWriteU32, bufferWriteF64 } from \"zun:buffer\"; function setU8(buffer: ArrayBuffer, index: u64, value: u8): boolean { return bufferSetU8(buffer, index, value); } function writeU32(buffer: ArrayBuffer, offset: u64, value: u32): boolean { return bufferWriteU32(buffer, offset, value); } function writeF64(buffer: ArrayBuffer, offset: u64, value: number): boolean { return bufferWriteF64(buffer, offset, value); } function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("buffer writer method") as u32
+            + 1
+    };
+    let u8_rid = find("setU8");
+    let u32_rid = find("writeU32");
+    let f64_rid = find("writeF64");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(u8_rid));
+    assert!(jit.is_compiled(u32_rid));
+    assert!(jit.is_compiled(f64_rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(16);
+    assert!(matches!(
+        jit.call_packed_with_heap(u8_rid, &[buffer.addr() as u64, 1, 0xab], &mut heap),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u32_rid, &[buffer.addr() as u64, 4, 0xfeed_beef], &mut heap),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(f64_rid, &[buffer.addr() as u64, 8, 2.5f64.to_bits()], &mut heap),
+        Ok(1)
+    ));
+    assert_eq!(heap.buffer_get(buffer, 1), Some(0xab));
+    assert_eq!(heap.buffer_read_u32(buffer, 4), Some(0xfeed_beef));
+    assert_eq!(heap.buffer_read_f64(buffer, 8), Some(2.5));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

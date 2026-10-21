@@ -740,17 +740,44 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::F64),
                                 types::F64,
                             ),
+                            Some("bufferSetU8") => (
+                                "zun_jit_buffer_set_u8",
+                                3,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("bufferWriteU32") => (
+                                "zun_jit_buffer_write_u32",
+                                3,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("bufferWriteF64") => (
+                                "zun_jit_buffer_write_f64",
+                                3,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
                             _ => return Err("unsupported builtin".into()),
                         };
                     if stack.len() < arg_count {
                         return Err("builtin stack underflow".into());
                     }
                     let args: Vec<Slot> = stack.split_off(stack.len() - arg_count);
+                    let arg_types = match name {
+                        "zun_jit_buffer_set_u8" => vec![types::I64, types::I64, types::I8],
+                        "zun_jit_buffer_write_u32" => vec![types::I64, types::I64, types::I32],
+                        "zun_jit_buffer_write_f64" => vec![types::I64, types::I64, types::F64],
+                        _ => vec![arg_type; arg_count],
+                    };
                     let fid = if let Some(&fid) = builtin_ids.get(name) {
                         fid
                     } else {
                         let mut sig = Signature::new(self.builder.func.signature.call_conv);
-                        for _ in 0..arg_count {
+                        for arg_type in arg_types {
                             sig.params.push(AbiParam::new(arg_type));
                         }
                         sig.returns.push(AbiParam::new(result_type));
