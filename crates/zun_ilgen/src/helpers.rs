@@ -19,6 +19,7 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
     let kind = match numkind_of(ty) {
         Some(n) => JitKind::Num(n),
         None if ty == Ty::Boolean => JitKind::Bool,
+        None if ty == Ty::String => JitKind::String,
         None
             if matches!(
                 ty,

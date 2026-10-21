@@ -25,7 +25,7 @@ use zun_types::TypeSystem;
 pub fn clif_ty(kind: JitKind) -> Type {
     match kind {
         JitKind::Bool => types::I32,
-        JitKind::Object => types::I64, // a machine pointer (64-bit target)
+        JitKind::Object | JitKind::String => types::I64,
         JitKind::Other => types::I64,  // never used; eligibility excludes it
         JitKind::Num(n) => match n {
             NumKind::I8 | NumKind::U8 => types::I8,
@@ -41,7 +41,7 @@ pub fn clif_ty(kind: JitKind) -> Type {
 fn is_signed(kind: JitKind) -> bool {
     match kind {
         JitKind::Num(n) => n.int_parts().map(|(_, s)| s).unwrap_or(false),
-        JitKind::Bool | JitKind::Object | JitKind::Other => false,
+        JitKind::Bool | JitKind::Object | JitKind::String | JitKind::Other => false,
     }
 }
 
@@ -404,6 +404,13 @@ impl Translator<'_> {
                     };
                     let (name, arg_count, arg_type, result_kind, result_type) =
                         match zun_natives::by_id(id).map(|f| f.name) {
+                            Some("length") => (
+                                "zun_jit_string_length",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::U64),
+                                types::I64,
+                            ),
                             Some("isValid") => (
                                 "zun_jit_date_is_valid",
                                 1,

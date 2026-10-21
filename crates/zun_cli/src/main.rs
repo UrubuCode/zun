@@ -225,7 +225,7 @@ fn link_aot_executable(
     let return_type = match zun_il::JitKind::from_byte(kind) {
         zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64) => "f64",
         zun_il::JitKind::Num(_) | zun_il::JitKind::Bool => "i64",
-        zun_il::JitKind::Object | zun_il::JitKind::Other => {
+        zun_il::JitKind::Object | zun_il::JitKind::String | zun_il::JitKind::Other => {
             return Err("AOT launcher supports only scalar numeric returns".to_string())
         }
     };

@@ -65,7 +65,15 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
     );
     supported
         || (op == Opcode::CallBuiltin
-            && (date_builtin(instr) || math_builtin(instr) || collection_builtin(instr)))
+            && (date_builtin(instr)
+                || math_builtin(instr)
+                || collection_builtin(instr)
+                || string_builtin(instr)))
+}
+
+fn string_builtin(instr: &zun_il::Instruction) -> bool {
+    let Operand::Imm32(id) = instr.operand else { return false; };
+    matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some("length"))
 }
 
 fn collection_builtin(instr: &zun_il::Instruction) -> bool {

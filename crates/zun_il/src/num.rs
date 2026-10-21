@@ -97,7 +97,9 @@ pub enum JitKind {
     /// An object reference (a machine pointer). Code 11 — must match
     /// `zun_interp::value::FIELD_OBJECT`.
     Object,
-    /// Anything the typed JIT does not handle (string, void).
+    /// An interned string handle (an index, not a movable object pointer).
+    String,
+    /// Anything the typed JIT does not handle (void).
     Other,
 }
 
@@ -108,6 +110,7 @@ impl JitKind {
             JitKind::Num(n) => n.to_imm() as u8,
             JitKind::Bool => 10,
             JitKind::Object => 11,
+            JitKind::String => 12,
             JitKind::Other => 255,
         }
     }
@@ -117,6 +120,7 @@ impl JitKind {
         match b {
             10 => JitKind::Bool,
             11 => JitKind::Object,
+            12 => JitKind::String,
             255 => JitKind::Other,
             n => match NumKind::from_imm(n as i32) {
                 Some(k) => JitKind::Num(k),

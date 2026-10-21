@@ -37,6 +37,16 @@ pub extern "C" fn zun_jit_array_length(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.array_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+/// Read the UTF-16 length of an interned string handle without allocation.
+#[inline]
+pub extern "C" fn zun_jit_string_length(handle: i64) -> i64 {
+    zun_gc::with_current_heap(|heap| {
+        heap.try_string(handle as u32)
+            .map(|value| value.encode_utf16().count() as i64)
+            .unwrap_or(-1)
+    })
+}
+
 /// Read a managed ArrayBuffer length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
@@ -883,6 +893,7 @@ impl Jit {
         // Make the runtime allocator callable from native `newobj`.
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
+        builder.symbol("zun_jit_string_length", zun_jit_string_length as *const u8);
     builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
     builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
     builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
@@ -1447,7 +1458,7 @@ impl Jit {
                     let (bits, signed) = k.int_parts().unwrap();
                     RetVal::Int(read_int(ptr, bits, signed))
                 }
-                Some(JitKind::Object) => {
+                Some(JitKind::Object) | Some(JitKind::String) => {
                     let f: extern "C" fn() -> i64 = std::mem::transmute(ptr);
                     RetVal::Int(f())
                 }

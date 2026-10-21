@@ -360,14 +360,14 @@ impl CallHook for JitHook<'_> {
         // Keep object arguments visible if a future native safepoint requests
         // collection while this JIT frame is active.
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let heap = zun_gc::current_heap_ptr()?;
         let packed: Vec<u64> = args
             .iter()
             .zip(kinds)
-            .map(|(v, &k)| pack_value(v, k))
+            .map(|(v, &k)| pack_value(v, k, unsafe { &mut *heap }))
             .collect();
-        let heap = zun_gc::current_heap_ptr()?;
         let result = unsafe { jit.call_packed_with_heap(method_rid, &packed, &mut *heap).ok()? };
-        Some(unpack_value(result, jit.return_kind(method_rid)))
+        Some(unpack_value(result, jit.return_kind(method_rid), unsafe { &*heap }))
     }
 
     fn on_backedge(&self, method_rid: u32, target_pc: usize) {
@@ -435,23 +435,32 @@ impl CallHook for JitHook<'_> {
 }
 
 /// Marshal a `Value` into a packed `u64` for parameter kind `k`.
-fn pack_value(v: &Value, k: JitKind) -> u64 {
+fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 {
     match k {
         JitKind::Num(NumKind::F64) => v.as_number().to_bits(),
         JitKind::Num(NumKind::F32) => (v.as_number() as f32).to_bits() as u64,
         JitKind::Bool => matches!(v, Value::Bool(true)) as u64,
         JitKind::Object => v.as_object().addr() as u64,
+        JitKind::String => match v {
+            Value::Str(value) => heap.intern_string(value.clone()) as u64,
+            _ => 0,
+        },
         JitKind::Num(_) => v.as_int() as u64,
         JitKind::Other => 0,
     }
 }
 
 /// Unmarshal a packed `u64` result into a `Value` of the return kind.
-fn unpack_value(bits: u64, ret: Option<JitKind>) -> Value {
+fn unpack_value(bits: u64, ret: Option<JitKind>, heap: &zun_gc::Heap) -> Value {
     match ret {
         None => Value::Void,
         Some(JitKind::Bool) => Value::Bool(bits != 0),
         Some(JitKind::Object) => Value::Object(unsafe { zun_gc::Obj::from_addr(bits as *mut u64) }),
+        Some(JitKind::String) => heap
+            .try_string(bits as u32)
+            .cloned()
+            .map(Value::Str)
+            .unwrap_or(Value::Void),
         Some(JitKind::Num(NumKind::F64)) => Value::Float(f64::from_bits(bits), NumKind::F64),
         Some(JitKind::Num(NumKind::F32)) => {
             Value::Float(f32::from_bits(bits as u32) as f64, NumKind::F32)
