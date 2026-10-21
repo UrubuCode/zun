@@ -1405,6 +1405,26 @@ mod method_tests {
     }
 
     #[test]
+    fn generator_session_contextual_next_uses_owned_state() {
+        let module = zun_compiler::compile("function* main(): int { yield 3; return 4; }")
+            .expect("compile generator function");
+        let entry = module.entry_point.expect("entry point");
+        let mut legacy_output = CaptureOutput::default();
+        let mut generator = GeneratorSession::new(&module, entry.rid(), Vec::new(), &mut legacy_output)
+            .expect("create generator session");
+        let mut first_output = CaptureOutput::default();
+        assert!(matches!(
+            generator.next_result_with_context(&mut first_output, None, None).expect("first next"),
+            GeneratorIteratorResult { done: false, .. }
+        ));
+        let mut second_output = CaptureOutput::default();
+        assert!(matches!(
+            generator.next_result_with_context(&mut second_output, None, None).expect("second next"),
+            GeneratorIteratorResult { done: true, .. }
+        ));
+    }
+
+    #[test]
     fn owned_generator_session_injects_context_per_resume() {
         let module = zun_compiler::compile("function* main(): int { yield 7; return 9; }")
             .expect("compile generator function");

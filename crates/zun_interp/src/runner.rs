@@ -110,6 +110,7 @@ pub struct ResumableSession<'a> {
 /// Tier 0 generator boundary with an iterator-shaped next operation.
 pub struct GeneratorSession<'a> {
     inner: ResumableSession<'a>,
+    owned: OwnedGeneratorSession<'a>,
     done: bool,
     current: Option<Value>,
     completion: Option<Value>,
@@ -169,8 +170,10 @@ impl<'a> GeneratorSession<'a> {
                 "generator session requires a method containing yield".into(),
             ));
         }
+        let owned_args = args.clone();
         Ok(Self {
             inner: ResumableSession::new(module, method_rid, args, output, hook, loader)?,
+            owned: OwnedGeneratorSession::new(module, method_rid, owned_args)?,
             done: false,
             current: None,
             completion: None,
@@ -210,6 +213,48 @@ impl<'a> GeneratorSession<'a> {
                 value,
                 done: false,
             }),
+            GeneratorResult::Complete(value) => Ok(GeneratorIteratorResult { value, done: true }),
+        }
+    }
+
+    /// Advance through the owned state-machine path. Host context is borrowed
+    /// only for this resume and is never retained by the generator state.
+    pub fn next_with_context(
+        &mut self,
+        output: &mut dyn Output,
+        hook: Option<&dyn CallHook>,
+        loader: Option<&zun_loader::ModuleLoader>,
+    ) -> Result<GeneratorResult, RunError> {
+        if self.done {
+            return Ok(GeneratorResult::Complete(
+                self.completion.clone().expect("completed generator stores its result"),
+            ));
+        }
+        match self.owned.resume(output, hook, loader)? {
+            ResumeResult::Yielded(value) => {
+                self.current = Some(value.clone());
+                Ok(GeneratorResult::Yielded(value))
+            }
+            ResumeResult::Complete(value) => {
+                self.done = true;
+                self.current = None;
+                self.completion = Some(value.clone());
+                Ok(GeneratorResult::Complete(value))
+            }
+            ResumeResult::Suspended => Err(RunError::Malformed(
+                "generator suspended without yielding a value".into(),
+            )),
+        }
+    }
+
+    pub fn next_result_with_context(
+        &mut self,
+        output: &mut dyn Output,
+        hook: Option<&dyn CallHook>,
+        loader: Option<&zun_loader::ModuleLoader>,
+    ) -> Result<GeneratorIteratorResult, RunError> {
+        match self.next_with_context(output, hook, loader)? {
+            GeneratorResult::Yielded(value) => Ok(GeneratorIteratorResult { value, done: false }),
             GeneratorResult::Complete(value) => Ok(GeneratorIteratorResult { value, done: true }),
         }
     }
