@@ -902,9 +902,15 @@ impl Translator<'_> {
                     let (kind, slot) = self.field_info(&instr.operand)?;
                     let (val, _) = stack.pop().ok_or("stack underflow")?;
                     let (ptr, _) = stack.pop().ok_or("stack underflow")?;
-                    let raw = crate::shim::pack_result(&mut self.builder, val, kind);
-                    let off = zun_core::field_offset(slot) as i32;
-                    self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
+                    if kind == JitKind::Object {
+                        let store = self.store_ref_fref();
+                        let field = self.builder.ins().iconst(types::I64, slot as i64);
+                        self.builder.ins().call(store, &[ptr, field, val]);
+                    } else {
+                        let raw = crate::shim::pack_result(&mut self.builder, val, kind);
+                        let off = zun_core::field_offset(slot) as i32;
+                        self.builder.ins().store(MemFlags::trusted(), raw, ptr, off);
+                    }
                     stack.push((val, kind)); // stfld leaves the stored value
                 }
                 other => return Err(format!("opcode {other:?} not supported by the typed JIT")),
@@ -1206,6 +1212,19 @@ impl Translator<'_> {
             .declare_function("zun_jit_array_store_u64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_u64");
         self.module.declare_func_in_func(func, self.builder.func)
+    }
+
+    fn store_ref_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let id = self
+            .module
+            .declare_function("zun_jit_store_ref", Linkage::Import, &sig)
+            .expect("declare zun_jit_store_ref");
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     fn array_pop_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {

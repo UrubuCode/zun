@@ -112,6 +112,19 @@ pub extern "C" fn zun_jit_array_store_u64(address: i64, index: i64, value: i64) 
     })
 }
 
+/// Store a managed object field and run the generational write barrier.
+#[inline]
+pub extern "C" fn zun_jit_store_ref(address: i64, slot: i64, value: i64) -> i32 {
+    if slot < 0 {
+        return 0;
+    }
+    let owner = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.store_field(owner, slot as usize, value as u64, true);
+        1
+    })
+}
+
 /// Pop a numeric array element without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_array_pop_f64(address: i64) -> f64 {
@@ -535,6 +548,7 @@ impl Jit {
     builder.symbol("zun_jit_array_load_u64", zun_jit_array_load_u64 as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);
+        builder.symbol("zun_jit_store_ref", zun_jit_store_ref as *const u8);
     builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);
     builder.symbol("zun_jit_array_push_f64", zun_jit_array_push_f64 as *const u8);
     builder.symbol("zun_jit_array_pop_u64", zun_jit_array_pop_u64 as *const u8);
