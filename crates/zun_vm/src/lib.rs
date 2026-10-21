@@ -248,6 +248,19 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn collection_size_builtins_match_interpreter_and_jit() {
+        let source = "import { mapNew, mapSet, mapSize, setNew, setAdd, setSize } from \"zun:collections\"; function main(): u64 { let map = mapNew(); mapSet(map, 1.0, 2.0); let set = setNew(); setAdd(set, 3.0); return mapSize(map) + setSize(set); }";
+        let bytes = zun_compiler::compile(source).unwrap().write();
+        let module = load(&bytes).expect("load collection-size module");
+        let mut interpreter_output = zun_interp::CaptureOutput::default();
+        let interpreter = zun_interp::run(&module, &mut interpreter_output).expect("interpreter run");
+        let mut jit_output = zun_interp::CaptureOutput::default();
+        let jit = execute_with(&bytes, &mut jit_output).expect("JIT run");
+        assert!(matches!(interpreter, Value::Int(2, zun_il::NumKind::U64)));
+        assert!(matches!(jit, Value::Int(2, zun_il::NumKind::U64)));
+    }
+
     #[cfg(windows)]
     #[test]
     fn native_execution_routes_external_member_ref_to_the_registered_hook() {
