@@ -263,6 +263,27 @@ mod tests {
         assert!(matches!(result, Value::Int(pid, zun_il::NumKind::I64) if pid > 0));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn native_execution_routes_f64_external_member_ref() {
+        let bytes = zun_compiler::compile_with_externals(
+            "import { sqrt } from \"msvcrt\"; function main(): number { return sqrt(9.0); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "msvcrt".into(),
+                name: "sqrt".into(),
+                params: vec![zun_sema::Ty::F64],
+                return_ty: zun_sema::Ty::F64,
+            }],
+        )
+        .expect("compile f64 native member reference")
+        .write();
+        let mut native = NativeCallHook::new();
+        native.register("msvcrt", "sqrt", FfiSignature::new([FfiScalar::F64], FfiScalar::F64));
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = execute_with_native(&bytes, &mut output, &native).expect("run f64 native member reference");
+        assert!(matches!(result, Value::Float(value, _) if (value - 3.0).abs() < f64::EPSILON));
+    }
+
     #[test]
     fn verifies_all_manifest_scopes_before_execution() {
         let dependency = zun_module::Module::new();
