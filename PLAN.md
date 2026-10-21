@@ -608,7 +608,10 @@ Plan:
   its parameter layout also accepts each `Any` argument as the same two-word
   `(tag, payload)` carrier and roots object-tagged payloads at the host
   boundary. Internal calls, aggregate lowering, and eligibility remain gated
-  until the carrier is propagated end to end.
+  until the carrier is propagated end to end. A narrow direct
+  `Any`-parameter-to-`Any`-return method now uses the same two-word shim and
+  is covered by equivalence tests; calls, aggregate values, and conditional
+  carrier propagation remain gated.
 - Interpreter safepoints already poll allocation sites and backedges with the
   current frame and caller chain as precise roots. JIT allocation calls now
   pass the pre-call SP, derive the x86-64 return PC, and publish the stopped
