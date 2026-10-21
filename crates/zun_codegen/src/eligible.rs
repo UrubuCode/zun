@@ -194,6 +194,27 @@ fn kind_supported(byte: u8) -> bool {
     !matches!(JitKind::from_byte(byte), JitKind::Other)
 }
 
+/// The current managed allocation lowering is safe for a non-escaping array
+/// whose only operation is a length query. Mutation, element access, or a
+/// returned reference still requires the interpreter's heap contract.
+fn scalar_array_length_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+    body.returns_value
+        && matches!(JitKind::from_byte(body.return_kind), JitKind::Num(kind) if kind.int_parts().is_some())
+        && instrs.iter().all(|instruction| {
+            matches!(
+                instruction.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::NewArray
+                    | Opcode::ArrayLength
+                    | Opcode::Ret
+            )
+        })
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
@@ -251,7 +272,8 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
             continue;
         }
         if instrs.iter().any(|i| i.opcode == Opcode::NewArray)
-            && (!body.returns_value || JitKind::from_byte(body.return_kind) != JitKind::Object)
+            && (JitKind::from_byte(body.return_kind) != JitKind::Object)
+            && !scalar_array_length_only(&instrs, &body)
         {
             continue;
         }

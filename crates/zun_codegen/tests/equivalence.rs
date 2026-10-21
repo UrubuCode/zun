@@ -64,6 +64,20 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn jit_can_allocate_an_array_for_a_scalar_length_result_with_heap_scope() {
+    let module = compile(
+        "function main(): u64 { let values = new Array(3); return values.length; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(entry));
+    let mut heap = zun_gc::Heap::new();
+    let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+    assert!(matches!(jit.call_entry(entry), Ok(zun_codegen::RetVal::Int(3))));
+    assert!(matches!(interp_entry(&module), Value::Int(3, _)));
+}
+
+#[test]
 fn managed_collections_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "import { mapNew, mapSet, mapHas } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 7.0, 42.0); if (mapHas(map, 7.0)) { return 1; } return 0; }",
