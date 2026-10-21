@@ -1173,6 +1173,8 @@ pub enum JitError {
         /// Arguments supplied.
         found: usize,
     },
+    /// An `Any` carrier contains an unknown runtime tag.
+    InvalidAnyTag(u64),
 }
 
 impl core::fmt::Display for JitError {
@@ -1187,6 +1189,7 @@ impl core::fmt::Display for JitError {
             JitError::Arity { expected, found } => {
                 write!(f, "arity mismatch: expected {expected}, found {found}")
             }
+            JitError::InvalidAnyTag(tag) => write!(f, "invalid Any tag: {tag}"),
         }
     }
 }
@@ -1822,8 +1825,15 @@ impl Jit {
         for kind in signature.param_kinds {
             if kind == JitKind::Object {
                 native_roots.push(unsafe { zun_gc::Obj::from_addr(args[word] as *mut u64) });
-            } else if kind == JitKind::Other && args[word] == zun_core::AnyTag::Object as u64 {
-                native_roots.push(unsafe { zun_gc::Obj::from_addr(args[word + 1] as *mut u64) });
+            } else if kind == JitKind::Other {
+                let tag = args[word];
+                let payload = args[word + 1];
+                let Some(value) = zun_core::Any::from_raw_parts(tag as u8, payload) else {
+                    return Err(JitError::InvalidAnyTag(tag));
+                };
+                if value.tag() == zun_core::AnyTag::Object {
+                    native_roots.push(unsafe { zun_gc::Obj::from_addr(payload as *mut u64) });
+                }
             }
             word += if kind == JitKind::Other { 2 } else { 1 };
         }
