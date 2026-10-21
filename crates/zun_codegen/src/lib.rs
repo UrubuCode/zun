@@ -1684,6 +1684,9 @@ impl Jit {
         if signature.returns == Some(JitKind::Other) {
             return Err(JitError::Ineligible(method_rid));
         }
+        if signature.param_kinds.iter().any(|&kind| kind == JitKind::Other) {
+            return Err(JitError::Ineligible(method_rid));
+        }
         let param_kinds = signature.param_kinds;
         if param_kinds.len() != args.len() {
             return Err(JitError::Arity {
@@ -1734,20 +1737,27 @@ impl Jit {
         if signature.returns != Some(JitKind::Other) {
             return Err(JitError::Ineligible(method_rid));
         }
-        if signature.param_kinds.len() != args.len() {
+        let expected_words: usize = signature
+            .param_kinds
+            .iter()
+            .map(|&kind| if kind == JitKind::Other { 2 } else { 1 })
+            .sum();
+        if expected_words != args.len() {
             return Err(JitError::Arity {
-                expected: signature.param_kinds.len(),
+                expected: expected_words,
                 found: args.len(),
             });
         }
-        let native_roots: Vec<zun_gc::Obj> = args
-            .iter()
-            .zip(signature.param_kinds)
-            .filter_map(|(&arg, kind)| {
-                (kind == JitKind::Object)
-                    .then(|| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
-            })
-            .collect();
+        let mut native_roots = Vec::new();
+        let mut word = 0;
+        for kind in signature.param_kinds {
+            if kind == JitKind::Object {
+                native_roots.push(unsafe { zun_gc::Obj::from_addr(args[word] as *mut u64) });
+            } else if kind == JitKind::Other && args[word] == zun_core::AnyTag::Object as u64 {
+                native_roots.push(unsafe { zun_gc::Obj::from_addr(args[word + 1] as *mut u64) });
+            }
+            word += if kind == JitKind::Other { 2 } else { 1 };
+        }
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self
@@ -2034,8 +2044,13 @@ fn body_signature<M: ClifModule>(
 ) -> cranelift_codegen::ir::Signature {
     let mut sig = cranelift_codegen::ir::Signature::new(module.isa().default_call_conv());
     for &k in &body.local_kinds[..body.param_count as usize] {
-        sig.params
-            .push(AbiParam::new(clif_ty(JitKind::from_byte(k))));
+        let kind = JitKind::from_byte(k);
+        if kind == JitKind::Other {
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+        } else {
+            sig.params.push(AbiParam::new(clif_ty(kind)));
+        }
     }
     if body.returns_value {
         let return_kind = JitKind::from_byte(body.return_kind);

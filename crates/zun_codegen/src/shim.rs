@@ -111,9 +111,18 @@ pub fn define_any_return_shim(
         b.seal_block(entry);
         let args_ptr = b.block_params(entry)[0];
         let mut args = Vec::with_capacity(param_kinds.len());
-        for (i, &kind) in param_kinds.iter().enumerate() {
-            let raw = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, (i * 8) as i32);
-            args.push(unpack_arg(&mut b, raw, kind));
+        let mut offset = 0;
+        for &kind in param_kinds {
+            let raw = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, offset);
+            if kind == JitKind::Other {
+                let payload = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, offset + 8);
+                args.push(raw);
+                args.push(payload);
+                offset += 16;
+            } else {
+                args.push(unpack_arg(&mut b, raw, kind));
+                offset += 8;
+            }
         }
         let fref = module.declare_func_in_func(real, b.func);
         let inst = b.ins().call(fref, &args);
