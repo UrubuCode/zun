@@ -336,8 +336,24 @@ impl Translator<'_> {
                     self.builder.ins().brif(cond, ft, &[], target, &[]);
                 }
                 Opcode::Ret => {
-                    if let Some((v, _)) = stack.pop() {
-                        self.builder.ins().return_(&[v]);
+                    if let Some((v, kind)) = stack.pop() {
+                        if kind == JitKind::Other {
+                            let tag = self.builder.ins().load(
+                                types::I64,
+                                MemFlags::trusted(),
+                                v,
+                                crate::any_abi::TAG_OFFSET,
+                            );
+                            let payload = self.builder.ins().load(
+                                types::I64,
+                                MemFlags::trusted(),
+                                v,
+                                crate::any_abi::PAYLOAD_OFFSET,
+                            );
+                            self.builder.ins().return_(&[tag, payload]);
+                        } else {
+                            self.builder.ins().return_(&[v]);
+                        }
                     } else {
                         self.builder.ins().return_(&[]);
                     }
@@ -1607,8 +1623,8 @@ impl Translator<'_> {
                         ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
                         _ => return Err("array index must be an integer".into()),
                     };
-                    let carrier_load = self.method_return_kind != JitKind::Other
-                        && instrs.get(i + 1).is_some_and(|next| next.opcode == Opcode::UnboxAny);
+                    let carrier_load = self.method_return_kind == JitKind::Other
+                        || instrs.get(i + 1).is_some_and(|next| next.opcode == Opcode::UnboxAny);
                     let load_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
                     let load_bool = self.method_return_kind == JitKind::Bool;
                     let load_object = self.method_return_kind == JitKind::Object;

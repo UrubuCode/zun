@@ -411,6 +411,17 @@ fn object_array_stack_only(instrs: &[zun_il::Instruction], body: &zun_module::Me
                 Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPush | Opcode::Ret)))
 }
 
+fn any_array_return_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+    body.returns_value
+        && JitKind::from_byte(body.return_kind) == JitKind::Other
+        && instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
+        && instrs.iter().all(|i| matches!(
+            i.opcode,
+            Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::LoadLocal
+                | Opcode::LoadArray | Opcode::Ret
+        ))
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
@@ -443,7 +454,9 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         }
         // Return and every local must be a representable JIT type.
         if !kind_supported(body.return_kind) && body.returns_value {
-            continue;
+            if JitKind::from_byte(body.return_kind) != JitKind::Other {
+                continue;
+            }
         }
         if !body.local_kinds.iter().all(|&k| kind_supported(k)) {
             continue;
@@ -451,6 +464,12 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
+        if !kind_supported(body.return_kind)
+            && body.returns_value
+            && !any_array_return_only(&instrs, &body)
+        {
+            continue;
+        }
         if instrs.iter().any(|i| i.opcode == Opcode::ConstStr) {
             // The first literal ABI slice is deliberately limited to a direct
             // literal receiver call. More general locals/control flow need a
@@ -478,7 +497,8 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                     && !object_array_access_only(&instrs, &body)
                     && !object_array_stack_only(&instrs, &body)
                     && !scalar_bool_array_access_only(&instrs, &body)
-                    && !scalar_u64_array_access_only(&instrs, &body)))
+                    && !scalar_u64_array_access_only(&instrs, &body)
+                    && !any_array_return_only(&instrs, &body)))
         {
             continue;
         }

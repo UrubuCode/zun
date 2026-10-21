@@ -4207,6 +4207,29 @@ fn proven_numeric_array_unbox_remains_jit_eligible() {
 }
 
 #[test]
+fn direct_any_array_load_preserves_the_two_word_return_abi() {
+    let module = compile(
+        "function read(values: Array): any { return values[0]; } function main(): u64 { return 0; }",
+    );
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "read")
+        .map(|index| index as u32 + 1)
+        .expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles Any return");
+    assert!(jit.is_compiled(read_rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    heap.array_set(array, 0, zun_core::Any::int(37));
+    let carrier = jit
+        .call_packed_any_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit Any return");
+    assert_eq!(carrier.into_any(), Some(zun_core::Any::int(37)));
+}
+
+#[test]
 fn proven_float_array_unbox_is_jit_equivalent() {
     let src = "function read(values: Array): number { return values[0] as number; }\n\
                function main(): number { let values = new Array(1); values[0] = 2.5; return read(values); }";

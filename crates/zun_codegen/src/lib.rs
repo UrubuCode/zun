@@ -1930,8 +1930,23 @@ impl Jit {
             .get(&method_rid)
             .ok_or(JitError::Ineligible(method_rid))?;
         let ptr = self.module.get_finalized_function(id);
-        let f: extern "C" fn(*const u64) -> JitAnyAbi = unsafe { std::mem::transmute(ptr) };
-        Ok(f(args.as_ptr()))
+        let f: extern "C" fn(*const u64, *mut JitAnyAbi) -> i32 = unsafe { std::mem::transmute(ptr) };
+        let mut result = JitAnyAbi { tag: 0, payload: 0 };
+        if f(args.as_ptr(), &mut result) == 0 {
+            return Err(JitError::InvalidAnyTag(result.tag));
+        }
+        Ok(result)
+    }
+
+    pub fn call_packed_any_with_heap(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+        heap: &mut zun_gc::Heap,
+    ) -> Result<JitAnyAbi, JitError> {
+        self.register_heap_layouts(heap);
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_packed_any(method_rid, args)
     }
 
     /// Call a compiled method while registering `heap` as the current managed

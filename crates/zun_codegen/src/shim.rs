@@ -81,9 +81,8 @@ pub fn define_shim(
 
 /// Build a shim for the two-word `Any` return ABI.
 ///
-/// `JitKind::Other` remains ineligible until its arguments and call sites are
-/// lowered as carriers too; this function establishes the return-side ABI so
-/// that future lowering cannot accidentally collapse `tag` and `payload`.
+/// The carrier is written through an explicit output pointer rather than
+/// relying on the platform ABI for returning a 16-byte C struct.
 pub fn define_any_return_shim(
     module: &mut dyn ClifModule,
     ctx: &mut Context,
@@ -96,8 +95,8 @@ pub fn define_any_return_shim(
     let ptr_ty = module.isa().pointer_type();
     let mut shim_sig = cranelift_codegen::ir::Signature::new(conv);
     shim_sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
-    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
-    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    shim_sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
+    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I32));
     let shim_id = module
         .declare_function(name, Linkage::Local, &shim_sig)
         .map_err(|e| e.to_string())?;
@@ -110,6 +109,7 @@ pub fn define_any_return_shim(
         b.switch_to_block(entry);
         b.seal_block(entry);
         let args_ptr = b.block_params(entry)[0];
+        let out_ptr = b.block_params(entry)[1];
         let mut args = Vec::with_capacity(param_kinds.len());
         let mut offset = 0;
         for &kind in param_kinds {
@@ -130,7 +130,10 @@ pub fn define_any_return_shim(
         if results.len() != 2 {
             return Err("Any return function must produce tag and payload".into());
         }
-        b.ins().return_(&[results[0], results[1]]);
+        b.ins().store(MemFlags::trusted(), results[0], out_ptr, crate::any_abi::TAG_OFFSET);
+        b.ins().store(MemFlags::trusted(), results[1], out_ptr, crate::any_abi::PAYLOAD_OFFSET);
+        let ok = b.ins().iconst(types::I32, 1);
+        b.ins().return_(&[ok]);
         b.finalize();
     }
     module
