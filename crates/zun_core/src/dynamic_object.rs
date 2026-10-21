@@ -44,4 +44,13 @@ impl DynamicObject {
             .chain(self.symbol_functions.values().filter_map(|value| value.environment()))
             .chain(self.string_functions.values().filter_map(|value| value.environment()))
     }
+
+    pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
+        let mut rewritten = 0;
+        for value in self.properties.values_mut().chain(self.symbol_properties.values_mut()) {
+            let mapped = value.map_object_address(map);
+            if mapped != *value { rewritten += 1; *value = mapped; }
+        }
+        rewritten
+    }
 }

@@ -60,6 +60,17 @@ impl OrderedMap {
         self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
     }
 
+    pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
+        let mut rewritten = 0;
+        for entry in self.entries.iter_mut().flatten() {
+            let key = entry.0.map_object_address(map);
+            let value = entry.1.map_object_address(map);
+            if key != entry.0 { rewritten += 1; entry.0 = key; }
+            if value != entry.1 { rewritten += 1; entry.1 = value; }
+        }
+        rewritten
+    }
+
     pub fn entry_at(&self, position: usize) -> Option<(Any, Any)> {
         self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value))).nth(position)
     }

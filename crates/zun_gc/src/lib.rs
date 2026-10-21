@@ -204,6 +204,27 @@ impl Heap {
         rewritten
     }
 
+    /// Rewrite strong object references held by collection side tables. Hashes
+    /// remain valid because object identity hashes are stored independently of
+    /// addresses; weak tables and iterator/handle state need separate passes.
+    pub fn rewrite_auxiliary_references(&mut self, relocation: &RelocationMap) -> usize {
+        let map = |address| relocation.relocate_address(address);
+        let mut rewritten = 0;
+        for array in self.arrays.values_mut() {
+            rewritten += array.rewrite_object_references(map);
+        }
+        for object in self.dynamic_objects.values_mut() {
+            rewritten += object.rewrite_object_references(map);
+        }
+        for map_storage in self.maps.values_mut() {
+            rewritten += map_storage.rewrite_object_references(map);
+        }
+        for set_storage in self.sets.values_mut() {
+            rewritten += set_storage.rewrite_object_references(map);
+        }
+        rewritten
+    }
+
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
         self.records.iter().filter(|record| record.alive).fold(
@@ -995,6 +1016,29 @@ mod tests {
         assert_eq!(rewritten, 1);
         assert_eq!(owner.field(0), new_target.addr() as u64);
         assert_eq!(owner.addr(), owner_addr);
+    }
+
+    #[test]
+    fn relocation_rewrites_strong_collection_references() {
+        let mut heap = Heap::new();
+        let array = heap.alloc_array(1);
+        let map = heap.alloc_map();
+        let old_target = heap.alloc(2, 0);
+        let new_target = heap.alloc(3, 0);
+        heap.array_set(array, 0, zun_core::Any::object(old_target.addr() as usize));
+        heap.map_insert(
+            map,
+            zun_core::Any::object(old_target.addr() as usize),
+            zun_core::Any::object(old_target.addr() as usize),
+        );
+
+        let mut relocation = RelocationMap::new();
+        relocation.insert(old_target, new_target);
+        assert_eq!(heap.rewrite_auxiliary_references(&relocation), 3);
+        assert_eq!(heap.array_get(array, 0).and_then(|value| value.as_object()), Some(new_target.addr() as usize));
+        let entries = heap.map_entries(map).unwrap();
+        assert_eq!(entries[0].0.as_object(), Some(new_target.addr() as usize));
+        assert_eq!(entries[0].1.as_object(), Some(new_target.addr() as usize));
     }
 
     #[test]

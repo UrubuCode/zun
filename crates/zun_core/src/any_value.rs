@@ -44,6 +44,12 @@ impl Any {
     pub const fn as_float(self) -> Option<f64> { match self.tag { AnyTag::Float => Some(f64::from_bits(self.payload)), _ => None } }
     pub const fn as_bool(self) -> Option<bool> { match self.tag { AnyTag::Bool => Some(self.payload != 0), _ => None } }
     pub const fn as_object(self) -> Option<usize> { match self.tag { AnyTag::Object => Some(self.payload as usize), _ => None } }
+    pub fn map_object_address(self, map: impl FnOnce(usize) -> usize) -> Self {
+        match self.as_object() {
+            Some(address) => Self::object(map(address)),
+            None => self,
+        }
+    }
     pub const fn as_string(self) -> Option<u32> { match self.tag { AnyTag::String => Some(self.payload as u32), _ => None } }
 }
 

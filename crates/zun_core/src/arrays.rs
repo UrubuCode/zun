@@ -39,6 +39,15 @@ impl ArrayStorage {
     pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
         self.elements.iter().filter_map(|value| value.as_object())
     }
+
+    pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
+        let mut rewritten = 0;
+        for value in &mut self.elements {
+            let mapped = value.map_object_address(map);
+            if mapped != *value { rewritten += 1; *value = mapped; }
+        }
+        rewritten
+    }
 }
 
 /// State for the default `Array[Symbol.iterator]()` protocol.
