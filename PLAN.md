@@ -574,6 +574,12 @@ The following runtime contracts are implemented and covered by tests:
   pending.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
   `.zm` module retained as the fallback for ineligible methods.
+- Cranelift managed-heap entry boundaries now expose explicit
+  `call_packed_with_heap` and `call_entry_with_heap` APIs. The eligible subset
+  covers tested numeric array allocation/length, numeric object fields, and
+  object-reference field loads/stores with interpreter/JIT equivalence; broader
+  managed values still require the remaining precise-GC and write-barrier
+  work.
 - A minimal `zun_napi` C ABI host boundary that executes compiled integer
   modules without exposing compiler or AST types.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
@@ -583,7 +589,8 @@ The following runtime contracts are implemented and covered by tests:
 - Typed scalar FFI calls are exercised against a real Windows system library;
   logical-library candidate resolution, aggregated load errors, and an
   absolute-path policy are implemented. Compiler/IL declarations and
-  marshalling for external symbols remain separate gates.
+  marshalling for external symbols remain separate gates; source-level
+  P/Invoke-style declarations and typed IL calls are still pending.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
   single-assignment completion, Promise integration, rejection propagation,
   typed `Pending`/`Resolved`/`Rejected` state inspection, and
