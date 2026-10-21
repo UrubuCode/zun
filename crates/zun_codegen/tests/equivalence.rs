@@ -64,6 +64,25 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 }
 
 #[test]
+fn generic_set_has_preserves_interpreter_fallback_boundary() {
+    let module = compile(
+        "import { setHas } from \"zun:collections\";\n\
+         function contains(set: Set, value: any): boolean { return setHas(set, value); }\n\
+         function main(): boolean { let set = new Set(); set.add(7); return contains(set, 7); }",
+    );
+    let contains = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "contains")
+        .expect("contains method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback");
+    assert!(!jit.is_compiled(contains), "generic Set.has must remain Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
 fn checked_string_array_unbox_preserves_tier0_fallback_boundary() {
     let module = compile(
         "function read(values: Array): string { return values[0] as string; } function main(): int { let values = new Array(1); values[0] = \"hello\"; return 1; }",
