@@ -1515,7 +1515,7 @@ fn body_signature<M: ClifModule>(
 mod tests {
     use super::{
         zun_jit_array_load_any, zun_jit_array_store_any, zun_jit_map_size, zun_jit_set_size,
-        JitAnyAbi,
+        zun_jit_store_ref, JitAnyAbi,
     };
 
     #[test]
@@ -1581,5 +1581,18 @@ mod tests {
         heap.set_add(set, zun_core::Any::int(3));
         assert_eq!(zun_jit_map_size(map.addr() as i64), 1);
         assert_eq!(zun_jit_set_size(set.addr() as i64), 1);
+    }
+
+    #[test]
+    fn jit_reference_store_preserves_young_target_through_minor_collection() {
+        let mut heap = zun_gc::Heap::new();
+        let owner = heap.alloc(1, 1);
+        unsafe { heap.collect(&[owner], &|_| vec![0]) };
+        let child = heap.alloc(2, 0);
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+
+        assert_eq!(zun_jit_store_ref(owner.addr() as i64, 0, child.addr() as i64), 1);
+        assert_eq!(unsafe { heap.collect_young(&[owner], &|_| vec![0]) }, 0);
+        assert_eq!(owner.field(0), child.addr() as u64);
     }
 }
