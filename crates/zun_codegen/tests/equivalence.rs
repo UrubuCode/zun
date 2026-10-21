@@ -4169,7 +4169,7 @@ fn checked_string_array_unbox_keeps_interpreter_fallback() {
 #[test]
 fn proven_numeric_array_unbox_remains_jit_eligible() {
     let src = "function read(values: Array): u64 { return values[0] as u64; }\n\
-               function main(): u64 { return 0; }";
+               function main(): u64 { let values = new Array(1); values[0] = 37; return read(values); }";
     let module = compile(src);
     let read_rid = module
         .tables
@@ -4180,6 +4180,14 @@ fn proven_numeric_array_unbox_remains_jit_eligible() {
         .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric unbox");
     assert!(jit.is_compiled(read_rid), "proven numeric UnboxAny should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    heap.array_set(array, 0, zun_core::Any::int(37));
+    let jit_value = jit
+        .call_packed_with_heap(read_rid, &[array.addr() as u64], &mut heap)
+        .expect("jit numeric unbox");
+    assert_eq!(jit_value, 37);
+    assert!(matches!(interp_entry(&module), Value::Int(37, _)));
 }
 
 #[test]
