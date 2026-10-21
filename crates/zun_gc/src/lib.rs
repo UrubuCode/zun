@@ -550,6 +550,21 @@ mod tests {
     }
 
     #[test]
+    fn minor_collection_keeps_registered_callback_environment_alive() {
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let environment = heap.alloc(2, 0);
+        let callback = zun_core::FunctionHandle::new(17, Some(environment.addr() as usize));
+        heap.finalization_register_with_function(target, 100, callback);
+        unsafe { heap.collect(&[target], &|_| Vec::new()) };
+        let garbage = heap.alloc(3, 0);
+
+        assert_eq!(unsafe { heap.collect_young(&[target], &|_| Vec::new()) }, 1);
+        assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
+        assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
+    }
+
+    #[test]
     fn finalization_unregister_cancels_before_target_is_swept() {
         let mut heap = Heap::new();
         let target = heap.alloc(1, 0);

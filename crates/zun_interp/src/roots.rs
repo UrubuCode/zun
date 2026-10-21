@@ -10,6 +10,27 @@ pub(super) fn collect(
     parent: Option<&RootLink>,
     extra_roots: &[zun_gc::Obj],
 ) -> usize {
+    collect_with_policy(types, stack, locals, parent, extra_roots, false)
+}
+
+pub(super) fn collect_young(
+    types: &zun_types::TypeSystem,
+    stack: &[Value],
+    locals: &[Value],
+    parent: Option<&RootLink>,
+    extra_roots: &[zun_gc::Obj],
+) -> usize {
+    collect_with_policy(types, stack, locals, parent, extra_roots, true)
+}
+
+fn collect_with_policy(
+    types: &zun_types::TypeSystem,
+    stack: &[Value],
+    locals: &[Value],
+    parent: Option<&RootLink>,
+    extra_roots: &[zun_gc::Obj],
+    young_only: bool,
+) -> usize {
     let mut roots: Vec<zun_gc::Obj> = Vec::new();
     roots.extend_from_slice(extra_roots);
     collect_frame_roots(stack, locals, &mut roots);
@@ -21,7 +42,13 @@ pub(super) fn collect(
     zun_gc::append_native_roots(&mut roots);
     let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
     // SAFETY: roots contains every live interpreter reference at this safepoint.
-    zun_gc::with_current_heap_mut(|h| unsafe { h.collect(&roots, &ref_fn) })
+    zun_gc::with_current_heap_mut(|h| unsafe {
+        if young_only {
+            h.collect_young(&roots, &ref_fn)
+        } else {
+            h.collect(&roots, &ref_fn)
+        }
+    })
 }
 
 /// Add object references found in a frame's stack and locals to `roots`.

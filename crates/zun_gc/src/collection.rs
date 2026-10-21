@@ -58,6 +58,22 @@ impl Heap {
                 }
             }
         }
+        // Finalizer callbacks are strong runtime-owned callables. Their
+        // target is weak, but a captured callback environment must survive
+        // until the registration is removed or delivered.
+        for entry in &self.finalizers {
+            let Some(environment) = entry.callback.and_then(|callback| callback.environment())
+            else {
+                continue;
+            };
+            let address = environment;
+            if let Some(&idx) = self.by_addr.get(&address) {
+                if !self.records[idx].marked {
+                    self.records[idx].marked = true;
+                    work.push(idx);
+                }
+            }
+        }
         while let Some(idx) = work.pop() {
             let obj = Obj(self.records[idx].addr);
             for slot in ref_slots(obj.type_rid()) {
