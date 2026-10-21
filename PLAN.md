@@ -710,8 +710,9 @@ The following runtime contracts are implemented and covered by tests:
   `LoadArray`/`StoreArray` now lower through Cranelift helpers; numeric
   allocation and indexed mutation use the narrow non-reference value ABI, while
   dynamic/reference-valued loads/stores and
-  collection-triggering allocation remain Tier 0 pending managed JIT value
-  lowering, precise safepoints, and write barriers.
+  aggregate `Any` loads/stores remain Tier 0 pending the two-word managed-value
+  ABI. Object allocation, reference fields, precise allocation safepoints, and
+  write barriers now have Cranelift lowering and interpreter/JIT coverage.
 - Runtime-backed ordered hash storage for strong `Map` and `Set`, including
   SameValueZero lookup, stable object-key hashing, insertion order, and GC
   tracing of managed keys and values. Source-level `Map` and `Set` classes
@@ -978,9 +979,9 @@ The adaptive GC interval is implemented: it scales the next safepoint with the
 live-set and increases the interval when a collection reclaims nothing. This
 now also increases the nursery budget when the observed young survival rate is
 high. This removes the fixed-256 policy, but does not eliminate the underlying whole-heap
-scan. A generational/incremental collector remains the long-term fix; precise
-JIT-frame stack maps and safe native-frame scanning are also still required
-before hot managed code can leave Tier 0. This remains the real performance
+  scan. A generational/incremental collector remains the long-term fix; moving
+  compaction still requires a relocation bridge for interpreter `Value`s. This
+  remains the real performance
 ceiling for large programs today, independent of any individual data structure.
 
 ### 7.3 Benchmarked opportunity sizing (2026-10-20)
