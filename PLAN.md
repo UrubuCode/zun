@@ -570,8 +570,9 @@ The following runtime contracts are implemented and covered by tests:
 - `Any` and `DynamicObject`, including dynamic-property IL, source lowering,
   and GC tracing of object-tagged dynamic values;
 - interpreted backedge observation plus Tier 1 local backedge poll counters as
-  the first OSR integration boundary; frame capture and replacement remain
-  pending.
+  the first OSR integration boundary; hot `(method_rid, target_pc)` transfer
+  requests are now published and deduplicated by `JitHook`. Frame capture and
+  replacement remain pending.
 - Cranelift relocatable object emission for the JIT-eligible subset, with the
   `.zm` module retained as the fallback for ineligible methods.
 - Cranelift managed-heap entry boundaries now expose explicit
