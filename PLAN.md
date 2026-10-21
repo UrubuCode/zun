@@ -662,7 +662,9 @@ The following runtime contracts are implemented and covered by tests:
   absolute-path policy are implemented. `FfiSignature` now describes the
   supported blittable `i64`, `f64`, and zero-argument `bool` C shapes, and
   validates them before dispatching to fixed-arity thunks. Compiler/IL
-  declarations and marshalling for external symbols remain separate gates;
+  external `MemberRef` calls now carry their arity and can be intercepted by a
+  host `CallHook`; native-library resolver binding, declarations, and
+  marshalling for external symbols remain separate gates;
   source-level P/Invoke-style declarations and typed IL calls are still
   pending.
 - A poll-driven `AsyncStateMachine` runtime contract with persistent state,
