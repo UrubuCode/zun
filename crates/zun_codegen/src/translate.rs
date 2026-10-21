@@ -447,6 +447,18 @@ impl Translator<'_> {
                                 stack.push((result, JitKind::Num(NumKind::I32)));
                                 continue;
                             }
+                            Some("concat") => {
+                                let (right, right_kind) = stack.pop().ok_or("string concat right")?;
+                                let (left, left_kind) = stack.pop().ok_or("string concat left")?;
+                                if left_kind != JitKind::String || right_kind != JitKind::String {
+                                    return Err("string concat expects string arguments".into());
+                                }
+                                let helper = self.string_concat_fref();
+                                let call = self.builder.ins().call(helper, &[left, right]);
+                                let result = self.builder.inst_results(call)[0];
+                                stack.push((result, JitKind::String));
+                                continue;
+                            }
                             _ => {}
                         }
                     }
@@ -593,6 +605,13 @@ impl Translator<'_> {
                                 types::I64,
                                 JitKind::Num(NumKind::I32),
                                 types::I32,
+                            ),
+                            Some("concat") => (
+                                "zun_jit_string_concat",
+                                2,
+                                types::I64,
+                                JitKind::String,
+                                types::I64,
                             ),
                             Some("isValid") => (
                                 "zun_jit_date_is_valid",
@@ -1670,6 +1689,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_string_compare", Linkage::Import, &sig)
             .expect("declare zun_jit_string_compare");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn string_concat_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_string_concat", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_concat");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
