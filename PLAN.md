@@ -691,7 +691,8 @@ The following runtime contracts are implemented and covered by tests:
   position-specific argument widths where a managed intrinsic mixes receiver,
   offset, and element types.
   Map, Set, and WeakMap
-  receivers also have that ABI for read-only size queries, while keys, values,
+  receivers also have that ABI for read-only size queries; numeric `Map.has`
+  and `Set.has` now use typed `f64` membership helpers, while generic keys, values,
   and mutating methods remain on the interpreter path until the aggregate
   `Any` ABI is lowered; broader managed values still require the remaining
   precise-GC and write-barrier work.
