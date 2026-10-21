@@ -85,6 +85,8 @@ pub enum Ty {
     Boolean,
     /// A managed contiguous array.
     Array,
+    /// A GC-owned contiguous byte buffer.
+    Buffer,
     /// A runtime-owned insertion-ordered hash map.
     Map,
     /// A runtime-owned insertion-ordered hash set.

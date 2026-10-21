@@ -2000,7 +2000,7 @@ impl Checker<'_> {
                             id,
                             args: vec![length],
                         },
-                        ty: Ty::Any,
+                        ty: Ty::Buffer,
                         span,
                     };
                 }

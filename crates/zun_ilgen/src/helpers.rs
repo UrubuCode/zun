@@ -24,6 +24,7 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
                 ty,
                 Ty::Instance(_)
                     | Ty::Array
+                    | Ty::Buffer
                     | Ty::BufferView(_)
                     | Ty::Map
                     | Ty::Set

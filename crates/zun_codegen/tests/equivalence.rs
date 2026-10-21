@@ -186,6 +186,28 @@ fn managed_map_and_set_size_methods_use_typed_object_receivers() {
 }
 
 #[test]
+fn array_buffer_length_uses_the_managed_object_abi() {
+    let module = compile(
+        "import { bufferLength } from \"zun:buffer\"; function bufferSize(value: ArrayBuffer): u64 { return bufferLength(value); } function main(): u64 { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "bufferSize")
+        .expect("bufferSize method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(17);
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[buffer.addr() as u64], &mut heap),
+        Ok(17)
+    ));
+}
+
+#[test]
 fn regexp_methods_preserve_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): int { let pattern = new RegExp(\"zun-[0-9]+\"); if (pattern.isMatch(\"zun-42\")) { return 1; } return 0; }",

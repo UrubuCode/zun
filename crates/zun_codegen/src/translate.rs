@@ -712,6 +712,13 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::U64),
                                 types::I64,
                             ),
+                            Some("bufferLength") => (
+                                "zun_jit_buffer_length",
+                                1,
+                                types::I64,
+                                JitKind::Num(NumKind::U64),
+                                types::I64,
+                            ),
                             _ => return Err("unsupported builtin".into()),
                         };
                     if stack.len() < arg_count {

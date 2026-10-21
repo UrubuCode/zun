@@ -20,6 +20,7 @@ impl<'a> Checker<'a> {
             "string" => Ty::String,
             "boolean" => Ty::Boolean,
             "Array" | "array" => Ty::Array,
+            "ArrayBuffer" | "arraybuffer" => Ty::Buffer,
             "Map" | "map" => Ty::Map,
             "Set" | "set" => Ty::Set,
             "WeakMap" | "weakmap" => Ty::WeakMap,
