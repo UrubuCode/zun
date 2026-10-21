@@ -571,9 +571,10 @@ The following runtime contracts are implemented and covered by tests:
   an isolated `RelocationMap` now provides forwarding-address translation and
   reference-slot rewriting as a tested contract, and the heap can rewrite
   metadata-declared object reference fields. Rewriting interpreter roots,
-  auxiliary stores, raw fields outside ordinary object fields, and native
-  stack-map slots, followed by actual movement, are still required before
-  compaction is enabled;
+  strong collection side tables beyond arrays/dynamic objects/maps/sets, raw
+  fields outside ordinary object fields, weak tables, iterator/handle state,
+  and native stack-map slots, followed by actual movement, are still required
+  before compaction is enabled;
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
