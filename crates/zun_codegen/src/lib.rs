@@ -1899,6 +1899,51 @@ impl Jit {
         Ok(f(args.as_ptr()))
     }
 
+    /// Call a scalar-returning method whose parameters may include two-word
+    /// `Any` carriers. This is the mixed counterpart to `call_packed_any`.
+    pub fn call_packed_with_any_args(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+    ) -> Result<u64, JitError> {
+        let signature = self
+            .sigs
+            .get(&method_rid)
+            .ok_or(JitError::Ineligible(method_rid))?
+            .clone();
+        if signature.returns == Some(JitKind::Other) {
+            return Err(JitError::Ineligible(method_rid));
+        }
+        let expected_words: usize = signature
+            .param_kinds
+            .iter()
+            .map(|&kind| any_abi::abi_word_count(kind))
+            .sum();
+        if expected_words != args.len() {
+            return Err(JitError::Arity { expected: expected_words, found: args.len() });
+        }
+        let mut native_roots = Vec::new();
+        let mut cursor = 0;
+        for &kind in &signature.param_kinds {
+            if kind == JitKind::Object {
+                native_roots.push(unsafe { zun_gc::Obj::from_addr(args[cursor] as *mut u64) });
+            } else if kind == JitKind::Other {
+                if let Some(value) = zun_core::Any::from_raw_parts(args[cursor] as u8, args[cursor + 1]) {
+                    if let Some(object) = value.as_object() {
+                        native_roots.push(unsafe { zun_gc::Obj::from_addr(object as *mut u64) });
+                    }
+                }
+            }
+            cursor += any_abi::abi_word_count(kind);
+        }
+        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
+        let id = *self.shim_ids.get(&method_rid).ok_or(JitError::Ineligible(method_rid))?;
+        let ptr = self.module.get_finalized_function(id);
+        let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
+        Ok(f(args.as_ptr()))
+    }
+
     /// Call a compiled method using the explicit two-word `Any` return ABI.
     ///
     /// This is intentionally separate from [`Self::call_packed`], whose

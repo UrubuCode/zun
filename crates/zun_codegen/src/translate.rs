@@ -2444,6 +2444,7 @@ impl Translator<'_> {
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
+
     fn array_store_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
