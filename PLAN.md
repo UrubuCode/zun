@@ -578,11 +578,12 @@ The following runtime contracts are implemented and covered by tests:
   regexes, records, and remembered-set entries) are now covered alongside the
   other strong references;
   iterator/typed-view side tables and weak metadata translation are covered,
-  while weak liveness and physical movement remain separate phases. Active
-  native root scopes and stopped frames can now rewrite their reference slots
-  through the forwarding map; `Heap::rewrite_all_references` coordinates the
-  heap-owned passes, while automatic frame discovery/stop and physical
-  movement remain pending.
+  while weak liveness remains a separate phase. Active native root scopes and
+  stopped frames can now rewrite their reference slots through the forwarding
+  map; `Heap::rewrite_all_references` coordinates the heap-owned passes, and an
+  explicit stop-the-world `Heap::compact` now copies live objects into fresh
+  chunks and releases the old chunks. Automatic frame discovery/stop and
+  normal-GC policy integration remain pending.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
