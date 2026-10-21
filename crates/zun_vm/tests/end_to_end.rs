@@ -533,6 +533,7 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
     assert!(hook.take_osr_requests().is_empty());
     let snapshots = hook.take_osr_snapshots();
     assert!(!snapshots.is_empty());
+    assert!(snapshots.iter().all(|snapshot| snapshot.stack.is_empty()));
     assert!(snapshots.iter().all(|snapshot| {
         hook.is_valid_osr_snapshot(snapshot)
             && snapshot.method_rid == spin_rid
@@ -540,6 +541,28 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
             && snapshot.pc >= snapshot.target_pc
     }));
     assert!(hook.take_osr_snapshots().is_empty());
+}
+
+#[test]
+fn osr_rejects_snapshots_with_a_live_evaluation_stack() {
+    use zun_interp::value::Value;
+
+    let src = "function main(): int { return 1; }";
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    let module = zun_ilgen::lower(&hir);
+    let loaded = zun_vm::load(&module.write()).unwrap();
+    let jit = zun_codegen::Jit::new(&loaded).unwrap();
+    let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 1);
+    let snapshot = zun_vm::OsrSnapshot {
+        method_rid: 1,
+        target_pc: 0,
+        pc: 0,
+        stack: vec![Value::Int(1, zun_il::NumKind::I32)],
+        locals: Vec::new(),
+    };
+    assert!(!hook.is_valid_osr_snapshot(&snapshot));
 }
 
 #[test]

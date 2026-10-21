@@ -133,7 +133,13 @@ impl<'a> JitHook<'a> {
     /// Check that a captured snapshot can be mapped back to the method's IL
     /// body before an OSR backend attempts frame replacement.
     pub fn is_valid_osr_snapshot(&self, snapshot: &OsrSnapshot) -> bool {
-        if snapshot.method_rid == 0 || snapshot.target_pc > snapshot.pc {
+        // The .NET OSR contract transfers at an IL stack-empty backedge. A
+        // non-empty evaluation stack has no stable mapping into the compiled
+        // entry state, so it must remain on Tier 0 until a later boundary.
+        if snapshot.method_rid == 0
+            || snapshot.target_pc > snapshot.pc
+            || !snapshot.stack.is_empty()
+        {
             return false;
         }
         let Some(method) = self
