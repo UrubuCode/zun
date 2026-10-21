@@ -28,6 +28,7 @@ pub(super) struct RootLink<'a> {
 /// Explicit interpreter activation record. Keeping the resumable pieces
 /// together is the first step toward async suspension; the synchronous loop
 /// still owns and advances one frame at a time for now.
+#[derive(Debug)]
 pub(super) struct ExecutionFrame {
     pub(super) method_rid: u32,
     pub(super) pc: usize,
