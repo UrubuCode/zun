@@ -545,6 +545,27 @@ impl<'a> Interp<'a> {
             "generatorIteratorDone" => {
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
+                let needs_prefetch = zun_gc::with_current_heap(|heap| {
+                    heap.generator_state(generator)
+                        .map(|state| !state.done && !state.has_current)
+                })
+                .ok_or(RunError::BadToken)?;
+                if needs_prefetch {
+                    let value = self.call_managed_collection(
+                        "generatorIteratorNext",
+                        &[Value::Object(generator)],
+                    )?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or(zun_core::Any::null());
+                    zun_gc::with_current_heap_mut(|heap| {
+                        if let Some(state) = heap.generator_state_mut(generator) {
+                            if !state.done {
+                                state.current = boxed;
+                                state.has_current = true;
+                            }
+                        }
+                    });
+                }
                 Ok(Value::Bool(
                     zun_gc::with_current_heap(|heap| {
                         heap.generator_state(generator).map(|state| state.done)
@@ -559,6 +580,19 @@ impl<'a> Interp<'a> {
                     heap.generator_state_take(generator)
                 })
                 .ok_or(RunError::BadToken)?;
+                if state.done {
+                    zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                    return Ok(Value::Void);
+                }
+                if state.has_current {
+                    let value = zun_gc::with_current_heap(|heap| {
+                        Value::unbox_any(state.current, heap)
+                    })
+                    .ok_or(RunError::BadToken)?;
+                    state.has_current = false;
+                    zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                    return Ok(value);
+                }
                 let outcome = if let Some(saved) = state.frame.take() {
                     let locals = zun_gc::with_current_heap(|heap| {
                         saved.locals.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()

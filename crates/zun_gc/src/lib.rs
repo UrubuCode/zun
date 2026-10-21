@@ -127,6 +127,7 @@ pub struct GeneratorState {
     pub frame: Option<GeneratorFrame>,
     pub done: bool,
     pub current: zun_core::Any,
+    pub has_current: bool,
 }
 
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a

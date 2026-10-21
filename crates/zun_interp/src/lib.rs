@@ -1471,6 +1471,17 @@ mod method_tests {
     }
 
     #[test]
+    fn resumes_generator_for_each_yield_and_skips_return_value() {
+        let module = zun_compiler::compile(
+            "function* values(): int { yield 2; yield 3; return 9; } function main(): any { let total: number = 0.0; for (let value of values()) { total = total + (value as number); } return total; }",
+        )
+        .expect("compile multi-yield generator");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run multi-yield generator");
+        assert!(matches!(result, Value::Float(5.0, zun_il::NumKind::F64)), "{result:?}");
+    }
+
+    #[test]
     fn owned_generator_session_injects_context_per_resume() {
         let module = zun_compiler::compile("function* main(): int { yield 7; return 9; }")
             .expect("compile generator function");

@@ -84,6 +84,7 @@ impl Heap {
             frame: None,
             done: false,
             current: zun_core::Any::null(),
+            has_current: false,
         });
         object
     }
