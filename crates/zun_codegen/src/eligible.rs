@@ -323,7 +323,7 @@ fn scalar_u64_array_access_only(
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::U64)
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
+            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop)
         })
         && instrs.iter().all(|instruction| {
             matches!(
@@ -339,6 +339,7 @@ fn scalar_u64_array_access_only(
                     | Opcode::StoreLocal
                     | Opcode::LoadArray
                     | Opcode::StoreArray
+                    | Opcode::ArrayPop
                     | Opcode::Ret
             )
         })
@@ -474,6 +475,8 @@ pub fn eligible_methods(module: &Module) -> HashSet<u32> {
             && (!body.returns_value
                 || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
                     && JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::U64)
+                    && JitKind::from_byte(body.return_kind) != JitKind::Bool
+                    && !scalar_bool_array_access_only(&instrs, &body)
                     && !object_array_stack_only(&instrs, &body)))
         {
             continue;

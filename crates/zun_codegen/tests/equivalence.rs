@@ -4262,6 +4262,26 @@ fn proven_bool_array_store_is_jit_equivalent() {
 }
 
 #[test]
+fn proven_bool_array_pop_and_push_are_jit_equivalent() {
+    let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
+               function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
+               function main(): boolean { return true; }";
+    let module = compile(src);
+    let pop_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "pop_value").map(|index| index as u32 + 1).expect("pop method");
+    let push_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "push_value").map(|index| index as u32 + 1).expect("push method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles bool stack methods");
+    assert!(jit.is_compiled(pop_rid));
+    assert!(jit.is_compiled(push_rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    heap.array_set(array, 0, zun_core::Any::bool(true));
+    assert_eq!(jit.call_packed_with_heap(pop_rid, &[array.addr() as u64], &mut heap).unwrap(), 1);
+    assert_eq!(heap.array_len(array), Some(0));
+    assert_eq!(jit.call_packed_with_heap(push_rid, &[array.addr() as u64, 1], &mut heap).unwrap(), 1);
+    assert_eq!(heap.array_get(array, 0).and_then(|value| value.as_bool()), Some(true));
+}
+
+#[test]
 fn numeric_array_allocation_is_jit_equivalent() {
     let src = "function make(length: u64): Array { return new Array(length); }\n\
                function main(): Array { return make(3); }";

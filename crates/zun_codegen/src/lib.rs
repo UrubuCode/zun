@@ -911,6 +911,22 @@ pub extern "C" fn zun_jit_array_push_u64(address: i64, value: i64) -> i64 {
 }
 
 #[inline]
+pub extern "C" fn zun_jit_array_pop_bool(address: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_pop(object).and_then(|value| value.as_bool()).unwrap_or(false) as i32
+    })
+}
+
+#[inline]
+pub extern "C" fn zun_jit_array_push_bool(address: i64, value: i32) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_push(object, zun_core::Any::bool(value != 0)).map(|length| length as i64).unwrap_or(-1)
+    })
+}
+
+#[inline]
 pub extern "C" fn zun_jit_array_pop_object(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
@@ -1395,6 +1411,8 @@ impl Jit {
     builder.symbol("zun_jit_array_push_f64", zun_jit_array_push_f64 as *const u8);
     builder.symbol("zun_jit_array_pop_u64", zun_jit_array_pop_u64 as *const u8);
     builder.symbol("zun_jit_array_push_u64", zun_jit_array_push_u64 as *const u8);
+    builder.symbol("zun_jit_array_pop_bool", zun_jit_array_pop_bool as *const u8);
+    builder.symbol("zun_jit_array_push_bool", zun_jit_array_push_bool as *const u8);
     builder.symbol("zun_jit_array_pop_object", zun_jit_array_pop_object as *const u8);
     builder.symbol("zun_jit_array_push_object", zun_jit_array_push_object as *const u8);
         builder.symbol(
