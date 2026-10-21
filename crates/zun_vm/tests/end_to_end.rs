@@ -566,6 +566,33 @@ fn osr_rejects_snapshots_with_a_live_evaluation_stack() {
 }
 
 #[test]
+fn osr_rejects_snapshots_inside_exception_regions() {
+    use zun_interp::value::Value;
+
+    let src = "class Error {} function main(): int { try { throw new Error(); } catch (error: Error) { return 42; } }";
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    assert!(diags.is_empty());
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty());
+    let module = zun_ilgen::lower(&hir);
+    let loaded = zun_vm::load(&module.write()).unwrap();
+    let jit = zun_codegen::Jit::new(&loaded).unwrap();
+    let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 1);
+    let method = loaded.tables.method_defs.first().unwrap();
+    let body = zun_module::read_body(&loaded.code, method.body_offset).unwrap();
+    let region = body.handlers.first().expect("catch region");
+    let snapshot = zun_vm::OsrSnapshot {
+        method_rid: 1,
+        target_pc: region.handler_start as usize,
+        pc: region.handler_start as usize,
+        stack: Vec::new(),
+        locals: vec![Value::Void; body.local_count as usize],
+    };
+    assert!(!hook.is_valid_osr_snapshot(&snapshot));
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

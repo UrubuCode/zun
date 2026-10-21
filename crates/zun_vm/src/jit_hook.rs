@@ -153,6 +153,23 @@ impl<'a> JitHook<'a> {
         let Ok(body) = zun_module::read_body(&self.module.code, method.body_offset) else {
             return false;
         };
+        // Handler entry/exit state is owned by the EH dispatcher, not by the
+        // ordinary OSR frame map. The .NET tiering contract therefore keeps
+        // patchpoints out of protected and handler intervals.
+        if body.handlers.iter().any(|handler| {
+            let in_try = |pc: usize| {
+                (handler.try_start as usize..handler.try_end as usize).contains(&pc)
+            };
+            let in_handler = |pc: usize| {
+                (handler.handler_start as usize..handler.handler_end as usize).contains(&pc)
+            };
+            in_try(snapshot.target_pc)
+                || in_try(snapshot.pc)
+                || in_handler(snapshot.target_pc)
+                || in_handler(snapshot.pc)
+        }) {
+            return false;
+        }
         if snapshot.locals.len() != body.local_count as usize {
             return false;
         }
