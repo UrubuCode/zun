@@ -250,9 +250,26 @@ mod tests {
 
     #[test]
     fn collection_size_builtins_match_interpreter_and_jit() {
-        let source = "import { mapNew, mapSet, mapSize, setNew, setAdd, setSize } from \"zun:collections\"; function main(): u64 { let map = mapNew(); mapSet(map, 1.0, 2.0); let set = setNew(); setAdd(set, 3.0); return mapSize(map) + setSize(set); }";
+        let source = "import { mapNew, mapSet, mapSize, setNew, setAdd, setSize } from \"zun:collections\"; function map_size(map: Map): u64 { return mapSize(map); } function set_size(set: Set): u64 { return setSize(set); } function main(): u64 { let map = mapNew(); mapSet(map, 1.0, 2.0); let set = setNew(); setAdd(set, 3.0); return map_size(map) + set_size(set); }";
         let bytes = zun_compiler::compile(source).unwrap().write();
         let module = load(&bytes).expect("load collection-size module");
+        let map_size_rid = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "map_size")
+            .map(|index| index as u32 + 1)
+            .expect("map_size method");
+        let set_size_rid = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "set_size")
+            .map(|index| index as u32 + 1)
+            .expect("set_size method");
+        let jit = zun_codegen::Jit::new(&module).expect("compile collection-size methods");
+        assert!(jit.is_compiled(map_size_rid));
+        assert!(jit.is_compiled(set_size_rid));
         let mut interpreter_output = zun_interp::CaptureOutput::default();
         let interpreter = zun_interp::run(&module, &mut interpreter_output).expect("interpreter run");
         let mut jit_output = zun_interp::CaptureOutput::default();
