@@ -1,6 +1,6 @@
 //! The Zun runtime heap.
 //!
-//! A non-moving object allocator shared, by design, between the interpreter and
+//! An object allocator shared, by design, between the interpreter and
 //! the JIT (PLAN.md §4.3, step 2). An object is a contiguous run of 8-byte
 //! slots: slot 0 holds the type RID, slot 1 holds the identity hash, and slots
 //! `2..=field_count + 1` hold the fields.
@@ -8,17 +8,19 @@
 //! object pointer, or a string-table handle — interpreted by the field's static
 //! type. This is what lets native code load and store fields by offset.
 //!
-//! Non-moving: once allocated, an object's address never changes, so a pointer
+//! Objects are normally stable, but the registered JIT safepoint path may move
+//! them during a full collection; native roots are rewritten before release.
 //! handed to native code remains stable. Mark-sweep reclaims unreachable
 //! objects using the type RID to find reference slots; interpreter roots,
 //! native root scopes, and stopped JIT frames described by stack maps are
-//! supported. Compaction remains a later phase because moving objects would
-//! require rewriting all managed references and native stack-map locations.
+//! supported. Moving collection rewrites heap-owned references and registered
+//! native stack-map locations before releasing old storage.
 //!
 //! # Safety
 //! Object pointers are valid only while the owning [`Heap`] is alive. The
-//! interpreter and JIT must not outlive it. Within that lifetime the heap never
-//! moves or frees a block, so raw access through [`Obj`] is sound.
+//! interpreter and JIT must not outlive it. Raw pointers remain valid until a
+//! collection boundary; callers crossing a moving collection must use the
+//! registered root and stack-map contracts so references can be rewritten.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
