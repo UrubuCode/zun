@@ -568,9 +568,10 @@ The following runtime contracts are implemented and covered by tests:
   coverage is tested; a regression also proves a JIT reference store retains a
   young target through minor collection. Interpreter safepoints now select
   minor/full collection policy, and the GC boundary has RAII thread-local
-  registration for nested stopped frames; ordinary mark-sweep and compaction
-  can consume every registered `(PC, SP)` frame directly once the
-  stop-the-world coordinator has suspended them;
+  registration for nested stopped frames; the Cranelift host boundary can
+  publish caller-supplied `(PC, SP)` coordinates, and ordinary mark-sweep and
+  compaction can consume every registered frame once the stop-the-world
+  coordinator has suspended it;
 - the non-moving heap now exposes a read-only compaction-plan snapshot with
   live/reclaimable object and slot counts. It does not relocate objects;
   an isolated `RelocationMap` now provides forwarding-address translation and
@@ -598,8 +599,9 @@ The following runtime contracts are implemented and covered by tests:
   without requiring the coordinator to rebuild the frame list. Ordinary
   mark/sweep, young collection, and `collect_and_compact` now also scan those
   registered frames and preserve their slots through relocation. Automatic suspension remains
-  pending; the coordinator-facing explicit frame-list API and the thread-local
-  convenience path now share the same mark/relocate implementation.
+  pending; the coordinator-facing explicit frame-list API, the thread-local
+  convenience path, and the heap-backed JIT call boundary now share the same
+  mark/relocate implementation.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
