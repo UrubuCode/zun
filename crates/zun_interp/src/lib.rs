@@ -1260,7 +1260,27 @@ impl Interp<'_> {
 #[cfg(test)]
 mod method_tests {
     use super::*;
-    use crate::roots::collect_frame_roots;
+    use crate::roots::{collect as collect_roots, collect_frame_roots};
+
+    #[test]
+    fn extra_osr_roots_keep_managed_objects_alive() {
+        let module = zun_compiler::compile("class Box { value: int; } function main() { }")
+            .expect("compile root test module");
+        let types = zun_types::TypeSystem::from_module(&module).expect("build type system");
+        let mut heap = zun_gc::Heap::new();
+        let object = heap.alloc(1, 1);
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        assert_eq!(
+            collect_roots(&types, &[], &[], None, &[object]),
+            0,
+            "an object retained by an OSR snapshot must remain live"
+        );
+        assert_eq!(
+            collect_roots(&types, &[], &[], None, &[]),
+            1,
+            "the object should be reclaimed after the snapshot root is consumed"
+        );
+    }
 
     #[test]
     fn resumable_session_completes_synchronous_async_function() {
