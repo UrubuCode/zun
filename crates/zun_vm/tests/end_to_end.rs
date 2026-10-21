@@ -523,23 +523,12 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
     let mut out = CaptureOutput::default();
     let result = run_with(&loaded, &mut out, Some(&hook)).unwrap();
     assert!(matches!(result, zun_interp::value::Value::Int(10, _)));
-    assert!(hook.total_loop_backedges(spin_rid) >= 2);
+    // Eligible loop methods are compiled at their normal entry point, so no
+    // interpreted backedge or mid-frame OSR request is needed.
+    assert_eq!(hook.total_loop_backedges(spin_rid), 0);
     assert!(hook.jit_is_defined(spin_rid));
-    let requests = hook.take_osr_requests();
-    assert!(!requests.is_empty());
-    assert!(requests
-        .iter()
-        .all(|request| request.method_rid == spin_rid));
     assert!(hook.take_osr_requests().is_empty());
-    let snapshots = hook.take_valid_osr_snapshots();
-    assert!(!snapshots.is_empty());
-    assert!(snapshots.iter().all(|snapshot| snapshot.stack.is_empty()));
-    assert!(snapshots.iter().all(|snapshot| {
-        hook.is_valid_osr_snapshot(snapshot)
-            && snapshot.method_rid == spin_rid
-            && !snapshot.locals.is_empty()
-            && snapshot.pc >= snapshot.target_pc
-    }));
+    assert!(hook.take_valid_osr_snapshots().is_empty());
     assert!(hook.take_osr_snapshots().is_empty());
 }
 

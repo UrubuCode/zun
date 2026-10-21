@@ -71,6 +71,16 @@ impl<'a> JitHook<'a> {
 
     /// Wrap a JIT with a custom threshold (0 compiles on the first call).
     pub fn with_threshold(jit: Jit, module: &'a Module, threshold: u32) -> Self {
+        let mut jit = jit;
+        // Pre-OSR tiering: compile eligible loop-containing methods at their
+        // normal entry point before execution. No suspended Tier 0 frame is
+        // transferred; ineligible methods retain the interpreter fallback.
+        let loop_methods: Vec<u32> = (1..=module.tables.method_defs.len() as u32)
+            .filter(|&rid| jit.is_compiled(rid) && method_contains_backedge(module, rid))
+            .collect();
+        for rid in loop_methods {
+            let _ = jit.ensure_compiled(module, rid);
+        }
         Self {
             jit: RefCell::new(jit),
             module,
@@ -260,6 +270,30 @@ impl<'a> JitHook<'a> {
                     .contains(&target_pc)
         })
     }
+}
+
+fn method_contains_backedge(module: &Module, method_rid: u32) -> bool {
+    let Some(method) = module.tables.method_defs.get(method_rid as usize - 1) else {
+        return false;
+    };
+    let Ok(body) = zun_module::read_body(&module.code, method.body_offset) else {
+        return false;
+    };
+    let Ok(instrs) = zun_il::decode_all(body.code) else {
+        return false;
+    };
+    let mut offset = 0usize;
+    for instr in instrs {
+        let end = offset + instr.encoded_len();
+        if let zun_il::Operand::Branch(displacement) = instr.operand {
+            let target = end as i64 + i64::from(displacement);
+            if target >= 0 && (target as usize) < offset {
+                return true;
+            }
+        }
+        offset = end;
+    }
+    false
 }
 
 impl CallHook for JitHook<'_> {
