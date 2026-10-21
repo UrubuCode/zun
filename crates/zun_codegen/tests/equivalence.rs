@@ -4352,6 +4352,17 @@ fn direct_any_virtual_call_preserves_the_carrier() {
         )
         .expect("jit virtual Any call");
     assert_eq!(result.into_any(), Some(zun_core::Any::int(321)));
+
+    let payload = heap.alloc(1, 0);
+    let carrier = zun_codegen::JitAnyAbi::from_any(zun_core::Any::object(payload.addr() as usize));
+    let result = jit
+        .call_packed_any_with_heap(
+            forward_rid,
+            &[receiver.addr() as u64, carrier.tag, carrier.payload],
+            &mut heap,
+        )
+        .expect("jit virtual managed Any call");
+    assert_eq!(result.into_any(), Some(zun_core::Any::object(payload.addr() as usize)));
 }
 
 #[test]
