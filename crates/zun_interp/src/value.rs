@@ -292,4 +292,15 @@ mod tests {
         );
         assert!(Value::Void.box_any(&mut heap).is_none());
     }
+
+    #[test]
+    fn interned_string_field_roundtrips_through_the_string_abi() {
+        let mut heap = zun_gc::Heap::new();
+        let value = Value::Str("zun".into());
+        let slot = encode_field(FIELD_STRING, &value, &mut heap);
+        assert!(matches!(
+            decode_field(FIELD_STRING, slot, &heap),
+            Value::Str(text) if &*text == "zun"
+        ));
+    }
 }

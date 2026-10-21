@@ -140,6 +140,7 @@ mod tests {
             JitKind::Num(NumKind::U8),
             JitKind::Num(NumKind::F32),
             JitKind::Bool,
+            JitKind::String,
             JitKind::Other,
         ] {
             assert_eq!(JitKind::from_byte(k.to_byte()), k);
