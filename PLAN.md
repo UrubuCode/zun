@@ -572,9 +572,10 @@ The following runtime contracts are implemented and covered by tests:
   reference-slot rewriting as a tested contract, and the heap can rewrite
   metadata-declared object reference fields. Rewriting interpreter roots,
   strong collection side tables beyond arrays/dynamic objects/maps/sets, raw
-  fields outside ordinary object fields, weak tables/handles, and native
-  stack-map slots, followed by actual movement, are still required before
-  compaction is enabled; iterator and typed-view side tables are covered.
+  fields outside ordinary object fields, and native stack-map slots, followed
+  by actual movement, are still required before compaction is enabled;
+  iterator/typed-view side tables and weak metadata translation are covered,
+  while weak liveness and physical movement remain separate phases.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
