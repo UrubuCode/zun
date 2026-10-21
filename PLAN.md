@@ -595,8 +595,10 @@ The following runtime contracts are implemented and covered by tests:
   `compact_with_native_frame` and `compact_with_native_frames` rewrite stopped
   JIT frames from their `(PC, SP)` stack maps, and
   `compact_with_registered_native_frames` consumes the active-frame registry
-  without requiring the coordinator to rebuild the frame list. Automatic
-  suspension and normal-GC policy integration remain pending.
+  without requiring the coordinator to rebuild the frame list. Ordinary
+  mark/sweep and `collect_and_compact` now also scan those registered frames
+  and preserve their slots through relocation. Automatic suspension remains
+  pending.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
@@ -819,8 +821,9 @@ This activates the first generational policy while leaving nursery allocation,
 card-table scaling, and precise JIT-frame safepoints as later completion work.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
-automatic precise JIT-frame safepoints (the stack-map metadata and stopped-frame
-consumer are implemented), true OSR frame replacement, compacting GC,
+automatic precise JIT-frame safepoints (the stack-map metadata and registered
+stopped-frame consumer are implemented), true OSR frame replacement, compacting GC
+integration with the live execution coordinator,
 complete typed FFI/ABI integration, production Node
 N-API bindings, AOT/R2R support for the full runtime surface, and the deferred
 language surfaces listed in section 4.4.2. Each gate requires a runtime test
