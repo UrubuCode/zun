@@ -587,9 +587,9 @@ The following runtime contracts are implemented and covered by tests:
   pending; an opt-in
   `collect_and_compact` API now runs mark/sweep followed by that explicit
   movement path for interpreter roots and active `NativeRootScope` roots.
-  `compact_with_native_frame` also rewrites one stopped JIT frame from its
-  `(PC, SP)` stack map; automatic suspension/discovery of all JIT frames and
-  normal-GC policy integration remain pending.
+  `compact_with_native_frame` and `compact_with_native_frames` rewrite stopped
+  JIT frames from their `(PC, SP)` stack maps; automatic suspension/discovery
+  of all JIT frames and normal-GC policy integration remain pending.
 - Promise/microtask scheduling and scalar external-library symbol calls;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
