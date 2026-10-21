@@ -1,7 +1,8 @@
 use super::gc_policy::GC_INTERVAL;
 use super::{CallHook, Interp, Output, RunError, Value};
 use super::state::{ExecutionFrame, ExecutionOutcome};
-use zun_module::Module;
+use zun_il::{decode_one, Opcode};
+use zun_module::{read_body, Module};
 
 /// Result of one poll of a persistent Tier 0 execution session.
 #[derive(Debug)]
@@ -55,6 +56,26 @@ impl<'a> GeneratorSession<'a> {
         args: Vec<Value>,
         output: &'a mut dyn Output,
     ) -> Result<Self, RunError> {
+        let method = module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+            .ok_or(RunError::BadToken)?;
+        let body = read_body(&module.code, method.body_offset)
+            .map_err(|error| RunError::Malformed(error.to_string()))?;
+        let mut offset = 0;
+        let mut is_generator = false;
+        while offset < body.code.len() {
+            let (instruction, size) = decode_one(&body.code[offset..])
+                .map_err(|error| RunError::Malformed(error.to_string()))?;
+            is_generator |= instruction.opcode == Opcode::Yield;
+            offset += size;
+        }
+        if !is_generator {
+            return Err(RunError::Malformed(
+                "generator session requires a method containing yield".into(),
+            ));
+        }
         Ok(Self {
             inner: ResumableSession::new(module, method_rid, args, output, None, None)?,
         })
