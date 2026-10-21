@@ -157,6 +157,29 @@ pub unsafe extern "C" fn zun_jit_array_load_any(
     unsafe { out.write(JitAnyAbi::from_any(value)) };
     1
 }
+
+/// Store a dynamic two-word carrier into an array element.
+///
+/// The raw parts are validated before entering managed storage. This keeps
+/// the dynamic ABI explicit while leaving aggregate stack lowering gated.
+#[inline]
+pub extern "C" fn zun_jit_array_store_any(
+    address: i64,
+    index: i64,
+    tag: u64,
+    payload: u64,
+) -> i32 {
+    if index < 0 {
+        return 0;
+    }
+    let Some(value) = zun_core::Any::from_raw_parts(tag as u8, payload) else {
+        return 0;
+    };
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_set(object, index as usize, value).is_some() as i32
+    })
+}
 #[inline]
 pub extern "C" fn zun_jit_date_is_valid(millis: i64) -> i32 {
     zun_core::DateValue::from_millis(millis).millis().is_some() as i32
@@ -498,6 +521,10 @@ impl Jit {
             "zun_jit_array_load_any",
             zun_jit_array_load_any as *const u8,
         );
+    builder.symbol(
+        "zun_jit_array_store_any",
+        zun_jit_array_store_any as *const u8,
+    );
         builder.symbol("zun_jit_date_year", zun_jit_date_year as *const u8);
         builder.symbol("zun_jit_date_is_valid", zun_jit_date_is_valid as *const u8);
         builder.symbol("zun_jit_date_month", zun_jit_date_month as *const u8);
@@ -1110,7 +1137,7 @@ fn body_signature<M: ClifModule>(
 
 #[cfg(test)]
 mod tests {
-    use super::{zun_jit_array_load_any, JitAnyAbi};
+    use super::{zun_jit_array_load_any, zun_jit_array_store_any, JitAnyAbi};
 
     #[test]
     fn dynamic_array_load_helper_preserves_both_abi_words() {
@@ -1126,5 +1153,22 @@ mod tests {
         assert_eq!(carrier, JitAnyAbi { tag: 3, payload: 0x1234 });
         assert_eq!(unsafe { zun_jit_array_load_any(array.addr() as i64, -1, &mut carrier) }, 0);
         assert_eq!(unsafe { zun_jit_array_load_any(array.addr() as i64, 0, std::ptr::null_mut()) }, 0);
+    }
+
+    #[test]
+    fn dynamic_array_store_helper_validates_and_preserves_both_abi_words() {
+        let mut heap = zun_gc::Heap::new();
+        let array = heap.alloc_array(1);
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        assert_eq!(
+            zun_jit_array_store_any(array.addr() as i64, 0, 3, 0x1234),
+            1
+        );
+        assert_eq!(
+            heap.array_get(array, 0),
+            Some(zun_core::Any::object(0x1234))
+        );
+        assert_eq!(zun_jit_array_store_any(array.addr() as i64, 0, 255, 0), 0);
+        assert_eq!(zun_jit_array_store_any(array.addr() as i64, -1, 0, 0), 0);
     }
 }
