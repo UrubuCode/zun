@@ -3931,6 +3931,19 @@ fn scalar_u64_array_allocation_and_access_are_jit_eligible() {
 }
 
 #[test]
+fn scalar_bool_array_allocation_and_access_are_jit_eligible() {
+    let module = compile(
+        "function main(): boolean { let values = new Array(1); values[0] = true; return values[0] as boolean; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles boolean array access");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+    let mut heap = zun_gc::Heap::new();
+    assert_eq!(jit.call_packed_with_heap(entry, &[], &mut heap).unwrap(), 1);
+}
+
+#[test]
 fn unsigned_wrap_u8() {
     assert_equivalent("function main(): u8 { let b: u8 = 250; return b + 10 as u8; }");
 }

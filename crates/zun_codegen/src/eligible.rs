@@ -365,6 +365,8 @@ fn scalar_bool_array_access_only(
                     | Opcode::ConstI32
                     | Opcode::ConstI64
                     | Opcode::ConstF64
+                    | Opcode::ConstTrue
+                    | Opcode::ConstFalse
                     | Opcode::UnboxAny
                     | Opcode::BoxAny
                     | Opcode::Pop
