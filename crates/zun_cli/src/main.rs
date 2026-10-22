@@ -285,6 +285,19 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                     Ok(object) => match std::fs::write(&object_out, object) {
                                         Ok(()) => {
                                             println!("wrote {}", object_out.display());
+                                            let metadata_out = out.with_extension("meta.o");
+                                            let metadata = match zun_codegen::compile_metadata_object(&module.write()) {
+                                                Ok(metadata) => metadata,
+                                                Err(error) => {
+                                                    eprintln!("zun: cannot emit AOT metadata object: {error}");
+                                                    return ExitCode::FAILURE;
+                                                }
+                                            };
+                                            if let Err(error) = std::fs::write(&metadata_out, metadata) {
+                                                eprintln!("zun: cannot write {}: {error}", metadata_out.display());
+                                                return ExitCode::FAILURE;
+                                            }
+                                            println!("wrote {}", metadata_out.display());
                                             let native_manifest = manifest.clone().with_native_object(
                                                 object_out
                                                     .file_name()
@@ -304,6 +317,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                             let executable_out = out.with_extension("exe");
                                             match link_aot_executable(
                                                 &object_out,
+                                                Some(&metadata_out),
                                                 &executable_out,
                                                 module.entry_point.map(|token| token.rid()),
                                                 module.entry_point.and_then(|token| {
@@ -422,6 +436,7 @@ fn resolve_lld() -> Option<PathBuf> {
 
 fn link_aot_executable(
     object: &Path,
+    metadata: Option<&Path>,
     executable: &Path,
     entry: Option<u32>,
     return_kind: Option<u8>,
@@ -463,6 +478,9 @@ fn link_aot_executable(
         .arg(format!("link-arg={}", object.display()))
         .arg("-o")
         .arg(executable);
+    if let Some(metadata) = metadata {
+        command.arg("-C").arg(format!("link-arg={}", metadata.display()));
+    }
     if let Some(lld) = resolve_lld() {
         command.arg("-C").arg(format!("linker={}", lld.display()));
     }

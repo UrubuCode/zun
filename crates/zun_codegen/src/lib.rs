@@ -2465,6 +2465,41 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
         .map_err(|e| JitError::Module(e.to_string()))
 }
 
+/// Emit the serialized `.zm` payload as a read-only data object with a stable
+/// exported symbol. The AOT linker can include this object alongside native
+/// code so the fallback interpreter has the original IL available at runtime.
+pub fn compile_metadata_object(module_bytes: &[u8]) -> Result<Vec<u8>, JitError> {
+    use object::write::{Object, Symbol, SymbolSection};
+    use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
+
+    let format = if cfg!(windows) {
+        BinaryFormat::Coff
+    } else if cfg!(target_os = "macos") {
+        BinaryFormat::MachO
+    } else {
+        BinaryFormat::Elf
+    };
+    let architecture = if cfg!(target_arch = "aarch64") {
+        Architecture::Aarch64
+    } else {
+        Architecture::X86_64
+    };
+    let mut object = Object::new(format, architecture, Endianness::Little);
+    let section = object.add_section(Vec::new(), b".zun_meta".to_vec(), SectionKind::ReadOnlyData);
+    let symbol = object.add_symbol(Symbol {
+        name: b"zun_embedded_module".to_vec(),
+        value: 0,
+        size: module_bytes.len() as u64,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section),
+        flags: SymbolFlags::None,
+    });
+    object.add_symbol_data(symbol, section, module_bytes, 1);
+    object.write().map_err(|e| JitError::Module(e.to_string()))
+}
+
 /// Read a nullary integer-returning entry point, sign/zero-extending to i64.
 ///
 /// # Safety
@@ -2520,11 +2555,26 @@ fn body_signature<M: ClifModule>(
 
 #[cfg(test)]
 mod tests {
+    use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
     use super::{
         zun_jit_array_load_any, zun_jit_array_load_object, zun_jit_array_store_any,
         zun_jit_array_store_object, zun_jit_map_size, zun_jit_set_size, zun_jit_store_ref,
-        JitAnyAbi,
+        compile_metadata_object, JitAnyAbi,
     };
+
+    #[test]
+    fn metadata_object_exports_the_embedded_module_symbol() {
+        let payload = b"ZUN-IL";
+        let object = compile_metadata_object(payload).expect("metadata object");
+        let file = object::File::parse(object.as_slice()).expect("parse metadata object");
+        let _symbol = file
+            .symbols()
+            .find(|symbol| symbol.name().ok() == Some("zun_embedded_module"))
+            .expect("embedded module symbol");
+        assert!(file
+            .sections()
+            .any(|section| section.data().ok() == Some(payload.as_slice())));
+    }
 
     #[test]
     fn dynamic_array_load_helper_preserves_both_abi_words() {

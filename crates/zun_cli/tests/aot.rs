@@ -111,6 +111,7 @@ fn build_aot_writes_fallback_module_manifest_and_object() {
         source.with_extension("zm"),
         source.with_extension("zman"),
         source.with_extension("o"),
+        source.with_extension("meta.o"),
         source.with_extension("exe"),
     ] {
         let _ = std::fs::remove_file(path);
@@ -141,7 +142,7 @@ fn build_aot_runs_a_floating_point_entry_point() {
     assert!(executable.status.success());
     assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "7.5");
 
-    for extension in ["ts", "zm", "zman", "o", "exe"] {
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
     }
     let _ = std::fs::remove_dir(root);
@@ -171,7 +172,7 @@ fn build_aot_runs_a_boolean_entry_point() {
     assert!(executable.status.success());
     assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "true");
 
-    for extension in ["ts", "zm", "zman", "o", "exe"] {
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
     }
     let _ = std::fs::remove_dir(root);
@@ -201,7 +202,7 @@ fn build_aot_preserves_f32_entry_abi() {
     assert!(executable.status.success());
     assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "7.5");
 
-    for extension in ["ts", "zm", "zman", "o", "exe"] {
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
     }
     let _ = std::fs::remove_dir(root);
@@ -229,7 +230,7 @@ fn build_aot_preserves_i32_entry_abi() {
     assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
 
-    for suffix in ["ts", "zm", "zman", "o", "exe", "aot.rs", "pdb"] {
+    for suffix in ["ts", "zm", "zman", "o", "meta.o", "exe", "aot.rs", "pdb"] {
         let path = root.join(format!("main.{suffix}"));
         let _ = std::fs::remove_file(path);
     }
@@ -260,7 +261,7 @@ fn build_aot_preserves_u32_entry_abi() {
     assert!(executable.status.success());
     assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "42");
 
-    for extension in ["ts", "zm", "zman", "o", "exe", "aot.rs", "pdb"] {
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe", "aot.rs", "pdb"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
     }
     let _ = std::fs::remove_dir(root);
@@ -296,7 +297,7 @@ fn build_aot_preserves_unsigned_64_bit_entry_points() {
         "18446744073709551615"
     );
 
-    for extension in ["ts", "zm", "zman", "o", "exe"] {
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
     }
     let _ = std::fs::remove_dir(root);
@@ -327,7 +328,7 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
     assert!(manifest.native_object.is_none());
     assert!(!source.with_extension("exe").exists());
 
-    for extension in ["ts", "zm", "zman", "o", "exe"] {
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
     }
     let _ = std::fs::remove_dir(root);
