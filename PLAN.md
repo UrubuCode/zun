@@ -405,7 +405,7 @@ imports, constructor calls, templates, conditional/null expressions, and named
 classes with identifier heritage, fields, simple methods, getter/setter kinds,
 optional members, computed member reads, member assignments, private members,
 optional method calls, exported and named default function/class declarations,
-spread arguments,
+unchanged local export lists, spread arguments,
 await/yield expressions, `this` member access, parentheses,
 TypeScript casts, satisfies/non-null assertions, default parameters, rest parameters,
 and supported statement sequences; the compiler now accepts that OXC-adapted
