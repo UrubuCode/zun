@@ -68,15 +68,35 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 "OXC adapter currently supports one return statement per function".into(),
             ]);
         };
-        let Some(Expression::NumericLiteral(number)) = return_statement.argument.as_ref() else {
-            return Err(vec![
-                "OXC adapter currently supports numeric return expressions".into(),
-            ]);
-        };
         let span = |span: oxc_span::Span| Span::new(span.start, span.end);
         let function_span = span(function.span);
         let return_span = span(return_statement.span);
-        let value_span = span(number.span);
+        let value = match return_statement.argument.as_ref() {
+            Some(Expression::NumericLiteral(number)) => Expr::Number {
+                value: number.value,
+                span: span(number.span),
+            },
+            Some(Expression::StringLiteral(string)) => {
+                let Some(value) = string.value.as_str() else {
+                    return Err(vec![
+                        "OXC adapter cannot represent non-UTF-8 string literals".into(),
+                    ]);
+                };
+                Expr::String {
+                    value: value.to_owned(),
+                    span: span(string.span),
+                }
+            }
+            Some(Expression::BooleanLiteral(boolean)) => Expr::Bool {
+                value: boolean.value,
+                span: span(boolean.span),
+            },
+            _ => {
+                return Err(vec![
+                    "OXC adapter currently supports literal return expressions".into(),
+                ])
+            }
+        };
         functions.push(Function {
             name: Name { span: span(id.span) },
             params: Vec::new(),
@@ -89,10 +109,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             is_generator: function.generator,
             body: Block {
                 statements: vec![Stmt::Return {
-                    value: Some(Expr::Number {
-                        value: number.value,
-                        span: value_span,
-                    }),
+                    value: Some(value),
                     span: return_span,
                 }],
                 span: span(body.span),
@@ -133,5 +150,25 @@ mod tests {
                 ..
             } if value == 42.0
         ));
+    }
+
+    #[test]
+    fn converts_string_and_boolean_literals_into_the_zun_ast() {
+        for (source, expected) in [
+            ("function text() { return 'zun'; }", "zun"),
+            ("function flag() { return true; }", "true"),
+        ] {
+            let program = parse_subset(source, true).unwrap();
+            let crate::ast::Stmt::Return { value: Some(value), .. } =
+                &program.functions[0].body.statements[0]
+            else {
+                panic!("expected a return statement");
+            };
+            match (value, expected) {
+                (crate::ast::Expr::String { value, .. }, "zun") => assert_eq!(value, "zun"),
+                (crate::ast::Expr::Bool { value, .. }, "true") => assert!(*value),
+                _ => panic!("unexpected converted literal"),
+            }
+        }
     }
 }
