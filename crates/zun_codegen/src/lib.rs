@@ -2497,6 +2497,17 @@ pub fn compile_metadata_object(module_bytes: &[u8]) -> Result<Vec<u8>, JitError>
         flags: SymbolFlags::None,
     });
     object.add_symbol_data(symbol, section, module_bytes, 1);
+    let length_symbol = object.add_symbol(Symbol {
+        name: b"zun_embedded_module_len".to_vec(),
+        value: 0,
+        size: std::mem::size_of::<u64>() as u64,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(section),
+        flags: SymbolFlags::None,
+    });
+    object.add_symbol_data(length_symbol, section, &(module_bytes.len() as u64).to_le_bytes(), 8);
     object.write().map_err(|e| JitError::Module(e.to_string()))
 }
 
@@ -2572,8 +2583,14 @@ mod tests {
             .find(|symbol| symbol.name().ok() == Some("zun_embedded_module"))
             .expect("embedded module symbol");
         assert!(file
+            .symbols()
+            .any(|symbol| symbol.name().ok() == Some("zun_embedded_module_len")));
+        assert!(file
             .sections()
-            .any(|section| section.data().ok() == Some(payload.as_slice())));
+            .any(|section| section
+                .data()
+                .ok()
+                .is_some_and(|data| data.starts_with(payload))));
     }
 
     #[test]
