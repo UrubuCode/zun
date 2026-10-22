@@ -24,6 +24,25 @@ pub extern "C" fn zun_rt_init() {}
 #[no_mangle]
 pub extern "C" fn zun_rt_shutdown() {}
 
+/// Execute an embedded module through the Tier 0 fallback and return a scalar
+/// integer/boolean result for a generated AOT launcher. A negative result
+/// reports load, verification, execution, or unsupported-result failure.
+#[no_mangle]
+pub unsafe extern "C" fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64 {
+    if ptr.is_null() {
+        return -1;
+    }
+    let Ok(len) = usize::try_from(len) else {
+        return -1;
+    };
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match execute(bytes) {
+        Ok(Value::Int(value, _)) => value,
+        Ok(Value::Bool(value)) => i64::from(value),
+        _ => -1,
+    }
+}
+
 pub use ffi::{
     library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
     FfiStringReturn, NativeLibrary,
@@ -249,6 +268,15 @@ pub fn invoke_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_runtime_hook_returns_scalar_tier0_results() {
+        let module = zun_compiler::compile("function main(): int { return 23; }").unwrap();
+        let bytes = module.write();
+        let result = unsafe { zun_rt_run_embedded_i64(bytes.as_ptr(), bytes.len() as u64) };
+        assert_eq!(result, 23);
+        assert_eq!(unsafe { zun_rt_run_embedded_i64(std::ptr::null(), 0) }, -1);
+    }
 
     #[test]
     fn executes_manifest_entry_scope() {
