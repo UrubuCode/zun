@@ -121,9 +121,12 @@ mod node_api {
         // SAFETY: N-API provides a live ArrayBuffer for the duration of this
         // callback and reports its exact byte length.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
-        let Ok(zun_interp::value::Value::Int(value, _)) = zun_vm::execute(bytes) else {
+        let Ok(zun_interp::value::Value::Int(value, kind)) = zun_vm::execute(bytes) else {
             return invalid_call(env);
         };
+        if !matches!(kind, zun_il::NumKind::I8 | zun_il::NumKind::I16 | zun_il::NumKind::I32 | zun_il::NumKind::I64) {
+            return invalid_call(env);
+        }
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK {
             invalid_call(env)
@@ -393,9 +396,12 @@ pub unsafe extern "C" fn zun_host_execute_i64(
         Ok(value) => value,
         Err(_) => return ZUN_HOST_VM_ERROR,
     };
-    let zun_interp::value::Value::Int(value, _) = value else {
+    let zun_interp::value::Value::Int(value, kind) = value else {
         return ZUN_HOST_VM_ERROR;
     };
+    if !matches!(kind, zun_il::NumKind::I8 | zun_il::NumKind::I16 | zun_il::NumKind::I32 | zun_il::NumKind::I64) {
+        return ZUN_HOST_VM_ERROR;
+    }
     // SAFETY: caller supplies writable storage for one i64.
     unsafe { *out = value };
     ZUN_HOST_OK
@@ -581,6 +587,19 @@ mod tests {
         let mut result = 0u64;
         let status = unsafe {
             zun_host_execute_u64(host, bytes.as_ptr(), bytes.len(), &mut result)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, ZUN_HOST_VM_ERROR);
+    }
+
+    #[test]
+    fn signed_host_export_rejects_unsigned_integer_modules() {
+        let module = zun_compiler::compile("function main(): u64 { return 42; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = 0i64;
+        let status = unsafe {
+            zun_host_execute_i64(host, bytes.as_ptr(), bytes.len(), &mut result)
         };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, ZUN_HOST_VM_ERROR);
