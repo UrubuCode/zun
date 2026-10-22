@@ -1668,7 +1668,7 @@ impl Translator<'_> {
                     // managed receivers/arguments visible before the call,
                     // regardless of whether the helper currently allocates.
                     for &(value, kind) in &args {
-                        if kind == JitKind::Object {
+                        if matches!(kind, JitKind::Object | JitKind::String) {
                             self.builder.declare_value_needs_stack_map(value);
                         }
                     }
@@ -1735,7 +1735,7 @@ impl Translator<'_> {
                     let values: Vec<Value> = args.iter().map(|(value, _)| *value).collect();
                     let inst = self.builder.ins().call(fref, &values);
                     let result = self.builder.inst_results(inst)[0];
-                    if result_kind == JitKind::Object {
+                    if matches!(result_kind, JitKind::Object | JitKind::String) {
                         self.builder.declare_value_needs_stack_map(result);
                     }
                     stack.push((result, result_kind));
