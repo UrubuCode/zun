@@ -430,6 +430,7 @@ single-statement `break` and `continue` branches preserve labels and spans;
 single-statement `while` branches reuse the existing loop lowering;
 single-statement `do while` branches reuse the existing loop lowering;
 single-statement `for` branches reuse the existing loop lowering;
+single-statement `for...of` branches reuse the existing loop lowering;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.

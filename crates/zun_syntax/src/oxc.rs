@@ -292,6 +292,32 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 }],
             })
         }
+        Statement::ForOfStatement(for_of_statement) => {
+            if for_of_statement.r#await {
+                return Err("OXC adapter does not support await in for-of loops yet".into());
+            }
+            let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left else {
+                return Err("OXC adapter supports identifier for-of bindings only".into());
+            };
+            if declaration.declarations.len() != 1 {
+                return Err("OXC adapter supports one for-of binding".into());
+            }
+            let declarator = &declaration.declarations[0];
+            let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                return Err("OXC adapter supports identifier for-of bindings only".into());
+            };
+            Ok(Block {
+                span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
+                statements: vec![Stmt::ForOf {
+                    name: Name {
+                        span: Span::new(identifier.span.start, identifier.span.end),
+                    },
+                    iterable: convert_expression(&for_of_statement.right)?,
+                    body: convert_if_branch(source, &for_of_statement.body)?,
+                    span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
+                }],
+            })
+        }
         _ => Err("OXC adapter requires a supported statement branch".into()),
     }
 }
@@ -1563,6 +1589,22 @@ mod tests {
                 then_block: ref block,
                 ..
             } if matches!(block.statements.first(), Some(crate::ast::Stmt::For { .. }))
+        ));
+    }
+
+    #[test]
+    fn converts_single_statement_for_of_branch() {
+        let program = parse_subset(
+            "function main(values, flag) { if (flag) for (let value of values) break; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::If {
+                then_block: ref block,
+                ..
+            } if matches!(block.statements.first(), Some(crate::ast::Stmt::ForOf { .. }))
         ));
     }
 
