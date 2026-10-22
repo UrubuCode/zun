@@ -2481,20 +2481,35 @@ pub fn compile_object_for_target(
 /// exported symbol. The AOT linker can include this object alongside native
 /// code so the fallback interpreter has the original IL available at runtime.
 pub fn compile_metadata_object(module_bytes: &[u8]) -> Result<Vec<u8>, JitError> {
+    compile_metadata_object_for_target(module_bytes, target_lexicon::Triple::host())
+}
+
+/// Emit the embedded module data object for an explicitly selected target.
+pub fn compile_metadata_object_for_target(
+    module_bytes: &[u8],
+    target: target_lexicon::Triple,
+) -> Result<Vec<u8>, JitError> {
     use object::write::{Object, Symbol, SymbolSection};
     use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
 
-    let format = if cfg!(windows) {
-        BinaryFormat::Coff
-    } else if cfg!(target_os = "macos") {
-        BinaryFormat::MachO
-    } else {
-        BinaryFormat::Elf
+    let format = match target.binary_format {
+        target_lexicon::BinaryFormat::Coff => BinaryFormat::Coff,
+        target_lexicon::BinaryFormat::Macho => BinaryFormat::MachO,
+        target_lexicon::BinaryFormat::Elf => BinaryFormat::Elf,
+        _ => {
+            return Err(JitError::UnsupportedHost(format!(
+                "unsupported metadata object format for target {target}"
+            )))
+        }
     };
-    let architecture = if cfg!(target_arch = "aarch64") {
-        Architecture::Aarch64
-    } else {
-        Architecture::X86_64
+    let architecture = match target.architecture {
+        target_lexicon::Architecture::X86_64 => Architecture::X86_64,
+        target_lexicon::Architecture::Aarch64(_) => Architecture::Aarch64,
+        _ => {
+            return Err(JitError::UnsupportedHost(format!(
+                "unsupported metadata object architecture for target {target}"
+            )))
+        }
     };
     let mut object = Object::new(format, architecture, Endianness::Little);
     let section = object.add_section(Vec::new(), b".zun_meta".to_vec(), SectionKind::ReadOnlyData);

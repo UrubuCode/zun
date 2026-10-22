@@ -5681,6 +5681,19 @@ fn aot_object_can_select_aarch64_target_isa() {
 }
 
 #[test]
+fn aot_metadata_object_can_select_aarch64_target_format() {
+    use object::Object as _;
+    let target = "aarch64-unknown-linux-gnu"
+        .parse::<target_lexicon::Triple>()
+        .expect("parse AArch64 target");
+    let object = zun_codegen::compile_metadata_object_for_target(b"ZUN-IL", target)
+        .expect("emit AArch64 metadata object");
+    let file = object::File::parse(object.as_slice()).expect("parse metadata object");
+    assert_eq!(file.architecture(), object::Architecture::Aarch64);
+    assert_eq!(file.format(), object::BinaryFormat::Elf);
+}
+
+#[test]
 fn aot_rejects_an_ineligible_entry_before_linking() {
     let module = compile(
         "function main(): string { if (true) { return \"managed\"; } return \"fallback\"; }",
