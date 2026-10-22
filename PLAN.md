@@ -768,7 +768,8 @@ The following runtime contracts are implemented and covered by tests:
   without exposing compiler or AST types, with typed integer, floating-point,
   boolean, and UTF-8 string result APIs plus size-query string copying.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
-  `runI64`, `runF64`, `runBool`, and `runString` ArrayBuffer/Buffer-backed
+  `runI64`, `runU64` (as JavaScript `BigInt`), `runF64`, `runBool`, and
+  `runString` ArrayBuffer/Buffer-backed
   JavaScript functions. Invalid input and VM/type failures become JavaScript
   TypeErrors. Linking the shared library requires the host's N-API import
   library through `ZUN_NODE_LIB` on platforms that require explicit symbol
