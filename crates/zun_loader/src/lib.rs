@@ -46,6 +46,34 @@ impl TrustedKeySet {
     fn contains(&self, key: &[u8; 32]) -> bool {
         self.keys.iter().any(|trusted| trusted == key)
     }
+
+    /// Return the next trusted set after applying signed-index rotation data.
+    /// The signed envelope VERSION selects the rotation schema; callers replace
+    /// the set only after authenticating that signed index.
+    pub fn rotate(
+        &self,
+        additions: impl IntoIterator<Item = [u8; 32]>,
+        revocations: impl IntoIterator<Item = [u8; 32]>,
+    ) -> Result<Self, LoadError> {
+        let revoked: Vec<_> = revocations.into_iter().collect();
+        let mut keys: Vec<_> = self
+            .keys
+            .iter()
+            .copied()
+            .filter(|key| !revoked.contains(key))
+            .collect();
+        for key in additions {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        Self::new(keys)
+    }
+
+    /// Return a new set with one key revoked.
+    pub fn revoke(&self, key: [u8; 32]) -> Result<Self, LoadError> {
+        self.rotate([], [key])
+    }
 }
 
 impl ContentId {
@@ -1977,6 +2005,17 @@ mod tests {
         .unwrap();
         let trusted = TrustedKeySet::new([[23u8; 32]]).unwrap();
         assert!(signed.verify_with_keys(&trusted).is_err());
+    }
+
+    #[test]
+    fn trusted_key_set_valid_rotation_and_invalid_empty_revocation() {
+        let old = [41u8; 32];
+        let next = [42u8; 32];
+        let trusted = TrustedKeySet::new([old]).unwrap();
+        let rotated = trusted.rotate([next], [old]).unwrap();
+        assert!(!rotated.contains(&old));
+        assert!(rotated.contains(&next));
+        assert!(rotated.revoke(next).is_err());
     }
 
     #[test]
