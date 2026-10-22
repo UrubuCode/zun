@@ -549,7 +549,12 @@ fn out_path(source: &Path) -> PathBuf {
 fn resolve_lld() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ZUN_LLD") {
         let path = PathBuf::from(path);
-        return path.is_file().then_some(path);
+        if !path.as_os_str().is_empty() {
+            // An explicit override is authoritative. Let the linker
+            // invocation report a stale path instead of silently selecting a
+            // different linker and violating the external-LLD contract.
+            return Some(path);
+        }
     }
     let path_candidates = if cfg!(windows) {
         ["lld-link.exe", "ld.lld.exe", "lld.exe"]
