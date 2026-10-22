@@ -276,4 +276,26 @@ mod tests {
             .expect_err("mixed direct ABI must require a marshalling stub");
         assert!(error.contains("unsupported direct FFI signature"));
     }
+
+    #[test]
+    fn string_metadata_is_checked_before_native_resolution() {
+        let mut hook = NativeCallHook::new();
+        hook.register(
+            "missing",
+            "echo",
+            FfiSignature::new([FfiScalar::String], FfiScalar::String).with_string_return(
+                crate::FfiStringReturn::OutBuffer { capacity: 16 },
+            ),
+        );
+        let result = hook
+            .try_call_external_typed(
+                "missing",
+                "echo",
+                &[1, 4, 4],
+                &[Value::Str(std::rc::Rc::from("input"))],
+            )
+            .expect("registered string export must be intercepted")
+            .expect_err("the missing library should fail after metadata validation");
+        assert!(!result.to_string().contains("metadata signature"));
+    }
 }
