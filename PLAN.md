@@ -221,6 +221,9 @@ verification is limited to signature parsing during envelope construction.
 no insecure self-declared-key fallback.
 `TrustedKeySet::rotate`/`revoke` provide the key-set transition hooks selected by
 the signed-index `VERSION` policy.
+Signed registry indexes now carry an authenticated version-2 rotation payload;
+the loader derives the successor trusted set only after verifying the current
+trusted signer, while version-1 indexes remain readable.
 
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
