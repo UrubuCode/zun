@@ -5259,8 +5259,8 @@ fn template_literals_parse_expression_interpolations() {
 fn bigint_operations_preserve_the_tier0_fallback_boundary() {
     let module = compile(
         r#"function main(): int {
-            let left: BigInt = new BigInt("10000000000000000000");
-            let right: BigInt = new BigInt("2");
+            let left: BigInt = 10000000000000000000n;
+            let right: BigInt = 2n;
             let product: BigInt = left * right;
             let negated: BigInt = -left;
             let quotient: BigInt = product / right;
