@@ -163,6 +163,86 @@ pub fn compile_prelude() -> Result<(u64, Module), Vec<Diagnostic>> {
     Ok((zun_prelude::fingerprint(), module))
 }
 
+/// Errors returned by the standalone prelude cache envelope.
+#[derive(Debug)]
+pub enum PreludeCacheError {
+    /// The cache file could not be read or written.
+    Io(std::io::Error),
+    /// The cache envelope or embedded `.zm` module is invalid.
+    Invalid(String),
+    /// The cache was built from a different prelude source.
+    Stale { expected: u64, found: u64 },
+}
+
+impl core::fmt::Display for PreludeCacheError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "prelude cache I/O failed: {error}"),
+            Self::Invalid(detail) => write!(f, "invalid prelude cache: {detail}"),
+            Self::Stale { expected, found } => write!(
+                f,
+                "stale prelude cache: expected {expected:#x}, found {found:#x}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PreludeCacheError {}
+
+const PRELUDE_CACHE_MAGIC: [u8; 4] = *b"ZPRC";
+const PRELUDE_CACHE_VERSION: u16 = 1;
+
+/// Persist the compiled prelude as a versioned cache envelope.
+pub fn write_prelude_cache(
+    path: impl AsRef<std::path::Path>,
+) -> Result<u64, PreludeCacheError> {
+    let (fingerprint, module) = compile_prelude().map_err(|diagnostics| {
+        PreludeCacheError::Invalid(
+            diagnostics
+                .into_iter()
+                .map(|diagnostic| diagnostic.message)
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    })?;
+    let payload = module.write();
+    let mut bytes = Vec::with_capacity(4 + 2 + 8 + 4 + payload.len());
+    bytes.extend_from_slice(&PRELUDE_CACHE_MAGIC);
+    bytes.extend_from_slice(&PRELUDE_CACHE_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&fingerprint.to_le_bytes());
+    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&payload);
+    std::fs::write(path, bytes).map_err(PreludeCacheError::Io)?;
+    Ok(fingerprint)
+}
+
+/// Read a prelude cache and reject it unless it matches the current source.
+pub fn read_prelude_cache(
+    path: impl AsRef<std::path::Path>,
+) -> Result<Module, PreludeCacheError> {
+    let bytes = std::fs::read(path).map_err(PreludeCacheError::Io)?;
+    if bytes.len() < 18 || bytes[..4] != PRELUDE_CACHE_MAGIC {
+        return Err(PreludeCacheError::Invalid("bad cache header".into()));
+    }
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version > PRELUDE_CACHE_VERSION {
+        return Err(PreludeCacheError::Invalid(format!(
+            "unsupported cache version {version}"
+        )));
+    }
+    let found = u64::from_le_bytes(bytes[6..14].try_into().unwrap());
+    let expected = zun_prelude::fingerprint();
+    if found != expected {
+        return Err(PreludeCacheError::Stale { expected, found });
+    }
+    let length = u32::from_le_bytes(bytes[14..18].try_into().unwrap()) as usize;
+    let payload = bytes
+        .get(18..18 + length)
+        .ok_or_else(|| PreludeCacheError::Invalid("truncated module payload".into()))?;
+    zun_module::Module::read(payload)
+        .map_err(|error| PreludeCacheError::Invalid(error.to_string()))
+}
+
 fn compile_source_with_externals(
     source: &str,
     external_functions: &[zun_sema::check::ExternalFunction],
@@ -438,6 +518,30 @@ mod tests {
             .method_defs
             .iter()
             .any(|method| module.strings.get(method.name) == "clamp"));
+    }
+
+    #[test]
+    fn prelude_cache_roundtrips_and_rejects_stale_fingerprints() {
+        let path = std::env::temp_dir().join(format!(
+            "zun-prelude-cache-{}-{}.zprc",
+            std::process::id(),
+            zun_prelude::fingerprint()
+        ));
+        write_prelude_cache(&path).expect("write prelude cache");
+        let module = read_prelude_cache(&path).expect("read prelude cache");
+        assert!(module
+            .tables
+            .method_defs
+            .iter()
+            .any(|method| module.strings.get(method.name) == "clamp"));
+        let mut stale = std::fs::read(&path).expect("read cache bytes");
+        stale[6] ^= 1;
+        std::fs::write(&path, stale).expect("write stale cache");
+        assert!(matches!(
+            read_prelude_cache(&path),
+            Err(PreludeCacheError::Stale { .. })
+        ));
+        std::fs::remove_file(path).expect("remove cache");
     }
 
     #[test]
