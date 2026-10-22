@@ -1411,6 +1411,11 @@ Five further ideas, each measured in an isolated worktree before being recorded
 (`#2`/`#4` on the real pipeline; `#1`/`#3`/`#5` on optimizer-resistant models).
 Ranked by payoff:
 
+The generational nursery row below is now an implementation record, not an
+open opportunity: the nursery, remembered set, evacuating minor collection,
+forwarding, and root rewriting are complete. Only card-table scaling and a
+fully incremental major collector remain deferred.
+
 | Idea | measurement | verdict |
 |---|---|---|
 | **Generational GC (nursery)** | full mark-sweep is O(n²) over a run (4× N → **16×** time); a nursery that scans only the young is **~22× faster** at N=40k and the gap grows with N | **highest** — the real ceiling (§7.2); a gen0 with bump alloc + cheap minor GC (doc 09/01, 09/03) is the fix, not just the adaptive interval |
