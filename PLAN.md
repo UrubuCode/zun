@@ -406,6 +406,10 @@ imports, constructor calls, templates, conditional/null expressions, and named
 classes with identifier heritage, fields, simple methods, getter/setter kinds,
 optional members, computed member reads, member assignments, private members,
 optional method calls, exported and named default function/class declarations,
+namespace imports with compile-time native/source-module member resolution,
+optional computed members and optional indirect calls through null-safe Tier 0
+branches, and initialized class fields lowered into declaration-order constructor
+arguments without changing frozen layouts,
 unchanged local export lists, spread arguments,
 await/yield expressions, `this` member access, parentheses,
 TypeScript casts, satisfies/non-null assertions, default parameters, rest parameters,
