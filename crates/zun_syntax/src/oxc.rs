@@ -19,6 +19,37 @@ use zun_common::Span;
 
 use crate::ast::{BinaryOp, Block, Expr, Function, Name, Program, Stmt};
 
+fn convert_type_annotation(
+    source: &str,
+    annotation: Option<&oxc_ast::ast::TSTypeAnnotation<'_>>,
+) -> Result<Option<crate::ast::TypeAnnotation>, String> {
+    let Some(annotation) = annotation else {
+        return Ok(None);
+    };
+    let start = annotation.span.start as usize;
+    let end = annotation.span.end as usize;
+    let raw = source
+        .get(start..end)
+        .ok_or_else(|| "OXC adapter received an invalid type span".to_owned())?;
+    let type_start = raw
+        .find(|character: char| !character.is_ascii_whitespace() && character != ':')
+        .ok_or_else(|| "OXC adapter received an empty type annotation".to_owned())?;
+    let type_text = raw[type_start..].trim();
+    if type_text.is_empty()
+        || !type_text
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err("OXC adapter supports named TypeScript types only".into());
+    }
+    let name_start = start + type_start;
+    Ok(Some(crate::ast::TypeAnnotation {
+        name: Name {
+            span: Span::new(name_start as u32, (name_start + type_text.len()) as u32),
+        },
+    }))
+}
+
 fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match argument {
@@ -612,7 +643,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 name: Name {
                                     span: Span::new(identifier_span.start, identifier_span.end),
                                 },
-                                ty: None,
+                                ty: convert_type_annotation(source, parameter.type_annotation.as_deref())
+                                .map_err(|error| vec![error])?,
                                 default_value: parameter
                                     .initializer
                                     .as_ref()
@@ -644,7 +676,11 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 span: Span::new(identifier.span.start, identifier.span.end),
                             },
                             params,
-                            return_type: None,
+                            return_type: convert_type_annotation(
+                                source,
+                                method.value.return_type.as_deref(),
+                            )
+                            .map_err(|error| vec![error])?,
                             is_extern: false,
                             is_static: method.r#static,
                             accessor: match method.kind {
@@ -906,7 +942,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 name: Name {
                     span: span(identifier_span),
                 },
-                ty: None,
+                ty: convert_type_annotation(source, parameter.type_annotation.as_deref())
+                .map_err(|error| vec![error])?,
                 default_value: parameter
                     .initializer
                     .as_ref()
@@ -933,7 +970,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         functions.push(Function {
             name: Name { span: span(id.span) },
             params,
-            return_type: None,
+            return_type: convert_type_annotation(source, function.return_type.as_deref())
+                .map_err(|error| vec![error])?,
             is_extern: false,
             is_static: false,
             accessor: None,
@@ -957,6 +995,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{diagnostics, parse_subset, parses};
+    use zun_common::Span;
 
     #[test]
     fn parses_standard_typescript_without_using_zun_ast() {
@@ -1437,5 +1476,14 @@ mod tests {
     fn converts_rest_parameters() {
         let program = parse_subset("function collect(...values) { return values; }", false).unwrap();
         assert!(program.functions[0].params[0].is_rest);
+    }
+
+    #[test]
+    fn converts_named_typescript_function_types() {
+        let source = "function add(value: int): int { return value; }";
+        let program = parse_subset(source, true).unwrap();
+        let function = &program.functions[0];
+        assert_eq!(function.params[0].ty.as_ref().unwrap().name.span, Span::new(20, 23));
+        assert_eq!(function.return_type.as_ref().unwrap().name.span, Span::new(26, 29));
     }
 }
