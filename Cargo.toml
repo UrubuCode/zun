@@ -20,7 +20,6 @@ members = [
     "crates/zun_compiler",
     "crates/zun_loader",
     "crates/zun_types",
-    "crates/zun_napi",
 ]
 
 [workspace.dependencies]

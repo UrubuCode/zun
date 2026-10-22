@@ -12,7 +12,8 @@
 //! **Dispatch ids are positions, not hand-written numbers.** A function's id is
 //! its index in the flattened registry ([`MODULES`] in order). Appending a
 //! function keeps every existing id stable; nothing is numbered by hand, so ids
-//! can never collide. `zun_node` and `zun_napi` will be organized the same way.
+//! can never collide. Extension modules such as `zun_node` will be organized
+//! the same way.
 
 mod buffer;
 mod collections;
