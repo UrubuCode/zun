@@ -776,12 +776,14 @@ The following runtime contracts are implemented and covered by tests:
   reinterpreting one ABI as the other; the Node `runU64` export returns a JS
   `BigInt`.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
-  `runI64`, `runU64` (as JavaScript `BigInt`), `runF64`, `runBool`, and
-  `runString` ArrayBuffer/Buffer-backed
-  JavaScript functions. Invalid input and VM/type failures become JavaScript
-  TypeErrors. Linking the shared library requires the host's N-API import
-  library through `ZUN_NODE_LIB` on platforms that require explicit symbol
-  imports.
+  `runI64`, `runI64BigInt`, `runU64` (as JavaScript `BigInt`), `runF64`,
+  `runBool`, and `runString` ArrayBuffer/Buffer-backed JavaScript functions.
+  Signed and unsigned integer entry points preserve their declared ZIL numeric
+  kind; the BigInt variants avoid JavaScript Number precision loss. Invalid
+  input and VM/type failures become JavaScript TypeErrors. This is the current
+  minimal embedding surface, not the production Node integration gate. Linking
+  the shared library requires the host's N-API import library through
+  `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
 - Typed scalar FFI calls are exercised against a real Windows system library;
   logical-library candidate resolution, aggregated load errors, and an
   absolute-path policy are implemented. `FfiSignature` now describes the
