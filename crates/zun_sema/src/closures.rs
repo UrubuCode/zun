@@ -463,6 +463,7 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Number { .. }
+            | ast::Expr::BigInt { .. }
             | ast::Expr::String { .. }
             | ast::Expr::Bool { .. }
             | ast::Expr::Null { .. } => {}
