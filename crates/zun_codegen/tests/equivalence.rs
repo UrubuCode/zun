@@ -4884,14 +4884,35 @@ fn proven_i64_array_access_uses_the_signed_i64_abi() {
 }
 
 #[test]
-fn narrow_i16_array_access_keeps_the_interpreter_fallback() {
+fn narrow_i16_array_access_is_jit_equivalent() {
     let src = "function write(values: Array, value: i16): i16 { values[0] = value; return values[0] as i16; }\n\
                function main(): i16 { let values = new Array(1); return write(values, -12); }";
     let module = compile(src);
     let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "write").map(|index| index as u32 + 1).expect("write method");
-    let jit = zun_codegen::Jit::compile(&module).expect("narrow fallback module remains valid");
-    assert!(!jit.is_compiled(rid));
+    let jit = zun_codegen::Jit::compile(&module).expect("narrow array module remains valid");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let value = jit.call_packed_with_heap(rid, &[array.addr() as u64, (-12i64) as u64], &mut heap)
+        .expect("narrow array JIT call");
+    assert_eq!(value as i64, -12);
     assert!(matches!(interp_entry(&module), Value::Int(-12, zun_il::NumKind::I16)));
+}
+
+#[test]
+fn narrow_i8_array_access_is_jit_equivalent() {
+    let src = "function write(values: Array, value: i8): i8 { values[0] = value; return values[0] as i8; }\n\
+               function main(): i8 { let values = new Array(1); return write(values, -7); }";
+    let module = compile(src);
+    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "write").map(|index| index as u32 + 1).expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("narrow array module remains valid");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let value = jit.call_packed_with_heap(rid, &[array.addr() as u64, (-7i64) as u64], &mut heap)
+        .expect("narrow array JIT call");
+    assert_eq!(value as i64, -7);
+    assert!(matches!(interp_entry(&module), Value::Int(-7, zun_il::NumKind::I8)));
 }
 
 #[test]
