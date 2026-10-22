@@ -92,6 +92,18 @@ fn bigint_comparison_operators_use_the_managed_floor() {
 }
 
 #[test]
+fn bigint_unary_negation_uses_the_managed_floor() {
+    let out = run_source(
+        r#"function main(): int {
+            let value: BigInt = new BigInt("7");
+            print((-value).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["-7"]);
+}
+
+#[test]
 fn arithmetic_and_locals() {
     let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);

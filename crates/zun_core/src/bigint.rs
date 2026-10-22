@@ -70,6 +70,12 @@ impl BigInt {
         self.add(&negated)
     }
 
+    pub fn neg(&self) -> Self {
+        let mut value = self.clone();
+        if !value.is_zero() { value.negative = !value.negative; }
+        value
+    }
+
     pub fn mul(&self, other: &Self) -> Self {
         let mut limbs = vec![0u32; self.limbs.len() + other.limbs.len()];
         for (i, &left) in self.limbs.iter().enumerate() {

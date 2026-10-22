@@ -1188,6 +1188,18 @@ impl Checker<'_> {
                     }
                 }
                 let operand = self.check_expr(cx, operand);
+                if *op == ast::UnaryOp::Neg && operand.ty == Ty::BigInt {
+                    if let Some((id, native)) = zun_natives::resolve("zun:collections", "bigIntNeg") {
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![operand],
+                            },
+                            ty: native_ty(native.ret),
+                            span,
+                        };
+                    }
+                }
                 let ty = match op {
                     // Negation keeps the operand's numeric type; `!` needs bool.
                     ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => operand.ty,

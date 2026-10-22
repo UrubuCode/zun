@@ -940,6 +940,13 @@ impl<'a> Interp<'a> {
                     Ok(Value::Object(object))
                 }
             }
+            "bigIntNeg" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
+                    .ok_or(RunError::BadToken)?;
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value.neg()));
+                Ok(Value::Object(object))
+            }
             "bigIntToString" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
