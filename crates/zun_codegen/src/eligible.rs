@@ -116,6 +116,8 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "mapSetI32"
                 | "mapGetI64Or"
                 | "setAddI32"
+                | "mapDeleteI32"
+                | "setDeleteI32"
                 | "bufferLength"
                 | "bufferGetU8"
                 | "bufferReadU32"
