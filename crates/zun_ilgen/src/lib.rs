@@ -1130,6 +1130,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let token = Token::new(TableKind::MethodDef, *func + 1);
                 self.emit(Instruction::new(Opcode::CallVirt, Operand::Token(token)));
             }
+            ExprKind::StaticCall { func, args } => {
+                for a in args {
+                    self.expr(a);
+                }
+                let token = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(Opcode::Call, Operand::Token(token)));
+            }
             ExprKind::MethodCallRest { func, args } => {
                 for a in args {
                     self.expr(a);

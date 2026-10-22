@@ -645,6 +645,16 @@ pub enum ExprKind {
         /// Arguments, with the receiver (`this`) first.
         args: Vec<Expr>,
     },
+    /// Invoke a class-static method without an implicit receiver.
+    ///
+    /// This node is reserved for the static-member lowering pass; the current
+    /// source grammar does not construct it yet.
+    StaticCall {
+        /// Statically resolved method index.
+        func: FuncIndex,
+        /// Arguments in declaration order, excluding `this`.
+        args: Vec<Expr>,
+    },
     /// Virtually invoke a method whose trailing parameter is variadic.
     MethodCallRest {
         /// Statically resolved method index.
