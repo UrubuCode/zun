@@ -338,7 +338,8 @@ and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
 `.zmlib` package envelope is now implemented, including optional per-module type
 declaration payloads authenticated by `<module>.d.ts` lock entries; debug information
-remains embedded in each `.zm` module. The former
+remains embedded in each `.zm` module. Declaration lock entries are excluded from
+executable `.zm` cache verification. The former
 `zun_napi` Node embedding crate has been removed (out of scope).
 The AOT launcher now resolves an explicit `ZUN_LLD` override or the active
 toolchain's `rust-lld` and passes it to the external final link step when available.
