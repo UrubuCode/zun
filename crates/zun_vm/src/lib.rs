@@ -43,6 +43,27 @@ pub unsafe extern "C" fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i6
     }
 }
 
+/// Unsigned counterpart to [`zun_rt_run_embedded_i64`] for AOT entrypoints
+/// whose declared result is `u8`/`u16`/`u32`/`u64`.
+#[no_mangle]
+pub unsafe extern "C" fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u64 {
+    if ptr.is_null() {
+        return u64::MAX;
+    }
+    let Ok(len) = usize::try_from(len) else {
+        return u64::MAX;
+    };
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match execute(bytes) {
+        Ok(Value::Int(value, kind))
+            if kind.int_parts().is_some_and(|(_, signed)| !signed) =>
+        {
+            value as u64
+        }
+        _ => u64::MAX,
+    }
+}
+
 pub use ffi::{
     library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
     FfiStringReturn, NativeLibrary,

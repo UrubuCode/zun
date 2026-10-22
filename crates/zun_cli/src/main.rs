@@ -392,10 +392,16 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                         eprintln!("zun: warning: cannot write fallback metadata object: {error}");
                                                     } else {
                                                         let executable_out = out.with_extension("exe");
+                                                        let return_kind = module.entry_point.and_then(|token| {
+                                                            module.tables.method_defs.get(token.rid() as usize - 1)
+                                                                .and_then(|method| zun_module::read_body(&module.code, method.body_offset).ok())
+                                                                .map(|body| body.return_kind)
+                                                        });
                                                         match link_aot_fallback(
                                                             &metadata_out,
                                                             &runtime,
                                                             &executable_out,
+                                                            return_kind,
                                                         ) {
                                                             Ok(()) => println!("wrote {}", executable_out.display()),
                                                             Err(error) => eprintln!("zun: warning: cannot link interpreter fallback: {error}"),
@@ -626,9 +632,27 @@ fn link_aot_executable(
 /// Link an interpreter-backed AOT launcher for a method that cannot be lowered
 /// to native code. The embedded metadata object supplies the original `.zm`
 /// bytes and the static runtime supplies the Tier 0 entrypoint.
-fn link_aot_fallback(metadata: &Path, runtime: &Path, executable: &Path) -> Result<(), String> {
+fn link_aot_fallback(
+    metadata: &Path,
+    runtime: &Path,
+    executable: &Path,
+    return_kind: Option<u8>,
+) -> Result<(), String> {
     let launcher = executable.with_extension("aot.rs");
-    let source = "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_i64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value < 0 { std::process::exit(1); } println!(\"{}\", value); } }\n";
+    let unsigned = matches!(
+        return_kind.map(zun_il::JitKind::from_byte),
+        Some(zun_il::JitKind::Num(
+            zun_il::NumKind::U8
+                | zun_il::NumKind::U16
+                | zun_il::NumKind::U32
+                | zun_il::NumKind::U64
+        ))
+    );
+    let source = if unsigned {
+        "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_u64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value == u64::MAX { std::process::exit(1); } println!(\"{}\", value); } }\n"
+    } else {
+        "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_i64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value < 0 { std::process::exit(1); } println!(\"{}\", value); } }\n"
+    };
     std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
     let mut command = Command::new("rustc");
     command
