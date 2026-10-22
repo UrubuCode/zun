@@ -45,6 +45,8 @@ pub struct FieldDef {
     /// Whether the field belongs to type storage rather than an instance.
     /// The metadata writer stores this flag in the high bit of the kind word.
     pub is_static: bool,
+    /// Whether the field is private to its declaring type.
+    pub is_private: bool,
 }
 
 /// A method defined in this module.
@@ -223,12 +225,14 @@ mod tests {
             signature: BlobIndex(0),
             kind: 0,
             is_static: false,
+            is_private: false,
         });
         let f1 = t.add_field_def(FieldDef {
             name: StringIndex(2),
             signature: BlobIndex(0),
             kind: 0,
             is_static: true,
+            is_private: false,
         });
         let ty = t.add_type_def(TypeDef {
             name: StringIndex(3),

@@ -22,6 +22,7 @@ fn sample_module() -> Module {
         signature: field_sig,
         kind: 2, // i32
         is_static: true,
+        is_private: true,
     });
 
     // The method body starts at code offset 0.

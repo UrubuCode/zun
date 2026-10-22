@@ -2043,6 +2043,7 @@ mod method_tests {
             signature: zun_metadata::BlobIndex(0),
             kind: zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
             is_static: false,
+            is_private: false,
         });
         let environment_type = module.tables.add_type_def(TypeDef {
             name: module.strings.intern("ClosureEnvironment"),
@@ -4449,7 +4450,7 @@ mod method_tests {
         let mut module = zun_module::Module::new();
         let field = module.tables.add_field_def(FieldDef {
             name: module.strings.intern("counter"), signature: zun_metadata::BlobIndex(0),
-            kind: zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(), is_static: true,
+            kind: zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(), is_static: true, is_private: false,
         });
         module.tables.add_type_def(TypeDef {
             name: module.strings.intern("Globals"), namespace: zun_metadata::StringIndex(0),

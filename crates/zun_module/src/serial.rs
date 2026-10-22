@@ -28,7 +28,7 @@ pub fn write_tables(tables: &Tables) -> Vec<u8> {
         ]);
     });
     write_table(&mut out, &tables.field_defs, |w, r| {
-        let kind = r.kind as u32 | (u32::from(r.is_static) << 7);
+        let kind = r.kind as u32 | (u32::from(r.is_private) << 6) | (u32::from(r.is_static) << 7);
         w.extend([r.name.0, r.signature.0, kind]);
     });
     write_table(&mut out, &tables.method_defs, |w, r| {
@@ -70,8 +70,9 @@ pub fn read_tables(bytes: &[u8]) -> Result<Tables, ReadError> {
         Ok(FieldDef {
             name,
             signature,
-            kind: encoded_kind & 0x7f,
+            kind: encoded_kind & 0x3f,
             is_static: encoded_kind & 0x80 != 0,
+            is_private: encoded_kind & 0x40 != 0,
         })
     })?;
     tables.method_defs = r.read_table(|r| {
