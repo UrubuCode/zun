@@ -24,9 +24,11 @@ pub extern "C" fn zun_rt_init() {}
 #[no_mangle]
 pub extern "C" fn zun_rt_shutdown() {}
 
-/// Execute an embedded module through the Tier 0 fallback and return a scalar
-/// integer/boolean result for a generated AOT launcher. A negative result
-/// reports load, verification, execution, or unsupported-result failure.
+/// Execute an embedded module through the Tier 0 fallback and return its raw
+/// signed integer/boolean payload for a generated AOT launcher. Invalid input,
+/// execution failure, or an unsupported result also uses `-1`; callers for a
+/// declared signed-integer result must therefore treat the return value as
+/// payload, while the boolean launcher separately rejects negative failures.
 #[no_mangle]
 pub unsafe extern "C" fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64 {
     if ptr.is_null() {
