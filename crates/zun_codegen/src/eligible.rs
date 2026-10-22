@@ -370,8 +370,9 @@ fn scalar_i64_array_access_only(
         ))
         && instrs.iter().all(|instruction| matches!(
             instruction.opcode,
-            Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::Conv
-                | Opcode::UnboxAny | Opcode::BoxAny | Opcode::Pop | Opcode::LoadLocal
+            Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::ConstF64 | Opcode::Conv
+                | Opcode::UnboxAny | Opcode::BoxAny | Opcode::AddI32 | Opcode::CmpLt
+                | Opcode::Branch | Opcode::BranchFalse | Opcode::Dup | Opcode::Pop | Opcode::LoadLocal
                 | Opcode::StoreLocal | Opcode::NewArray | Opcode::LoadArray
                 | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret
         ))
@@ -388,9 +389,10 @@ fn scalar_i32_array_access_only(
         })
         && instrs.iter().all(|instruction| {
             matches!(instruction.opcode,
-                Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::Conv
-                    | Opcode::UnboxAny | Opcode::BoxAny
-                    | Opcode::Pop | Opcode::LoadLocal | Opcode::StoreLocal
+                Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::ConstF64 | Opcode::Conv
+                    | Opcode::UnboxAny | Opcode::BoxAny | Opcode::AddI32 | Opcode::CmpLt
+                    | Opcode::Branch | Opcode::BranchFalse
+                    | Opcode::Dup | Opcode::Pop | Opcode::LoadLocal | Opcode::StoreLocal
                     | Opcode::NewArray | Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret)
         })
 }
@@ -694,6 +696,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             )
             && !scalar_bool_array_access_only(&instrs, &body)
             && !scalar_u64_array_access_only(&instrs, &body)
+            && !scalar_i32_array_access_only(&instrs, &body)
             && !scalar_i64_array_access_only(&instrs, &body)
             && !scalar_f64_array_access_only(&instrs, &body)
             && !scalar_array_length_only(&instrs, &body)

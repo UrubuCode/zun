@@ -4790,6 +4790,21 @@ fn narrow_i16_array_access_keeps_the_interpreter_fallback() {
 }
 
 #[test]
+fn i32_array_loop_is_jit_equivalent() {
+    let src = "function main(): i32 { let values = new Array(1); values[0] = 0; let i: i32 = 0; while (i < 4) { values[0] = (values[0] as i32) + 1; i = i + 1; } return values[0] as i32; }";
+    let module = compile(src);
+    let body = zun_module::read_body(&module.code, module.tables.method_defs[0].body_offset).unwrap();
+    let opcodes: Vec<_> = zun_il::decode_all(body.code).unwrap().iter().map(|instruction| instruction.opcode).collect();
+    assert!(zun_codegen::eligible_methods(&module).contains(&1), "opcodes: {opcodes:?}");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 array loop");
+    let mut heap = zun_gc::Heap::new();
+    let jit_value = jit.call_entry_with_heap(1, &mut heap).expect("jit array loop");
+    let RetVal::Int(jit_value) = jit_value else { panic!("unexpected JIT result") };
+    assert_eq!(jit_value, 4);
+    assert!(matches!(interp_entry(&module), Value::Int(4, _)));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
