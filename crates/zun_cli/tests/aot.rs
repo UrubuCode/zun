@@ -38,6 +38,42 @@ fn build_can_persist_a_valid_prelude_cache() {
 }
 
 #[test]
+fn build_rejects_a_stale_prelude_cache_before_emitting_module() {
+    let root = std::env::temp_dir().join(format!(
+        "zun-prelude-cache-stale-cli-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    let cache = root.join("prelude.zprc");
+    std::fs::write(&source, "function main(): int { return 7; }\n").expect("write source");
+    zun_compiler::write_prelude_cache(&cache).expect("write valid cache");
+    let mut bytes = std::fs::read(&cache).expect("read cache");
+    bytes[6] ^= 1;
+    std::fs::write(&cache, bytes).expect("write stale cache");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build", "--prelude-cache"])
+        .arg(&cache)
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("stale"));
+    assert!(!source.with_extension("zm").exists());
+
+    for path in [
+        source.clone(),
+        source.with_extension("zm"),
+        source.with_extension("zman"),
+        cache,
+    ] {
+        let _ = std::fs::remove_file(path);
+    }
+    let _ = std::fs::remove_dir(root);
+}
+
+#[test]
 fn build_aot_writes_fallback_module_manifest_and_object() {
     let root = std::env::temp_dir().join(format!("zun-aot-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
