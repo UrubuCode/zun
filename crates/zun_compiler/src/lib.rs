@@ -733,6 +733,17 @@ mod tests {
     }
 
     #[test]
+    fn compiles_native_oxc_try_catch_finally_with_dynamic_catch() {
+        let module = compile_with_oxc(
+            "function main(value: int): int { try { throw value; } catch (error) { return 7; } finally { debugger; } return value; }",
+            true,
+        )
+        .expect("OXC try/catch/finally should compile with a dynamic catch");
+        assert!(module.entry_point.is_some());
+        assert!(!module.code.is_empty());
+    }
+
+    #[test]
     fn compiles_an_independent_module_without_the_implicit_prelude() {
         let module = compile_without_prelude("function main(): int { return 42; }", &[])
             .expect("standalone module should compile");

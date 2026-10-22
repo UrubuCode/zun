@@ -37,6 +37,7 @@ pub(crate) fn route_exception(
                 (Some(token), Value::Object(object)) => {
                     types.is_assignable(object.type_rid(), token.rid())
                 }
+                (None, _) => true,
                 _ => false,
             },
         })

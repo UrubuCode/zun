@@ -440,6 +440,7 @@ empty OXC statements preserve branch spans without emitting runtime statements;
 OXC `debugger` statements are accepted as span-preserving no-ops;
 OXC try/catch/finally statements lower to typed exception HIR with identifier catches;
 unannotated OXC catches use an explicit zero-width marker resolved as `Any`;
+catch-all exception handlers now serialize distinctly from finally handlers and route all thrown values;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.

@@ -40,8 +40,8 @@ pub enum HandlerKind {
 /// A half-open protected IL interval and its handler target.
 ///
 /// Offsets are relative to the method's instruction stream, not the enclosing
-/// module. `catch_type` is null for finally handlers and identifies the error
-/// type for catch handlers.
+/// module. `catch_type` is null for finally handlers and for catch-all catches;
+/// otherwise it identifies the error type for a typed catch handler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExceptionHandler {
     pub try_start: u32,
@@ -112,10 +112,9 @@ pub fn write_body_with_handlers(
         assert!(handler.handler_start < handler.handler_end);
         assert!(handler.try_end as usize <= code.len());
         assert!(handler.handler_end as usize <= code.len());
-        assert_eq!(
-            handler.kind == HandlerKind::Finally,
-            handler.catch_type.is_none()
-        );
+        if handler.kind == HandlerKind::Finally {
+            assert!(handler.catch_type.is_none());
+        }
     }
     let offset = code_section.len() as u32;
     code_section.extend_from_slice(&param_count.to_le_bytes());

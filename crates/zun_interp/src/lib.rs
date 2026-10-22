@@ -569,6 +569,7 @@ impl Interp<'_> {
                                     (Some(token), Value::Object(object)) => {
                                         self.types.is_assignable(object.type_rid(), token.rid())
                                     }
+                                    (None, _) => true,
                                     _ => false,
                                 }
                             }
