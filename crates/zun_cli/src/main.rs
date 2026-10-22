@@ -230,21 +230,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 report.removed_methods.len()
             );
             if report.dynamic_fallback {
-                eprintln!(
-                    "zun: warning: unresolved member calls require embedded-IL interpreter fallback"
-                );
-                for site in &report.dynamic_sites {
-                    match site.source_span {
-                        Some((start, end)) => eprintln!(
-                            "zun: warning: dynamic/reflection fallback site: method `{}` at PC {} (source {}..{})",
-                            site.method_name, site.pc, start, end
-                        ),
-                        None => eprintln!(
-                            "zun: warning: dynamic/reflection fallback site: method `{}` at PC {}",
-                            site.method_name, site.pc
-                        ),
-                    }
-                }
+                warn_dynamic_fallback(&report);
             }
             for rid in &report.removed_methods {
                 if let Some(method) = module.tables.method_defs.get(*rid as usize - 1) {
@@ -261,6 +247,14 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
+        }
+        Action::Build { aot: true, .. } => {
+            if let Ok(report) = zun_compiler::trim_report_with_roots(&module, &preserve_roots) {
+                if report.dynamic_fallback {
+                    warn_dynamic_fallback(&report);
+                }
+            }
+            module
         }
         _ => module,
     };
@@ -586,6 +580,24 @@ fn report(file: &str, source: &str, diags: &[Diagnostic]) {
             format!("[{}] ", d.code)
         };
         eprintln!("{location}: error: {code}{}", d.message);
+    }
+}
+
+fn warn_dynamic_fallback(report: &zun_compiler::TrimReport) {
+    eprintln!(
+        "zun: warning: dynamic/reflection operations require embedded-IL interpreter fallback"
+    );
+    for site in &report.dynamic_sites {
+        match site.source_span {
+            Some((start, end)) => eprintln!(
+                "zun: warning: dynamic/reflection fallback site: method `{}` at PC {} (source {}..{})",
+                site.method_name, site.pc, start, end
+            ),
+            None => eprintln!(
+                "zun: warning: dynamic/reflection fallback site: method `{}` at PC {}",
+                site.method_name, site.pc
+            ),
+        }
     }
 }
 
