@@ -812,7 +812,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             name: Name {
                                 span: span(identifier.span),
                             },
-                            ty: None,
+                            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())
+                                .map_err(|error| vec![error])?,
                             init: convert_expression(initializer).map_err(|error| vec![error])?,
                             span: span(declarator.span),
                         });
@@ -1184,6 +1185,16 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Let { .. }
+        ));
+    }
+
+    #[test]
+    fn preserves_typed_local_declarations() {
+        let program = parse_subset("function main() { let value: int = 42; return value; }", true)
+            .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Let { ref ty, .. } if ty.as_ref().is_some_and(|ty| ty.name.span.start < ty.name.span.end)
         ));
     }
 
