@@ -178,6 +178,18 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 })
             }
         }
+        Expression::ComputedMemberExpression(member) => {
+            let object = Box::new(convert_expression(&member.object)?);
+            let index = Box::new(convert_expression(&member.expression)?);
+            if member.optional {
+                return Err("OXC adapter does not support optional computed members yet".into());
+            }
+            Ok(Expr::Index {
+                object,
+                index,
+                span: span(member.span),
+            })
+        }
         Expression::ChainExpression(chain) => match &chain.expression {
             ChainElement::StaticMemberExpression(member) => Ok(Expr::OptionalField {
                 object: Box::new(convert_expression(&member.object)?),
@@ -1129,6 +1141,19 @@ mod tests {
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
                 value: Some(crate::ast::Expr::OptionalField { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_computed_member_access() {
+        let program = parse_subset("function read(values, index) { return values[index]; }", false)
+            .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Index { .. }),
                 ..
             }
         ));
