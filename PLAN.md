@@ -418,7 +418,8 @@ parser, sema, metadata, verifier, and lowering paths. Static fields now have
 complete source-to-IL Tier 0 read/write lowering and GC-rooted storage; the JIT
 uses its existing interpreter fallback for these field operations. Getters/setters
       are implemented as `get`/`set` accessor sugar over ordinary methods;
-      private `#fields` remain pending.*
+      and private `#fields` are implemented; private members are mangled in
+      metadata/layout and access is checked against the declaring type.*
 
 **Group 3 — TypeScript type-level (erased at runtime):** generics, interfaces,
 enums, union types with narrowing, and optional properties. These are handled by
@@ -1052,7 +1053,8 @@ an optimization gate.
    direct-call lowering. Static fields are complete through source syntax,
    metadata, Tier 0 storage, GC roots, and `ldsfld`/`stsfld`; getters/setters
    now lower from declarative `get`/`set` syntax to ordinary accessor methods;
-   private `#fields` remain pending.
+   private `#fields` use type-checked mangled field layout and ordinary field
+   IL lowering.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
    replacement, non-blittable FFI marshalling (deferred; ownership modes are
    specified in section 4.4), production N-API, AOT/R2R, and the
