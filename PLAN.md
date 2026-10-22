@@ -1121,10 +1121,10 @@ Bucket capacities are powers of two and probe advancement now uses a bit mask;
 this preserves the current layout and semantics without asserting a benchmarked
 speedup.
 The reproducible workspace workload is `cargo run --release --example
-ordered_map_bench -p zun_core`; on 2026-10-20 it measured `N=200000` at
-50.242 ns/op for insert and 3.990 ns/op for probe, and `N=1000000` at
-27.997 ns/op for insert and 2.433 ns/op for probe. These numbers are a new
-baseline, not a before/after comparison.
+ordered_map_bench -p zun_core`; the 2026-10-21 rerun measured `N=200000` at
+31.724 ns/op for insert and 4.343 ns/op for probe, and `N=1000000` at
+31.942 ns/op for insert and 2.966 ns/op for probe. These numbers are a new
+machine-specific baseline, not a before/after comparison.
 
 ### 7.2 Tier 0 interpreter GC is O(n^2) over a run
 
