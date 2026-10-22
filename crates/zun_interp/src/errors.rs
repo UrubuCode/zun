@@ -40,7 +40,7 @@ impl core::fmt::Display for RunError {
 
 impl RunError {
     pub(crate) fn annotate(self, module: &zun_module::Module, method_rid: u32, pc: u32) -> Self {
-        if matches!(self, RunError::SourceFrame { .. } | RunError::Suspended) {
+        if matches!(self, RunError::SourceFrame { .. } | RunError::Suspended | RunError::Thrown(_)) {
             return self;
         }
         let Some(frame) = module.debug_frame_at(method_rid, pc) else {
