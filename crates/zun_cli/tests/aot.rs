@@ -6,7 +6,8 @@ fn build_can_persist_a_valid_prelude_cache() {
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
     let cache = root.join("prelude.zprc");
-    std::fs::write(&source, "function main(): int { return 7; }\n").expect("write source");
+    std::fs::write(&source, "function main(): int { return abs(-7); }\n")
+        .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .args(["build", "--prelude-cache"])
@@ -21,6 +22,14 @@ fn build_can_persist_a_valid_prelude_cache() {
     );
     assert!(cache.is_file());
     zun_compiler::read_prelude_cache(&cache).expect("cache must be readable");
+    let module = zun_module::Module::read(
+        &std::fs::read(source.with_extension("zm")).expect("read linked module"),
+    )
+    .expect("linked module must be valid");
+    assert_eq!(module.tables.member_refs.len(), 1);
+    let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
+        .expect("read linked manifest");
+    assert_eq!(manifest.dependencies, vec!["zun:prelude"]);
 
     for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman"), cache] {
         let _ = std::fs::remove_file(path);

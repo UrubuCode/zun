@@ -112,7 +112,42 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
     };
 
-    let module = match zun_compiler::compile(&source) {
+    let cached_prelude = match &action {
+        Action::Build {
+            prelude_cache: Some(path),
+            ..
+        } => {
+            let result = if path.is_file() {
+                zun_compiler::read_prelude_cache(path)
+            } else {
+                zun_compiler::write_prelude_cache(path)
+                    .and_then(|_| zun_compiler::read_prelude_cache(path))
+                    .map_err(|error| error)
+            };
+            match result {
+                Ok(module) => Some(module),
+                Err(error) => {
+                    eprintln!("zun: cannot load prelude cache {}: {error}", path.display());
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        _ => None,
+    };
+    let module_result = match cached_prelude.as_ref() {
+        Some(prelude) => zun_compiler::compile_with_cached_prelude(&source, prelude)
+            .and_then(|loader| {
+                let scope = loader.get("app").ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "cached prelude compilation did not produce app module",
+                    )]
+                })?;
+                zun_module::Module::read(&scope.module().write())
+                    .map_err(|error| vec![Diagnostic::error(error.to_string())])
+            }),
+        None => zun_compiler::compile(&source),
+    };
+    let module = match module_result {
         Ok(m) => m,
         Err(diags) => {
             report(file, &source, &diags);
@@ -164,19 +199,16 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         Action::Build { aot, prelude_cache, .. } => {
             let out = out_path(path);
             let manifest_out = out.with_extension("zman");
-            if let Some(cache) = prelude_cache {
-                if let Err(error) = zun_compiler::write_prelude_cache(&cache) {
-                    eprintln!("zun: cannot write prelude cache {}: {error}", cache.display());
-                    return ExitCode::FAILURE;
-                }
-                println!("wrote {}", cache.display());
+            if let Some(cache) = prelude_cache.as_ref() {
+                println!("using {}", cache.display());
             }
             match std::fs::write(&out, module.write()) {
                 Ok(()) => {
-                    let manifest = zun_loader::ModuleManifest::new(
-                        file,
-                        std::iter::empty::<String>(),
-                    )
+                    let dependencies = cached_prelude
+                        .as_ref()
+                        .map(|_| vec!["zun:prelude".to_owned()])
+                        .unwrap_or_default();
+                    let manifest = zun_loader::ModuleManifest::new(file, dependencies)
                     .with_prelude_fingerprint(zun_prelude::fingerprint());
                     match manifest.write_file(&manifest_out) {
                         Ok(()) => {
