@@ -2390,6 +2390,35 @@ fn string_receiver_loop_method_is_jit_equivalent() {
 }
 
 #[test]
+fn string_includes_with_managed_parameters_is_jit_equivalent() {
+    let module = zun_compiler::compile(
+        "import { includes } from \"zun:string\";\n\
+         class String { extern includes(needle: string): boolean; }\n\
+         function contains(value: string, needle: string): boolean { return value.includes(needle); }\n\
+         function main(): boolean { return true; }",
+    )
+    .expect("compile parameterized String includes");
+    let contains = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "contains")
+        .map(|index| index as u32 + 1)
+        .expect("contains method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds parameterized String includes");
+    assert!(jit.is_compiled(contains), "managed string parameters should use the direct JIT ABI");
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun runtime"));
+    let needle = heap.intern_string(std::rc::Rc::from("runtime"));
+    assert_eq!(
+        jit.call_packed_with_heap(contains, &[value as u64, needle as u64], &mut heap)
+            .expect("jit includes"),
+        1
+    );
+}
+
+#[test]
 fn string_count_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { count } from \"zun:string\";\n\
