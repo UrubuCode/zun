@@ -262,6 +262,13 @@ pub struct ModuleLoader {
     modules: HashMap<String, ModuleScope>,
 }
 
+/// Registry-facing byte fetch boundary. Network, authentication, and index
+/// policy stay outside the loader and return canonical module bytes here.
+pub trait ModuleFetcher {
+    /// Fetch one module by registry identity.
+    fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError>;
+}
+
 /// The flattened dependency manifest consumed by the loader.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleManifest {
@@ -808,6 +815,23 @@ impl ModuleLoader {
         self.load_bytes(name, &bytes)
     }
 
+    /// Fetch, verify, and register one module selected by a lockfile entry.
+    pub fn load_fetched(
+        &mut self,
+        name: &str,
+        expected: ContentId,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let bytes = fetcher.fetch(name)?;
+        let found = content_id(&bytes);
+        if found != expected {
+            return Err(LoadError::InvalidManifest(format!(
+                "fetched module `{name}` has content identity mismatch"
+            )));
+        }
+        self.load_bytes(name.to_owned(), &bytes)
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         package.lock.verify()?;
@@ -1212,6 +1236,20 @@ mod tests {
         loader.load_cached(&root, "cached", id).unwrap();
         assert!(loader.get("cached").is_some());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn loader_verifies_fetched_content_before_registration() {
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> { Ok(self.0.clone()) }
+        }
+        let bytes = Module::new().write();
+        let registry = Registry(bytes.clone());
+        let mut loader = ModuleLoader::new();
+        loader.load_fetched("remote", content_id(&bytes), &registry).unwrap();
+        assert!(loader.get("remote").is_some());
+        assert!(loader.load_fetched("bad", content_id(b"other"), &registry).is_err());
     }
 
     #[test]
