@@ -568,6 +568,20 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             });
             continue;
         }
+        if let Statement::ExportNamedDeclaration(export) = &statement {
+            for specifier in &export.specifiers {
+                let local = specifier.local.span();
+                let exported = specifier.exported.span();
+                if source.get(local.start as usize..local.end as usize)
+                    != source.get(exported.start as usize..exported.end as usize)
+                {
+                    return Err(vec![
+                        "OXC adapter supports unchanged local export names only".into(),
+                    ]);
+                }
+            }
+            continue;
+        }
         let class_declaration = match &statement {
             Statement::ClassDeclaration(class_declaration) => Some(class_declaration),
             Statement::ExportDeclaration(export) => match &export.declaration {
@@ -1589,5 +1603,16 @@ mod tests {
         let class = parse_subset("export default class Box {}", true).unwrap();
         assert_eq!(function.functions.len(), 1);
         assert_eq!(class.classes.len(), 1);
+    }
+
+    #[test]
+    fn accepts_unchanged_export_lists_and_rejects_aliases() {
+        let program = parse_subset("function main() {} export { main };", false).unwrap();
+        assert_eq!(program.functions.len(), 1);
+        let error = parse_subset("function main() {} export { main as entry };", false)
+            .unwrap_err();
+        assert!(error
+            .iter()
+            .any(|message| message.contains("unchanged local export names")));
     }
 }
