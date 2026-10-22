@@ -226,6 +226,22 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 _ => Err("OXC adapter currently supports identifier and static-member callees only".into()),
             }
         }
+        Expression::NewExpression(new_expression) => {
+            let Expression::Identifier(identifier) = &new_expression.callee else {
+                return Err("OXC adapter supports identifier constructors only".into());
+            };
+            let mut args = Vec::with_capacity(new_expression.arguments.len());
+            for argument in &new_expression.arguments {
+                args.push(convert_argument(argument)?);
+            }
+            Ok(Expr::New {
+                class: Name {
+                    span: span(identifier.span),
+                },
+                args,
+                span: span(new_expression.span),
+            })
+        }
         _ => Err("OXC adapter currently supports literal, identifier, and binary expressions".into()),
     }
 }
@@ -845,5 +861,17 @@ mod tests {
         assert_eq!(program.imports[0].names.len(), 2);
         assert!(program.imports[0].names[0].is_default);
         assert!(!program.imports[0].names[1].is_default);
+    }
+
+    #[test]
+    fn converts_identifier_constructor_calls() {
+        let program = parse_subset("function make() { return new Point(1, 2); }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::New { ref args, .. }),
+                ..
+            } if args.len() == 2
+        ));
     }
 }
