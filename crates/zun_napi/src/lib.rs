@@ -485,6 +485,52 @@ pub unsafe extern "C" fn zun_host_execute_i32(
     ZUN_HOST_OK
 }
 
+/// Execute a compiled module and return an `i16` result through `out`.
+#[no_mangle]
+pub unsafe extern "C" fn zun_host_execute_i16(
+    host: *mut ZunHost,
+    module_ptr: *const u8,
+    module_len: usize,
+    out: *mut i16,
+) -> i32 {
+    if host.is_null() || module_ptr.is_null() || out.is_null() {
+        return ZUN_HOST_INVALID_ARGUMENT;
+    }
+    let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
+    let value = match zun_vm::execute(bytes) {
+        Ok(value) => value,
+        Err(_) => return ZUN_HOST_VM_ERROR,
+    };
+    let zun_interp::value::Value::Int(value, zun_il::NumKind::I16) = value else {
+        return ZUN_HOST_VM_ERROR;
+    };
+    unsafe { *out = value as i16 };
+    ZUN_HOST_OK
+}
+
+/// Execute a compiled module and return a `u16` result through `out`.
+#[no_mangle]
+pub unsafe extern "C" fn zun_host_execute_u16(
+    host: *mut ZunHost,
+    module_ptr: *const u8,
+    module_len: usize,
+    out: *mut u16,
+) -> i32 {
+    if host.is_null() || module_ptr.is_null() || out.is_null() {
+        return ZUN_HOST_INVALID_ARGUMENT;
+    }
+    let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
+    let value = match zun_vm::execute(bytes) {
+        Ok(value) => value,
+        Err(_) => return ZUN_HOST_VM_ERROR,
+    };
+    let zun_interp::value::Value::Int(value, zun_il::NumKind::U16) = value else {
+        return ZUN_HOST_VM_ERROR;
+    };
+    unsafe { *out = value as u16 };
+    ZUN_HOST_OK
+}
+
 /// Execute a compiled module and return the raw unsigned integer result.
 /// The value is copied without narrowing through the signed C ABI.
 #[no_mangle]
@@ -695,6 +741,22 @@ mod tests {
         };
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, ZUN_HOST_VM_ERROR);
+    }
+
+    #[test]
+    fn host_executes_narrow_i16_and_u16_modules() {
+        let signed = zun_compiler::compile("function main(): i16 { return -12; }").unwrap();
+        let unsigned = zun_compiler::compile("function main(): u16 { return 65000; }").unwrap();
+        let signed_bytes = signed.write();
+        let unsigned_bytes = unsigned.write();
+        let host = zun_host_create();
+        let mut signed_result = 0i16;
+        let mut unsigned_result = 0u16;
+        assert_eq!(unsafe { zun_host_execute_i16(host, signed_bytes.as_ptr(), signed_bytes.len(), &mut signed_result) }, ZUN_HOST_OK);
+        assert_eq!(unsafe { zun_host_execute_u16(host, unsigned_bytes.as_ptr(), unsigned_bytes.len(), &mut unsigned_result) }, ZUN_HOST_OK);
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(signed_result, -12);
+        assert_eq!(unsigned_result, 65000);
     }
 
     #[test]
