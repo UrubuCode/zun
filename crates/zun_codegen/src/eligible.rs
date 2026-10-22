@@ -86,7 +86,7 @@ fn requires_exception_bridge(op: Opcode) -> bool {
 fn branching_virtual_call(instrs: &[zun_il::Instruction]) -> bool {
     instrs.iter().any(|i| {
         matches!(i.opcode, Opcode::BranchTrue | Opcode::BranchFalse)
-    }) && instrs.iter().any(|i| i.opcode == Opcode::CallVirt)
+    }) && instrs.iter().filter(|i| i.opcode == Opcode::CallVirt).count() > 1
 }
 
 fn string_builtin(instr: &zun_il::Instruction) -> bool {
