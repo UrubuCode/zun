@@ -378,7 +378,7 @@ imports, constructor calls, templates, conditional/null expressions, and named
 classes with identifier heritage, fields, simple methods, getter/setter kinds,
 optional members, computed member reads, member assignments, private members,
 spread arguments, await/yield expressions, `this` member access, parentheses,
-TypeScript casts, and supported statement sequences;
+TypeScript casts, satisfies/non-null assertions, and supported statement sequences;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
