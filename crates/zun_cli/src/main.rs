@@ -329,10 +329,11 @@ fn link_aot_executable(
 ) -> Result<(), String> {
     let entry = entry.ok_or_else(|| "module has no entry point".to_string())?;
     let kind = return_kind.ok_or_else(|| "entry point has no readable body".to_string())?;
-    let return_type = match zun_il::JitKind::from_byte(kind) {
-        zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64) => "f64",
-        zun_il::JitKind::Num(zun_il::NumKind::U64) => "u64",
-        zun_il::JitKind::Num(_) | zun_il::JitKind::Bool => "i64",
+    let (return_type, print_value) = match zun_il::JitKind::from_byte(kind) {
+        zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64) => ("f64", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::U64) => ("u64", "value"),
+        zun_il::JitKind::Num(_) => ("i64", "value"),
+        zun_il::JitKind::Bool => ("i32", "value != 0"),
         zun_il::JitKind::Object
         | zun_il::JitKind::Array
         | zun_il::JitKind::String
@@ -342,7 +343,7 @@ fn link_aot_executable(
     };
     let launcher = object.with_extension("aot.rs");
     let source = format!(
-        "extern \"C\" {{ fn m{entry}() -> {return_type}; }}\nfn main() {{ println!(\"{{}}\", unsafe {{ m{entry}() }}); }}\n"
+        "extern \"C\" {{ fn m{entry}() -> {return_type}; }}\nfn main() {{ let value = unsafe {{ m{entry}() }}; println!(\"{{}}\", {print_value}); }}\n"
     );
     std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
     let result = std::process::Command::new("rustc")
