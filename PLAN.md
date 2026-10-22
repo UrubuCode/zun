@@ -332,7 +332,7 @@ source frame through the public runner boundary, including recursive failures.
 Remaining gates:
 full AOT binary (linker + runtime bundle), native TS/JS front-end, full
 remote module transport/index integration (with a safe local directory
-fetcher and HTTP(S) module fetcher now implemented), dynamic-import warnings/fallback (conservative
+fetcher, HTTP(S) module fetcher, and HTTP registry-index fetcher now implemented), dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented),
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
