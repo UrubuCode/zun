@@ -31,6 +31,8 @@ pub enum ZunTy {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ZunValue {
     pub ty: ZunTyRepr,
+    /// Reserved for future carrier flags; must be zero in ABI v1.
+    pub reserved: u32,
     pub payload: u64,
 }
 
