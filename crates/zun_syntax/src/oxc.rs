@@ -8,11 +8,9 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, ChainElement,
-    Declaration, ExportDefaultDeclarationKind,
-    Expression,
-    ClassElement, ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
-    MethodDefinitionKind, ModuleExportName, PropertyKey, Statement,
-    UnaryOperator,
+    ClassElement, Declaration, ExportDefaultDeclarationKind, Expression, ForStatementInit,
+    ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind,
+    ModuleExportName, PropertyKey, Statement, UnaryOperator,
 };
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
@@ -82,7 +80,7 @@ fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
     }
 }
 
-fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
+fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
     let Statement::BlockStatement(block) = statement else {
         return Err("OXC adapter requires block branches for conditional statements".into());
     };
@@ -90,6 +88,26 @@ fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
     let mut statements = Vec::with_capacity(block.body.len());
     for statement in &block.body {
         match statement {
+            Statement::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                        return Err(
+                            "OXC adapter currently supports identifier local bindings".into()
+                        );
+                    };
+                    let Some(initializer) = declarator.init.as_ref() else {
+                        return Err("OXC adapter requires an initializer for local bindings".into());
+                    };
+                    statements.push(Stmt::Let {
+                        name: Name {
+                            span: span(identifier.span),
+                        },
+                        ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                        init: convert_expression(initializer)?,
+                        span: span(declarator.span),
+                    });
+                }
+            }
             Statement::ReturnStatement(return_statement) => statements.push(Stmt::Return {
                 value: return_statement
                     .argument
@@ -107,24 +125,22 @@ fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
                 }),
                 span: span(break_statement.span),
             }),
-            Statement::ContinueStatement(continue_statement) => {
-                statements.push(Stmt::Continue {
-                    label: continue_statement.label.as_ref().map(|label| Name {
-                        span: span(label.span),
-                    }),
-                    span: span(continue_statement.span),
-                })
-            }
+            Statement::ContinueStatement(continue_statement) => statements.push(Stmt::Continue {
+                label: continue_statement.label.as_ref().map(|label| Name {
+                    span: span(label.span),
+                }),
+                span: span(continue_statement.span),
+            }),
             Statement::ThrowStatement(throw_statement) => statements.push(Stmt::Throw {
                 value: convert_expression(&throw_statement.argument)?,
                 span: span(throw_statement.span),
             }),
             Statement::IfStatement(if_statement) => {
-                let then_block = convert_block_statement(&if_statement.consequent)?;
+                let then_block = convert_block_statement(source, &if_statement.consequent)?;
                 let else_block = if_statement
                     .alternate
                     .as_ref()
-                    .map(convert_block_statement)
+                    .map(|statement| convert_block_statement(source, statement))
                     .transpose()?;
                 statements.push(Stmt::If {
                     cond: convert_expression(&if_statement.test)?,
@@ -179,7 +195,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                     .as_ref()
                     .and_then(|value| value.as_str())
                     .or_else(|| Some(quasi.value.raw.as_str()))
-                    .ok_or_else(|| "OXC adapter cannot represent this template segment".to_owned())?;
+                    .ok_or_else(|| {
+                        "OXC adapter cannot represent this template segment".to_owned()
+                    })?;
                 parts.push(crate::ast::TemplatePart::Text(text.to_owned()));
                 if let Some(expression) = template.expressions.get(index) {
                     parts.push(crate::ast::TemplatePart::Expr(Box::new(
@@ -237,9 +255,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             },
             span: span(assertion.span),
         }),
-        Expression::TSNonNullExpression(assertion) => {
-            convert_expression(&assertion.expression)
-        }
+        Expression::TSNonNullExpression(assertion) => convert_expression(&assertion.expression),
         Expression::StaticMemberExpression(member) => {
             let object = Box::new(convert_expression(&member.object)?);
             let field = Name {
@@ -416,7 +432,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                     value,
                     span: span(assignment.span),
                 }),
-                _ => Err("OXC adapter supports identifier, field, and index assignments only".into()),
+                _ => {
+                    Err("OXC adapter supports identifier, field, and index assignments only".into())
+                }
             }
         }
         Expression::CallExpression(call) => {
@@ -453,7 +471,10 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                         })
                     }
                 }
-                _ => Err("OXC adapter currently supports identifier and static-member callees only".into()),
+                _ => Err(
+                    "OXC adapter currently supports identifier and static-member callees only"
+                        .into(),
+                ),
             }
         }
         Expression::NewExpression(new_expression) => {
@@ -472,7 +493,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 span: span(new_expression.span),
             })
         }
-        _ => Err("OXC adapter currently supports literal, identifier, and binary expressions".into()),
+        _ => {
+            Err("OXC adapter currently supports literal, identifier, and binary expressions".into())
+        }
     }
 }
 
@@ -520,46 +543,58 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     for statement in parsed.program.body {
         if let Statement::ImportDeclaration(import_declaration) = statement {
             let Some(module) = import_declaration.source.value.as_str() else {
-                return Err(vec!["OXC adapter cannot represent non-UTF-8 import sources".into()]);
+                return Err(vec![
+                    "OXC adapter cannot represent non-UTF-8 import sources".into(),
+                ]);
             };
             let mut names = Vec::new();
             if let Some(specifiers) = import_declaration.specifiers.as_deref() {
                 for specifier in specifiers {
-                match specifier {
-                    ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
-                        let ModuleExportName::IdentifierName(imported) = &specifier.imported else {
+                    match specifier {
+                        ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                            let ModuleExportName::IdentifierName(imported) = &specifier.imported
+                            else {
+                                return Err(vec![
+                                    "OXC adapter supports identifier named imports only".into(),
+                                ]);
+                            };
+                            names.push(crate::ast::ImportName {
+                                imported: Name {
+                                    span: Span::new(imported.span.start, imported.span.end),
+                                },
+                                local: Name {
+                                    span: Span::new(
+                                        specifier.local.span.start,
+                                        specifier.local.span.end,
+                                    ),
+                                },
+                                is_default: false,
+                            });
+                        }
+                        ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                            names.push(crate::ast::ImportName {
+                                imported: Name {
+                                    span: Span::new(
+                                        specifier.local.span.start,
+                                        specifier.local.span.end,
+                                    ),
+                                },
+                                local: Name {
+                                    span: Span::new(
+                                        specifier.local.span.start,
+                                        specifier.local.span.end,
+                                    ),
+                                },
+                                is_default: true,
+                            });
+                        }
+                        ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => {
                             return Err(vec![
-                                "OXC adapter supports identifier named imports only".into(),
+                                "OXC adapter does not support namespace imports yet".into()
                             ]);
-                        };
-                        names.push(crate::ast::ImportName {
-                            imported: Name {
-                                span: Span::new(imported.span.start, imported.span.end),
-                            },
-                            local: Name {
-                                span: Span::new(specifier.local.span.start, specifier.local.span.end),
-                            },
-                            is_default: false,
-                        });
-                    }
-                    ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
-                        names.push(crate::ast::ImportName {
-                            imported: Name {
-                                span: Span::new(specifier.local.span.start, specifier.local.span.end),
-                            },
-                            local: Name {
-                                span: Span::new(specifier.local.span.start, specifier.local.span.end),
-                            },
-                            is_default: true,
-                        });
-                    }
-                    ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => {
-                        return Err(vec![
-                            "OXC adapter does not support namespace imports yet".into(),
-                        ]);
+                        }
                     }
                 }
-            }
             }
             imports.push(crate::ast::Import {
                 names,
@@ -600,14 +635,19 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             let Some(id) = class_declaration.id.as_ref() else {
                 return Err(vec!["OXC adapter requires named classes".into()]);
             };
-            let base = class_declaration.heritage.as_ref().map(|heritage| {
-                let Expression::Identifier(identifier) = &heritage.expression else {
-                    return Err("OXC adapter supports identifier class bases only".into());
-                };
-                Ok(Name {
-                    span: Span::new(identifier.span.start, identifier.span.end),
+            let base = class_declaration
+                .heritage
+                .as_ref()
+                .map(|heritage| {
+                    let Expression::Identifier(identifier) = &heritage.expression else {
+                        return Err("OXC adapter supports identifier class bases only".into());
+                    };
+                    Ok(Name {
+                        span: Span::new(identifier.span.start, identifier.span.end),
+                    })
                 })
-            }).transpose().map_err(|error| vec![error])?;
+                .transpose()
+                .map_err(|error| vec![error])?;
             let mut fields = Vec::new();
             let mut methods = Vec::new();
             for element in &class_declaration.body.body {
@@ -625,15 +665,15 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             PropertyKey::PrivateIdentifier(identifier) => {
                                 (Span::new(identifier.span.start, identifier.span.end), true)
                             }
-                            _ => return Err(vec![
-                                "OXC adapter supports identifier class fields only".into(),
-                            ]),
+                            _ => {
+                                return Err(vec![
+                                    "OXC adapter supports identifier class fields only".into(),
+                                ])
+                            }
                         };
-                        let Some(type_annotation) = convert_type_annotation(
-                            source,
-                            property.type_annotation.as_deref(),
-                        )
-                        .map_err(|error| vec![error])?
+                        let Some(type_annotation) =
+                            convert_type_annotation(source, property.type_annotation.as_deref())
+                                .map_err(|error| vec![error])?
                         else {
                             return Err(vec![
                                 "OXC adapter requires class fields to have named types".into(),
@@ -690,14 +730,18 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     (identifier.span, false)
                                 }
                                 _ => return Err(vec![
-                                    "OXC adapter supports identifier class method parameters only".into(),
+                                    "OXC adapter supports identifier class method parameters only"
+                                        .into(),
                                 ]),
                             };
                             params.push(crate::ast::Param {
                                 name: Name {
                                     span: Span::new(identifier_span.start, identifier_span.end),
                                 },
-                                ty: convert_type_annotation(source, parameter.type_annotation.as_deref())
+                                ty: convert_type_annotation(
+                                    source,
+                                    parameter.type_annotation.as_deref(),
+                                )
                                 .map_err(|error| vec![error])?,
                                 default_value: parameter
                                     .initializer
@@ -756,7 +800,11 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             span: Span::new(method.span.start, method.span.end),
                         });
                     }
-                    _ => return Err(vec!["OXC adapter does not support this class element yet".into()]),
+                    _ => {
+                        return Err(vec![
+                            "OXC adapter does not support this class element yet".into()
+                        ])
+                    }
                 }
             }
             classes.push(crate::ast::Class {
@@ -783,7 +831,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             _ => None,
         };
         let Some(function) = function else {
-            return Err(vec!["OXC adapter does not support this top-level declaration yet".into()]);
+            return Err(vec![
+                "OXC adapter does not support this top-level declaration yet".into(),
+            ]);
         };
         let Some(id) = function.id.as_ref() else {
             return Err(vec!["OXC adapter requires named functions".into()]);
@@ -861,12 +911,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     });
                 }
                 Statement::IfStatement(if_statement) => {
-                    let then_block = convert_block_statement(&if_statement.consequent)
+                    let then_block = convert_block_statement(source, &if_statement.consequent)
                         .map_err(|error| vec![error])?;
                     let else_block = if_statement
                         .alternate
                         .as_ref()
-                        .map(convert_block_statement)
+                        .map(|statement| convert_block_statement(source, statement))
                         .transpose()
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::If {
@@ -878,7 +928,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     });
                 }
                 Statement::WhileStatement(while_statement) => {
-                    let body = convert_block_statement(&while_statement.body)
+                    let body = convert_block_statement(source, &while_statement.body)
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::While {
                         cond: convert_expression(&while_statement.test)
@@ -933,7 +983,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             )))
                         }
                     };
-                    let body = convert_block_statement(&for_statement.body)
+                    let body = convert_block_statement(source, &for_statement.body)
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::For {
                         init,
@@ -976,7 +1026,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             "OXC adapter supports identifier for-of bindings only".into(),
                         ]);
                     };
-                    let body = convert_block_statement(&for_of_statement.body)
+                    let body = convert_block_statement(source, &for_of_statement.body)
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::ForOf {
                         name: Name {
@@ -989,7 +1039,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     });
                 }
                 Statement::DoWhileStatement(do_while_statement) => {
-                    let body = convert_block_statement(&do_while_statement.body)
+                    let body = convert_block_statement(source, &do_while_statement.body)
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::DoWhile {
                         body,
@@ -1009,16 +1059,18 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         for parameter in &function.params.items {
             let (identifier_span, is_rest) = match &parameter.pattern {
                 BindingPattern::BindingIdentifier(identifier) => (identifier.span, false),
-                _ => return Err(vec![
-                    "OXC adapter currently supports identifier parameters".into(),
-                ]),
+                _ => {
+                    return Err(vec![
+                        "OXC adapter currently supports identifier parameters".into()
+                    ])
+                }
             };
             params.push(crate::ast::Param {
                 name: Name {
                     span: span(identifier_span),
                 },
                 ty: convert_type_annotation(source, parameter.type_annotation.as_deref())
-                .map_err(|error| vec![error])?,
+                    .map_err(|error| vec![error])?,
                 default_value: parameter
                     .initializer
                     .as_ref()
@@ -1031,7 +1083,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         }
         if let Some(rest) = function.params.rest.as_ref() {
             let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
-                return Err(vec!["OXC adapter supports identifier rest parameters only".into()]);
+                return Err(vec![
+                    "OXC adapter supports identifier rest parameters only".into()
+                ]);
             };
             params.push(crate::ast::Param {
                 name: Name {
@@ -1044,7 +1098,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             });
         }
         functions.push(Function {
-            name: Name { span: span(id.span) },
+            name: Name {
+                span: span(id.span),
+            },
             params,
             return_type: convert_type_annotation(source, function.return_type.as_deref())
                 .map_err(|error| vec![error])?,
@@ -1104,8 +1160,9 @@ mod tests {
             ("function flag() { return true; }", "true"),
         ] {
             let program = parse_subset(source, true).unwrap();
-            let crate::ast::Stmt::Return { value: Some(value), .. } =
-                &program.functions[0].body.statements[0]
+            let crate::ast::Stmt::Return {
+                value: Some(value), ..
+            } = &program.functions[0].body.statements[0]
             else {
                 panic!("expected a return statement");
             };
@@ -1147,7 +1204,8 @@ mod tests {
 
     #[test]
     fn converts_logical_and_unary_return_expressions() {
-        let program = parse_subset("function choose(value) { return !value && true; }", false).unwrap();
+        let program =
+            parse_subset("function choose(value) { return !value && true; }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1185,7 +1243,8 @@ mod tests {
 
     #[test]
     fn converts_initialized_local_declarations() {
-        let program = parse_subset("function main() { let value = 42; return value; }", false).unwrap();
+        let program =
+            parse_subset("function main() { let value = 42; return value; }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Let { .. }
@@ -1194,8 +1253,11 @@ mod tests {
 
     #[test]
     fn preserves_typed_local_declarations() {
-        let program = parse_subset("function main() { let value: int = 42; return value; }", true)
-            .unwrap();
+        let program = parse_subset(
+            "function main() { let value: int = 42; return value; }",
+            true,
+        )
+        .unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Let { ref ty, .. } if ty.as_ref().is_some_and(|ty| ty.name.span.start < ty.name.span.end)
@@ -1235,6 +1297,23 @@ mod tests {
                 else_block: Some(_),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_local_bindings_inside_block_branches() {
+        let program = parse_subset(
+            "function main(value) { if (value) { let result: int = 42; return result; } return 0; }",
+            true,
+        )
+        .unwrap();
+        let crate::ast::Stmt::If { ref then_block, .. } = program.functions[0].body.statements[0]
+        else {
+            panic!("expected an if statement");
+        };
+        assert!(matches!(
+            then_block.statements.first(),
+            Some(crate::ast::Stmt::Let { ty: Some(_), .. })
         ));
     }
 
@@ -1337,7 +1416,8 @@ mod tests {
 
     #[test]
     fn converts_identifier_assignments() {
-        let program = parse_subset("function set(value) { value = 42; return value; }", false).unwrap();
+        let program =
+            parse_subset("function set(value) { value = 42; return value; }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })
@@ -1390,7 +1470,8 @@ mod tests {
 
     #[test]
     fn converts_template_literals_and_interpolations() {
-        let program = parse_subset("function greet(name) { return `hello ${name}`; }", false).unwrap();
+        let program =
+            parse_subset("function greet(name) { return `hello ${name}`; }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1402,11 +1483,8 @@ mod tests {
 
     #[test]
     fn converts_null_and_conditional_expressions() {
-        let program = parse_subset(
-            "function choose(value) { return value ? null : 0; }",
-            false,
-        )
-        .unwrap();
+        let program =
+            parse_subset("function choose(value) { return value ? null : 0; }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1430,8 +1508,11 @@ mod tests {
 
     #[test]
     fn converts_computed_member_access() {
-        let program = parse_subset("function read(values, index) { return values[index]; }", false)
-            .unwrap();
+        let program = parse_subset(
+            "function read(values, index) { return values[index]; }",
+            false,
+        )
+        .unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1480,7 +1561,8 @@ mod tests {
 
     #[test]
     fn converts_spread_call_arguments() {
-        let program = parse_subset("function call(values) { return merge(...values); }", false).unwrap();
+        let program =
+            parse_subset("function call(values) { return merge(...values); }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1492,8 +1574,8 @@ mod tests {
 
     #[test]
     fn converts_await_and_yield_expressions() {
-        let async_program = parse_subset("async function wait(value) { return await value; }", false)
-            .unwrap();
+        let async_program =
+            parse_subset("async function wait(value) { return await value; }", false).unwrap();
         assert!(matches!(
             async_program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1576,14 +1658,18 @@ mod tests {
 
     #[test]
     fn converts_rest_parameters() {
-        let program = parse_subset("function collect(...values) { return values; }", false).unwrap();
+        let program =
+            parse_subset("function collect(...values) { return values; }", false).unwrap();
         assert!(program.functions[0].params[0].is_rest);
     }
 
     #[test]
     fn converts_typed_rest_parameters() {
-        let program = parse_subset("function collect(...values: Values) { return values; }", true)
-            .unwrap();
+        let program = parse_subset(
+            "function collect(...values: Values) { return values; }",
+            true,
+        )
+        .unwrap();
         assert!(program.functions[0].params[0].ty.is_some());
     }
 
@@ -1592,21 +1678,27 @@ mod tests {
         let source = "function add(value: int): int { return value; }";
         let program = parse_subset(source, true).unwrap();
         let function = &program.functions[0];
-        assert_eq!(function.params[0].ty.as_ref().unwrap().name.span, Span::new(20, 23));
-        assert_eq!(function.return_type.as_ref().unwrap().name.span, Span::new(26, 29));
+        assert_eq!(
+            function.params[0].ty.as_ref().unwrap().name.span,
+            Span::new(20, 23)
+        );
+        assert_eq!(
+            function.return_type.as_ref().unwrap().name.span,
+            Span::new(26, 29)
+        );
     }
 
     #[test]
     fn preserves_typescript_class_field_types() {
-        let program = parse_subset("class Box { value: number; } function main() {}", true)
-            .unwrap();
+        let program =
+            parse_subset("class Box { value: number; } function main() {}", true).unwrap();
         assert_eq!(program.classes[0].fields[0].ty.name.span, Span::new(19, 25));
     }
 
     #[test]
     fn converts_optional_method_calls() {
-        let program = parse_subset("function read(value) { return value?.trim(); }", false)
-            .unwrap();
+        let program =
+            parse_subset("function read(value) { return value?.trim(); }", false).unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
@@ -1629,8 +1721,8 @@ mod tests {
 
     #[test]
     fn converts_named_default_declarations() {
-        let function = parse_subset("export default function main(): int { return 7; }", true)
-            .unwrap();
+        let function =
+            parse_subset("export default function main(): int { return 7; }", true).unwrap();
         let class = parse_subset("export default class Box {}", true).unwrap();
         assert_eq!(function.functions.len(), 1);
         assert_eq!(class.classes.len(), 1);
@@ -1640,8 +1732,8 @@ mod tests {
     fn accepts_unchanged_export_lists_and_rejects_aliases() {
         let program = parse_subset("function main() {} export { main };", false).unwrap();
         assert_eq!(program.functions.len(), 1);
-        let error = parse_subset("function main() {} export { main as entry };", false)
-            .unwrap_err();
+        let error =
+            parse_subset("function main() {} export { main as entry };", false).unwrap_err();
         assert!(error
             .iter()
             .any(|message| message.contains("unchanged local export names")));

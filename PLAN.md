@@ -420,6 +420,8 @@ typed OXC entrypoints are covered through full compiler semantic checking and
 IL generation; named TypeScript class-field annotations are preserved with
 source spans; local and `for`-initializer TypeScript annotations are preserved
 through the adapter, compiler, and native CLI path;
+initialized identifier bindings inside conditional and loop blocks now use the
+same typed annotation and source-span preservation rules;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
