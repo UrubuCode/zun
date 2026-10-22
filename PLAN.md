@@ -412,6 +412,7 @@ The CLI has an integration fixture that provisions `zun_vm.lib` when available,
 builds an ineligible scalar entrypoint, and executes the resulting fallback binary.
 Signed and unsigned scalar fallback ABIs are both covered, including the generated
 launcher’s `u64` path; boolean fallback output preserves native `true`/`false` text.
+Floating fallback now uses an out-parameter ABI and is covered for `f64` output.
 
 ## 8. Risks & attention points
 
