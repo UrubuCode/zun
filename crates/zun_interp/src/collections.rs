@@ -685,7 +685,18 @@ impl<'a> Interp<'a> {
                 let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value))).is_none()))
             }
+            "mapSetI64" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value))).is_none()))
+            }
             "mapHasI32" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key))).ok_or(RunError::BadToken)?))
+            }
+            "mapHasI64" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key))).ok_or(RunError::BadToken)?))
@@ -697,7 +708,19 @@ impl<'a> Interp<'a> {
                 let value = zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::int(key)).and_then(|value| value.as_int())).unwrap_or(fallback);
                 Ok(Value::Int(value, zun_il::NumKind::I32))
             }
+            "mapGetI64Or" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                let fallback = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                let value = zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::int(key)).and_then(|value| value.as_int())).unwrap_or(fallback);
+                Ok(Value::Int(value, zun_il::NumKind::I64))
+            }
             "mapDeleteI32" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, zun_core::Any::int(key))).is_some()))
+            }
+            "mapDeleteI64" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, zun_core::Any::int(key))).is_some()))
@@ -798,12 +821,27 @@ impl<'a> Interp<'a> {
                 let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
             }
+            "setAddI64" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+            }
             "setHasI32" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
             }
+            "setHasI64" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+            }
             "setDeleteI32" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+            }
+            "setDeleteI64" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
