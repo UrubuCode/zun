@@ -430,8 +430,12 @@ impl Heap {
             if let Some(callback) = on_relocation.as_mut() {
                 callback(&relocation);
             }
-            self.nursery_chunks.clear();
-            self.nursery_cursor = 0;
+            // A non-moving full collection may have promoted survivors in
+            // place. Those records are now old, but their storage can still
+            // live in a nursery chunk. Retaining the chunks keeps those
+            // promoted objects valid; force the next allocation into a fresh
+            // chunk instead of reusing storage that contains old objects.
+            self.nursery_cursor = CHUNK_SLOTS;
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
