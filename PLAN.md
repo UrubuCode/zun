@@ -1197,6 +1197,12 @@ remaining performance work is nursery bump allocation and larger card-table
 scaling; the table's measured ceiling must not be read as an unimplemented
 minor collector.
 
+Allocation clarification: the current single-thread heap already allocates
+objects with a chunk-local bump cursor and reuses swept records by size. A
+per-thread allocation context/TLAB and adaptive quantum are not useful until
+the VM has multiple mutator threads; they remain a deferred scaling step, not
+an absent nursery allocation path.
+
 Takeaway: the two big wins (generational GC and getting hot loops out of Tier 0)
 are already in the section 6 cluster — this confirms their priority with numbers.
 Superinstructions and the std cache are good medium wins. Scalar box/unbox
