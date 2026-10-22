@@ -114,6 +114,8 @@ pub enum TokenKind {
     Ellipsis,
     /// `.`
     Dot,
+    /// `#`, the private-member marker.
+    Hash,
 
     // Operators
     /// `+`
@@ -263,6 +265,7 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semi,
                     b':' => TokenKind::Colon,
+                    b'#' => TokenKind::Hash,
                     b'?' => {
                         if bytes.get(pos) == Some(&b'?') {
                             pos += 1;
@@ -444,6 +447,12 @@ mod tests {
             kinds("== === != <= >= = => < >"),
             vec![EqEq, EqEq, BangEq, LtEq, GtEq, Eq, Arrow, Lt, Gt, Eof]
         );
+    }
+
+    #[test]
+    fn lexes_private_member_marker() {
+        use TokenKind::*;
+        assert_eq!(kinds("#value"), vec![Hash, Ident, Eof]);
     }
 
     #[test]
