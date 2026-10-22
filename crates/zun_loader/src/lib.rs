@@ -1852,6 +1852,37 @@ impl ModuleLoader {
         self.load_index_cached(cache_root, &signed.index, fetcher)
     }
 
+    /// Authenticate, load, and then install a signed index's successor key set.
+    pub fn load_signed_index_trusted_with_rotation(
+        &mut self,
+        signed: &SignedModuleIndex,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.clone().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        let next = signed.rotated_trusted_keys(&trusted)?;
+        self.load_index(&signed.index, fetcher)?;
+        self.trusted_keys = Some(next);
+        Ok(())
+    }
+
+    /// Cached counterpart of [`Self::load_signed_index_trusted_with_rotation`].
+    pub fn load_signed_index_trusted_cached_with_rotation(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        signed: &SignedModuleIndex,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.clone().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        let next = signed.rotated_trusted_keys(&trusted)?;
+        self.load_index_cached(cache_root, &signed.index, fetcher)?;
+        self.trusted_keys = Some(next);
+        Ok(())
+    }
+
     /// Authenticate and install the successor key set carried by a signed
     /// index. The retained set is changed only after the transition verifies.
     pub fn apply_signed_index_rotation(
