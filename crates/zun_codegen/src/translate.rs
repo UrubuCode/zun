@@ -1342,6 +1342,13 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::U64),
                                 types::I64,
                             ),
+                            Some("mapValues") => (
+                                "zun_jit_map_values",
+                                1,
+                                types::I64,
+                                JitKind::Array,
+                                types::I64,
+                            ),
                             Some("setSize") => (
                                 "zun_jit_set_size",
                                 1,
