@@ -2620,6 +2620,58 @@ mod tests {
     }
 
     #[test]
+    fn http_fetcher_loads_a_trusted_signed_index_and_module() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let module = Module::new().write();
+        let mut index = ModuleIndex::new();
+        index.push("app", content_id(&module)).unwrap();
+        let signing = SigningKey::from_bytes(&[71u8; 32]);
+        let payload = index.write();
+        let signed = SignedModuleIndex::new(
+            index,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&payload).to_bytes(),
+        )
+        .unwrap();
+        let index_bytes = signed.write();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 1024];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let body = if request.starts_with("GET /index.zidx") {
+                    &index_bytes
+                } else {
+                    &module
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+
+        let fetcher = HttpFetcher::new(format!("http://{address}")).unwrap();
+        let signed = fetcher.fetch_signed_index().unwrap();
+        let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader
+            .load_signed_index_with_keys(&signed, &trusted, &fetcher)
+            .unwrap();
+        assert!(loader.get("app").is_some());
+        server.join().unwrap();
+    }
+
+    #[test]
     fn loads_and_preserves_scope_identity() {
         let module = Module::new();
         let scope = ModuleScope::from_bytes("demo", &module.write()).expect("load");
