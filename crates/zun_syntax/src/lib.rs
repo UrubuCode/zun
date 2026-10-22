@@ -9,6 +9,7 @@
 
 pub mod ast;
 pub mod lexer;
+pub mod oxc;
 pub mod parser;
 
 pub use ast::{
