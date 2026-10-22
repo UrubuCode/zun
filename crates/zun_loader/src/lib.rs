@@ -567,11 +567,15 @@ pub struct SignedModuleIndex {
     pub index: ModuleIndex,
     pub public_key: [u8; 32],
     pub signature: [u8; 64],
+    /// Keys authorized by this authenticated index for the next release.
+    pub key_additions: Vec<[u8; 32]>,
+    /// Keys revoked by this authenticated index for the next release.
+    pub key_revocations: Vec<[u8; 32]>,
 }
 
 impl SignedModuleIndex {
     const MAGIC: &'static [u8; 4] = b"ZISG";
-    const VERSION: u16 = 1;
+    const VERSION: u16 = 2;
 
     pub fn new(
         index: ModuleIndex,
@@ -582,9 +586,49 @@ impl SignedModuleIndex {
             index,
             public_key,
             signature,
+            key_additions: Vec::new(),
+            key_revocations: Vec::new(),
         };
         signed.verify_signature()?;
         Ok(signed)
+    }
+
+    pub fn new_with_rotation(
+        index: ModuleIndex,
+        public_key: [u8; 32],
+        key_additions: impl IntoIterator<Item = [u8; 32]>,
+        key_revocations: impl IntoIterator<Item = [u8; 32]>,
+        signature: [u8; 64],
+    ) -> Result<Self, LoadError> {
+        let signed = Self {
+            index,
+            public_key,
+            signature,
+            key_additions: key_additions.into_iter().collect(),
+            key_revocations: key_revocations.into_iter().collect(),
+        };
+        signed.verify_signature()?;
+        Ok(signed)
+    }
+
+    fn signed_payload(&self) -> Vec<u8> {
+        let index_payload = self.index.write();
+        if self.key_additions.is_empty() && self.key_revocations.is_empty() {
+            return index_payload;
+        }
+        let mut payload = Vec::with_capacity(4 + index_payload.len() + 12);
+        payload.extend_from_slice(&(index_payload.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&index_payload);
+        payload.extend_from_slice(b"ZROT");
+        payload.extend_from_slice(&(self.key_additions.len() as u32).to_le_bytes());
+        for key in &self.key_additions {
+            payload.extend_from_slice(key);
+        }
+        payload.extend_from_slice(&(self.key_revocations.len() as u32).to_le_bytes());
+        for key in &self.key_revocations {
+            payload.extend_from_slice(key);
+        }
+        payload
     }
 
     fn verify_signature(&self) -> Result<(), LoadError> {
@@ -592,7 +636,7 @@ impl SignedModuleIndex {
             LoadError::InvalidManifest(format!("invalid index public key: {error}"))
         })?;
         let signature = Signature::from_bytes(&self.signature);
-        key.verify(&self.index.write(), &signature)
+        key.verify(&self.signed_payload(), &signature)
             .map_err(|error| {
                 LoadError::InvalidManifest(format!("invalid index signature: {error}"))
             })
@@ -617,11 +661,25 @@ impl SignedModuleIndex {
         self.verify_signature()
     }
 
+    /// Authenticate this index and derive the next trusted key set.
+    pub fn rotated_trusted_keys(
+        &self,
+        trusted: &TrustedKeySet,
+    ) -> Result<TrustedKeySet, LoadError> {
+        self.verify_with_keys(trusted)?;
+        trusted.rotate(self.key_additions.clone(), self.key_revocations.clone())
+    }
+
     pub fn write(&self) -> Vec<u8> {
-        let payload = self.index.write();
+        let payload = self.signed_payload();
         let mut bytes = Vec::with_capacity(106 + payload.len());
         bytes.extend_from_slice(Self::MAGIC);
-        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        let version = if self.key_additions.is_empty() && self.key_revocations.is_empty() {
+            1
+        } else {
+            Self::VERSION
+        };
+        bytes.extend_from_slice(&version.to_le_bytes());
         bytes.extend_from_slice(&self.public_key);
         bytes.extend_from_slice(&self.signature);
         bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -636,7 +694,7 @@ impl SignedModuleIndex {
             ));
         }
         let version = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
-        if version > Self::VERSION {
+        if version > Self::VERSION || version == 0 {
             return Err(LoadError::InvalidManifest(format!(
                 "unsupported signed registry index version {version}"
             )));
@@ -654,7 +712,51 @@ impl SignedModuleIndex {
                 "invalid signed registry index payload length".into(),
             ));
         }
-        Self::new(ModuleIndex::read(&bytes[106..end])?, public_key, signature)
+        if version == 1 {
+            return Self::new(ModuleIndex::read(&bytes[106..end])?, public_key, signature);
+        }
+        let payload = &bytes[106..end];
+        let mut prefix_cursor = 0;
+        let index_len = read_u32(payload, &mut prefix_cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated rotated index".into()))?
+            as usize;
+        let index_bytes = take(payload, &mut prefix_cursor, index_len)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated rotated index".into()))?;
+        let index = ModuleIndex::read(index_bytes)?;
+        if take(payload, &mut prefix_cursor, 4) != Some(b"ZROT") {
+            return Err(LoadError::InvalidManifest("missing signed key rotation".into()));
+        }
+        let mut cursor = prefix_cursor;
+        let additions = read_u32(payload, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated key additions".into()))?
+            as usize;
+        let mut key_additions = Vec::with_capacity(additions);
+        for _ in 0..additions {
+            let raw = take(payload, &mut cursor, 32)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated key addition".into()))?;
+            key_additions.push(raw.try_into().unwrap());
+        }
+        let revocations = read_u32(payload, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated key revocations".into()))?
+            as usize;
+        let mut key_revocations = Vec::with_capacity(revocations);
+        for _ in 0..revocations {
+            let raw = take(payload, &mut cursor, 32)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated key revocation".into()))?;
+            key_revocations.push(raw.try_into().unwrap());
+        }
+        if cursor != payload.len() {
+            return Err(LoadError::InvalidManifest("trailing key rotation bytes".into()));
+        }
+        let signed = Self {
+            index,
+            public_key,
+            signature,
+            key_additions,
+            key_revocations,
+        };
+        signed.verify_signature()?;
+        Ok(signed)
     }
 }
 
@@ -2452,6 +2554,35 @@ mod tests {
         .unwrap();
         let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
         assert!(signed.verify_with_keys(&trusted).is_ok());
+    }
+
+    #[test]
+    fn signed_registry_index_rotates_trusted_keys_after_authentication() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut index = ModuleIndex::new();
+        index.push("app", content_id(b"app")).unwrap();
+        let signing = SigningKey::from_bytes(&[72u8; 32]);
+        let next = [73u8; 32];
+        let unsigned = SignedModuleIndex {
+            index,
+            public_key: signing.verifying_key().to_bytes(),
+            signature: [0u8; 64],
+            key_additions: vec![next],
+            key_revocations: vec![signing.verifying_key().to_bytes()],
+        };
+        let signed = SignedModuleIndex::new_with_rotation(
+            unsigned.index.clone(),
+            unsigned.public_key,
+            unsigned.key_additions.clone(),
+            unsigned.key_revocations.clone(),
+            signing.sign(&unsigned.signed_payload()).to_bytes(),
+        )
+        .unwrap();
+        let roundtrip = SignedModuleIndex::read(&signed.write()).unwrap();
+        let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
+        let rotated = roundtrip.rotated_trusted_keys(&trusted).unwrap();
+        assert!(!rotated.contains(&signing.verifying_key().to_bytes()));
+        assert!(rotated.contains(&next));
     }
 
     #[test]
