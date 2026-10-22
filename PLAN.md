@@ -212,6 +212,8 @@ remains the final trust-anchor integration gate.
 `ModuleLoader::new_with_trusted_keys` retains the provisioned set for package loads.
 `SignedModuleLock::verify` now requires that external set; embedded-key-only
 verification is limited to signature parsing during envelope construction.
+`TrustedKeySet::rotate`/`revoke` provide the key-set transition hooks selected by
+the signed-index `VERSION` policy.
 
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
