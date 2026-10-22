@@ -407,7 +407,7 @@ fn convert_try_statement(
             },
             ty: crate::ast::TypeAnnotation {
                 name: Name {
-                    span: Span::new(identifier.span.start, identifier.span.end),
+                    span: Span::new(0, 0),
                 },
             },
             body: convert_block_node(source, &handler.body)?,
@@ -1627,7 +1627,7 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements.first(),
             Some(crate::ast::Stmt::Try { catches, finally: Some(_), .. })
-                if catches.len() == 1
+                if catches.len() == 1 && catches[0].ty.name.span == Span::new(0, 0)
         ));
     }
 

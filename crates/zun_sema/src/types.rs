@@ -5,6 +5,9 @@ use zun_syntax::ast;
 
 impl<'a> Checker<'a> {
     pub(super) fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
+        if annotation.name.span.start == annotation.name.span.end {
+            return Ty::Any;
+        }
         let text = self.text(&annotation.name).to_string();
         if let Some(&ty) = self.type_aliases.get(&text) {
             return ty;
