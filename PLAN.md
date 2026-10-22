@@ -845,13 +845,14 @@ The following runtime contracts are implemented and covered by tests:
   indexing, indexed assignment, `length`, `push`, and `pop` lower to verified
   IL and execute in Tier 0. Typed helpers live in `std/array.zun`.
 - Array instructions have verifier fixtures and explicit interpreter/JIT
-  equivalence coverage. Read-only `ArrayLength` and scalar `f64`/`u64`
+  equivalence coverage. Read-only `ArrayLength` and scalar `f64`, `i32`,
+  `i64`, and `u64`
   `LoadArray`/`StoreArray` now lower through Cranelift helpers; numeric
   allocation and indexed mutation use the narrow non-reference value ABI, while
   dynamic/reference-valued loads/stores and
   aggregate `Any` loads/stores remain Tier 0 pending the two-word managed-value
   ABI. Sema-proven scalar `UnboxAny` extraction is the narrow exception:
-  `u64`, `f64`, and `boolean` carrier paths have direct interpreter/JIT
+  `u64`, `i64`, `i32`, `f64`, and `boolean` carrier paths have direct interpreter/JIT
   equivalence tests;
   checked string/reference unboxing remains Tier 0. Object allocation,
   reference fields, precise allocation safepoints, and
@@ -975,9 +976,10 @@ the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
 The narrow scalar array ABI is also implemented: Cranelift lowers `LoadArray`
-and `StoreArray` for `f64`, `u64`, and `boolean` values through heap-scoped
-helpers, with interpreter/JIT equivalence coverage. The same scalar boundary
-covers `Array.push` and `Array.pop` for all three scalar kinds. `Any`-valued
+and `StoreArray` for `f64`, `i32`, `i64`, `u64`, and `boolean` values through
+heap-scoped helpers, with interpreter/JIT equivalence coverage. The same
+scalar boundary covers `Array.push` and `Array.pop` for these scalar kinds.
+`Any`-valued
 and reference-valued array access remains Tier 0 until the two-word
 managed-value ABI and its precise GC/write-barrier contract are complete.
 
