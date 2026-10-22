@@ -1342,9 +1342,6 @@ impl Translator<'_> {
                                 JitKind::Num(NumKind::U64),
                                 types::I64,
                             ),
-                            Some("mapNew") => (
-                                "zun_jit_map_new", 0, types::I64, JitKind::Object, types::I64,
-                            ),
                             Some("mapValues") => (
                                 "zun_jit_map_values",
                                 1,
@@ -1386,9 +1383,6 @@ impl Translator<'_> {
                                 types::I64,
                                 JitKind::Num(NumKind::U64),
                                 types::I64,
-                            ),
-                            Some("setNew") => (
-                                "zun_jit_set_new", 0, types::I64, JitKind::Object, types::I64,
                             ),
                             Some("mapHasF64") => (
                                 "zun_jit_map_has_f64",

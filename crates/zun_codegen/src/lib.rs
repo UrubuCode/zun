@@ -622,10 +622,6 @@ pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.map_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
-pub extern "C" fn zun_jit_map_new() -> i64 {
-    zun_gc::with_current_heap_mut(|heap| heap.alloc_map().addr() as i64)
-}
-
 pub extern "C" fn zun_jit_map_clear(address: i64) -> i32 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| heap.map_clear(object).is_some() as i32)
@@ -702,10 +698,6 @@ pub extern "C" fn zun_jit_set_entries(address: i64) -> i64 {
 pub extern "C" fn zun_jit_set_size(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| heap.set_len(object).map(|len| len as i64).unwrap_or(-1))
-}
-
-pub extern "C" fn zun_jit_set_new() -> i64 {
-    zun_gc::with_current_heap_mut(|heap| heap.alloc_set().addr() as i64)
 }
 
 pub extern "C" fn zun_jit_set_clear(address: i64) -> i32 {
@@ -1574,7 +1566,6 @@ impl Jit {
     builder.symbol("zun_jit_f64_array_get", zun_jit_f64_array_get as *const u8);
     builder.symbol("zun_jit_f64_array_set", zun_jit_f64_array_set as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
-    builder.symbol("zun_jit_map_new", zun_jit_map_new as *const u8);
         builder.symbol("zun_jit_map_clear", zun_jit_map_clear as *const u8);
         builder.symbol("zun_jit_map_values", zun_jit_map_values as *const u8);
         builder.symbol("zun_jit_map_keys", zun_jit_map_keys as *const u8);
@@ -1582,7 +1573,6 @@ impl Jit {
         builder.symbol("zun_jit_set_values", zun_jit_set_values as *const u8);
         builder.symbol("zun_jit_set_entries", zun_jit_set_entries as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
-    builder.symbol("zun_jit_set_new", zun_jit_set_new as *const u8);
         builder.symbol("zun_jit_set_clear", zun_jit_set_clear as *const u8);
     builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
     builder.symbol("zun_jit_set_has_f64", zun_jit_set_has_f64 as *const u8);
