@@ -1764,6 +1764,7 @@ impl Translator<'_> {
                     let carrier_load = self.method_return_kind == JitKind::Other
                         || instrs.get(i + 1).is_some_and(|next| next.opcode == Opcode::UnboxAny);
                     let load_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
+                    let load_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);
                     let load_bool = self.method_return_kind == JitKind::Bool;
                     let load_object = self.method_return_kind == JitKind::Object;
                     if carrier_load {
@@ -1782,6 +1783,8 @@ impl Translator<'_> {
                         self.array_load_object_fref()
                     } else if load_bool {
                         self.array_load_bool_fref()
+                    } else if load_i32 {
+                        self.array_load_i32_fref()
                     } else if load_u64 {
                         self.array_load_u64_fref()
                     } else {
@@ -1794,6 +1797,8 @@ impl Translator<'_> {
                         JitKind::Num(NumKind::U64)
                     } else if load_bool {
                         JitKind::Bool
+                    } else if load_i32 {
+                        JitKind::Num(NumKind::I32)
                     } else {
                         JitKind::Num(NumKind::F64)
                     };
@@ -1805,9 +1810,10 @@ impl Translator<'_> {
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
                     let store_object = matches!(value_kind, JitKind::Object | JitKind::Array);
                     let store_u64 = value_kind == JitKind::Num(NumKind::U64);
+                    let store_i32 = value_kind == JitKind::Num(NumKind::I32);
                     let store_bool = value_kind == JitKind::Bool;
                     if !matches!(array_kind, JitKind::Object | JitKind::Array)
-                        || (!store_object && !store_u64 && !store_bool && value_kind != JitKind::Num(NumKind::F64))
+                        || (!store_object && !store_u64 && !store_i32 && !store_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array store requires object and f64/u64 value".into());
                     }
@@ -1823,6 +1829,8 @@ impl Translator<'_> {
                         self.array_store_u64_fref()
                     } else if store_bool {
                         self.array_store_bool_fref()
+                    } else if store_i32 {
+                        self.array_store_i32_fref()
                     } else {
                         self.array_store_f64_fref()
                     };
@@ -2405,6 +2413,16 @@ impl Translator<'_> {
         self.module.declare_func_in_func(func, self.builder.func)
     }
 
+    fn array_load_i32_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let func = self.module.declare_function("zun_jit_array_load_i32", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_load_i32");
+        self.module.declare_func_in_func(func, self.builder.func)
+    }
+
     fn array_load_bool_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
@@ -2480,6 +2498,17 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_store_u64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_u64");
+        self.module.declare_func_in_func(func, self.builder.func)
+    }
+
+    fn array_store_i32_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(types::I32));
+        let func = self.module.declare_function("zun_jit_array_store_i32", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_store_i32");
         self.module.declare_func_in_func(func, self.builder.func)
     }
 

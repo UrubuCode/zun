@@ -811,6 +811,16 @@ pub extern "C" fn zun_jit_array_load_u64(address: i64, index: i64) -> i64 {
     })
 }
 
+pub extern "C" fn zun_jit_array_load_i32(address: i64, index: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.array_get(object, index as usize)
+            .and_then(|value| value.as_int())
+            .map(|value| value as i32)
+            .unwrap_or_default()
+    })
+}
+
 /// Read a boolean dynamic-array element as the narrow i32 JIT boolean ABI.
 #[inline]
 pub extern "C" fn zun_jit_array_load_bool(address: i64, index: i64) -> i32 {
@@ -860,6 +870,14 @@ pub extern "C" fn zun_jit_array_store_u64(address: i64, index: i64, value: i64) 
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
         heap.array_set(object, index as usize, zun_core::Any::int(value)).is_some() as i32
+    })
+}
+
+pub extern "C" fn zun_jit_array_store_i32(address: i64, index: i64, value: i32) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_set(object, index as usize, zun_core::Any::int(value as i64))
+            .is_some() as i32
     })
 }
 
@@ -1438,10 +1456,12 @@ impl Jit {
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
     builder.symbol("zun_jit_array_load_u64", zun_jit_array_load_u64 as *const u8);
+        builder.symbol("zun_jit_array_load_i32", zun_jit_array_load_i32 as *const u8);
     builder.symbol("zun_jit_array_load_bool", zun_jit_array_load_bool as *const u8);
     builder.symbol("zun_jit_array_load_object", zun_jit_array_load_object as *const u8);
     builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
     builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);
+        builder.symbol("zun_jit_array_store_i32", zun_jit_array_store_i32 as *const u8);
     builder.symbol("zun_jit_array_store_bool", zun_jit_array_store_bool as *const u8);
     builder.symbol("zun_jit_array_store_object", zun_jit_array_store_object as *const u8);
         builder.symbol("zun_jit_store_ref", zun_jit_store_ref as *const u8);

@@ -4721,6 +4721,30 @@ fn proven_bool_array_store_is_jit_equivalent() {
 }
 
 #[test]
+fn proven_i32_array_load_and_store_are_jit_equivalent() {
+    let src = "function write(values: Array, value: i32): i32 { values[0] = value; return values[0] as i32; }\n\
+               function main(): i32 { let values = new Array(1); return write(values, 42); }";
+    let module = compile(src);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "write")
+        .map(|index| index as u32 + 1)
+        .expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 array access");
+    assert!(jit.is_compiled(rid), "i32 array access should be eligible");
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let jit_value = jit
+        .call_packed_with_heap(rid, &[array.addr() as u64, 42], &mut heap)
+        .expect("jit i32 array access");
+    assert_eq!(jit_value as i32, 42);
+    assert_eq!(heap.array_get(array, 0).and_then(|value| value.as_int()), Some(42));
+    assert!(matches!(interp_entry(&module), Value::Int(42, _)));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
