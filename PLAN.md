@@ -318,8 +318,8 @@ arrays; static/private/accessors; Map/Set/WeakMap (ordered O(1) + ephemeron trac
 `Any`/`DynamicObject`; cached prelude; scalar + string FFI with declared ownership
 contracts; multi-module loader/manifest; minimal `std/` surfaces. Remaining gates:
 full AOT binary (linker + runtime bundle), native TS/JS front-end,
-module registry, sequence-point debug info, true OSR. `zun_napi` (Node embedding) is
-being removed (out of scope).
+module registry, sequence-point debug info, true OSR. The former `zun_napi` Node
+embedding crate has been removed (out of scope).
 
 ## 8. Risks & attention points
 
