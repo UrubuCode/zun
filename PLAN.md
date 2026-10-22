@@ -351,8 +351,10 @@ P/Invoke):
   the future generated stub. `FfiStringArgument` provides call-scoped storage
   with UTF-16-to-UTF-8 conversion, explicit byte length, and NUL termination;
   `NativeLibrary` has explicit borrowed, owned, and caller-buffer copy helpers.
-  Compiler/IL signature integration and generated stubs remain deferred; the
-  validated runtime helpers are the boundary that those stubs will consume.
+  The compiler/IL metadata now carries the explicit string contract for the
+  one-string-argument path, and the native hook validates and dispatches it.
+  Generated stubs, multiple string arguments, and broader aggregate marshalling
+  remain deferred.
 
 Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
 } from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
@@ -1098,8 +1100,8 @@ an optimization gate.
    private `#fields` use type-checked mangled field layout and ordinary field
    IL lowering.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
-   replacement, compiler/IL integration for the validated non-blittable FFI
-   boundary, production-grade N-API, full-runtime AOT/R2R, and the
+   replacement, generated FFI stubs and broader non-blittable signatures,
+   production-grade N-API, full-runtime AOT/R2R, and the
    remaining performance backlog (the first OrderedMap and generational-GC
    policies are complete; only their measured scaling follow-ups remain).
    Async/await source lowering is complete in
