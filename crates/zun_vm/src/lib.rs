@@ -351,6 +351,16 @@ mod tests {
     }
 
     #[test]
+    fn embedded_runtime_hook_preserves_negative_signed_results() {
+        let module = zun_compiler::compile("function main(): int { return -7; }").unwrap();
+        let bytes = module.write();
+        assert_eq!(
+            unsafe { zun_rt_run_embedded_i64(bytes.as_ptr(), bytes.len() as u64) },
+            -7
+        );
+    }
+
+    #[test]
     fn embedded_runtime_hook_accepts_non_scalar_results_for_aot_fallback() {
         let module = zun_compiler::compile("function main(): string { return \"managed\"; }").unwrap();
         let bytes = module.write();
