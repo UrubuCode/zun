@@ -1070,6 +1070,11 @@ the interpreter/JIT equivalence path covers literal `String` methods. The
 runtime JIT now also carries those literals through `newobj` and typed string
 fields. The relocatable/AOT backend now emits `ConstStr` literals into
 relocatable Cranelift data objects rather than embedding process-local pointers.
+Managed string literals, helper receivers/arguments, and helper results now
+also participate in Cranelift precise stack-map declarations at JIT
+safepoints. This completes the root-publication side of the current string
+helper ABI; broad string-method eligibility remains gated until its allocation
+and exception contracts are complete.
 The AOT launcher now preserves the Cranelift `i32` ABI for boolean entrypoints
 and prints their logical value. It still requires the managed runtime/helper
 bridge for string-returning entrypoints and remains restricted to scalar
