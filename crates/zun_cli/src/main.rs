@@ -233,9 +233,9 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 eprintln!(
                     "zun: warning: unresolved member calls require embedded-IL interpreter fallback"
                 );
-                for method in &report.dynamic_methods {
+                for (method, pc) in &report.dynamic_sites {
                     eprintln!(
-                        "zun: warning: dynamic/reflection fallback site: method `{method}`"
+                        "zun: warning: dynamic/reflection fallback site: method `{method}` at PC {pc}"
                     );
                 }
             }

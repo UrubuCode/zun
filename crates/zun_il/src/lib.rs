@@ -21,5 +21,7 @@ pub mod opcode;
 pub use num::{JitKind, NumKind};
 
 pub use disasm::disassemble;
-pub use instr::{decode_all, decode_one, encode, DecodeError, Instruction, Operand};
+pub use instr::{
+    decode_all, decode_all_with_offsets, decode_one, encode, DecodeError, Instruction, Operand,
+};
 pub use opcode::{Opcode, OperandKind, StackEffect};

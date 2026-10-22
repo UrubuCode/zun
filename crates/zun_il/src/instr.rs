@@ -167,6 +167,21 @@ pub fn decode_all(mut bytes: &[u8]) -> Result<Vec<Instruction>, DecodeError> {
     Ok(out)
 }
 
+/// Decode an instruction stream while retaining each instruction's byte PC.
+pub fn decode_all_with_offsets(mut bytes: &[u8]) -> Result<Vec<(u32, Instruction)>, DecodeError> {
+    let mut out = Vec::new();
+    let mut offset = 0u32;
+    while !bytes.is_empty() {
+        let (instr, n) = decode_one(bytes)?;
+        out.push((offset, instr));
+        bytes = &bytes[n..];
+        offset = offset
+            .checked_add(n as u32)
+            .ok_or(DecodeError::UnexpectedEof)?;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +204,9 @@ mod tests {
         }
         let decoded = decode_all(&bytes).unwrap();
         assert_eq!(decoded, program);
+        let with_offsets = decode_all_with_offsets(&bytes).unwrap();
+        assert_eq!(with_offsets[0].0, 0);
+        assert_eq!(with_offsets[1].0, 5);
     }
 
     #[test]

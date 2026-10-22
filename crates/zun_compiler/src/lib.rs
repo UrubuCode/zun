@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use zun_common::{Diagnostic, Severity};
-use zun_il::{decode_all, Opcode, Operand};
+use zun_il::{decode_all, decode_all_with_offsets, Opcode, Operand};
 use zun_module::{read_body, Module};
 
 /// Compute the conservative set of method RIDs reachable from a module entry.
@@ -99,6 +99,8 @@ pub struct TrimReport {
     pub dynamic_fallback: bool,
     /// Method names containing unresolved member calls that trigger fallback.
     pub dynamic_methods: Vec<String>,
+    /// Dynamic/reflection call sites as `(method name, byte PC)` pairs.
+    pub dynamic_sites: Vec<(String, u32)>,
 }
 
 /// Analyze a module without changing it, returning the trimmer's decisions.
@@ -114,26 +116,43 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
     let removed_methods: Vec<_> = (1..=module.tables.method_defs.len() as u32)
         .filter(|rid| !reachable.contains(rid))
         .collect();
-    let dynamic_methods: Vec<String> = module
+    let dynamic_sites: Vec<(String, u32)> = module
         .tables
         .method_defs
         .iter()
         .filter(|method| method.body_offset != u32::MAX)
         .filter_map(|method| {
             let body = read_body(&module.code, method.body_offset).ok()?;
-            let dynamic = decode_all(body.code).ok()?.into_iter().any(|instruction| {
-                matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
-                    && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
-            });
-            dynamic.then(|| module.strings.get(method.name).to_owned())
+            let method_name = module.strings.get(method.name).to_owned();
+            Some(
+                decode_all_with_offsets(body.code)
+                    .ok()?
+                    .into_iter()
+                    .filter(|(_, instruction)| {
+                        matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
+                            && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
+                    })
+                    .map(move |(pc, _)| (method_name.clone(), pc))
+                    .collect::<Vec<_>>(),
+            )
         })
+        .flatten()
         .collect();
-    let dynamic_fallback = !dynamic_methods.is_empty();
+    let dynamic_methods: Vec<String> = dynamic_sites
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut dynamic_methods = dynamic_methods;
+    dynamic_methods.sort();
+    let dynamic_fallback = !dynamic_sites.is_empty();
     Ok(TrimReport {
         reachable_methods,
         removed_methods,
         dynamic_fallback,
         dynamic_methods,
+        dynamic_sites,
     })
 }
 
