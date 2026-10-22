@@ -417,7 +417,8 @@ typed rest-parameter annotations are preserved as well;
 Zun parser; `.cjs` and `.jsx` select the JavaScript mode;
 typed OXC entrypoints are covered through full compiler semantic checking and
 IL generation; named TypeScript class-field annotations are preserved with
-source spans;
+source spans; local and `for`-initializer TypeScript annotations are preserved
+through the adapter, compiler, and native CLI path;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
