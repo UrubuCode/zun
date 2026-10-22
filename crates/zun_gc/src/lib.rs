@@ -217,9 +217,20 @@ pub struct Heap {
     /// This is the remembered-set boundary for the future minor collector;
     /// full collections still trace the complete heap today.
     remembered_set: HashSet<usize>,
+    /// Per-heap realm singleton used by `globalThis`/`global` bindings.
+    global_object: Option<Obj>,
 }
 
 impl Heap {
+    /// Return the per-heap realm singleton, allocating it lazily.
+    pub fn global_object(&mut self) -> Obj {
+        if let Some(object) = self.global_object {
+            return object;
+        }
+        let object = self.alloc_dynamic();
+        self.global_object = Some(object);
+        object
+    }
     /// Publish the reference slots for a module type before entering JIT code.
     pub fn register_reference_slots(&mut self, type_rid: u32, slots: Vec<usize>) {
         self.reference_slots.insert(type_rid, slots);
@@ -833,7 +844,15 @@ impl Heap {
         relocation: &RelocationMap,
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
     ) -> usize {
-        self.rewrite_object_references(relocation, ref_slots)
+        let mut rewritten = 0;
+        if let Some(object) = self.global_object {
+            let mapped = relocation.relocate(object);
+            if mapped != object {
+                self.global_object = Some(mapped);
+                rewritten += 1;
+            }
+        }
+        rewritten + self.rewrite_object_references(relocation, ref_slots)
             + self.rewrite_auxiliary_references(relocation)
             + self.rewrite_generator_frames(relocation)
             + self.rewrite_generator_states(relocation)
@@ -2474,5 +2493,16 @@ mod tests {
         assert_eq!(result.reclaimed_objects, 1);
         assert_eq!(heap.bigint_value(roots[0]).unwrap().to_string(), "18446744073709551616");
         assert_eq!(roots[0].type_rid(), zun_core::CoreTypeId::BigInt.get() as u32);
+    }
+
+    #[test]
+    fn realm_global_object_is_a_heap_singleton_and_relocates() {
+        let mut heap = Heap::new();
+        let global = heap.global_object();
+        assert_eq!(heap.global_object(), global);
+        let mut roots = vec![global];
+        unsafe { heap.collect_young_evacuating(&mut roots, &|_| Vec::new(), &mut |_| {}) };
+        assert_eq!(heap.global_object(), roots[0]);
+        assert_ne!(roots[0], global);
     }
 }
