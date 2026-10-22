@@ -371,7 +371,7 @@ anchored and self-declared signed-index fixtures are covered;
 HTTP index fetching accepts the rotated `TrustedKeySet` path;
 sequence-point PC-to-source metadata in `.zm`;
 native OXC JavaScript/TypeScript parse boundary with isolated diagnostics and a
-source-span-preserving literal/identifier/binary/logical/unary/call-expression
+source-span-preserving literal/identifier/binary/logical/unary/call/member-call
 AST adapter with identifier parameters, local declarations, and supported
 statement sequences;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
