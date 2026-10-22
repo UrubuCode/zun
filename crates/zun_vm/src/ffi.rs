@@ -158,6 +158,15 @@ impl FfiStringArgument {
         Ok(Self { bytes, nul_terminated })
     }
 
+    /// Encode an internal UTF-16 string at the native boundary. Conversion
+    /// happens before the call and the resulting UTF-8 buffer remains owned by
+    /// this call-scoped argument.
+    pub fn from_utf16(value: &[u16], nul_terminated: bool) -> Result<Self, String> {
+        let value = String::from_utf16(value)
+            .map_err(|_| "string argument contains invalid UTF-16".to_owned())?;
+        Self::from_utf8(&value, nul_terminated)
+    }
+
     pub fn as_ptr(&self) -> *const u8 {
         self.bytes.as_ptr()
     }
@@ -868,6 +877,9 @@ mod tests {
         assert_eq!(nul_terminated.len_bytes(), 4);
         assert_eq!(unsafe { *nul_terminated.as_ptr().add(4) }, 0);
         assert!(FfiStringArgument::from_utf8("bad\0text", true).is_err());
+        let utf16 = FfiStringArgument::from_utf16(&[0x006f, 0x006c, 0x00e1], false).unwrap();
+        assert_eq!(utf16.len_bytes(), "olá".len());
+        assert!(FfiStringArgument::from_utf16(&[0xd800], false).is_err());
     }
 
     #[test]
