@@ -36,7 +36,10 @@ pub enum FfiStringReturn {
     /// named companion value or a declared NUL-terminated convention.
     Borrowed { length: FfiStringLength },
     /// The native side transfers ownership and exposes the named deallocator.
-    Owned { free_symbol: String },
+    Owned {
+        free_symbol: String,
+        length: FfiStringLength,
+    },
     /// The caller owns the temporary buffer and the native side returns the
     /// number of initialized bytes.
     OutBuffer { capacity: usize },
@@ -51,7 +54,7 @@ impl FfiStringReturn {
             } if name.trim().is_empty() => {
                 Err("borrowed string returns require a non-empty length parameter".into())
             }
-            Self::Owned { free_symbol } if free_symbol.trim().is_empty() => {
+            Self::Owned { free_symbol, .. } if free_symbol.trim().is_empty() => {
                 Err("owned string returns require a free symbol".into())
             }
             Self::OutBuffer { capacity: 0 } => {
@@ -103,6 +106,27 @@ impl FfiStringReturn {
                 "owned string returns require a generated free callback before copying".into(),
             ),
         }
+    }
+
+    /// Copy an owned return and invoke the declared deallocator callback after
+    /// the copy. Symbol lookup is intentionally supplied by the generated
+    /// stub; this method never resolves or invents a free function.
+    pub fn copy_owned_with<F: FnOnce()>(
+        &self,
+        payload: &[u8],
+        reported_len: Option<usize>,
+        free: F,
+    ) -> Result<Vec<u8>, String> {
+        if !matches!(self, Self::Owned { .. }) {
+            return Err("owned copy requires an owned string return declaration".into());
+        }
+        let length = reported_len.ok_or("owned string returns require a reported length")?;
+        if length > payload.len() {
+            return Err("owned string length exceeds the native payload".into());
+        }
+        let result = payload[..length].to_vec();
+        free();
+        Ok(result)
     }
 }
 
@@ -694,7 +718,8 @@ mod tests {
         .validate()
         .is_ok());
         assert!(FfiStringReturn::Owned {
-            free_symbol: "free_text".into()
+            free_symbol: "free_text".into(),
+            length: FfiStringLength::OutParameter("len".into()),
         }
         .validate()
         .is_ok());
@@ -707,7 +732,8 @@ mod tests {
         .validate()
         .is_err());
         assert!(FfiStringReturn::Owned {
-            free_symbol: "  ".into()
+            free_symbol: "  ".into(),
+            length: FfiStringLength::OutParameter("len".into()),
         }
         .validate()
         .is_err());
@@ -747,8 +773,24 @@ mod tests {
 
         let owned = FfiStringReturn::Owned {
             free_symbol: "free_text".into(),
+            length: FfiStringLength::OutParameter("len".into()),
         };
         assert!(owned.copy_payload(b"owned", Some(5)).is_err());
+    }
+
+    #[test]
+    fn owned_string_copy_runs_the_declared_free_callback_after_copy() {
+        let owned = FfiStringReturn::Owned {
+            free_symbol: "free_text".into(),
+            length: FfiStringLength::OutParameter("len".into()),
+        };
+        let mut freed = false;
+        let result = owned
+            .copy_owned_with(b"owned", Some(5), || freed = true)
+            .unwrap();
+        assert_eq!(result, b"owned");
+        assert!(freed);
+        assert!(owned.copy_owned_with(b"owned", Some(6), || {}).is_err());
     }
 
     #[test]
