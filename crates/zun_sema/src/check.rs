@@ -160,6 +160,7 @@ struct Signature {
     optional_count: usize,
     rest_param: Option<usize>,
     is_generator: bool,
+    is_static: bool,
 }
 
 /// A collected class: its base and its own (not inherited) fields.
@@ -260,6 +261,7 @@ impl Checker<'_> {
                     .count(),
                 rest_param: f.params.iter().position(|parameter| parameter.is_rest),
                 is_generator: f.is_generator,
+                is_static: false,
             });
         }
 
@@ -318,6 +320,7 @@ impl Checker<'_> {
                         .position(|parameter| parameter.is_rest)
                         .map(|index| index + 1),
                     is_generator: false,
+                    is_static: m.is_static,
                 });
             }
         }
@@ -1268,6 +1271,7 @@ impl Checker<'_> {
                                 optional_count,
                                 rest_param: self.signatures[func as usize].rest_param,
                                 is_generator: self.signatures[func as usize].is_generator,
+                                is_static: false,
                             };
                             if let Some(rest_index) = sig.rest_param {
                                 if args.len() < rest_index {
@@ -1625,6 +1629,7 @@ impl Checker<'_> {
                     optional_count,
                     rest_param: self.signatures[func as usize].rest_param,
                     is_generator: self.signatures[func as usize].is_generator,
+                    is_static: false,
                 };
                 let rest_index = sig.rest_param;
                 if let Some(rest_index) = rest_index {
@@ -1702,6 +1707,13 @@ impl Checker<'_> {
                                 let sig = &self.signatures[func as usize];
                                 (sig.params.clone(), sig.return_ty)
                             };
+                            if !self.signatures[func as usize].is_static {
+                                self.error(
+                                    method.span,
+                                    format!("instance method `{}` must be called through an object", self.text(method)),
+                                );
+                                return self.poison(span);
+                            }
                             if param_tys.len() == args.len() {
                                 let mut checked = Vec::with_capacity(args.len());
                                 for (arg, &expected) in args.iter().zip(&param_tys) {
@@ -1970,7 +1982,7 @@ impl Checker<'_> {
                 // Static signatures omit the implicit receiver. Reaching this
                 // instance-call path with that arity means `value.method()`
                 // attempted to invoke a static member through an object.
-                if self.signatures[func as usize].params.len() == args.len() {
+                if self.signatures[func as usize].is_static {
                     self.error(
                         method.span,
                         format!("static method `{mname}` must be called through its class"),
@@ -2045,6 +2057,7 @@ impl Checker<'_> {
                     optional_count,
                     rest_param: self.signatures[func as usize].rest_param,
                     is_generator: self.signatures[func as usize].is_generator,
+                    is_static: false,
                 };
                 let rest_index = sig.rest_param;
                 if rest_index.is_some() && call_args.len() < rest_index.unwrap() {
@@ -2704,6 +2717,7 @@ impl Checker<'_> {
                             optional_count,
                             rest_param,
                             is_generator: false,
+                            is_static: false,
                         };
                         self.pad_default_args(&mut args, &signature, span);
                         for (arg, &expected) in args.iter_mut().zip(&param_tys) {
