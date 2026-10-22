@@ -1007,9 +1007,14 @@ so these typed names are executable through both engines rather than being
 JIT-only declarations.
 Non-allocating collection clearing is also JIT-lowerable through the
 `mapClear`/`setClear` helpers; the translator models their discarded `Void`
-result explicitly. Collection operations that materialize managed arrays,
-such as `mapValues`, `mapKeys`, and `mapEntries`, remain Tier 0 until their
-allocation and managed-array ABI is lowered.
+result explicitly. Collection operations that materialize managed arrays use
+the managed-array ABI where listed below; generic carrier operations remain
+Tier 0.
+The managed-array ABI is now available for `mapValues`, `mapKeys`,
+`mapEntries`, `setValues`, and `setEntries`, including nested entry pairs.
+`mapNew` and `setNew` remain explicitly deferred: their promotion must first
+be integrated with the global allocation/safepoint eligibility gate rather
+than being admitted as isolated builtins.
 
 The dynamic array ABI now has validated load and store helpers for the explicit
 two-word `Any` carrier. Proven scalar `UnboxAny` reads use a temporary
