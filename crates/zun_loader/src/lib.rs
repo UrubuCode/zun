@@ -350,6 +350,16 @@ impl ModuleLock {
         let bytes = std::fs::read(path).map_err(LoadError::Io)?;
         Self::read(&bytes)
     }
+
+    /// Verify every lock entry is present and intact in a content cache.
+    pub fn verify_cache(&self, cache_root: impl AsRef<Path>) -> Result<(), LoadError> {
+        for (name, id) in &self.entries {
+            ModuleCache::load(&cache_root, *id).map_err(|error| {
+                LoadError::InvalidManifest(format!("locked module `{name}` failed verification: {error}"))
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl ModuleManifest {
@@ -935,15 +945,22 @@ mod tests {
     #[test]
     fn lockfile_roundtrips_content_identities_and_rejects_duplicates() {
         let mut lock = ModuleLock::new();
-        lock.push("zun:std", content_id(b"std")).unwrap();
-        lock.push("app", content_id(b"app")).unwrap();
+        let root = std::env::temp_dir().join(format!("zun-lock-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut cache = ModuleCache::default();
+        let std_id = cache.store(&root, b"std").unwrap();
+        let app_id = cache.store(&root, b"app").unwrap();
+        lock.push("zun:std", std_id).unwrap();
+        lock.push("app", app_id).unwrap();
         assert!(lock.push("app", content_id(b"other")).is_err());
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
+        decoded.verify_cache(&root).unwrap();
         let path = std::env::temp_dir().join(format!("zun-lock-{}.zlock", std::process::id()));
         lock.write_file(&path).unwrap();
         assert_eq!(ModuleLock::read_file(&path).unwrap(), lock);
         std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
