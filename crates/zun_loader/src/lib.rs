@@ -276,6 +276,71 @@ pub struct ModuleManifest {
     pub prelude_fingerprint: Option<u64>,
 }
 
+/// A deterministic lockfile binding module identities to immutable content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleLock {
+    /// Module names and their content identities in lockfile order.
+    pub entries: Vec<(String, ContentId)>,
+}
+
+impl ModuleLock {
+    const MAGIC: &'static [u8; 5] = b"ZLOCK";
+    const VERSION: u16 = 1;
+
+    /// Construct an empty lockfile.
+    pub fn new() -> Self { Self { entries: Vec::new() } }
+
+    /// Add a module identity, rejecting duplicate names.
+    pub fn push(&mut self, name: impl Into<String>, id: ContentId) -> Result<(), LoadError> {
+        let name = name.into();
+        if self.entries.iter().any(|(existing, _)| existing == &name) {
+            return Err(LoadError::InvalidManifest(format!("duplicate lock entry `{name}`")));
+        }
+        self.entries.push((name, id));
+        Ok(())
+    }
+
+    /// Serialize the lockfile deterministically.
+    pub fn write(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(Self::MAGIC);
+        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for (name, id) in &self.entries {
+            write_name(&mut bytes, name);
+            bytes.extend_from_slice(&id.0);
+        }
+        bytes
+    }
+
+    /// Parse and validate a lockfile payload.
+    pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        if bytes.len() < 11 || &bytes[..5] != Self::MAGIC {
+            return Err(LoadError::InvalidManifest("bad lockfile header".into()));
+        }
+        let version = u16::from_le_bytes(bytes[5..7].try_into().unwrap());
+        if version > Self::VERSION {
+            return Err(LoadError::InvalidManifest(format!("unsupported lockfile version {version}")));
+        }
+        let count = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
+        let mut cursor = 11;
+        let mut lock = Self::new();
+        for _ in 0..count {
+            let name = read_name(bytes, &mut cursor)?;
+            let end = cursor.checked_add(32).ok_or_else(|| LoadError::InvalidManifest("lockfile overflow".into()))?;
+            let raw = bytes.get(cursor..end).ok_or_else(|| LoadError::InvalidManifest("truncated lock entry".into()))?;
+            cursor = end;
+            let mut id = [0u8; 32];
+            id.copy_from_slice(raw);
+            lock.push(name, ContentId(id))?;
+        }
+        if cursor != bytes.len() {
+            return Err(LoadError::InvalidManifest("trailing lockfile bytes".into()));
+        }
+        Ok(lock)
+    }
+}
+
 impl ModuleManifest {
     const MAGIC: &'static [u8; 4] = b"ZMAN";
     const VERSION: u16 = 2;
@@ -840,6 +905,16 @@ mod tests {
         std::fs::write(root.join(format!("{}.zm", id.hex())), b"tampered").unwrap();
         assert!(matches!(ModuleCache::load(&root, id), Err(CacheError::Integrity { .. })));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lockfile_roundtrips_content_identities_and_rejects_duplicates() {
+        let mut lock = ModuleLock::new();
+        lock.push("zun:std", content_id(b"std")).unwrap();
+        lock.push("app", content_id(b"app")).unwrap();
+        assert!(lock.push("app", content_id(b"other")).is_err());
+        let decoded = ModuleLock::read(&lock.write()).unwrap();
+        assert_eq!(decoded, lock);
     }
 
     #[test]
