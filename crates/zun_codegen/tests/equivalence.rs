@@ -4779,6 +4779,17 @@ fn proven_i64_array_access_uses_the_signed_i64_abi() {
 }
 
 #[test]
+fn narrow_i16_array_access_keeps_the_interpreter_fallback() {
+    let src = "function write(values: Array, value: i16): i16 { values[0] = value; return values[0] as i16; }\n\
+               function main(): i16 { let values = new Array(1); return write(values, -12); }";
+    let module = compile(src);
+    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "write").map(|index| index as u32 + 1).expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("narrow fallback module remains valid");
+    assert!(!jit.is_compiled(rid));
+    assert!(matches!(interp_entry(&module), Value::Int(-12, zun_il::NumKind::I16)));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
