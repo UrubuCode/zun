@@ -947,11 +947,13 @@ layouts, plus a source-level `toString()` implementation. The heap also stores
 managed `ErrorValue` name/message pairs with mutation and sweep cleanup,
 providing the runtime backing for those source-level error objects.
 
-The release benchmark rerun on 2026-10-21 measured 435.190 ns/iteration for
-the integer Tier 0 loop and 3.956 ns/iteration for the equivalent JIT loop
-(110.45x on the 2026-10-21 rerun). The metadata-focused Tier 0 workloads
-measured 279.251 ns/iteration for field load/store and 529.247 ns/iteration for virtual
-dispatch. The result was identical between interpreter and JIT. These figures
+The isolated before/after benchmark on 2026-10-22 measured 266.982 ns/iteration
+for the integer Tier 0 loop before eager compilation and 2.104 ns/iteration for
+the equivalent Tier 1 loop after it (the before run measured 2.439 ns/iteration
+for its Tier 1 control path; the current run measured 121.39x Tier 0-to-Tier 1).
+The current metadata-focused Tier 0 workloads measured 226.719 ns/iteration for
+field load/store and 409.973 ns/iteration for virtual dispatch. The result was
+identical between interpreter and JIT. These figures
 are machine-specific and should be re-run after interpreter or OSR changes;
 the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
@@ -1188,7 +1190,7 @@ Ranked by payoff:
 | Idea | measurement | verdict |
 |---|---|---|
 | **Generational GC (nursery)** | full mark-sweep is O(n²) over a run (4× N → **16×** time); a nursery that scans only the young is **~22× faster** at N=40k and the gap grows with N | **highest** — the real ceiling (§7.2); a gen0 with bump alloc + cheap minor GC (doc 09/01, 09/03) is the fix, not just the adaptive interval |
-| **OSR / eager-JIT-for-loops** | the 2026-10-21 rerun measured **290.289 ns/iter** in Tier 0 vs **2.628 ns/iter** in Tier 1, a **110.45×** gap | **eager-JIT complete** — eligible loop methods now compile at normal entry; true OSR (doc 06) remains deferred until frame-transfer ABI and precise live-in maps exist |
+| **OSR / eager-JIT-for-loops** | isolated 2026-10-22 runs measured **266.982 ns/iter** before eager compilation and **2.104 ns/iter** after it (current run: **121.39×**) | **eager-JIT complete** — eligible loop methods now compile at normal entry; true OSR (doc 06) remains deferred until frame-transfer ABI and precise live-in maps exist |
 | **Interpreter superinstructions** | fusing a hot opcode sequence on the same tagged-stack VM: **~4–5×** fewer-dispatch speedup | **medium** — helps startup, cold code, everything before it is hot; stable Rust (no computed-goto); pairs with a leaner stack value |
 | **Cache the compiled std/prelude (R2R-lite)** | compiling a trivial program costs **~39 µs**, almost all of it the std/prelude, **paid at every process start** | **scaffold complete** — standalone versioned cache output, fingerprinted manifests, and stale-cache validation exist; reuse in concatenated source compilation remains deferred until metadata/RID linking is integrated |
 | **Escape analysis to elide `any` box/unbox** | scalar `Any` box/unbox overhead is **~0.03 ns** (negligible — `Any` is a value type) | **low for scalars** — not worth a pass on its own; the real dynamic cost is heap object allocation, which is covered by generational GC (#1), not escape analysis |
