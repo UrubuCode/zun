@@ -950,6 +950,24 @@ impl Checker<'_> {
                 ty: Ty::F64,
                 span,
             },
+            ast::Expr::BigInt { value, .. } => {
+                let Some((id, native)) = zun_natives::resolve("zun:collections", "bigIntNew") else {
+                    self.error(span, "BigInt literal intrinsic is unavailable");
+                    return self.poison(span);
+                };
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![hir::Expr {
+                            kind: hir::ExprKind::String(value.clone()),
+                            ty: Ty::String,
+                            span,
+                        }],
+                    },
+                    ty: native_ty(native.ret),
+                    span,
+                }
+            }
             ast::Expr::String { value, .. } => hir::Expr {
                 kind: hir::ExprKind::String(value.clone()),
                 ty: Ty::String,
@@ -3050,7 +3068,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
         IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
         Template { parts, .. } => parts.iter().map(|p| match p { ast::TemplatePart::Text(_) => 0, ast::TemplatePart::Expr(e) => count_yields_in_expr(e) }).sum(),
-        Function(_) | Number { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
+        Function(_) | Number { .. } | BigInt { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
         StaticMethodCall { args, .. } => args.iter().map(count_yields_in_expr).sum(),
         StaticField { .. } => 0,
     }
@@ -3092,7 +3110,7 @@ fn count_awaits_in_stmt(stmt: &ast::Stmt) -> usize {
 fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
     use ast::Expr::*;
     match expr {
-        Function(_) | Number { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
+        Function(_) | Number { .. } | BigInt { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
         Template { parts, .. } => parts
             .iter()
             .map(|part| match part {

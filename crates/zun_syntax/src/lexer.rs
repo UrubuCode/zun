@@ -12,6 +12,8 @@ pub enum TokenKind {
     // Literals and names
     /// A numeric literal (integer or decimal).
     Number,
+    /// A decimal BigInt literal with an `n` suffix.
+    BigInt,
     /// A double-quoted string literal.
     String,
     /// A backtick template literal.
@@ -205,7 +207,12 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                         pos += 1;
                     }
                 }
-                TokenKind::Number
+                if bytes.get(pos) == Some(&b'n') {
+                    pos += 1;
+                    TokenKind::BigInt
+                } else {
+                    TokenKind::Number
+                }
             }
             b'"' => {
                 pos += 1;

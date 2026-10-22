@@ -38,7 +38,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
-        Expr::Function(_) | Expr::Number { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
+        Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
     }
 }
 
@@ -146,6 +146,11 @@ impl Parser<'_> {
                 self.bump();
                 let value = self.text(t).parse::<f64>().unwrap_or_else(|_| f64::NAN);
                 Expr::Number { value, span: t.span }
+            }
+            TokenKind::BigInt => {
+                self.bump();
+                let text = self.text(t);
+                Expr::BigInt { value: text[..text.len() - 1].to_owned(), span: t.span }
             }
             TokenKind::String => {
                 self.bump();

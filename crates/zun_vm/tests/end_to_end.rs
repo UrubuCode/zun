@@ -118,6 +118,18 @@ fn bigint_division_and_remainder_use_truncation_toward_zero() {
 }
 
 #[test]
+fn bigint_literals_use_the_managed_constructor_path() {
+    let out = run_source(
+        r#"function main(): int {
+            let value: BigInt = 12345678901234567890n;
+            print(value.toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["12345678901234567890"]);
+}
+
+#[test]
 fn arithmetic_and_locals() {
     let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);

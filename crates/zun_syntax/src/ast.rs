@@ -372,6 +372,13 @@ pub enum Expr {
         /// Source location.
         span: Span,
     },
+    /// An arbitrary-precision integer literal with a trailing `n`.
+    BigInt {
+        /// Decimal digits without the suffix.
+        value: String,
+        /// Source location.
+        span: Span,
+    },
     /// A string literal, with escapes already processed.
     String {
         /// The decoded contents.
@@ -580,6 +587,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Number { span, .. }
+            | Expr::BigInt { span, .. }
             | Expr::String { span, .. }
             | Expr::Template { span, .. }
             | Expr::Bool { span, .. }
