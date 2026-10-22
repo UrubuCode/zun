@@ -301,6 +301,10 @@ impl Translator<'_> {
                     let literal = self.string_literal_fref();
                     let call = self.builder.ins().call(literal, &[ptr, len]);
                     let result = self.builder.inst_results(call)[0];
+                    // Interning may allocate and trigger a collection. Keep
+                    // the managed handle visible to the precise stack map
+                    // for subsequent safepoints in this method.
+                    self.builder.declare_value_needs_stack_map(result);
                     stack.push((result, JitKind::String));
                 }
                 Opcode::Conv => {
