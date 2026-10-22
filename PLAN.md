@@ -321,10 +321,10 @@ versioned native extension ABI with owned `namespace`/`module().func` lookup;
 scalar + string FFI with declared ownership contracts; multi-module loader/manifest;
 SHA-256 content-addressed cache with deterministic lockfiles, Ed25519 signatures,
 and capability declarations; sequence-point PC-to-source metadata in `.zm`;
-minimal `std/` surfaces. Remaining gates:
-fully default-installed `zun:std` without implicit source concatenation, static
-base-type rebinding and extension methods over the frozen floor, typed native
-extension bindings beyond registry lookup, Error-stack consumption of sequence
+minimal `std/` surfaces; static `String` rebinding with frozen-floor extension
+methods. Remaining gates:
+fully default-installed `zun:std` without implicit source concatenation, typed
+native extension bindings beyond registry lookup, Error-stack consumption of sequence
 points, full AOT binary (linker + runtime bundle), native TS/JS front-end, full
 module registry/fetcher and remote index integration, true OSR. The signed
 `.zmlib` package envelope is now implemented. The former
