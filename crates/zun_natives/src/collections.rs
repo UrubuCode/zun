@@ -229,6 +229,12 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "bigIntSub", params: &[BigInt, BigInt], ret: BigInt, imp: unavailable },
         NativeFn { name: "bigIntMul", params: &[BigInt, BigInt], ret: BigInt, imp: unavailable },
         NativeFn { name: "bigIntCompare", params: &[BigInt, BigInt], ret: I32, imp: unavailable },
+        NativeFn { name: "bigIntEq", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
+        NativeFn { name: "bigIntNe", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
+        NativeFn { name: "bigIntLt", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
+        NativeFn { name: "bigIntLe", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
+        NativeFn { name: "bigIntGt", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
+        NativeFn { name: "bigIntGe", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
         NativeFn { name: "bigIntToString", params: &[BigInt], ret: Str, imp: unavailable },
     ],
 };

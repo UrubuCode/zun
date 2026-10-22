@@ -1116,6 +1116,12 @@ impl Checker<'_> {
                         ast::BinaryOp::Add => Some("bigIntAdd"),
                         ast::BinaryOp::Sub => Some("bigIntSub"),
                         ast::BinaryOp::Mul => Some("bigIntMul"),
+                        ast::BinaryOp::Eq => Some("bigIntEq"),
+                        ast::BinaryOp::Ne => Some("bigIntNe"),
+                        ast::BinaryOp::Lt => Some("bigIntLt"),
+                        ast::BinaryOp::Le => Some("bigIntLe"),
+                        ast::BinaryOp::Gt => Some("bigIntGt"),
+                        ast::BinaryOp::Ge => Some("bigIntGe"),
                         _ => None,
                     };
                     if let Some(name) = intrinsic {
@@ -1130,7 +1136,7 @@ impl Checker<'_> {
                             };
                         }
                     }
-                    self.error(span, "BigInt supports only `+`, `-`, and `*` operators");
+                    self.error(span, "BigInt supports arithmetic and comparison operators");
                     return self.poison(span);
                 }
                 let ty = self.binary_result(*op, &lhs, &rhs, span);

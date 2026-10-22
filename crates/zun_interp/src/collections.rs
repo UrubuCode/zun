@@ -905,7 +905,8 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
-            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntCompare" => {
+            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntCompare"
+            | "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe" => {
                 let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let (left, right) = zun_gc::with_current_heap(|heap| {
@@ -918,6 +919,17 @@ impl<'a> Interp<'a> {
                         std::cmp::Ordering::Greater => 1,
                     };
                     Ok(Value::Int(result, zun_il::NumKind::I32))
+                } else if matches!(name, "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe") {
+                    let ordering = left.cmp(&right);
+                    let result = match name {
+                        "bigIntEq" => ordering == std::cmp::Ordering::Equal,
+                        "bigIntNe" => ordering != std::cmp::Ordering::Equal,
+                        "bigIntLt" => ordering == std::cmp::Ordering::Less,
+                        "bigIntLe" => ordering != std::cmp::Ordering::Greater,
+                        "bigIntGt" => ordering == std::cmp::Ordering::Greater,
+                        _ => ordering != std::cmp::Ordering::Less,
+                    };
+                    Ok(Value::Bool(result))
                 } else {
                     let value = match name {
                         "bigIntAdd" => left.add(&right),
