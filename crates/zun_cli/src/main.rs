@@ -606,7 +606,13 @@ fn out_path(source: &Path) -> PathBuf {
 /// dependency. `ZUN_LLD` is an explicit override; otherwise use the copy
 /// shipped with the active Rust toolchain when available.
 fn resolve_lld(target: target_lexicon::Triple) -> Option<PathBuf> {
-    if let Some(path) = explicit_lld_override(std::env::var_os("ZUN_LLD").as_deref()) {
+    let configured = if target == target_lexicon::Triple::host() {
+        std::env::var_os("ZUN_LLD")
+            .or_else(|| std::env::var_os(target_env_name("ZUN_LLD", &target.to_string())))
+    } else {
+        std::env::var_os(target_env_name("ZUN_LLD", &target.to_string()))
+    };
+    if let Some(path) = explicit_lld_override(configured.as_deref()) {
         return Some(path);
     }
     let path_candidates = if cfg!(windows) {
@@ -690,8 +696,12 @@ fn resolve_runtime_library(target: &target_lexicon::Triple) -> Option<PathBuf> {
 }
 
 fn runtime_library_env_name(target: &str) -> String {
+    target_env_name("ZUN_RUNTIME_LIB", target)
+}
+
+fn target_env_name(prefix: &str, target: &str) -> String {
     format!(
-        "ZUN_RUNTIME_LIB_{}",
+        "{prefix}_{}",
         target
             .chars()
             .map(|character| {
@@ -945,7 +955,9 @@ fn line_col(source: &str, offset: u32) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{explicit_lld_override, parse_aot_target, runtime_library_env_name};
+    use super::{
+        explicit_lld_override, parse_aot_target, runtime_library_env_name, target_env_name,
+    };
     use std::ffi::OsStr;
     use std::path::Path;
 
@@ -982,6 +994,14 @@ mod tests {
         assert_eq!(
             runtime_library_env_name("aarch64-unknown-linux-gnu"),
             "ZUN_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_GNU"
+        );
+    }
+
+    #[test]
+    fn target_lld_override_uses_the_same_target_qualification() {
+        assert_eq!(
+            target_env_name("ZUN_LLD", "aarch64-unknown-linux-gnu"),
+            "ZUN_LLD_AARCH64_UNKNOWN_LINUX_GNU"
         );
     }
 }
