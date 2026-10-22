@@ -895,6 +895,41 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         let mut method_statements = Vec::with_capacity(body.statements.len());
                         for statement in &body.statements {
                             match statement {
+                                Statement::VariableDeclaration(declaration) => {
+                                    for declarator in &declaration.declarations {
+                                        let BindingPattern::BindingIdentifier(identifier) =
+                                            &declarator.id
+                                        else {
+                                            return Err(vec![
+                                                "OXC adapter currently supports identifier local bindings".into(),
+                                            ]);
+                                        };
+                                        let Some(initializer) = declarator.init.as_ref() else {
+                                            return Err(vec![
+                                                "OXC adapter requires an initializer for local bindings".into(),
+                                            ]);
+                                        };
+                                        method_statements.push(Stmt::Let {
+                                            name: Name {
+                                                span: Span::new(
+                                                    identifier.span.start,
+                                                    identifier.span.end,
+                                                ),
+                                            },
+                                            ty: convert_type_annotation(
+                                                source,
+                                                declarator.type_annotation.as_deref(),
+                                            )
+                                            .map_err(|error| vec![error])?,
+                                            init: convert_expression(initializer)
+                                                .map_err(|error| vec![error])?,
+                                            span: Span::new(
+                                                declarator.span.start,
+                                                declarator.span.end,
+                                            ),
+                                        });
+                                    }
+                                }
                                 Statement::ReturnStatement(return_statement) => {
                                     method_statements.push(Stmt::Return {
                                         value: return_statement
@@ -914,6 +949,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                         convert_expression(&expression_statement.expression)
                                             .map_err(|error| vec![error])?,
                                     ));
+                                }
+                                Statement::IfStatement(if_statement) => {
+                                    method_statements.push(
+                                        convert_if_statement(source, if_statement)
+                                            .map_err(|error| vec![error])?,
+                                    );
                                 }
                                 Statement::WhileStatement(while_statement) => {
                                     method_statements.push(Stmt::While {
@@ -950,7 +991,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     method_statements.extend(nested.statements);
                                 }
                                 _ => return Err(vec![
-                                    "OXC adapter class methods currently support return, expression, and loop statements".into(),
+                                    "OXC adapter class methods currently support local, conditional, return, expression, and loop statements".into(),
                                 ]),
                             }
                         }
@@ -1980,6 +2021,23 @@ mod tests {
         assert!(matches!(
             program.classes[0].methods[0].body.statements.first(),
             Some(crate::ast::Stmt::While { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_locals_and_conditionals_in_class_methods() {
+        let program = parse_subset(
+            "class Box { value: number; read(value) { let local: number = value; if (local) return this.value; return value; } } function main() {}",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.classes[0].methods[0].body.statements.first(),
+            Some(crate::ast::Stmt::Let { .. })
+        ));
+        assert!(matches!(
+            program.classes[0].methods[0].body.statements.get(1),
+            Some(crate::ast::Stmt::If { .. })
         ));
     }
 

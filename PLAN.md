@@ -433,6 +433,7 @@ single-statement `for` branches reuse the existing loop lowering;
 single-statement `for...of` branches reuse the existing loop lowering;
 loops nested inside block branches reuse the same loop lowering;
 class-method loop statements reuse the same loop lowering;
+class-method locals and conditionals reuse typed function-body lowering;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
