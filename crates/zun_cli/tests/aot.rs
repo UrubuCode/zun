@@ -336,6 +336,44 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
 }
 
 #[test]
+fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
+    let runtime = std::env::current_exe()
+        .expect("test executable path")
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|path| path.join(if cfg!(windows) { "zun_vm.lib" } else { "libzun_vm.a" }));
+    let Some(runtime) = runtime.filter(|path| path.is_file()) else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("zun-aot-runtime-fallback-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    std::fs::write(
+        &source,
+        "function main(): int { let value: any = 23; return value as int; }\n",
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .env("ZUN_RUNTIME_LIB", &runtime)
+        .args(["build", "--aot"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let executable = source.with_extension("exe");
+    assert!(executable.is_file(), "{}", String::from_utf8_lossy(&output.stderr));
+    let run = Command::new(&executable).output().expect("run fallback executable");
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "23");
+
+    for extension in ["ts", "zm", "zman", "meta.o", "exe", "aot.rs"] {
+        let _ = std::fs::remove_file(source.with_extension(extension));
+    }
+    let _ = std::fs::remove_dir(root);
+}
+
+#[test]
 fn trim_reports_removed_method_names() {
     let root = std::env::temp_dir().join(format!("zun-trim-report-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
