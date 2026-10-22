@@ -269,6 +269,36 @@ pub trait ModuleFetcher {
     fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError>;
 }
 
+/// Fetcher for a trusted local registry mirror. Module names are resolved
+/// beneath `root` and may not escape it through absolute or parent paths.
+#[derive(Debug, Clone)]
+pub struct DirectoryFetcher {
+    root: PathBuf,
+}
+
+impl DirectoryFetcher {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+}
+
+impl ModuleFetcher for DirectoryFetcher {
+    fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
+        let relative = Path::new(name);
+        if relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(component, std::path::Component::ParentDir)
+            })
+        {
+            return Err(LoadError::InvalidManifest(format!(
+                "unsafe registry module path `{name}`"
+            )));
+        }
+        let path = self.root.join(relative).with_extension("zm");
+        std::fs::read(path).map_err(LoadError::Io)
+    }
+}
+
 /// A deterministic registry index mapping module identities to immutable
 /// content IDs. The index is metadata only; bytes remain in the cache or are
 /// supplied by a [`ModuleFetcher`].
@@ -1404,6 +1434,23 @@ mod tests {
         let mut bad = ModuleIndex::new();
         bad.push("indexed", content_id(b"different")).unwrap();
         assert!(ModuleLoader::new().load_index(&bad, &Registry(Module::new().write())).is_err());
+    }
+
+    #[test]
+    fn directory_fetcher_loads_indexed_modules_and_rejects_escape_paths() {
+        let root = std::env::temp_dir().join(format!("zun-registry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("scope")).unwrap();
+        let bytes = Module::new().write();
+        std::fs::write(root.join("scope").join("module.zm"), &bytes).unwrap();
+        let mut index = ModuleIndex::new();
+        index.push("scope/module", content_id(&bytes)).unwrap();
+        let fetcher = DirectoryFetcher::new(&root);
+        let mut loader = ModuleLoader::new();
+        loader.load_index(&index, &fetcher).unwrap();
+        assert!(loader.get("scope/module").is_some());
+        assert!(fetcher.fetch("../outside").is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
