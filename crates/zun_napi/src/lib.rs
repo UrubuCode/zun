@@ -511,6 +511,33 @@ pub unsafe extern "C" fn zun_host_execute_u64(
     ZUN_HOST_OK
 }
 
+/// Execute a compiled module and return a `u32` result through `out`.
+/// The result kind is checked before conversion so signed or wider values are
+/// never silently reinterpreted at the host boundary.
+#[no_mangle]
+pub unsafe extern "C" fn zun_host_execute_u32(
+    host: *mut ZunHost,
+    module_ptr: *const u8,
+    module_len: usize,
+    out: *mut u32,
+) -> i32 {
+    if host.is_null() || module_ptr.is_null() || out.is_null() {
+        return ZUN_HOST_INVALID_ARGUMENT;
+    }
+    // SAFETY: caller supplies a valid immutable byte range for this call.
+    let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
+    let value = match zun_vm::execute(bytes) {
+        Ok(value) => value,
+        Err(_) => return ZUN_HOST_VM_ERROR,
+    };
+    let zun_interp::value::Value::Int(value, zun_il::NumKind::U32) = value else {
+        return ZUN_HOST_VM_ERROR;
+    };
+    // SAFETY: caller supplies writable storage for one u32.
+    unsafe { *out = value as u32 };
+    ZUN_HOST_OK
+}
+
 /// Execute a compiled module and return its floating-point result through
 /// `out`. The status codes match [`zun_host_execute_i64`].
 #[no_mangle]
@@ -682,6 +709,33 @@ mod tests {
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn host_executes_a_compiled_u32_module() {
+        let module = zun_compiler::compile("function main(): u32 { return 42; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = 0u32;
+        let status = unsafe {
+            zun_host_execute_u32(host, bytes.as_ptr(), bytes.len(), &mut result)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, ZUN_HOST_OK);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn u32_host_export_rejects_u64_modules() {
+        let module = zun_compiler::compile("function main(): u64 { return 42; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = 0u32;
+        let status = unsafe {
+            zun_host_execute_u32(host, bytes.as_ptr(), bytes.len(), &mut result)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, ZUN_HOST_VM_ERROR);
     }
 
     #[test]
