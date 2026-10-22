@@ -190,6 +190,18 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 span: span(member.span),
             })
         }
+        Expression::PrivateFieldExpression(member) => {
+            if member.optional {
+                return Err("OXC adapter does not support optional private members yet".into());
+            }
+            Ok(Expr::PrivateField {
+                object: Box::new(convert_expression(&member.object)?),
+                field: Name {
+                    span: span(member.field.span),
+                },
+                span: span(member.span),
+            })
+        }
         Expression::ChainExpression(chain) => match &chain.expression {
             ChainElement::StaticMemberExpression(member) => Ok(Expr::OptionalField {
                 object: Box::new(convert_expression(&member.object)?),
@@ -277,6 +289,14 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 AssignmentTarget::ComputedMemberExpression(member) => Ok(Expr::IndexAssign {
                     object: Box::new(convert_expression(&member.object)?),
                     index: Box::new(convert_expression(&member.expression)?),
+                    value,
+                    span: span(assignment.span),
+                }),
+                AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::PrivateFieldAssign {
+                    object: Box::new(convert_expression(&member.object)?),
+                    field: Name {
+                        span: span(member.field.span),
+                    },
                     value,
                     span: span(assignment.span),
                 }),
@@ -1188,6 +1208,26 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[1],
             crate::ast::Stmt::Expr(crate::ast::Expr::IndexAssign { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_private_member_access_and_assignment() {
+        let program = parse_subset(
+            "function update(value) { value.#secret = 1; return value.#secret; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Expr(crate::ast::Expr::PrivateFieldAssign { .. })
+        ));
+        assert!(matches!(
+            program.functions[0].body.statements[1],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::PrivateField { .. }),
+                ..
+            }
         ));
     }
 }
