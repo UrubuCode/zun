@@ -70,6 +70,7 @@ impl<'a> OwnedGeneratorSession<'a> {
             resume_frame: None,
             yielded: None,
             static_fields: std::collections::HashMap::new(),
+            active_frame: None,
         };
         let outcome = if let Some(frame) = self.pending.take() {
             interp.resume_suspended(frame)
@@ -90,7 +91,7 @@ impl<'a> OwnedGeneratorSession<'a> {
                 }
             }
             ExecutionOutcome::Thrown(value) => Err(RunError::Thrown(value)),
-            ExecutionOutcome::Fault(error) => Err(error),
+            ExecutionOutcome::Fault(error) => Err(interp.annotate_error(error)),
         }
     }
 
@@ -382,6 +383,7 @@ impl<'a> ResumableSession<'a> {
                 resume_frame: None,
                 yielded: None,
                 static_fields: std::collections::HashMap::new(),
+                active_frame: None,
             },
             method_rid,
             args: Some(args),
@@ -477,9 +479,15 @@ pub(super) fn run_method_with(
         resume_frame: None,
         yielded: None,
         static_fields: std::collections::HashMap::new(),
+        active_frame: None,
     };
-    let result = interp.call(method_rid, args, None)?;
-    interp.deliver_finalization_callbacks()?;
+    let result = match interp.call(method_rid, args, None) {
+        Ok(value) => value,
+        Err(error) => return Err(interp.annotate_error(error)),
+    };
+    if let Err(error) = interp.deliver_finalization_callbacks() {
+        return Err(interp.annotate_error(error));
+    }
     Ok(result)
 }
 

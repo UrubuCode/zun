@@ -210,6 +210,7 @@ impl Interp<'_> {
         let mut pc = &mut frame.pc;
 
         while *pc < code.len() {
+            self.active_frame = Some((method_rid, *pc as u32));
             let (instr, size) =
                 decode_one(&code[*pc..]).map_err(|e| RunError::Malformed(e.to_string()))?;
             let next = *pc + size;

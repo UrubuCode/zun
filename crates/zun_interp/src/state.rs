@@ -17,9 +17,19 @@ pub(super) struct Interp<'a> {
     /// Value produced by a generator yield at the current suspension point.
     pub(super) yielded: Option<Value>,
     pub(super) static_fields: HashMap<(u32, u32), Value>,
+    /// Most recent executing frame/program counter, used for source-aware
+    /// diagnostics at the public runner boundary.
+    pub(super) active_frame: Option<(u32, u32)>,
 }
 
 impl<'a> Interp<'a> {
+    pub(super) fn annotate_error(&self, error: super::RunError) -> super::RunError {
+        match self.active_frame {
+            Some((method, pc)) => error.annotate(self.module, method, pc),
+            None => error,
+        }
+    }
+
     /// Rewrite owned suspended frames after a moving collection.
     pub(super) fn rewrite_suspended_frames(
         &mut self,
