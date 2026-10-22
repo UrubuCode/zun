@@ -385,6 +385,9 @@ Signed lock loading now exposes the same external-key and retained-key paths,
 including cache-backed variants, closing the trust gate at lock registration.
 Content-addressed cache writes now repair an existing entry whose bytes no longer
 match its content identity, with regression coverage for tampered cache files.
+Directory and HTTP registry transports now reject parent, absolute, backslash,
+query, fragment, percent-encoded, colon, and control-character module paths before
+filesystem or URL interpolation; logical lock/index identities remain unchanged.
 The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable on
 `PATH`, or the active toolchain's `rust-lld`, and passes it to the external final
 link step when available.
