@@ -221,6 +221,20 @@ impl ModuleManifest {
         }
     }
 
+    /// Reject a manifest whose compiled prelude is not the one expected by
+    /// the current compiler/runtime.
+    pub fn validate_prelude_fingerprint(&self, expected: u64) -> Result<(), LoadError> {
+        match self.prelude_fingerprint {
+            Some(actual) if actual == expected => Ok(()),
+            Some(actual) => Err(LoadError::InvalidManifest(format!(
+                "prelude fingerprint mismatch: expected {expected:#x}, found {actual:#x}"
+            ))),
+            None => Err(LoadError::InvalidManifest(
+                "manifest has no prelude fingerprint".into(),
+            )),
+        }
+    }
+
     /// Serialize the flattened manifest into a deterministic binary payload.
     pub fn write(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -850,6 +864,10 @@ mod tests {
         let decoded = ModuleManifest::read(&manifest.write()).expect("roundtrip");
         assert_eq!(decoded, manifest);
         assert_eq!(decoded.prelude_fingerprint, Some(0x1234_5678_9abc_def0));
+        decoded
+            .validate_prelude_fingerprint(0x1234_5678_9abc_def0)
+            .expect("matching prelude should validate");
+        assert!(decoded.validate_prelude_fingerprint(0x42).is_err());
         assert_eq!(
             decoded.native_object_path("dist/app.zman"),
             Some(PathBuf::from("dist/app.o"))
