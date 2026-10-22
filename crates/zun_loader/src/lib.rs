@@ -282,14 +282,16 @@ pub struct ModuleManifest {
 pub struct ModuleLock {
     /// Module names and their content identities in lockfile order.
     pub entries: Vec<(String, ContentId)>,
+    /// Capabilities granted to each module identity.
+    pub capabilities: Vec<(String, Vec<String>)>,
 }
 
 impl ModuleLock {
     const MAGIC: &'static [u8; 5] = b"ZLOCK";
-    const VERSION: u16 = 1;
+    const VERSION: u16 = 2;
 
     /// Construct an empty lockfile.
-    pub fn new() -> Self { Self { entries: Vec::new() } }
+    pub fn new() -> Self { Self { entries: Vec::new(), capabilities: Vec::new() } }
 
     /// Add a module identity, rejecting duplicate names.
     pub fn push(&mut self, name: impl Into<String>, id: ContentId) -> Result<(), LoadError> {
@@ -298,6 +300,27 @@ impl ModuleLock {
             return Err(LoadError::InvalidManifest(format!("duplicate lock entry `{name}`")));
         }
         self.entries.push((name, id));
+        Ok(())
+    }
+
+    /// Declare capabilities for a locked module.
+    pub fn grant_capabilities(
+        &mut self,
+        name: impl Into<String>,
+        capabilities: impl IntoIterator<Item = String>,
+    ) -> Result<(), LoadError> {
+        let name = name.into();
+        if !self.entries.iter().any(|(entry, _)| entry == &name) {
+            return Err(LoadError::InvalidManifest(format!("capabilities reference unknown module `{name}`")));
+        }
+        if self.capabilities.iter().any(|(entry, _)| entry == &name) {
+            return Err(LoadError::InvalidManifest(format!("duplicate capabilities for `{name}`")));
+        }
+        let mut capabilities: Vec<_> = capabilities.into_iter().collect();
+        capabilities.sort();
+        capabilities.dedup();
+        self.capabilities.push((name, capabilities));
+        self.capabilities.sort_by(|left, right| left.0.cmp(&right.0));
         Ok(())
     }
 
@@ -310,6 +333,12 @@ impl ModuleLock {
         for (name, id) in &self.entries {
             write_name(&mut bytes, name);
             bytes.extend_from_slice(&id.0);
+        }
+        bytes.extend_from_slice(&(self.capabilities.len() as u32).to_le_bytes());
+        for (name, capabilities) in &self.capabilities {
+            write_name(&mut bytes, name);
+            bytes.extend_from_slice(&(capabilities.len() as u32).to_le_bytes());
+            for capability in capabilities { write_name(&mut bytes, capability); }
         }
         bytes
     }
@@ -334,6 +363,16 @@ impl ModuleLock {
             let mut id = [0u8; 32];
             id.copy_from_slice(raw);
             lock.push(name, ContentId(id))?;
+        }
+        let capability_count = read_u32(bytes, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated capability section".into()))? as usize;
+        for _ in 0..capability_count {
+            let name = read_name(bytes, &mut cursor)?;
+            let count = read_u32(bytes, &mut cursor)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated capability count".into()))? as usize;
+            let mut capabilities = Vec::with_capacity(count);
+            for _ in 0..count { capabilities.push(read_name(bytes, &mut cursor)?); }
+            lock.grant_capabilities(name, capabilities)?;
         }
         if cursor != bytes.len() {
             return Err(LoadError::InvalidManifest("trailing lockfile bytes".into()));
@@ -1019,10 +1058,12 @@ mod tests {
         let app_id = cache.store(&root, b"app").unwrap();
         lock.push("zun:std", std_id).unwrap();
         lock.push("app", app_id).unwrap();
+        lock.grant_capabilities("app", ["net".to_owned(), "fs".to_owned(), "net".to_owned()]).unwrap();
         assert!(lock.push("app", content_id(b"other")).is_err());
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
         decoded.verify_cache(&root).unwrap();
+        assert_eq!(decoded.capabilities, vec![("app".to_owned(), vec!["fs".to_owned(), "net".to_owned()])]);
         let path = std::env::temp_dir().join(format!("zun-lock-{}.zlock", std::process::id()));
         lock.write_file(&path).unwrap();
         assert_eq!(ModuleLock::read_file(&path).unwrap(), lock);
