@@ -402,9 +402,12 @@ pub struct HttpFetcher {
 impl HttpFetcher {
     pub fn new(base_url: impl Into<String>) -> Result<Self, LoadError> {
         let base_url = base_url.into().trim_end_matches('/').to_owned();
-        if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+        if !(base_url.starts_with("http://") || base_url.starts_with("https://"))
+            || base_url.contains(['?', '#', '\\'])
+            || base_url.chars().any(char::is_control)
+        {
             return Err(LoadError::InvalidManifest(
-                "HTTP registry base URL must use http:// or https://".into(),
+                "HTTP registry base URL must use http:// or https:// without query, fragment, backslash, or control characters".into(),
             ));
         }
         Ok(Self { base_url })
@@ -2599,6 +2602,9 @@ mod tests {
     #[test]
     fn http_fetcher_validates_registry_urls_and_module_paths() {
         assert!(HttpFetcher::new("file:///tmp/registry").is_err());
+        assert!(HttpFetcher::new("https://registry.example.test/root?tenant=evil").is_err());
+        assert!(HttpFetcher::new("https://registry.example.test/root#fragment").is_err());
+        assert!(HttpFetcher::new("https://registry.example.test/root\\mirror").is_err());
         let fetcher = HttpFetcher::new("https://registry.example.test/root").unwrap();
         assert!(fetcher.fetch("../escape").is_err());
         assert!(fetcher.fetch("scope\\escape").is_err());
