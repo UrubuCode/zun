@@ -65,6 +65,7 @@ mod node_api {
         ) -> NapiStatus;
         fn napi_get_undefined(env: NapiEnv, result: *mut NapiValue) -> NapiStatus;
         fn napi_throw_type_error(env: NapiEnv, code: *const u8, message: *const u8) -> NapiStatus;
+        fn napi_throw_error(env: NapiEnv, code: *const u8, message: *const u8) -> NapiStatus;
     }
 
     fn undefined(env: NapiEnv) -> NapiValue {
@@ -79,6 +80,12 @@ mod node_api {
     fn invalid_call(env: NapiEnv) -> NapiValue {
         let message = b"expected an ArrayBuffer containing a valid Zun module\0";
         let _ = unsafe { napi_throw_type_error(env, core::ptr::null(), message.as_ptr()) };
+        undefined(env)
+    }
+
+    fn registration_failed(env: NapiEnv) -> NapiValue {
+        let message = b"failed to register Zun N-API exports\0";
+        let _ = unsafe { napi_throw_error(env, core::ptr::null(), message.as_ptr()) };
         undefined(env)
     }
 
@@ -264,7 +271,7 @@ mod node_api {
             (b"runString\0".as_slice(), run_string as NapiCallback),
         ] {
             let mut function = core::ptr::null_mut();
-            if unsafe {
+            let status = unsafe {
                 napi_create_function(
                     env,
                     name.as_ptr(),
@@ -273,9 +280,14 @@ mod node_api {
                     core::ptr::null_mut(),
                     &mut function,
                 )
-            } == NAPI_OK
+            };
+            if status != NAPI_OK {
+                return registration_failed(env);
+            }
+            if unsafe { napi_set_named_property(env, exports, name.as_ptr(), function) }
+                != NAPI_OK
             {
-                let _ = unsafe { napi_set_named_property(env, exports, name.as_ptr(), function) };
+                return registration_failed(env);
             }
         }
         exports
