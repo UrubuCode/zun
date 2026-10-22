@@ -2419,6 +2419,35 @@ fn string_includes_with_managed_parameters_is_jit_equivalent() {
 }
 
 #[test]
+fn string_index_of_with_managed_parameters_preserves_utf16_indices() {
+    let module = zun_compiler::compile(
+        "import { indexOf } from \"zun:string\";\n\
+         class String { extern indexOf(needle: string): int; }\n\
+         function locate(value: string, needle: string): int { return value.indexOf(needle); }\n\
+         function main(): int { return 0; }",
+    )
+    .expect("compile parameterized String indexOf");
+    let locate = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "locate")
+        .map(|index| index as u32 + 1)
+        .expect("locate method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds parameterized String indexOf");
+    assert!(jit.is_compiled(locate));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("😀zun"));
+    let needle = heap.intern_string(std::rc::Rc::from("zun"));
+    assert_eq!(
+        jit.call_packed_with_heap(locate, &[value as u64, needle as u64], &mut heap)
+            .expect("jit indexOf"),
+        2
+    );
+}
+
+#[test]
 fn string_count_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { count } from \"zun:string\";\n\
