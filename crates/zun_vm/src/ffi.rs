@@ -57,6 +57,12 @@ impl FfiStringReturn {
             Self::Owned { free_symbol, .. } if free_symbol.trim().is_empty() => {
                 Err("owned string returns require a free symbol".into())
             }
+            Self::Owned {
+                length: FfiStringLength::OutParameter(name),
+                ..
+            } if name.trim().is_empty() => {
+                Err("owned string returns require a non-empty length parameter".into())
+            }
             Self::OutBuffer { capacity: 0 } => {
                 Err("out-buffer string returns require positive capacity".into())
             }
@@ -120,6 +126,7 @@ impl FfiStringReturn {
         if !matches!(self, Self::Owned { .. }) {
             return Err("owned copy requires an owned string return declaration".into());
         }
+        self.validate()?;
         let length = reported_len.ok_or("owned string returns require a reported length")?;
         if length > payload.len() {
             return Err("owned string length exceeds the native payload".into());
@@ -734,6 +741,12 @@ mod tests {
         assert!(FfiStringReturn::Owned {
             free_symbol: "  ".into(),
             length: FfiStringLength::OutParameter("len".into()),
+        }
+        .validate()
+        .is_err());
+        assert!(FfiStringReturn::Owned {
+            free_symbol: "free_text".into(),
+            length: FfiStringLength::OutParameter(String::new()),
         }
         .validate()
         .is_err());
