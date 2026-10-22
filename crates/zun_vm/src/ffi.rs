@@ -3,8 +3,8 @@
 //! This module is intentionally separate from `zun_natives`: intrinsics are
 //! implemented by Zun, while this API loads third-party native libraries.
 
-use std::ffi::OsStr;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::Path;
 
 /// Scalar types supported by the first, blittable FFI ABI.
@@ -55,7 +55,8 @@ impl FfiSignature {
         } else {
             Err(format!(
                 "unsupported direct FFI signature: {} parameter(s) returning {:?}",
-                self.arity(), self.result
+                self.arity(),
+                self.result
             ))
         }
     }
@@ -73,7 +74,9 @@ impl FfiSignature {
     }
 
     fn matches_bool_call(&self) -> bool {
-        self.result == FfiScalar::Bool && self.params.is_empty()
+        self.result == FfiScalar::Bool
+            && self.params.iter().all(|param| *param == FfiScalar::Bool)
+            && self.arity() <= 3
     }
 }
 
@@ -106,7 +109,11 @@ pub fn library_name_variants(name: &str) -> Vec<String> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        vec![format!("lib{name}.so"), format!("{name}.so"), name.to_owned()]
+        vec![
+            format!("lib{name}.so"),
+            format!("{name}.so"),
+            name.to_owned(),
+        ]
     }
     #[cfg(not(any(windows, unix)))]
     {
@@ -163,7 +170,10 @@ impl NativeLibraryResolver {
             let library = unsafe { NativeLibrary::open_named(name) }?;
             self.libraries.insert(name.to_owned(), library);
         }
-        Ok(self.libraries.get(name).expect("library inserted or cached"))
+        Ok(self
+            .libraries
+            .get(name)
+            .expect("library inserted or cached"))
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -349,21 +359,61 @@ impl NativeLibrary {
         Ok(unsafe { symbol() } != 0)
     }
 
+    /// Call a C integer-style boolean function with one boolean argument.
+    /// The explicit `i32` ABI matches the C representation declared by this
+    /// bridge; it is not inferred from Rust's platform-dependent `bool` ABI.
+    pub unsafe fn call_bool_1(&self, name: &[u8], arg: bool) -> Result<bool, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i32) -> i32>(name) }?;
+        Ok(unsafe { symbol(arg as i32) } != 0)
+    }
+
+    /// Call a C integer-style boolean function with two boolean arguments.
+    pub unsafe fn call_bool_2(
+        &self,
+        name: &[u8],
+        first: bool,
+        second: bool,
+    ) -> Result<bool, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i32, i32) -> i32>(name) }?;
+        Ok(unsafe { symbol(first as i32, second as i32) } != 0)
+    }
+
+    /// Call a C integer-style boolean function with three boolean arguments.
+    pub unsafe fn call_bool_3(
+        &self,
+        name: &[u8],
+        first: bool,
+        second: bool,
+        third: bool,
+    ) -> Result<bool, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i32, i32, i32) -> i32>(name) }?;
+        Ok(unsafe { symbol(first as i32, second as i32, third as i32) } != 0)
+    }
+
     /// Call a blittable C integer-style boolean after validating its ABI
-    /// descriptor. Boolean arguments remain deferred until their C layout is
-    /// represented explicitly rather than guessed from the host ABI.
+    /// descriptor. Boolean parameters use the explicit integer-style C ABI.
     pub unsafe fn call_bool_signature(
         &self,
         name: &[u8],
         signature: &FfiSignature,
+        args: &[bool],
     ) -> Result<bool, FfiError> {
-        if !signature.matches_bool_call() {
+        if !signature.matches_bool_call() || signature.arity() != args.len() {
             return Err(FfiError {
-                message: "unsupported bool FFI signature: expected () -> bool".into(),
+                message: "unsupported bool FFI signature: expected (bool{0,3}) -> bool".into(),
             });
         }
-        // SAFETY: the descriptor restricts this to the existing bool thunk.
-        unsafe { self.call_bool_0(name) }
+        // SAFETY: the descriptor restricts every parameter and the arity
+        // dispatch selects the matching explicit C integer-style thunk.
+        unsafe {
+            match args {
+                [] => self.call_bool_0(name),
+                [arg] => self.call_bool_1(name, *arg),
+                [first, second] => self.call_bool_2(name, *first, *second),
+                [first, second, third] => self.call_bool_3(name, *first, *second, *third),
+                _ => unreachable!("signature validation limits bool calls to three arguments"),
+            }
+        }
     }
 
     /// Call a C symbol with no arguments and an `f64` result.
@@ -447,7 +497,10 @@ mod tests {
 
     #[test]
     fn explicit_library_names_are_not_rewritten() {
-        assert_eq!(library_name_variants("./native/libzun.so"), vec!["./native/libzun.so"]);
+        assert_eq!(
+            library_name_variants("./native/libzun.so"),
+            vec!["./native/libzun.so"]
+        );
         assert_eq!(library_name_variants("zun.so.1"), vec!["zun.so.1"]);
     }
 
@@ -466,7 +519,9 @@ mod tests {
         #[cfg(windows)]
         assert!(variants.contains(&"zun.dll".to_owned()));
         #[cfg(unix)]
-        assert!(variants.iter().any(|candidate| candidate.starts_with("libzun")));
+        assert!(variants
+            .iter()
+            .any(|candidate| candidate.starts_with("libzun")));
     }
 
     #[test]
@@ -500,14 +555,22 @@ mod tests {
     }
 
     #[test]
+    fn bool_parameters_use_the_explicit_integer_style_abi() {
+        let signature = FfiSignature::new(
+            vec![FfiScalar::Bool, FfiScalar::Bool, FfiScalar::Bool],
+            FfiScalar::Bool,
+        );
+        assert!(signature.validate().is_ok());
+        assert_eq!(signature.params(), &[FfiScalar::Bool; 3]);
+    }
+
+    #[test]
     fn typed_i64_call_rejects_an_incompatible_signature_before_lookup() {
         let path = std::env::current_exe().expect("test executable path");
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
         let signature = FfiSignature::new(vec![FfiScalar::F64], FfiScalar::I64);
-        let error = unsafe {
-            library.call_i64_signature(b"zun_missing_symbol", &signature, &[1])
-        }
-        .expect_err("incompatible signature must be rejected");
+        let error = unsafe { library.call_i64_signature(b"zun_missing_symbol", &signature, &[1]) }
+            .expect_err("incompatible signature must be rejected");
         assert!(error.to_string().contains("unsupported i64 FFI signature"));
     }
 
@@ -516,10 +579,9 @@ mod tests {
         let path = std::env::current_exe().expect("test executable path");
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
         let signature = FfiSignature::new(vec![FfiScalar::I64], FfiScalar::F64);
-        let error = unsafe {
-            library.call_f64_signature(b"zun_missing_symbol", &signature, &[1.0])
-        }
-        .expect_err("incompatible signature must be rejected");
+        let error =
+            unsafe { library.call_f64_signature(b"zun_missing_symbol", &signature, &[1.0]) }
+                .expect_err("incompatible signature must be rejected");
         assert!(error.to_string().contains("unsupported f64 FFI signature"));
     }
 
@@ -528,10 +590,9 @@ mod tests {
         let path = std::env::current_exe().expect("test executable path");
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
         let signature = FfiSignature::new(vec![FfiScalar::I64], FfiScalar::Bool);
-        let error = unsafe {
-            library.call_bool_signature(b"zun_missing_symbol", &signature)
-        }
-        .expect_err("incompatible signature must be rejected");
+        let error =
+            unsafe { library.call_bool_signature(b"zun_missing_symbol", &signature, &[false]) }
+                .expect_err("incompatible signature must be rejected");
         assert!(error.to_string().contains("unsupported bool FFI signature"));
     }
 

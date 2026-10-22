@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use zun_il::NumKind;
 use zun_interp::value::Value;
 use zun_interp::{CallHook, RunError};
-use zun_il::NumKind;
 
 use crate::{FfiScalar, FfiSignature, NativeLibraryResolver};
 
@@ -79,7 +79,8 @@ impl NativeCallHook {
                     _ => None,
                 })
                 .collect();
-            let values = values.ok_or_else(|| RunError::Native("native i64 argument type mismatch".into()))?;
+            let values = values
+                .ok_or_else(|| RunError::Native("native i64 argument type mismatch".into()))?;
             let result = unsafe {
                 library
                     .call_i64_signature(export.as_bytes(), signature, &values)
@@ -100,7 +101,8 @@ impl NativeCallHook {
                     _ => None,
                 })
                 .collect();
-            let values = values.ok_or_else(|| RunError::Native("native f64 argument type mismatch".into()))?;
+            let values = values
+                .ok_or_else(|| RunError::Native("native f64 argument type mismatch".into()))?;
             let result = unsafe {
                 library
                     .call_f64_signature(export.as_bytes(), signature, &values)
@@ -108,10 +110,24 @@ impl NativeCallHook {
             };
             return Ok(Value::Float(result, NumKind::F64));
         }
-        if signature.result() == FfiScalar::Bool && signature.params().is_empty() && args.is_empty() {
+        if signature.result() == FfiScalar::Bool
+            && signature
+                .params()
+                .iter()
+                .all(|param| *param == FfiScalar::Bool)
+        {
+            let values: Option<Vec<bool>> = args
+                .iter()
+                .map(|value| match value {
+                    Value::Bool(value) => Some(*value),
+                    _ => None,
+                })
+                .collect();
+            let values = values
+                .ok_or_else(|| RunError::Native("native bool argument type mismatch".into()))?;
             let result = unsafe {
                 library
-                    .call_bool_signature(export.as_bytes(), signature)
+                    .call_bool_signature(export.as_bytes(), signature, &values)
                     .map_err(|error| RunError::Native(error.to_string()))?
             };
             return Ok(Value::Bool(result));
@@ -153,7 +169,9 @@ impl CallHook for NativeCallHook {
             let arity = usize::from(encoded[0]);
             let expected_len = arity.checked_add(2)?;
             if arity != args.len() || encoded.len() != expected_len {
-                return Some(Err(RunError::Native("native metadata signature arity mismatch".into())));
+                return Some(Err(RunError::Native(
+                    "native metadata signature arity mismatch".into(),
+                )));
             }
             let expected = encoded[1..]
                 .iter()
@@ -165,12 +183,16 @@ impl CallHook for NativeCallHook {
                 })
                 .collect::<Option<Vec<_>>>();
             let Some(expected) = expected else {
-                return Some(Err(RunError::Native("unsupported native metadata type".into())));
+                return Some(Err(RunError::Native(
+                    "unsupported native metadata type".into(),
+                )));
             };
             let result = expected.last().copied();
             let params = &expected[..expected.len() - 1];
             if result != Some(signature.result()) || params != signature.params() {
-                return Some(Err(RunError::Native("native metadata signature mismatch".into())));
+                return Some(Err(RunError::Native(
+                    "native metadata signature mismatch".into(),
+                )));
             }
         }
         Some(self.invoke(module, name, signature, args))
@@ -185,7 +207,11 @@ mod tests {
     #[test]
     fn calls_a_system_library_through_the_registered_scalar_abi() {
         let mut hook = NativeCallHook::new();
-        hook.register("kernel32", "GetCurrentProcessId", FfiSignature::new([], FfiScalar::I64));
+        hook.register(
+            "kernel32",
+            "GetCurrentProcessId",
+            FfiSignature::new([], FfiScalar::I64),
+        );
         let result = hook
             .try_call_external("kernel32", "GetCurrentProcessId", &[])
             .expect("registered native export")
@@ -214,7 +240,11 @@ mod tests {
     fn checked_registration_rejects_mixed_scalar_shapes() {
         let mut hook = NativeCallHook::new();
         let error = hook
-            .register_checked("test", "mixed", FfiSignature::new([FfiScalar::I64], FfiScalar::F64))
+            .register_checked(
+                "test",
+                "mixed",
+                FfiSignature::new([FfiScalar::I64], FfiScalar::F64),
+            )
             .expect_err("mixed direct ABI must require a marshalling stub");
         assert!(error.contains("unsupported direct FFI signature"));
     }
