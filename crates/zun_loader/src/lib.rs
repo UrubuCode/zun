@@ -796,6 +796,16 @@ impl SignedModuleLock {
         })
     }
 
+    /// Verify the signature and require the release-pinned registry key.
+    pub fn verify_against(&self, trusted_key: &[u8; 32]) -> Result<(), LoadError> {
+        if &self.public_key != trusted_key {
+            return Err(LoadError::InvalidManifest(
+                "lockfile key is not trusted by the release".into(),
+            ));
+        }
+        self.verify()
+    }
+
     /// Serialize the signed envelope.
     pub fn write(&self) -> Vec<u8> {
         let payload = self.lock.write();
@@ -1792,6 +1802,10 @@ mod tests {
             SignedModuleLock::new(lock, signing.verifying_key().to_bytes(), signature).unwrap();
         let bytes = signed.write();
         assert_eq!(SignedModuleLock::read(&bytes).unwrap(), signed);
+        assert!(signed
+            .verify_against(&signing.verifying_key().to_bytes())
+            .is_ok());
+        assert!(signed.verify_against(&[99u8; 32]).is_err());
         let mut tampered = bytes;
         *tampered.last_mut().unwrap() ^= 1;
         assert!(SignedModuleLock::read(&tampered).is_err());
