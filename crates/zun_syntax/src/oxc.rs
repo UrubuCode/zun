@@ -950,6 +950,38 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                             .map_err(|error| vec![error])?,
                                     ));
                                 }
+                                Statement::BreakStatement(break_statement) => {
+                                    method_statements.push(Stmt::Break {
+                                        label: break_statement.label.as_ref().map(|label| Name {
+                                            span: Span::new(label.span.start, label.span.end),
+                                        }),
+                                        span: Span::new(
+                                            break_statement.span.start,
+                                            break_statement.span.end,
+                                        ),
+                                    });
+                                }
+                                Statement::ContinueStatement(continue_statement) => {
+                                    method_statements.push(Stmt::Continue {
+                                        label: continue_statement.label.as_ref().map(|label| Name {
+                                            span: Span::new(label.span.start, label.span.end),
+                                        }),
+                                        span: Span::new(
+                                            continue_statement.span.start,
+                                            continue_statement.span.end,
+                                        ),
+                                    });
+                                }
+                                Statement::ThrowStatement(throw_statement) => {
+                                    method_statements.push(Stmt::Throw {
+                                        value: convert_expression(&throw_statement.argument)
+                                            .map_err(|error| vec![error])?,
+                                        span: Span::new(
+                                            throw_statement.span.start,
+                                            throw_statement.span.end,
+                                        ),
+                                    });
+                                }
                                 Statement::IfStatement(if_statement) => {
                                     method_statements.push(
                                         convert_if_statement(source, if_statement)
@@ -991,7 +1023,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     method_statements.extend(nested.statements);
                                 }
                                 _ => return Err(vec![
-                                    "OXC adapter class methods currently support local, conditional, return, expression, and loop statements".into(),
+                                    "OXC adapter class methods currently support local, conditional, loop-control, throw, return, expression, and loop statements".into(),
                                 ]),
                             }
                         }
@@ -2038,6 +2070,19 @@ mod tests {
         assert!(matches!(
             program.classes[0].methods[0].body.statements.get(1),
             Some(crate::ast::Stmt::If { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_control_flow_and_throw_in_class_methods() {
+        let program = parse_subset(
+            "class Box { value: number; read(value) { while (value) { if (value) continue; break; } throw value; } } function main() {}",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.classes[0].methods[0].body.statements.get(1),
+            Some(crate::ast::Stmt::Throw { .. })
         ));
     }
 
