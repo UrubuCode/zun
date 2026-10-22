@@ -422,6 +422,7 @@ source spans; local and `for`-initializer TypeScript annotations are preserved
 through the adapter, compiler, and native CLI path;
 initialized identifier bindings inside conditional and loop blocks now use the
 same typed annotation and source-span preservation rules;
+`else if` chains are lowered into nested typed `Stmt::If` blocks;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.

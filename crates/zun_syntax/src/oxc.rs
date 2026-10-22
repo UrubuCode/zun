@@ -136,18 +136,7 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
                 span: span(throw_statement.span),
             }),
             Statement::IfStatement(if_statement) => {
-                let then_block = convert_block_statement(source, &if_statement.consequent)?;
-                let else_block = if_statement
-                    .alternate
-                    .as_ref()
-                    .map(|statement| convert_block_statement(source, statement))
-                    .transpose()?;
-                statements.push(Stmt::If {
-                    cond: convert_expression(&if_statement.test)?,
-                    then_block,
-                    else_block,
-                    span: span(if_statement.span),
-                });
+                statements.push(convert_if_statement(source, if_statement)?);
             }
             _ => {
                 return Err(
@@ -160,6 +149,33 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
     Ok(Block {
         statements,
         span: span(block.span),
+    })
+}
+
+fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
+    match statement {
+        Statement::BlockStatement(_) => convert_block_statement(source, statement),
+        Statement::IfStatement(if_statement) => Ok(Block {
+            span: Span::new(if_statement.span.start, if_statement.span.end),
+            statements: vec![convert_if_statement(source, if_statement)?],
+        }),
+        _ => Err("OXC adapter requires block or if branches for conditional statements".into()),
+    }
+}
+
+fn convert_if_statement(
+    source: &str,
+    if_statement: &oxc_ast::ast::IfStatement<'_>,
+) -> Result<Stmt, String> {
+    Ok(Stmt::If {
+        cond: convert_expression(&if_statement.test)?,
+        then_block: convert_if_branch(source, &if_statement.consequent)?,
+        else_block: if_statement
+            .alternate
+            .as_ref()
+            .map(|statement| convert_if_branch(source, statement))
+            .transpose()?,
+        span: Span::new(if_statement.span.start, if_statement.span.end),
     })
 }
 
@@ -729,10 +745,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 BindingPattern::BindingIdentifier(identifier) => {
                                     (identifier.span, false)
                                 }
-                                _ => return Err(vec![
+                                _ => {
+                                    return Err(vec![
                                     "OXC adapter supports identifier class method parameters only"
                                         .into(),
-                                ]),
+                                ])
+                                }
                             };
                             params.push(crate::ast::Param {
                                 name: Name {
@@ -911,21 +929,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     });
                 }
                 Statement::IfStatement(if_statement) => {
-                    let then_block = convert_block_statement(source, &if_statement.consequent)
-                        .map_err(|error| vec![error])?;
-                    let else_block = if_statement
-                        .alternate
-                        .as_ref()
-                        .map(|statement| convert_block_statement(source, statement))
-                        .transpose()
-                        .map_err(|error| vec![error])?;
-                    statements.push(Stmt::If {
-                        cond: convert_expression(&if_statement.test)
-                            .map_err(|error| vec![error])?,
-                        then_block,
-                        else_block,
-                        span: span(if_statement.span),
-                    });
+                    statements.push(convert_if_statement(source, if_statement).map_err(|error| vec![error])?);
                 }
                 Statement::WhileStatement(while_statement) => {
                     let body = convert_block_statement(source, &while_statement.body)
@@ -1314,6 +1318,25 @@ mod tests {
         assert!(matches!(
             then_block.statements.first(),
             Some(crate::ast::Stmt::Let { ty: Some(_), .. })
+        ));
+    }
+
+    #[test]
+    fn converts_else_if_branches() {
+        let program = parse_subset(
+            "function main(value) { if (value) { return 1; } else if (value + 1) { return 2; } return 0; }",
+            true,
+        )
+        .unwrap();
+        let crate::ast::Stmt::If { ref else_block, .. } = program.functions[0].body.statements[0]
+        else {
+            panic!("expected an if statement");
+        };
+        assert!(matches!(
+            else_block
+                .as_ref()
+                .and_then(|block| block.statements.first()),
+            Some(crate::ast::Stmt::If { .. })
         ));
     }
 
