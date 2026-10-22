@@ -11,6 +11,7 @@ use zun_interp::CaptureOutput;
 
 /// Iterations the benchmarked function performs internally.
 const N: i64 = 5_000_000;
+const COLLECTION_N: i64 = 10_000;
 
 fn compile(src: &str) -> zun_module::Module {
     let mut diags = Vec::new();
@@ -31,6 +32,55 @@ fn interp_ns_per_iteration(src: &str, iterations: usize) -> f64 {
         std::hint::black_box(zun_interp::run(&module, &mut out).unwrap());
     }
     t.elapsed().as_nanos() as f64 / (3.0 * iterations as f64)
+}
+
+fn benchmark_i32_map_loop() {
+    let src = format!(
+        "import {{ mapNew, mapSetI32, mapGetI32Or }} from \"zun:collections\";\n\
+         function fill(value: Map, n: i32): i32 {{ let i: i32 = 0; while (i < n) {{ mapSetI32(value, i, i); i = i + 1; }} return mapGetI32Or(value, n - 1, -1); }}\n\
+         function main(): i32 {{ let value = mapNew(); return fill(value, {COLLECTION_N}); }}"
+    );
+    let module = compile(&src);
+    let fill = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "fill")
+        .map(|index| index as u32 + 1)
+        .expect("map loop method");
+    let jit = Jit::compile(&module).expect("jit compiles i32 map loop");
+    assert!(jit.is_compiled(fill));
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    let jit_warmup = jit
+        .call_packed_with_heap(fill, &[map.addr() as u64, COLLECTION_N as u64], &mut heap)
+        .expect("jit map loop");
+    let jit_reps = 10;
+    let t = Instant::now();
+    for _ in 0..jit_reps {
+        std::hint::black_box(
+            jit.call_packed_with_heap(fill, &[map.addr() as u64, COLLECTION_N as u64], &mut heap)
+                .expect("jit map loop"),
+        );
+    }
+    let jit_ns = t.elapsed().as_nanos() as f64 / (jit_reps as f64 * COLLECTION_N as f64);
+
+    let mut out = CaptureOutput::default();
+    let interp_warmup = zun_interp::run(&module, &mut out).unwrap();
+    let interp_reps = 3;
+    let t = Instant::now();
+    for _ in 0..interp_reps {
+        let mut out = CaptureOutput::default();
+        std::hint::black_box(zun_interp::run(&module, &mut out).unwrap());
+    }
+    let interp_ns = t.elapsed().as_nanos() as f64 / (interp_reps as f64 * COLLECTION_N as f64);
+    assert_eq!(jit_warmup, COLLECTION_N as u64 - 1);
+    assert!(matches!(interp_warmup, zun_interp::value::Value::Int(value, _) if value == COLLECTION_N - 1));
+    println!();
+    println!("i32 Map mutation loop ({COLLECTION_N} iterations/call, interp == jit: true)");
+    println!("interpreter (Tier 0): {interp_ns:8.3} ns/iteration");
+    println!("JIT (Tier 1):         {jit_ns:8.3} ns/iteration");
+    println!("speedup:              {:8.2}x", interp_ns / jit_ns);
 }
 
 fn main() {
@@ -94,6 +144,8 @@ fn main() {
         "per iteration there are ~4 int ops (mul, add, sub, cmp) + a store + loop,\n\
          so divide by ~4 for a rough per-op figure."
     );
+
+    benchmark_i32_map_loop();
 
     // These workloads stay in Tier 0 because object operations are not yet
     // JIT-eligible. They specifically exercise the interpreter metadata

@@ -1204,6 +1204,13 @@ ordered_map_bench -p zun_core`; the 2026-10-21 rerun measured `N=200000` at
 31.942 ns/op for insert and 2.966 ns/op for probe. These numbers are a new
 machine-specific baseline, not a before/after comparison.
 
+The Zun-level typed collection benchmark now also measures a 10,000-iteration
+`Map<i32, i32>` mutation loop: the 2026-10-22 release run measured
+**1173.627 ns/iteration** in Tier 0 and **28.090 ns/iteration** in Tier 1
+(**41.78x**), with identical results. The benchmark is part of
+`crates/zun_codegen/examples/bench.rs`; the Tier 0 cost includes the current
+interpreter/GC path for managed hash mutations.
+
 ### 7.2 Tier 0 interpreter GC is O(n^2) over a run
 
 A Map/Set benchmark run *through compiled Zun code* (interpreter) did not finish
