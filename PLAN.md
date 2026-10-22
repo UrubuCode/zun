@@ -1005,6 +1005,11 @@ carrier-based collection operations remain Tier 0 by design.
 The corresponding Tier 0 managed-collection dispatcher cases are also present,
 so these typed names are executable through both engines rather than being
 JIT-only declarations.
+Non-allocating collection clearing is also JIT-lowerable through the
+`mapClear`/`setClear` helpers; the translator models their discarded `Void`
+result explicitly. Collection operations that materialize managed arrays,
+such as `mapValues`, `mapKeys`, and `mapEntries`, remain Tier 0 until their
+allocation and managed-array ABI is lowered.
 
 The dynamic array ABI now has validated load and store helpers for the explicit
 two-word `Any` carrier. Proven scalar `UnboxAny` reads use a temporary
