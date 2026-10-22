@@ -135,7 +135,27 @@ pub fn compile_with_externals(
     external_functions: &[zun_sema::check::ExternalFunction],
 ) -> Result<Module, Vec<Diagnostic>> {
     let source_with_prelude = zun_prelude::with_prelude(source);
-    let source = source_with_prelude.as_str();
+    compile_source_with_externals(&source_with_prelude, external_functions)
+}
+
+/// Compile source without implicitly concatenating the standard prelude.
+///
+/// This is the stable compiler boundary for independently emitted modules:
+/// callers must provide any imported prelude signatures explicitly. Keeping
+/// this path separate from [`compile_with_externals`] prevents a future
+/// precompiled-prelude cache from changing source offsets or metadata RIDs in
+/// the ordinary source compiler.
+pub fn compile_without_prelude(
+    source: &str,
+    external_functions: &[zun_sema::check::ExternalFunction],
+) -> Result<Module, Vec<Diagnostic>> {
+    compile_source_with_externals(source, external_functions)
+}
+
+fn compile_source_with_externals(
+    source: &str,
+    external_functions: &[zun_sema::check::ExternalFunction],
+) -> Result<Module, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let ast = zun_syntax::parse(source, &mut diagnostics);
     if diagnostics.iter().any(is_error) {
@@ -383,6 +403,18 @@ mod tests {
         let module = compile("function main(): int { return 7; }").expect("compile");
         assert!(module.entry_point.is_some());
         assert!(!module.code.is_empty());
+    }
+
+    #[test]
+    fn compiles_an_independent_module_without_the_implicit_prelude() {
+        let module = compile_without_prelude("function main(): int { return 42; }", &[])
+            .expect("standalone module should compile");
+        assert!(module.entry_point.is_some());
+        assert!(module
+            .tables
+            .method_defs
+            .iter()
+            .all(|method| module.strings.get(method.name) != "clamp"));
     }
 
     #[test]
