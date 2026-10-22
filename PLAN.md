@@ -997,6 +997,12 @@ the pointer ABI, including
   hot calls through `JitHook` with the active interpreter heap. The object
   stack-operation path has direct interpreter/JIT equivalence coverage.
 
+Typed managed collection access now includes the complete `i32` query and
+mutation set: `mapHasI32`, `mapGetI32Or`, `mapSetI32`, `mapDeleteI32`,
+`setHasI32`, `setAddI32`, and `setDeleteI32`. Each uses a width-specific
+Cranelift helper and has interpreter/JIT equivalence coverage; generic
+carrier-based collection operations remain Tier 0 by design.
+
 The dynamic array ABI now has validated load and store helpers for the explicit
 two-word `Any` carrier. Proven scalar `UnboxAny` reads use a temporary
 two-word carrier slot in Cranelift before extracting the payload; checked
