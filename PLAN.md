@@ -327,10 +327,10 @@ minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
 Structured method-name/source-span frame resolution is also available to
-diagnostic consumers; interpreter errors can render that source-frame context.
+diagnostic consumers; interpreter errors now carry the nearest source frame
+through the public runner boundary, including recursive failures.
 Remaining gates:
-Error-stack consumption of sequence
-points, full AOT binary (linker + runtime bundle), native TS/JS front-end, full
+full AOT binary (linker + runtime bundle), native TS/JS front-end, full
 remote module transport/index integration (with a safe local directory
 fetcher now implemented), dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented),
