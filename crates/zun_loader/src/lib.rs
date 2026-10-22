@@ -305,6 +305,7 @@ impl std::error::Error for LoadError {}
 #[derive(Debug, Default)]
 pub struct ModuleLoader {
     modules: HashMap<String, ModuleScope>,
+    trusted_keys: Option<TrustedKeySet>,
 }
 
 /// Registry-facing byte fetch boundary. Network, authentication, and index
@@ -1419,6 +1420,15 @@ impl ModuleLoader {
         Self::default()
     }
 
+    /// Create a loader whose signed package operations use release-provisioned
+    /// registry keys.
+    pub fn new_with_trusted_keys(trusted_keys: TrustedKeySet) -> Self {
+        Self {
+            modules: HashMap::new(),
+            trusted_keys: Some(trusted_keys),
+        }
+    }
+
     /// Load and register a module under `name`.
     pub fn load_bytes(&mut self, name: impl Into<String>, bytes: &[u8]) -> Result<(), LoadError> {
         let name = name.into();
@@ -1512,7 +1522,11 @@ impl ModuleLoader {
 
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
-        package.lock.verify()?;
+        if let Some(trusted) = &self.trusted_keys {
+            package.lock.verify_with_keys(trusted)?;
+        } else {
+            package.lock.verify()?;
+        }
         for (name, bytes) in &package.modules {
             self.load_bytes(name.clone(), bytes)?;
         }
@@ -2013,6 +2027,26 @@ mod tests {
         loader.load_cached(&root, "cached", id).unwrap();
         assert!(loader.get("cached").is_some());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn trusted_loader_rejects_an_unanchored_package_key() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let payload = Module::new().write();
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(&payload)).unwrap();
+        let attacker = SigningKey::from_bytes(&[31u8; 32]);
+        let lock_bytes = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            attacker.verifying_key().to_bytes(),
+            attacker.sign(&lock_bytes).to_bytes(),
+        )
+        .unwrap();
+        let package = Zmlib::new(signed, vec![("app".into(), payload)]).unwrap();
+        let trusted = TrustedKeySet::new([[32u8; 32]]).unwrap();
+        let mut loader = ModuleLoader::new_with_trusted_keys(trusted);
+        assert!(loader.load_zmlib(&package).is_err());
     }
 
     #[test]
