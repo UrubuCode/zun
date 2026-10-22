@@ -128,7 +128,8 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                     let manifest = zun_loader::ModuleManifest::new(
                         file,
                         std::iter::empty::<String>(),
-                    );
+                    )
+                    .with_prelude_fingerprint(zun_prelude::fingerprint());
                     match manifest.write_file(&manifest_out) {
                         Ok(()) => {
                             println!("wrote {}", out.display());
