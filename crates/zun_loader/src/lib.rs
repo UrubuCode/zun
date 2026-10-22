@@ -889,6 +889,14 @@ impl ModuleLock {
             )));
         }
         let mut capabilities: Vec<_> = capabilities.into_iter().collect();
+        if let Some(unknown) = capabilities
+            .iter()
+            .find(|capability| !matches!(capability.as_str(), "fs" | "net" | "screen" | "native"))
+        {
+            return Err(LoadError::InvalidManifest(format!(
+                "unknown capability `{unknown}` for `{name}`"
+            )));
+        }
         capabilities.sort();
         capabilities.dedup();
         self.capabilities.push((name, capabilities));
@@ -2322,6 +2330,9 @@ mod tests {
         lock.push("app", app_id).unwrap();
         lock.grant_capabilities("app", ["net".to_owned(), "fs".to_owned(), "net".to_owned()])
             .unwrap();
+        assert!(lock
+            .grant_capabilities("zun:std", ["camera".to_owned()])
+            .is_err());
         assert!(lock.push("app", content_id(b"other")).is_err());
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
