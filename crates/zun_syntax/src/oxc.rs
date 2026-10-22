@@ -6,7 +6,7 @@
 //! arena-owned AST types.
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{BinaryOperator, BindingPattern, Expression, Statement};
+use oxc_ast::ast::{BinaryOperator, BindingPattern, Expression, LogicalOperator, Statement, UnaryOperator};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use zun_common::Span;
@@ -56,6 +56,31 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 lhs: Box::new(convert_expression(&binary.left)?),
                 rhs: Box::new(convert_expression(&binary.right)?),
                 span: span(binary.span),
+            })
+        }
+        Expression::LogicalExpression(logical) => {
+            let op = match logical.operator {
+                LogicalOperator::And => BinaryOp::And,
+                LogicalOperator::Or => BinaryOp::Or,
+                LogicalOperator::Coalesce => BinaryOp::Nullish,
+            };
+            Ok(Expr::Binary {
+                op,
+                lhs: Box::new(convert_expression(&logical.left)?),
+                rhs: Box::new(convert_expression(&logical.right)?),
+                span: span(logical.span),
+            })
+        }
+        Expression::UnaryExpression(unary) => {
+            let op = match unary.operator {
+                UnaryOperator::UnaryNegation => crate::ast::UnaryOp::Neg,
+                UnaryOperator::LogicalNot => crate::ast::UnaryOp::Not,
+                _ => return Err("OXC adapter does not support this unary operator yet".into()),
+            };
+            Ok(Expr::Unary {
+                op,
+                operand: Box::new(convert_expression(&unary.argument)?),
+                span: span(unary.span),
             })
         }
         _ => Err("OXC adapter currently supports literal, identifier, and binary expressions".into()),
@@ -245,6 +270,22 @@ mod tests {
                 }),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_logical_and_unary_return_expressions() {
+        let program = parse_subset("function choose(value) { return !value && true; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Binary {
+                    op: crate::ast::BinaryOp::And,
+                    ref lhs,
+                    ..
+                }),
+                ..
+            } if matches!(**lhs, crate::ast::Expr::Unary { op: crate::ast::UnaryOp::Not, .. })
         ));
     }
 }
