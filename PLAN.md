@@ -20,7 +20,7 @@ calls, interpreted backedge observation, and conservative reachability-based
 trimming are also implemented. Scalar typed FFI/ABI integration now covers
 source declarations, typed MemberRef metadata, host resolution, and direct
 blittable dispatch. The remaining gates are non-blittable marshalling,
-production N-API hosting, full-runtime AOT/R2R object emission, true OSR frame replacement,
+full-runtime AOT/R2R object emission, true OSR frame replacement,
 and production-grade
 trimming diagnostics and metadata removal.
 
@@ -113,7 +113,6 @@ zun/
 │   │
 │   │   # ---- hosts ----
 │   │   ├── zun_cli/           # binário `zun`: build, run, disasm, verify
-│   │   └── zun_napi/          # bindings N-API para hospedar a VM dentro do Node (fase 2)
 │   └── ...
 └── .docs-dotnet/              # referência de design
 ```
@@ -176,7 +175,6 @@ GC geracional + barriers, exceções, closures, vtables/interfaces, generics rei
 State machines async, Promise/event loop, `Any`/`DynamicObject` para JS não tipado, inline caches no dispatch.
 
 **Fase 5 — Hosting e distribuição**
-`zun_napi` (Node embedding), módulos pré-compilados/cache R2R-like, OSR, trimming/alcançabilidade.
 
 ### Estado de implementação
 
@@ -199,7 +197,7 @@ contrato observável no código e um teste que o exercite.
   carregados. Imports de módulos de usuário são validados no build, mas ainda
   não são baixados para uma chamada executável no VM.
 - **Ainda aberto:** otimização Cranelift de generators/async e closures,
-  ABI/FFI tipado integrado à IL, bindings Node N-API de produção, AOT/R2R
+  ABI/FFI tipado integrado à IL, AOT/R2R
   completo para métodos fora do subconjunto escalar, substituição de frames
   por OSR e trimming completo de metadata/diagnósticos. A declaração
   `function*`, o lowering de `yield`, a retomada persistente no Tier 0 e a
@@ -619,6 +617,171 @@ Plan:
   worktree and measure the adapter effort (per the "measure before asserting"
   rule).
 
+## 4.7 Module distribution: minimal core + fetched official modules (decision, 2026-10-22)
+
+The **minimal core** is the Zun **engine itself**: the VM, the frozen intrinsic
+floor, and the **stable host ABI/API surface** that modules link against. It is
+not a set of swappable modules — it is the thing every module depends on and
+extends.
+
+Modules are **Zun-dependent extensions, not standalone libraries** — they do not
+run without the Zun engine, and they are **not generic loadable assemblies / a
+`.dll`**. A Zun module is one of two shapes:
+
+1. **Precompiled Zun module** — the `.zm` emitted by Zun's own compiler
+   (ZIL + metadata, pure-Zun, architecture-portable). It is Zun's precompiled
+   output, loadable only by the Zun engine, not a self-standing library.
+2. **Native extension** — machine code (e.g. Rust) built **against the Zun host
+   ABI** (the analogue of Node's napi, not a copy of it): it can **declare and
+   expose typed values and functions** to Zun and use raw machine code, and must
+   be **compatible with the Zun API**. Per-architecture.
+
+**N-API scope (supersedes the Phase-5 "Node
+embedding" line):** embedding the Zun VM inside Node as an addon (production
+N-API host/isolate) is **out of core scope** — Zun competes with Node, it is not
+a guest. It is not a backlog item; Node embedding is outside the core and
+must not block progress. What remains is the Zun **extension ABI**
+(`zun_abi`/`zun_register_vN`, the napi *analogue* above) — the foundation of this
+module model. Loading Node `.node` addons, if ever wanted, is itself a **separate
+module** (`@urubucode/napi`), not core.
+
+Everything beyond the core — `node:*` compatibility, `napi`, `zun:screen`, an XML
+viewer, etc. — is such an extension, published in **separate official repos with
+their own licenses** and fetched on demand. This keeps the engine small, isolates
+licensing (a differently-licensed extension stays its own distributable the user
+opts into, never linked into the core), and lets extensions evolve
+independently. Distribution/fetch is Deno/npm/NuGet-shaped and rides on the
+loader resolution hook, `ModuleScope` (≈ AssemblyLoadContext), and dynamic
+`import()`; but the artifact is a Zun-engine extension (precompiled `.zm` or a
+native ABI extension), **not** a free-standing assembly.
+
+### Index
+
+The Zun release ships a baseline **index** (JSON) mapping a logical module name
+to its official repo and release-selection rule, and the index is refreshable
+independently of the Zun binary (so new official modules need no core release).
+Sketch:
+
+```json
+{
+  "registry": "https://github.com",
+  "signing_key": "<zun org public key>",
+  "modules": {
+    "@urubucode/node": { "repo": "drysius/zun_node", "provides": ["fs","path","os","..."], "kind": "ffi", "per_arch": true },
+    "@urubucode/screen": { "repo": "drysius/zun_screen", "provides": ["zun:screen"], "kind": "ffi", "per_arch": true },
+    "@urubucode/browser": { "repo": "drysius/zun_browser", "provides": ["zun:browser"], "kind": "zim", "per_arch": false }
+  }
+}
+```
+
+Each release in a module repo declares the **ABI/contract version** it targets
+and carries a content **hash** and a **signature**; Zun selects the release
+matching its own ABI (see Versioning).
+
+### Resolution and trust (structural gate, not a prompt)
+
+- Resolution precedence: `./x`/URL (file) · `zun:name` (official Zun module) ·
+  `@scope/name` (scoped package) · bare `fs`/`path` (node-compat module, if the
+  node package is installed) · `name.node` (native napi addon, per-arch).
+- A required module that is **in the official index** is resolved on demand —
+  fetched (one module, not bulk), verified, cached, loaded — with a log line, no
+  interactive prompt: `node resources is required, downloading v1.4 …`.
+- A module that is **not resolvable** (unknown / not in the index) is a hard
+  **error** telling the user to resolve it (`zun i @urubucode/node`), never a
+  silent fetch of arbitrary code.
+- **No human gate is needed because the gate is structural**: only the
+  official, signed index is auto-resolved, and only the specific requested
+  module. Integrity (content hash) **and** publisher signature are mandatory on
+  every fetch — that verification is the checkpoint, since nothing prompts.
+- **Auto-fetch-with-log is the dev default; an `--offline`/strict mode disables
+  runtime fetching** so production/air-gapped builds fail with "run `zun i …`"
+  instead of touching the network. The deterministic production path is
+  pre-install (below), after which `zun run` never hits the network.
+
+### CLI and cache
+
+- `zun i -g @urubucode/node` installs one module globally; `zun i -g
+  @urubucode/*` installs the whole official set (opt-in, for Dockerfiles — one
+  install, no per-start downloads). `zun upgrade` updates Zun and the installed
+  modules together, respecting ABI compatibility.
+- A **lockfile** records exact name→version→hash; the global store is
+  **content-addressed by hash** (reproducible, offline after first fetch,
+  shareable across projects).
+
+### Versioning (the compat key is ABI, not product version)
+
+A module is compatible with a **Zun ABI/contract version** (`.zm` format version
++ intrinsic ids + core-type layouts + host-boundary ABI), not the marketing
+version. Module releases declare the target ABI (e.g. `zun-abi: 3`); Zun picks
+the matching release. Product versions (1.x, 2.x) are a convenience, like .NET's
+`netX.0` target vs assembly version — so an ABI-compatible Zun 1.3 still loads
+modules built for 1.0.
+
+### Capabilities and artifact shape
+
+- Each module **declares the machine capabilities it uses** (`fs`, `net`,
+  `screen`, `native`) so the host can scope/permission them (Deno-style), tying
+  into the intrinsic-vs-FFI split (§4.4).
+- **Pure-Zun modules ship one portable `.zm`** (IL is arch-independent, `per_arch:
+  false`); **FFI/napi modules ship per-platform native artifacts** (`per_arch:
+  true`), and third-party `.node` addons are per-arch user-provided binaries.
+
+### Extension ABI: native side + TS surface
+
+A native extension registers its functions/values against the stable host ABI;
+the TS side binds them by name with a typed generic, wrapped in a `namespace`
+(not a class — `fs` is a namespace of free functions + constants, never
+`new Fs()`).
+
+Native (Rust `cdylib`), registered through `zun_register_vN`:
+
+```rust
+#[no_mangle]
+pub extern "C" fn zun_register_v1(reg: &mut Registry) {
+    reg.abi(1);
+    reg.capabilities(&["fs"]);
+    let m = reg.module("zun:node/fs");
+    m.func("fs.readFileSync", &[Ty::Str], Ty::Str, read_file_sync);
+    m.func("fs.existsSync",   &[Ty::Str], Ty::Bool, exists_sync);
+    m.value("fs.sep", Value::string(std::path::MAIN_SEPARATOR.to_string()));
+}
+```
+
+TS surface, via `zun:abi`:
+
+```ts
+import { module } from "zun:abi";
+const node = module("zun:node/fs");
+export namespace Fs {
+  export const readFileSync = node.func<(path: string) => string>("fs.readFileSync");
+  export const existsSync   = node.func<(path: string) => boolean>("fs.existsSync");
+  export const sep          = node.value<string>("fs.sep");
+}
+export default Fs;
+```
+
+Rules:
+
+- `module(name).func<Sig>("key")` / `.value<T>("key")`: the generic is the
+  compile-time type, the string is the runtime binding key. The **native
+  registration is the source of truth**; sema must verify the generic matches the
+  registered `NativeFn` signature (params/ret in `NativeTy`) and error on
+  mismatch — same safety check as `extern`, expressed as generic + name.
+- A binding is a **first-class function value** (uses closures), so it can be
+  stored, passed and re-exported; a call lowers to `call.builtin <id>` with the
+  id resolved from the key.
+- Two type vocabularies bridge here: the pure ABI machine types (`str`, `u8`,
+  `i32`…) and the TS types (`string`, `number`); sema maps ABI↔TS.
+- `extern` methods and `abi.func` bindings **coexist**: `extern` for instance
+  methods on primitive-backed classes (e.g. `String.length`), `module().func`
+  for namespace-style module surfaces (e.g. `fs.readFileSync`); both lower to the
+  same `call.builtin`/`NativeFn`. Requires language support for `namespace`.
+
+Sequencing: fix the **contracts now** (index schema, ABI version in the release,
+capability declaration, resolution precedence) so they are not a later redesign;
+build the **fetcher/registry** (signature, lockfile, cache, offline mode) in
+Phase 5, after the multi-`.zm` loader and dynamic `import()` exist.
+
 ## 5. Implementation ledger (2026-10-20)
 
 ### Current ABI gates (2026-10-20)
@@ -712,10 +875,6 @@ The following runtime contracts are implemented and covered by tests:
   integer result functions (`i8..i64` and `u8..u64`) in addition to the float,
   boolean, and string helpers; each rejects mismatched result kinds before
   writing to caller storage;
-- the optional Node N-API registration also exposes `runI8`, `runI16`,
-  `runI32`, `runI64`, `runU8`, `runU16`, `runU32`, and `runU64`; feature
-  compilation is validated without Node installed, while final linking still
-  requires the platform's `node.lib`/`libnode`.
 - managed BigInt construction, add/subtract/multiply/compare, typed arithmetic
   and comparison operators, and `toString`, with GC-owned payloads and an
   explicit Tier 0 boundary;
@@ -786,22 +945,6 @@ The following runtime contracts are implemented and covered by tests:
   instance-method form is also explicitly bound to `zun:string` in semantic
   analysis, so primitive-backed String calls do not collide with homonymous
   Number methods.
-- A minimal `zun_napi` C ABI host boundary that executes compiled `.zm` modules
-  without exposing compiler or AST types, with typed integer, floating-point,
-  boolean, and UTF-8 string result APIs plus size-query string copying.
-  Signed and unsigned integer exports validate their exact `NumKind` instead of
-  reinterpreting one ABI as the other; the Node `runU64` export returns a JS
-  `BigInt`.
-- An optional `node-api` feature exporting `napi_register_module_v1` with
-  `runI64`, `runI64BigInt`, `runU64` (as JavaScript `BigInt`), `runF64`,
-  `runBool`, and `runString` ArrayBuffer/Buffer-backed JavaScript functions.
-  Signed and unsigned integer entry points preserve their declared ZIL numeric
-  kind; the BigInt variants avoid JavaScript Number precision loss. Invalid
-  input or module-buffer failures become JavaScript TypeErrors, while execution
-  failures and result-type mismatches become JavaScript Errors. This is the current
-  minimal embedding surface, not the production Node integration gate. Linking
-  the shared library requires the host's N-API import library through
-  `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
 - Typed scalar FFI calls are exercised against a real Windows system library;
   logical-library candidate resolution, aggregated load errors, and an
   absolute-path policy are implemented. `FfiSignature` now describes the
@@ -1037,10 +1180,11 @@ environment side tables, publish old-to-young remembered-set barriers.
 preserves old objects, and clears dead young weak references. Interpreter GC
 safepoints now use seven minor collections followed by a full collection, and
 finalizer callback environments are explicit roots during both collection modes.
-This completes the first generational policy while leaving nursery allocation
-and card-table scaling as later optimization work. The young-only correctness
-path is no longer pending; incremental scheduling and larger-scale
-nursery/card-table tuning remain. JIT allocation safepoints now
+This completes the moving generational policy: nursery allocation uses a
+chunk-local bump cursor, minor collections evacuate survivors through a
+forwarding map, rewrite interpreter/JIT/native roots and heap side tables, and
+discard stale young free-list entries. Card-table scaling remains a later
+optimization. JIT allocation safepoints now
 capture the x86-64 return PC from the pre-call SP, publish the stopped frame,
 consume the corresponding Cranelift stack map during collection, and compact
 the heap at a conservative periodic boundary while rewriting registered JIT
@@ -1063,7 +1207,7 @@ The remaining completion gates are broader JIT lowering for managed heap values,
 additional platform coverage for the automatic collection policy at the
 now-published precise JIT-frame safepoint, true OSR frame replacement, and
  non-blittable FFI marshalling (deferred; its ownership ABI is specified in
- section 4.4), production Node N-API bindings, AOT/R2R support
+ section 4.4), AOT/R2R support
  for the full runtime surface and the remaining Group 3 type-level
 features. Runtime JIT string literals now use an explicit literal-handle ABI:
 the JIT owns stable UTF-8 bytes and interns them through the active heap scope;
@@ -1161,7 +1305,7 @@ an optimization gate.
    IL lowering.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
    replacement, generated FFI stubs and broader non-blittable signatures,
-   production-grade N-API, full-runtime AOT/R2R, and the
+   full-runtime AOT/R2R, and the
    remaining performance backlog (the first OrderedMap and generational-GC
    policies are complete; only their measured scaling follow-ups remain).
    Async/await source lowering is complete in
@@ -1273,11 +1417,11 @@ Ranked by payoff:
 | **Cache the compiled std/prelude (R2R-lite)** | compiling a trivial program costs **~39 µs**, almost all of it the std/prelude, **paid at every process start** | **scaffold complete** — standalone versioned cache output, fingerprinted manifests, and stale-cache validation exist; reuse in concatenated source compilation remains deferred until metadata/RID linking is integrated |
 | **Escape analysis to elide `any` box/unbox** | scalar `Any` box/unbox overhead is **~0.03 ns** (negligible — `Any` is a value type) | **low for scalars** — not worth a pass on its own; the real dynamic cost is heap object allocation, which is covered by generational GC (#1), not escape analysis |
 
-Ledger clarification: the first generational policy is complete (young/old
-classification, remembered-set barriers, and young-only collection). The
-remaining performance work is nursery bump allocation and larger card-table
-scaling; the table's measured ceiling must not be read as an unimplemented
-minor collector.
+Ledger clarification: the moving generational policy is complete (young/old
+classification, remembered-set barriers, bump allocation, evacuating minor
+collection, forwarding, and root/side-table rewriting). Larger card-table
+scaling remains deferred; the measured ceiling must not be read as an
+unimplemented minor collector.
 
 Allocation clarification: the current single-thread heap already allocates
 objects with a chunk-local bump cursor and reuses swept records by size. A
@@ -1314,9 +1458,13 @@ artifacts before loading or execution. `compile_with_cached_prelude` and
 artifact; the ordinary source-concatenation path remains available for
 backward-compatible builds.
 
-N-API validation note (2026-10-22): `cargo check -p zun_napi --features
-node-api` succeeds without a host linker configured, and the host boundary
-suite passes all 17 tests. The optional Node module therefore has a verified
-compile-time surface for scalar, BigInt, boolean, floating-point, and
-size-query string exports; production module loading, persistent host state,
-and broader runtime object marshalling remain separate gates.
+Core-scope correction (2026-10-22): production Node embedding is outside Zun
+core. The `zun_napi` crate and its `node-api`/`ZUN_NODE_LIB` integration were
+removed from the workspace. The supported core boundary is the Zun extension
+ABI (`zun_abi`/`zun_register_vN`); Node compatibility, if ever needed, belongs
+in a separate `@urubucode/napi` module.
+
+AOT status (2026-10-22): `zun build --aot` emits a Cranelift native object but
+does not yet link a standalone executable. The remaining full-AOT gate is
+invoking the platform linker (`link.exe`, `cc`, `ld`, or `lld`) and linking the
+Zun runtime/startup, including GC, intrinsics, and the interpreter fallback.
