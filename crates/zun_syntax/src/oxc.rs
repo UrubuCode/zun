@@ -9,7 +9,7 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, Expression,
     ClassElement, ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
-    ModuleExportName, PropertyKey, Statement,
+    MethodDefinitionKind, ModuleExportName, PropertyKey, Statement,
     UnaryOperator,
 };
 use oxc_parser::Parser;
@@ -473,7 +473,11 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             return_type: None,
                             is_extern: false,
                             is_static: method.r#static,
-                            accessor: None,
+                            accessor: match method.kind {
+                                MethodDefinitionKind::Get => Some(crate::ast::AccessorKind::Get),
+                                MethodDefinitionKind::Set => Some(crate::ast::AccessorKind::Set),
+                                _ => None,
+                            },
                             external_module: None,
                             is_async: method.value.r#async,
                             is_generator: method.value.generator,
@@ -1039,7 +1043,7 @@ mod tests {
     #[test]
     fn converts_uninitialized_class_fields_and_heritage() {
         let program = parse_subset(
-            "class Child extends Base { value: number; #secret: string; read() { return 1; } } function main() {}",
+            "class Child extends Base { value: number; #secret: string; get read() { return 1; } } function main() {}",
             true,
         )
         .unwrap();
@@ -1048,6 +1052,10 @@ mod tests {
         assert_eq!(program.classes[0].fields.len(), 2);
         assert!(program.classes[0].fields[1].is_private);
         assert_eq!(program.classes[0].methods.len(), 1);
+        assert_eq!(
+            program.classes[0].methods[0].accessor,
+            Some(crate::ast::AccessorKind::Get)
+        );
     }
 
     #[test]
