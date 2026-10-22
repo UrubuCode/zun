@@ -444,7 +444,8 @@ that callable-property binding to source code, and `proxyGet`, `proxySet`,
 traps or fall back to the target's dynamic property in Tier 0; remaining Proxy
 trap forms and call-site caching are still Phase 4 work. `BigInt` now has a
 managed GC-owned payload and Tier 0 constructor/arithmetic/compare/formatting
-bindings; literals, operators, and Cranelift lowering remain deferred. `Intl`,
+bindings; literals, division/remainder, and Cranelift lowering remain deferred.
+Typed arithmetic and comparison operators already use the same Tier 0 floor. `Intl`,
 `SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
 Cross-cutting rule: data structures with real algorithmic complexity (hashing,
@@ -690,8 +691,9 @@ The following runtime contracts are implemented and covered by tests:
   can publish the coordinator's `(PC, SP)` pair, with packed calls also
   supporting a host that already installed the current heap scope.
 - Promise/microtask scheduling and scalar external-library symbol calls;
-- managed BigInt construction, add/subtract/multiply/compare, and
-  `toString`, with GC-owned payloads and an explicit Tier 0 boundary;
+- managed BigInt construction, add/subtract/multiply/compare, typed arithmetic
+  and comparison operators, and `toString`, with GC-owned payloads and an
+  explicit Tier 0 boundary;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
   exception-bearing methods;
@@ -986,8 +988,8 @@ operations. The language now binds `BigInt` construction, arithmetic,
 comparison, formatting, and typed `+`/`-`/`*`/comparison operators through managed
 `CallBuiltin` intrinsics. The
 managed payload is GC-owned and the vertical slice is covered by interpreter
-tests plus an interpreter/JIT equivalence test. BigInt literals, operators,
-and Cranelift lowering remain deferred; these operations intentionally stay
+tests plus an interpreter/JIT equivalence test. BigInt literals, division,
+remainder, and Cranelift lowering remain deferred; these operations intentionally stay
 on the Tier 0 fallback until the managed-value JIT representation is designed.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
