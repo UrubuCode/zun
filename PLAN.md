@@ -308,13 +308,16 @@ heap allocation / the GC is).
 
 On `main`, implemented and test-covered: format/metadata/verifier; interpreter with
 precise roots; mark-sweep GC + moving compaction + forwarding map + remembered-set
-start; Cranelift Tier 1 (typed stack, virtual-slot dispatch, heap/object/array/string
+start; generational GC (nursery bump allocation, budget-triggered evacuating minor
+collections, old-to-young barriers, weak/ephemeron stress coverage, and native
+stack-map root rewriting); Cranelift Tier 1 (typed stack, virtual-slot dispatch,
+heap/object/array/string
 + Map/Set lowering, eager-JIT-for-loops); closures; exceptions (unwind + rethrow
 routing); iteration; async/await; generators; BigInt; Group 2 syntax; DataView/typed
 arrays; static/private/accessors; Map/Set/WeakMap (ordered O(1) + ephemeron tracing);
 `Any`/`DynamicObject`; cached prelude; scalar + string FFI with declared ownership
 contracts; multi-module loader/manifest; minimal `std/` surfaces. Remaining gates:
-generational GC, full AOT binary (linker + runtime bundle), native TS/JS front-end,
+full AOT binary (linker + runtime bundle), native TS/JS front-end,
 module registry, sequence-point debug info, true OSR. `zun_napi` (Node embedding) is
 being removed (out of scope).
 
