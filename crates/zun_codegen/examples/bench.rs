@@ -119,4 +119,44 @@ fn main() {
         "virtual dispatch loop (Tier 0):  {:8.3} ns/iteration",
         interp_ns_per_iteration(&virtual_src, N as usize)
     );
+
+    let array_src = format!(
+        "function main(): i32 {{ let values = new Array(1); values[0] = 0; let i: i32 = 0;\n\
+         while (i < {N}) {{ values[0] = (values[0] as i32) + 1; i = i + 1; }}\n\
+         return values[0] as i32; }}"
+    );
+    let array_module = compile(&array_src);
+    let array_entry = array_module.entry_point.unwrap().rid();
+    let array_jit = Jit::compile(&array_module).expect("jit compiles i32 array loop");
+    assert!(array_jit.is_compiled(array_entry));
+    let mut array_heap = zun_gc::Heap::new();
+    let array_jit_warmup = array_jit
+        .call_entry_with_heap(array_entry, &mut array_heap)
+        .expect("jit array warmup");
+    let array_reps = 20;
+    let t = Instant::now();
+    for _ in 0..array_reps {
+        std::hint::black_box(
+            array_jit
+                .call_entry_with_heap(array_entry, &mut array_heap)
+                .expect("jit array call"),
+        );
+    }
+    let array_jit_ns = t.elapsed().as_nanos() as f64 / (array_reps as f64 * N as f64);
+    let mut array_out = CaptureOutput::default();
+    let array_interp_warmup = zun_interp::run(&array_module, &mut array_out).unwrap();
+    let t = Instant::now();
+    for _ in 0..3 {
+        let mut out = CaptureOutput::default();
+        std::hint::black_box(zun_interp::run(&array_module, &mut out).unwrap());
+    }
+    let array_interp_ns = t.elapsed().as_nanos() as f64 / (3.0 * N as f64);
+    let RetVal::Int(array_jit_result) = array_jit_warmup else { panic!("unexpected array JIT result") };
+    let zun_interp::value::Value::Int(array_interp_result, _) = array_interp_warmup else { panic!("unexpected array interpreter result") };
+    assert_eq!(array_jit_result, array_interp_result);
+    println!();
+    println!("i32 array increment loop (interp == jit: {})", array_jit_result == array_interp_result);
+    println!("interpreter (Tier 0): {:8.3} ns/iteration", array_interp_ns);
+    println!("JIT (Tier 1):         {:8.3} ns/iteration", array_jit_ns);
+    println!("speedup:              {:8.2}x", array_interp_ns / array_jit_ns);
 }
