@@ -414,7 +414,7 @@ TypeScript parameter and return annotations preserved with source spans;
 typed rest-parameter annotations are preserved as well;
 `.js` and `.mjs` CLI inputs select the native OXC frontend automatically;
 `.mts` and `.tsx` select its TypeScript mode while legacy `.ts` remains on the
-Zun parser;
+Zun parser; `.cjs` and `.jsx` select the JavaScript mode;
 typed OXC entrypoints are covered through full compiler semantic checking and
 IL generation; named TypeScript class-field annotations are preserved with
 source spans;
