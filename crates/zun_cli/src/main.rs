@@ -311,6 +311,12 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                     .to_string_lossy()
                                                     .into_owned(),
                                             );
+                                            let native_manifest = match resolve_runtime_library() {
+                                                Some(runtime) => native_manifest.with_runtime_library(
+                                                    runtime.to_string_lossy().into_owned(),
+                                                ),
+                                                None => native_manifest,
+                                            };
                                             if let Err(error) =
                                                 native_manifest.write_file(&manifest_out)
                                             {

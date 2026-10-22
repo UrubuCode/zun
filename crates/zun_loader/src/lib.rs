@@ -378,6 +378,8 @@ pub struct ModuleManifest {
     pub native_object: Option<String>,
     /// Optional relocatable object containing the embedded `.zm` metadata/IL.
     pub metadata_object: Option<String>,
+    /// Optional static runtime library used by the AOT linker.
+    pub runtime_library: Option<String>,
     /// Fingerprint of the prelude embedded or linked by the compiled modules.
     /// A missing value denotes a legacy or manually assembled manifest.
     pub prelude_fingerprint: Option<u64>,
@@ -746,7 +748,7 @@ impl Zmlib {
 
 impl ModuleManifest {
     const MAGIC: &'static [u8; 4] = b"ZMAN";
-    const VERSION: u16 = 3;
+    const VERSION: u16 = 4;
 
     /// Construct a manifest for an entry module and its dependencies.
     pub fn new(entry: impl Into<String>, dependencies: impl IntoIterator<Item = String>) -> Self {
@@ -755,6 +757,7 @@ impl ModuleManifest {
             dependencies: dependencies.into_iter().collect(),
             native_object: None,
             metadata_object: None,
+            runtime_library: None,
             prelude_fingerprint: None,
         }
     }
@@ -768,6 +771,12 @@ impl ModuleManifest {
     /// Associate the object containing embedded module metadata/IL.
     pub fn with_metadata_object(mut self, path: impl Into<String>) -> Self {
         self.metadata_object = Some(path.into());
+        self
+    }
+
+    /// Record the static runtime library used for AOT linking.
+    pub fn with_runtime_library(mut self, path: impl Into<String>) -> Self {
+        self.runtime_library = Some(path.into());
         self
     }
 
@@ -811,6 +820,22 @@ impl ModuleManifest {
         }
     }
 
+    /// Resolve the optional AOT runtime library relative to the manifest.
+    pub fn runtime_library_path(&self, manifest_path: impl AsRef<Path>) -> Option<PathBuf> {
+        let library = PathBuf::from(self.runtime_library.as_deref()?);
+        if library.is_absolute() {
+            Some(library)
+        } else {
+            Some(
+                manifest_path
+                    .as_ref()
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(library),
+            )
+        }
+    }
+
     /// Reject a manifest whose compiled prelude is not the one expected by
     /// the current compiler/runtime.
     pub fn validate_prelude_fingerprint(&self, expected: u64) -> Result<(), LoadError> {
@@ -842,6 +867,10 @@ impl ModuleManifest {
         bytes.push(u8::from(self.metadata_object.is_some()));
         if let Some(metadata_object) = &self.metadata_object {
             write_name(&mut bytes, metadata_object);
+        }
+        bytes.push(u8::from(self.runtime_library.is_some()));
+        if let Some(runtime_library) = &self.runtime_library {
+            write_name(&mut bytes, runtime_library);
         }
         bytes.push(u8::from(self.prelude_fingerprint.is_some()));
         if let Some(fingerprint) = self.prelude_fingerprint {
@@ -893,6 +922,15 @@ impl ModuleManifest {
                 _ => return Err(LoadError::InvalidManifest("invalid metadata object flag".into())),
             }
         };
+        let runtime_library = if version < 4 {
+            None
+        } else {
+            match take(bytes, &mut cursor, 1) {
+                Some([0]) => None,
+                Some([1]) => Some(read_name(bytes, &mut cursor)?),
+                _ => return Err(LoadError::InvalidManifest("invalid runtime library flag".into())),
+            }
+        };
         let prelude_fingerprint = if version < 2 {
             None
         } else {
@@ -912,6 +950,7 @@ impl ModuleManifest {
             dependencies,
             native_object,
             metadata_object,
+            runtime_library,
             prelude_fingerprint,
         })
     }
@@ -1743,6 +1782,7 @@ mod tests {
         let manifest = ModuleManifest::new("app", vec!["core".into()])
             .with_native_object("app.o")
             .with_metadata_object("app.meta.o")
+            .with_runtime_library("runtime.lib")
             .with_prelude_fingerprint(0x1234_5678_9abc_def0);
         let decoded = ModuleManifest::read(&manifest.write()).expect("roundtrip");
         assert_eq!(decoded, manifest);
@@ -1758,6 +1798,10 @@ mod tests {
         assert_eq!(
             decoded.metadata_object_path("dist/app.zman"),
             Some(PathBuf::from("dist/app.meta.o"))
+        );
+        assert_eq!(
+            decoded.runtime_library_path("dist/app.zman"),
+            Some(PathBuf::from("dist/runtime.lib"))
         );
         assert_eq!(
             ModuleManifest::new("app", Vec::<String>::new()).native_object_path("app.zman"),
