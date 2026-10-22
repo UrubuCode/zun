@@ -382,34 +382,110 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 })
             }).transpose().map_err(|error| vec![error])?;
             let mut fields = Vec::new();
+            let mut methods = Vec::new();
             for element in &class_declaration.body.body {
-                let ClassElement::PropertyDefinition(property) = element else {
-                    return Err(vec!["OXC adapter does not support class methods yet".into()]);
-                };
-                if property.value.is_some() {
-                    return Err(vec![
-                        "OXC adapter does not support initialized class fields yet".into(),
-                    ]);
+                match element {
+                    ClassElement::PropertyDefinition(property) => {
+                        if property.value.is_some() {
+                            return Err(vec![
+                                "OXC adapter does not support initialized class fields yet".into(),
+                            ]);
+                        }
+                        let (field_span, is_private) = match &property.key {
+                            PropertyKey::StaticIdentifier(identifier) => {
+                                (Span::new(identifier.span.start, identifier.span.end), false)
+                            }
+                            PropertyKey::PrivateIdentifier(identifier) => {
+                                (Span::new(identifier.span.start, identifier.span.end), true)
+                            }
+                            _ => return Err(vec![
+                                "OXC adapter supports identifier class fields only".into(),
+                            ]),
+                        };
+                        fields.push(crate::ast::ClassField {
+                            name: Name { span: field_span },
+                            ty: crate::ast::TypeAnnotation {
+                                name: Name { span: field_span },
+                            },
+                            is_static: property.r#static,
+                            is_private,
+                        });
+                    }
+                    ClassElement::MethodDefinition(method) => {
+                        let PropertyKey::StaticIdentifier(identifier) = &method.key else {
+                            return Err(vec![
+                                "OXC adapter supports identifier class method names only".into(),
+                            ]);
+                        };
+                        let Some(body) = method.value.body.as_ref() else {
+                            return Err(vec!["OXC adapter requires class method bodies".into()]);
+                        };
+                        let mut method_statements = Vec::with_capacity(body.statements.len());
+                        for statement in &body.statements {
+                            match statement {
+                                Statement::ReturnStatement(return_statement) => {
+                                    method_statements.push(Stmt::Return {
+                                        value: return_statement
+                                            .argument
+                                            .as_ref()
+                                            .map(convert_expression)
+                                            .transpose()
+                                            .map_err(|error| vec![error])?,
+                                        span: Span::new(
+                                            return_statement.span.start,
+                                            return_statement.span.end,
+                                        ),
+                                    });
+                                }
+                                Statement::ExpressionStatement(expression_statement) => {
+                                    method_statements.push(Stmt::Expr(
+                                        convert_expression(&expression_statement.expression)
+                                            .map_err(|error| vec![error])?,
+                                    ));
+                                }
+                                _ => return Err(vec![
+                                    "OXC adapter class methods currently support return and expression statements".into(),
+                                ]),
+                            }
+                        }
+                        let mut params = Vec::with_capacity(method.value.params.items.len());
+                        for parameter in &method.value.params.items {
+                            let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern
+                            else {
+                                return Err(vec![
+                                    "OXC adapter supports identifier class method parameters only".into(),
+                                ]);
+                            };
+                            params.push(crate::ast::Param {
+                                name: Name {
+                                    span: Span::new(identifier.span.start, identifier.span.end),
+                                },
+                                ty: None,
+                                default_value: None,
+                                is_rest: false,
+                            });
+                        }
+                        methods.push(Function {
+                            name: Name {
+                                span: Span::new(identifier.span.start, identifier.span.end),
+                            },
+                            params,
+                            return_type: None,
+                            is_extern: false,
+                            is_static: method.r#static,
+                            accessor: None,
+                            external_module: None,
+                            is_async: method.value.r#async,
+                            is_generator: method.value.generator,
+                            body: Block {
+                                statements: method_statements,
+                                span: Span::new(body.span.start, body.span.end),
+                            },
+                            span: Span::new(method.span.start, method.span.end),
+                        });
+                    }
+                    _ => return Err(vec!["OXC adapter does not support this class element yet".into()]),
                 }
-                let (field_span, is_private) = match &property.key {
-                    PropertyKey::StaticIdentifier(identifier) => {
-                        (Span::new(identifier.span.start, identifier.span.end), false)
-                    }
-                    PropertyKey::PrivateIdentifier(identifier) => {
-                        (Span::new(identifier.span.start, identifier.span.end), true)
-                    }
-                    _ => return Err(vec![
-                        "OXC adapter supports identifier class fields only".into(),
-                    ]),
-                };
-                fields.push(crate::ast::ClassField {
-                    name: Name { span: field_span },
-                    ty: crate::ast::TypeAnnotation {
-                        name: Name { span: field_span },
-                    },
-                    is_static: property.r#static,
-                    is_private,
-                });
             }
             classes.push(crate::ast::Class {
                 name: Name {
@@ -417,7 +493,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 },
                 base,
                 fields,
-                methods: Vec::new(),
+                methods,
                 span: Span::new(class_declaration.span.start, class_declaration.span.end),
             });
             continue;
@@ -963,7 +1039,7 @@ mod tests {
     #[test]
     fn converts_uninitialized_class_fields_and_heritage() {
         let program = parse_subset(
-            "class Child extends Base { value: number; #secret: string; } function main() {}",
+            "class Child extends Base { value: number; #secret: string; read() { return 1; } } function main() {}",
             true,
         )
         .unwrap();
@@ -971,6 +1047,7 @@ mod tests {
         assert!(program.classes[0].base.is_some());
         assert_eq!(program.classes[0].fields.len(), 2);
         assert!(program.classes[0].fields[1].is_private);
+        assert_eq!(program.classes[0].methods.len(), 1);
     }
 
     #[test]
