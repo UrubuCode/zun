@@ -329,15 +329,15 @@ VM extension loading now exposes that checked invocation boundary.
 Structured method-name/source-span frame resolution is also available to
 diagnostic consumers; interpreter errors can render that source-frame context.
 Remaining gates:
-typed
-VM bindings for native extensions, Error-stack consumption of sequence
+Error-stack consumption of sequence
 points, full AOT binary (linker + runtime bundle), native TS/JS front-end, full
 remote module transport/index integration (with a safe local directory
 fetcher now implemented), dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented),
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
-`.zmlib` package envelope is now implemented. The former
+`.zmlib` package envelope is now implemented, including optional per-module type
+declaration payloads; debug information remains embedded in each `.zm` module. The former
 `zun_napi` Node embedding crate has been removed (out of scope).
 
 ## 8. Risks & attention points
