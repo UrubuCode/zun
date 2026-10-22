@@ -239,6 +239,11 @@ pub fn read_prelude_cache(
     let payload = bytes
         .get(18..18 + length)
         .ok_or_else(|| PreludeCacheError::Invalid("truncated module payload".into()))?;
+    if bytes.len() != 18 + length {
+        return Err(PreludeCacheError::Invalid(
+            "trailing bytes after module payload".into(),
+        ));
+    }
     zun_module::Module::read(payload)
         .map_err(|error| PreludeCacheError::Invalid(error.to_string()))
 }
@@ -540,6 +545,14 @@ mod tests {
         assert!(matches!(
             read_prelude_cache(&path),
             Err(PreludeCacheError::Stale { .. })
+        ));
+        write_prelude_cache(&path).expect("restore valid cache");
+        let mut trailing = std::fs::read(&path).expect("read cache bytes");
+        trailing.push(0);
+        std::fs::write(&path, trailing).expect("write trailing cache");
+        assert!(matches!(
+            read_prelude_cache(&path),
+            Err(PreludeCacheError::Invalid(detail)) if detail.contains("trailing")
         ));
         std::fs::remove_file(path).expect("remove cache");
     }
