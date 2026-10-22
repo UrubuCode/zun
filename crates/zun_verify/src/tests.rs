@@ -435,6 +435,25 @@ fn fixture_valid_dynamic_property_access() {
 }
 
 #[test]
+fn fixture_valid_realm_global_load() {
+    let code = asm(&[
+        Instruction::simple(Opcode::RealmGlobal),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_realm_global_return_height() {
+    let code = asm(&[
+        Instruction::simple(Opcode::RealmGlobal),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert!(matches!(check(&code, VOID), Err(VerifyError { .. })));
+}
+
+#[test]
 fn fixture_invalid_dynamic_store_underflow() {
     let code = asm(&[
         Instruction::new(Opcode::StoreDynamic, Operand::StringRef(0)),
