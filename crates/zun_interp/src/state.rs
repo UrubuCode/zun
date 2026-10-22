@@ -1,4 +1,5 @@
 use super::{CallHook, Output, Value};
+use std::collections::HashMap;
 use zun_module::Module;
 use zun_gc::Obj;
 
@@ -15,6 +16,7 @@ pub(super) struct Interp<'a> {
     pub(super) resume_frame: Option<ExecutionFrame>,
     /// Value produced by a generator yield at the current suspension point.
     pub(super) yielded: Option<Value>,
+    pub(super) static_fields: HashMap<(u32, u32), Value>,
 }
 
 impl<'a> Interp<'a> {

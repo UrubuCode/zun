@@ -217,10 +217,16 @@ impl Interp<'_> {
 
             match instr.opcode {
                 Opcode::Nop => {}
-                // Static-field storage is represented in metadata first; the
-                // source checker still rejects it until class storage and GC
-                // roots are wired through the runtime.
-                Opcode::LoadStatic | Opcode::StoreStatic => return Err(RunError::BadToken),
+                Opcode::LoadStatic => {
+                    let key = self.static_field_key(operand_token(&instr.operand))?;
+                    stack.push(self.static_fields.entry(key).or_insert(Value::Void).clone());
+                }
+                Opcode::StoreStatic => {
+                    let key = self.static_field_key(operand_token(&instr.operand))?;
+                    let value = pop(&mut stack)?;
+                    self.static_fields.insert(key, value.clone());
+                    stack.push(value);
+                }
                 Opcode::ConstF64 => stack.push(Value::Float(
                     operand_f64(&instr.operand),
                     zun_il::NumKind::F64,
@@ -1339,6 +1345,8 @@ impl Interp<'_> {
     /// `parent` chain. Reference fields are traced via the module's type layout.
     fn collect(&mut self, stack: &mut [Value], locals: &mut [Value], parent: Option<&RootLink>, full: bool) -> usize {
         let mut extra_roots = Vec::new();
+        let static_values: Vec<Value> = self.static_fields.values().cloned().collect();
+        roots::collect_frame_roots(&static_values, &[], &mut extra_roots);
         if let Some(hook) = self.hook {
             hook.append_roots(&mut extra_roots);
         }
@@ -1350,6 +1358,9 @@ impl Interp<'_> {
                 locals,
                 &extra_roots,
                 &mut |relocation| {
+                    for value in self.static_fields.values_mut() {
+                        Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
+                    }
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);
                     }
@@ -4431,6 +4442,38 @@ mod method_tests {
             .expect("poll generator");
         assert!(matches!(yielded.value, Value::Int(42, zun_il::NumKind::I32)));
         assert!(!yielded.done);
+    }
+
+    #[test]
+    fn tier0_loads_and_stores_static_fields() {
+        let mut module = zun_module::Module::new();
+        let field = module.tables.add_field_def(FieldDef {
+            name: module.strings.intern("counter"), signature: zun_metadata::BlobIndex(0),
+            kind: zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(), is_static: true,
+        });
+        module.tables.add_type_def(TypeDef {
+            name: module.strings.intern("Globals"), namespace: zun_metadata::StringIndex(0),
+            base: Token::null(TableKind::TypeDef), field_start: field.rid(), field_end: field.rid() + 1,
+            method_start: 1, method_end: 2,
+        });
+        let body = [
+            Instruction::new(Opcode::ConstI32, Operand::Imm32(41)),
+            Instruction::new(Opcode::StoreStatic, Operand::Token(field)),
+            Instruction::new(Opcode::LoadStatic, Operand::Token(field)),
+            Instruction::simple(Opcode::Ret),
+        ];
+        let mut code = Vec::new();
+        for instruction in body { encode(&instruction, &mut code); }
+        let offset = write_body(&mut module.code, 0, 0, true,
+            zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(), &[], &code);
+        let method = module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("main"), signature: zun_metadata::BlobIndex(0),
+            body_offset: offset, is_static: true,
+        });
+        module.entry_point = Some(method);
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run static field roundtrip");
+        assert!(matches!(result, Value::Int(41, zun_il::NumKind::I32)));
     }
 }
 

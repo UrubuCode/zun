@@ -27,6 +27,24 @@ impl<'a> Interp<'a> {
             .ok_or(RunError::BadToken)
     }
 
+    pub(crate) fn static_field_key(
+        &self,
+        token: zun_metadata::Token,
+    ) -> Result<(u32, u32), RunError> {
+        if token.table() != Some(zun_metadata::TableKind::FieldDef) || token.rid() == 0 {
+            return Err(RunError::BadToken);
+        }
+        let field = self.module.tables.field_defs.get(token.rid() as usize - 1).ok_or(RunError::BadToken)?;
+        if !field.is_static {
+            return Err(RunError::BadToken);
+        }
+        let owner = self.module.tables.type_defs.iter().enumerate()
+            .find(|(_, ty)| ty.field_start <= token.rid() && token.rid() < ty.field_end)
+            .map(|(index, _)| index as u32 + 1)
+            .ok_or(RunError::BadToken)?;
+        Ok((owner, token.rid()))
+    }
+
     pub(crate) fn dynamic_name(&self, operand: &Operand) -> Result<&str, RunError> {
         let index = operand_strref(operand);
         Ok(self.module.strings.get(zun_metadata::StringIndex(index)))

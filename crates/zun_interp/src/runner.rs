@@ -69,6 +69,7 @@ impl<'a> OwnedGeneratorSession<'a> {
             suspended: None,
             resume_frame: None,
             yielded: None,
+            static_fields: std::collections::HashMap::new(),
         };
         let outcome = if let Some(frame) = self.pending.take() {
             interp.resume_suspended(frame)
@@ -380,6 +381,7 @@ impl<'a> ResumableSession<'a> {
                 suspended: None,
                 resume_frame: None,
                 yielded: None,
+                static_fields: std::collections::HashMap::new(),
             },
             method_rid,
             args: Some(args),
@@ -474,6 +476,7 @@ pub(super) fn run_method_with(
         suspended: None,
         resume_frame: None,
         yielded: None,
+        static_fields: std::collections::HashMap::new(),
     };
     let result = interp.call(method_rid, args, None)?;
     interp.deliver_finalization_callbacks()?;
