@@ -316,6 +316,7 @@ heap/object/array/string
 routing); iteration; async/await; generators; BigInt; Group 2 syntax; DataView/typed
 arrays; static/private/accessors; Map/Set/WeakMap (ordered O(1) + ephemeron tracing);
 `Any`/`DynamicObject`; cached prelude plus the `zun:std` cached-module boundary;
+relocatable per-realm global singleton with `globalThis`/`global` bindings;
 scalar + string FFI with declared ownership contracts; multi-module loader/manifest;
 minimal `std/` surfaces. Remaining gates:
 full AOT binary (linker + runtime bundle), native TS/JS front-end,
