@@ -1200,6 +1200,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let token = self.layout.field_tokens[*class as usize][*field_slot as usize];
                 self.emit(Instruction::new(Opcode::StoreField, Operand::Token(token)));
             }
+            ExprKind::StaticFieldGet { class, field_slot } => {
+                let token = self.layout.field_tokens[*class as usize][*field_slot as usize];
+                self.emit(Instruction::new(Opcode::LoadStatic, Operand::Token(token)));
+            }
             ExprKind::ArrayGet { object, index } => {
                 self.expr(object);
                 self.expr(index);

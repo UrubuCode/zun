@@ -31,6 +31,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::ComputedCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
         Expr::MethodCall { receiver, method, args, .. } | Expr::OptionalMethodCall { object: receiver, method, args, .. } => { rebase_expression_names(receiver, base); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
         Expr::StaticMethodCall { class, method, args, .. } => { shift(&mut class.span); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::StaticField { class, field, .. } => { shift(&mut class.span); shift(&mut field.span); }
         Expr::Spread { expr, .. } => rebase_expression_names(expr, base),
         Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } => { rebase_expression_names(object, base); shift(&mut field.span); }
         Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }

@@ -657,6 +657,8 @@ pub enum ExprKind {
         /// Arguments in declaration order, excluding `this`.
         args: Vec<Expr>,
     },
+    /// Read a statically declared class field.
+    StaticFieldGet { class: ClassIndex, field_slot: u16 },
     /// Virtually invoke a method whose trailing parameter is variadic.
     MethodCallRest {
         /// Statically resolved method index.

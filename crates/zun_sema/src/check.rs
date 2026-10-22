@@ -2142,6 +2142,18 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::StaticField { class, field, .. } => {
+                let class_name = self.text(class).to_string();
+                let Some(&class_index) = self.classes_by_name.get(&class_name) else {
+                    self.error(class.span, format!("unknown class `{class_name}`"));
+                    return self.poison(span);
+                };
+                let Some((field_slot, ty)) = self.static_field_of(class_index, self.text(field)) else {
+                    self.error(field.span, format!("unknown static field `{}`", self.text(field)));
+                    return self.poison(span);
+                };
+                hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span }
+            }
             ast::Expr::Cast { expr, ty, .. } => {
                 let value = self.check_expr(cx, expr);
                 let target = self.resolve_annotation(ty);
@@ -2365,8 +2377,19 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Field { object, field, .. } => {
-                let object = self.check_expr(cx, object);
                 let fname = self.text(field).to_string();
+                if let ast::Expr::Ident(class_name) = object.as_ref() {
+                    if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
+                        if let Some((field_slot, ty)) = self.static_field_of(class_index, &fname) {
+                            return hir::Expr {
+                                kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot },
+                                ty,
+                                span,
+                            };
+                        }
+                    }
+                }
+                let object = self.check_expr(cx, object);
                 if object.ty == Ty::Array && fname == "length" {
                     return hir::Expr {
                         kind: hir::ExprKind::ArrayLength {
@@ -2884,6 +2907,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Template { parts, .. } => parts.iter().map(|p| match p { ast::TemplatePart::Text(_) => 0, ast::TemplatePart::Expr(e) => count_yields_in_expr(e) }).sum(),
         Function(_) | Number { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
         StaticMethodCall { args, .. } => args.iter().map(count_yields_in_expr).sum(),
+        StaticField { .. } => 0,
     }
 }
 
@@ -2949,6 +2973,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
             count_awaits_in_expr(receiver) + args.iter().map(count_awaits_in_expr).sum::<usize>()
         }
         StaticMethodCall { args, .. } => args.iter().map(count_awaits_in_expr).sum(),
+        StaticField { .. } => 0,
         OptionalField { object, .. } => count_awaits_in_expr(object),
         OptionalMethodCall { object, args, .. } => {
             count_awaits_in_expr(object) + args.iter().map(count_awaits_in_expr).sum::<usize>()

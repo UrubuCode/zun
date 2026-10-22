@@ -46,12 +46,6 @@ impl<'a> Checker<'a> {
             let mut own = Vec::new();
             for f in &c.fields {
                 let fname = self.text(&f.name).to_string();
-                if f.is_static {
-                    self.error(
-                        f.name.span,
-                        format!("static field `{fname}` is not supported yet"),
-                    );
-                }
                 let ty = self.resolve_annotation(&f.ty);
                 own.push((fname, ty, f.is_static));
             }

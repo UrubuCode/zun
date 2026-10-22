@@ -91,6 +91,7 @@ pub(super) fn collect_mutated_expr(
         ast::Expr::StaticMethodCall { args, .. } => {
             for arg in args { collect_mutated_expr(checker, arg, names); }
         }
+        ast::Expr::StaticField { .. } => {}
         ast::Expr::Field { object, .. } | ast::Expr::Index { object, .. } => {
             collect_mutated_expr(checker, object, names)
         }

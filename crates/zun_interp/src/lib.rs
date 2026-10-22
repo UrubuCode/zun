@@ -4475,5 +4475,15 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run static field roundtrip");
         assert!(matches!(result, Value::Int(41, zun_il::NumKind::I32)));
     }
+
+    #[test]
+    fn source_reads_a_static_field() {
+        let module = zun_compiler::compile(
+            "class Math { static answer: number; } function main(): number { return Math.answer; }",
+        ).expect("compile static field read");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run static field read");
+        assert!(matches!(result, Value::Void));
+    }
 }
 

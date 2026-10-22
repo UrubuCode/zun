@@ -392,6 +392,8 @@ pub enum Expr {
         /// Source location.
         span: Span,
     },
+    /// `Class.field` static member read.
+    StaticField { class: Name, field: Name, span: Span },
     /// `name = value`
     Assign {
         /// The assigned variable.
@@ -567,6 +569,7 @@ impl Expr {
             | Expr::ComputedCall { span, .. }
             | Expr::MethodCall { span, .. }
             | Expr::StaticMethodCall { span, .. }
+            | Expr::StaticField { span, .. }
             | Expr::OptionalField { span, .. }
             | Expr::OptionalMethodCall { span, .. }
             | Expr::Spread { span, .. }

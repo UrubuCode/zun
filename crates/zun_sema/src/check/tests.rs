@@ -46,11 +46,11 @@
     }
 
     #[test]
-    fn rejects_static_fields_until_class_storage_exists() {
-        let message = first_error(
-            "class Math { static answer: number; } function main(): number { return 0.0; }",
+    fn accepts_static_fields() {
+        let (_, diagnostics) = check_src(
+            "class Math { static answer: number; } function main(): number { return Math.answer; }",
         );
-        assert!(message.contains("static field `answer` is not supported yet"), "{message}");
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
     }
 
     #[test]

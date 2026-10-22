@@ -24,6 +24,14 @@ impl<'a> Checker<'a> {
             .map(|(slot, (_, ty, _))| (slot as u16, ty))
     }
 
+    pub(super) fn static_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
+        self.full_fields(class)
+            .into_iter()
+            .enumerate()
+            .find(|(_, (n, _, is_static))| n == name && *is_static)
+            .map(|(slot, (_, ty, _))| (slot as u16, ty))
+    }
+
     /// Resolve a method name to its function index, searching base classes.
     pub(super) fn method_of(&self, class: u32, name: &str) -> Option<u32> {
         if let Some(&f) = self.methods_by_class[class as usize].get(name) {
