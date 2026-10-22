@@ -149,6 +149,25 @@ fn interned_string_length_uses_the_typed_jit_abi() {
 }
 
 #[test]
+fn aliased_intrinsic_import_uses_the_local_binding() {
+    let module = compile(
+        "import { length as stringLength } from \"zun:string\"; function measure(value: string): u64 { return stringLength(value); } function main(): u64 { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let handle = heap.intern_string(std::rc::Rc::from("alias"));
+    assert!(matches!(jit.call_packed_with_heap(rid, &[handle as u64], &mut heap), Ok(5)));
+}
+
+#[test]
 fn primitive_string_length_callvirt_uses_the_direct_handle_path() {
     let module = compile(
         "import { length } from \"zun:string\"; class String { extern length(): u64; } function measure(value: string): u64 { return value.length(); } function main(): u64 { return 0; }",
