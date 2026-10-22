@@ -933,11 +933,6 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             for element in &class_declaration.body.body {
                 match element {
                     ClassElement::PropertyDefinition(property) => {
-                        if property.value.is_some() {
-                            return Err(vec![
-                                "OXC adapter does not support initialized class fields yet".into(),
-                            ]);
-                        }
                         let (field_span, is_private) = match &property.key {
                             PropertyKey::StaticIdentifier(identifier) => {
                                 (Span::new(identifier.span.start, identifier.span.end), false)
@@ -964,6 +959,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             ty: type_annotation,
                             is_static: property.r#static,
                             is_private,
+                            initializer: property
+                                .value
+                                .as_ref()
+                                .map(convert_expression)
+                                .transpose()
+                                .map_err(|error| vec![error])?
+                                .map(Box::new),
                         });
                     }
                     ClassElement::MethodDefinition(method) => {
@@ -2031,6 +2033,13 @@ mod tests {
         assert!(binding.is_namespace);
         assert!(!binding.is_default);
         assert_eq!(binding.local.span, Span::new(12, 16));
+    }
+
+    #[test]
+    fn converts_initialized_class_fields() {
+        let program = parse_subset("class Point { x: number = 5; }", true).unwrap();
+        let field = &program.classes[0].fields[0];
+        assert!(matches!(field.initializer.as_deref(), Some(crate::ast::Expr::Number { value, .. }) if *value == 5.0));
     }
 
     #[test]

@@ -71,6 +71,8 @@ pub struct ClassField {
     pub is_static: bool,
     /// Whether the field uses the `#private` spelling.
     pub is_private: bool,
+    /// Optional instance-field initializer, evaluated during construction.
+    pub initializer: Option<Box<Expr>>,
 }
 
 /// `function name(params): ret { body }`

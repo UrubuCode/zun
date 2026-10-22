@@ -203,6 +203,7 @@ impl Parser<'_> {
                     ty,
                     is_static,
                     is_private,
+                    initializer: None,
                 });
             }
         }
