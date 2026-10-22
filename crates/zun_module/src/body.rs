@@ -189,7 +189,7 @@ pub fn read_body(code_section: &[u8], offset: u32) -> Result<MethodBody<'_>, Rea
         {
             return Err(ReadError::InvalidHandler);
         }
-        if (kind == HandlerKind::Finally) != catch_type.is_none() {
+        if kind == HandlerKind::Finally && catch_type.is_some() {
             return Err(ReadError::InvalidHandler);
         }
         handlers.push(ExceptionHandler {

@@ -1893,6 +1893,18 @@ mod method_tests {
     }
 
     #[test]
+    fn catch_all_handles_a_non_object_exception() {
+        let module = zun_compiler::compile_with_oxc(
+            "function main(): int { try { throw 7; } catch (error) { return 42; } }",
+            true,
+        )
+        .expect("compile catch-all handler");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("catch-all should handle primitive throw");
+        assert_eq!(value.as_int(), 42);
+    }
+
+    #[test]
     fn finally_runs_before_a_normal_return() {
         let module = zun_compiler::compile(
             "function main(): int { try { return 1; } finally { print(2); } }",
