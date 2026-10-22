@@ -515,6 +515,22 @@ mod tests {
     }
 
     #[test]
+    fn compiles_a_standalone_module_importing_a_linked_prelude_function() {
+        let source = "function main(): int { return abs(-7); }\nimport { abs } from \"zun:prelude\";";
+        let module = compile_without_prelude(
+            source,
+            &[zun_sema::check::ExternalFunction {
+                module: "zun:prelude".into(),
+                name: "abs".into(),
+                params: vec![zun_sema::Ty::INT],
+                return_ty: zun_sema::Ty::INT,
+            }],
+        )
+        .expect("linked prelude import should compile");
+        assert_eq!(module.tables.member_refs.len(), 1);
+    }
+
+    #[test]
     fn emits_the_prelude_as_a_fingerprinted_independent_artifact() {
         let (fingerprint, module) = compile_prelude().expect("prelude should compile alone");
         assert_eq!(fingerprint, zun_prelude::fingerprint());
