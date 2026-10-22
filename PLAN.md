@@ -366,6 +366,8 @@ sequence-point source spans attached when available, reflective property access
 included, and regression coverage),
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
+ AOT builds now emit the same dynamic/reflection fallback site warnings even when
+ trimming is disabled.
 `.zmlib` package envelope is now implemented, including optional per-module type
 declaration payloads authenticated by `<module>.d.ts` lock entries; debug information
 remains embedded in each `.zm` module. Declaration lock entries are excluded from
