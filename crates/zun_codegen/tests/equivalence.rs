@@ -2654,6 +2654,21 @@ fn array_higher_order_methods_keep_interpreter_fallback() {
 }
 
 #[test]
+fn non_capturing_closure_keeps_interpreter_fallback_boundary() {
+    let module = zun_compiler::compile(
+        "function main(): number { let double = (value: number) => value * 2.0; return double(21.0) as number; }",
+    )
+    .expect("compile non-capturing closure");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with closure fallback");
+    assert!(!jit.is_compiled(entry), "closure calls require Tier 0 environment ABI");
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(42.0, zun_il::NumKind::F64)
+    ));
+}
+
+#[test]
 fn array_count_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array { count(value: any): u64 { let total: u64 = 0; let index: u64 = 0; while (index < this.length) { if (this[index] == value) { total = total + 1; } index = index + 1; } return total; } }\n\
