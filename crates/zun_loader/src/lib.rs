@@ -599,11 +599,14 @@ pub struct Zmlib {
     pub lock: SignedModuleLock,
     /// Named serialized modules included in the package.
     pub modules: Vec<(String, Vec<u8>)>,
+    /// Optional `.zmlib` type declaration payloads keyed by module identity.
+    /// Debug information remains in each serialized `.zm` module.
+    pub type_declarations: Vec<(String, Vec<u8>)>,
 }
 
 impl Zmlib {
     const MAGIC: &'static [u8; 5] = b"ZMLIB";
-    const VERSION: u16 = 1;
+    const VERSION: u16 = 2;
 
     /// Construct a package and ensure every payload matches its lock entry.
     pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
@@ -617,7 +620,23 @@ impl Zmlib {
                 return Err(LoadError::InvalidManifest(format!("package module `{name}` has content identity mismatch")));
             }
         }
-        Ok(Self { lock, modules })
+        Ok(Self { lock, modules, type_declarations: Vec::new() })
+    }
+
+    /// Attach deterministic type declaration payloads to locked modules.
+    pub fn with_type_declarations(
+        mut self,
+        declarations: Vec<(String, Vec<u8>)>,
+    ) -> Result<Self, LoadError> {
+        for (name, _) in &declarations {
+            if !self.modules.iter().any(|(module, _)| module == name) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "type declarations provided for unknown module `{name}`"
+                )));
+            }
+        }
+        self.type_declarations = declarations;
+        Ok(self)
     }
 
     /// Serialize the package deterministically.
@@ -630,6 +649,12 @@ impl Zmlib {
         bytes.extend_from_slice(&lock);
         bytes.extend_from_slice(&(self.modules.len() as u32).to_le_bytes());
         for (name, payload) in &self.modules {
+            write_name(&mut bytes, name);
+            bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(payload);
+        }
+        bytes.extend_from_slice(&(self.type_declarations.len() as u32).to_le_bytes());
+        for (name, payload) in &self.type_declarations {
             write_name(&mut bytes, name);
             bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
             bytes.extend_from_slice(payload);
@@ -658,8 +683,23 @@ impl Zmlib {
             let payload = take(bytes, &mut cursor, len).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module".into()))?.to_vec();
             modules.push((name, payload));
         }
+        let mut type_declarations = Vec::new();
+        if version >= 2 {
+            let declaration_count = read_u32(bytes, &mut cursor)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib declaration count".into()))? as usize;
+            type_declarations.reserve(declaration_count);
+            for _ in 0..declaration_count {
+                let name = read_name(bytes, &mut cursor)?;
+                let len = read_u32(bytes, &mut cursor)
+                    .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib declaration length".into()))? as usize;
+                let payload = take(bytes, &mut cursor, len)
+                    .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib declaration".into()))?
+                    .to_vec();
+                type_declarations.push((name, payload));
+            }
+        }
         if cursor != bytes.len() { return Err(LoadError::InvalidManifest("trailing zmlib bytes".into())); }
-        Self::new(lock, modules)
+        Self::new(lock, modules)?.with_type_declarations(type_declarations)
     }
 
     /// Write a `.zmlib` package to disk.
@@ -1358,7 +1398,10 @@ mod tests {
             signing.verifying_key().to_bytes(),
             signing.sign(&ModuleLock { entries: vec![("app".into(), content_id(&payload))], capabilities: vec![] }.write()).to_bytes(),
         ).unwrap();
-        let package = Zmlib::new(signed, vec![("app".into(), payload.clone())]).unwrap();
+        let package = Zmlib::new(signed, vec![("app".into(), payload.clone())])
+            .unwrap()
+            .with_type_declarations(vec![("app".into(), b"declare function main(): int;".to_vec())])
+            .unwrap();
         assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
         let path = std::env::temp_dir().join(format!("zun-package-{}.zmlib", std::process::id()));
         package.write_file(&path).unwrap();
