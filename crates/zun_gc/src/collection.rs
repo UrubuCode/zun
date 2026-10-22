@@ -426,6 +426,7 @@ impl Heap {
                 }
             }
             self.rewrite_all_references(&relocation, ref_slots);
+            unsafe { rewrite_native_roots(&relocation) };
             if let Some(callback) = on_relocation.as_mut() {
                 callback(&relocation);
             }
