@@ -4916,6 +4916,22 @@ fn narrow_i8_array_access_is_jit_equivalent() {
 }
 
 #[test]
+fn narrow_i16_array_push_pop_is_jit_equivalent() {
+    let src = "function roundtrip(values: Array, value: i16): i16 { values.push(value); return values.pop() as i16; }\n\
+               function main(): i16 { let values = new Array(0); return roundtrip(values, -13); }";
+    let module = compile(src);
+    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "roundtrip").map(|index| index as u32 + 1).expect("roundtrip method");
+    let jit = zun_codegen::Jit::compile(&module).expect("narrow push/pop module remains valid");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(0);
+    let value = jit.call_packed_with_heap(rid, &[array.addr() as u64, (-13i64) as u64], &mut heap)
+        .expect("narrow push/pop JIT call");
+    assert_eq!(value as i64, -13);
+    assert!(matches!(interp_entry(&module), Value::Int(-13, zun_il::NumKind::I16)));
+}
+
+#[test]
 fn i32_array_loop_is_jit_equivalent() {
     let src = "function main(): i32 { let values = new Array(1); values[0] = 0; let i: i32 = 0; while (i < 4) { values[0] = (values[0] as i32) + 1; i = i + 1; } return values[0] as i32; }";
     let module = compile(src);

@@ -1994,6 +1994,10 @@ impl Translator<'_> {
                     let pop_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
                     let pop_i64 = self.method_return_kind == JitKind::Num(NumKind::I64);
                     let pop_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);
+                    let pop_narrow = matches!(
+                        self.method_return_kind,
+                        JitKind::Num(NumKind::I8 | NumKind::U8 | NumKind::I16 | NumKind::U16)
+                    );
                     let pop_bool = self.method_return_kind == JitKind::Bool;
                     let pop_object = self.method_return_kind == JitKind::Object;
                     let pop = if pop_object {
@@ -2002,7 +2006,7 @@ impl Translator<'_> {
                         self.array_pop_bool_fref()
                     } else if pop_u64 || pop_i64 {
                         self.array_pop_u64_fref()
-                    } else if pop_i32 {
+                    } else if pop_i32 || pop_narrow {
                         self.array_pop_i32_fref()
                     } else {
                         self.array_pop_f64_fref()
@@ -2011,10 +2015,18 @@ impl Translator<'_> {
                     if pop_object {
                         self.builder.declare_value_needs_stack_map(self.builder.inst_results(inst)[0]);
                     }
-                    stack.push((
-                        self.builder.inst_results(inst)[0],
-                        if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else if pop_i64 { JitKind::Num(NumKind::I64) } else if pop_i32 { JitKind::Num(NumKind::I32) } else { JitKind::Num(NumKind::F64) },
-                    ));
+                    let result = self.builder.inst_results(inst)[0];
+                    if pop_narrow {
+                        let width = match self.method_return_kind {
+                            JitKind::Num(NumKind::I8 | NumKind::U8) => types::I8,
+                            _ => types::I16,
+                        };
+                        let result = self.builder.ins().ireduce(width, result);
+                        stack.push((result, self.method_return_kind));
+                    } else {
+                        stack.push((result,
+                            if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else if pop_i64 { JitKind::Num(NumKind::I64) } else if pop_i32 { JitKind::Num(NumKind::I32) } else { JitKind::Num(NumKind::F64) }));
+                    }
                 }
                 Opcode::ArrayPush => {
                     let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
@@ -2023,9 +2035,13 @@ impl Translator<'_> {
                     let push_u64 = value_kind == JitKind::Num(NumKind::U64);
                     let push_i64 = value_kind == JitKind::Num(NumKind::I64);
                     let push_i32 = value_kind == JitKind::Num(NumKind::I32);
+                    let push_narrow = matches!(
+                        value_kind,
+                        JitKind::Num(NumKind::I8 | NumKind::U8 | NumKind::I16 | NumKind::U16)
+                    );
                     let push_bool = value_kind == JitKind::Bool;
                     if !matches!(array_kind, JitKind::Object | JitKind::Array)
-                        || (!push_object && !push_u64 && !push_i64 && !push_i32 && !push_bool && value_kind != JitKind::Num(NumKind::F64))
+                        || (!push_object && !push_u64 && !push_i64 && !push_i32 && !push_narrow && !push_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array push requires object and f64/u64 value".into());
                     }
@@ -2033,18 +2049,24 @@ impl Translator<'_> {
                     if push_object {
                         self.builder.declare_value_needs_stack_map(value);
                     }
+                    let push_value = if push_narrow {
+                        match value_kind {
+                            JitKind::Num(NumKind::I8 | NumKind::U8) => self.builder.ins().uextend(types::I32, value),
+                            _ => self.builder.ins().sextend(types::I32, value),
+                        }
+                    } else { value };
                     let push = if push_object {
                         self.array_push_object_fref()
                     } else if push_bool {
                         self.array_push_bool_fref()
                     } else if push_u64 || push_i64 {
                         self.array_push_u64_fref()
-                    } else if push_i32 {
+                    } else if push_i32 || push_narrow {
                         self.array_push_i32_fref()
                     } else {
                         self.array_push_f64_fref()
                     };
-                    let inst = self.builder.ins().call(push, &[array, value]);
+                    let inst = self.builder.ins().call(push, &[array, push_value]);
                     stack.push((self.builder.inst_results(inst)[0], JitKind::Num(NumKind::I64)));
                 }
                 Opcode::LoadField => {
