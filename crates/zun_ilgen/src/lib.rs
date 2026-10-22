@@ -74,6 +74,7 @@ pub(crate) fn numkind_of(ty: Ty) -> Option<NumKind> {
 fn ffi_type_tag(ty: Ty) -> u8 {
     match ty {
         Ty::Int(IntKind { bits: 32, signed: true }) => 5,
+        Ty::Int(IntKind { bits: 32, signed: false }) => 6,
         Ty::Int(IntKind { bits: 64, .. }) => 1,
         Ty::Float(FloatKind::F64) => 2,
         Ty::Boolean => 3,

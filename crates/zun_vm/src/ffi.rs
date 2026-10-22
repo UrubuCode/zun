@@ -15,6 +15,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiScalar {
     I32,
+    U32,
     I64,
     F64,
     Bool,
@@ -237,7 +238,7 @@ impl FfiSignature {
         if self.string_return.is_some() && !self.matches_string_call() {
             return Err("string return declaration requires a string -> string signature".into());
         }
-        if self.matches_i32_call() || self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
+        if self.matches_i32_call() || self.matches_u32_call() || self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
             Ok(())
         } else if self.matches_string_call() {
             let declaration = self
@@ -266,6 +267,12 @@ impl FfiSignature {
     fn matches_i32_call(&self) -> bool {
         self.result == FfiScalar::I32
             && self.params.iter().all(|param| *param == FfiScalar::I32)
+            && self.arity() <= 1
+    }
+
+    fn matches_u32_call(&self) -> bool {
+        self.result == FfiScalar::U32
+            && self.params.iter().all(|param| *param == FfiScalar::U32)
             && self.arity() <= 1
     }
 
@@ -638,6 +645,27 @@ impl NativeLibrary {
         }}
     }
 
+    pub unsafe fn call_u32_0(&self, name: &[u8]) -> Result<u32, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn() -> u32>(name) }?;
+        Ok(unsafe { symbol() })
+    }
+
+    pub unsafe fn call_u32_1(&self, name: &[u8], arg: u32) -> Result<u32, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(u32) -> u32>(name) }?;
+        Ok(unsafe { symbol(arg) })
+    }
+
+    pub unsafe fn call_u32_signature(&self, name: &[u8], signature: &FfiSignature, args: &[u32]) -> Result<u32, FfiError> {
+        if !signature.matches_u32_call() || signature.arity() != args.len() {
+            return Err(FfiError { message: format!("unsupported u32 FFI signature: arity {}, arguments {}", signature.arity(), args.len()) });
+        }
+        unsafe { match args {
+            [] => self.call_u32_0(name),
+            [arg] => self.call_u32_1(name, *arg),
+            _ => Err(FfiError { message: "unsupported u32 FFI arity".into() }),
+        }}
+    }
+
     pub unsafe fn call_i64_0(&self, name: &[u8]) -> Result<i64, FfiError> {
         // SAFETY: the caller guarantees the symbol ABI described above.
         let symbol = unsafe { self.symbol::<unsafe extern "C" fn() -> i64>(name) }?;
@@ -924,6 +952,12 @@ mod tests {
     #[test]
     fn i32_signature_is_a_supported_blittable_shape() {
         let signature = FfiSignature::new([FfiScalar::I32], FfiScalar::I32);
+        assert!(signature.validate().is_ok());
+    }
+
+    #[test]
+    fn u32_signature_is_a_supported_blittable_shape() {
+        let signature = FfiSignature::new([FfiScalar::U32], FfiScalar::U32);
         assert!(signature.validate().is_ok());
     }
 

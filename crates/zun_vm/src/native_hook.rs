@@ -69,6 +69,20 @@ impl NativeCallHook {
         if signature
             .params()
             .iter()
+            .all(|param| *param == FfiScalar::U32)
+            && signature.result() == FfiScalar::U32
+        {
+            let values: Option<Vec<u32>> = args.iter().map(|value| match value {
+                Value::Int(number, NumKind::U32) => Some(*number as u32),
+                _ => None,
+            }).collect();
+            let values = values.ok_or_else(|| RunError::Native("native u32 argument type mismatch".into()))?;
+            let result = unsafe { library.call_u32_signature(export.as_bytes(), signature, &values).map_err(|error| RunError::Native(error.to_string()))? };
+            return Ok(Value::Int(result as i64, NumKind::U32));
+        }
+        if signature
+            .params()
+            .iter()
             .all(|param| *param == FfiScalar::I32)
             && signature.result() == FfiScalar::I32
         {
@@ -231,6 +245,7 @@ impl CallHook for NativeCallHook {
                 .map(|tag| match tag {
                     1 => Some(FfiScalar::I64),
                     5 => Some(FfiScalar::I32),
+                    6 => Some(FfiScalar::U32),
                     2 => Some(FfiScalar::F64),
                     3 => Some(FfiScalar::Bool),
                     4 => Some(FfiScalar::String),
