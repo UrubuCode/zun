@@ -15,6 +15,13 @@ use zun_types::{CoreTypes, TypeError, TypeSystem};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContentId(pub [u8; 32]);
 
+impl ContentId {
+    /// Return the lowercase hexadecimal cache path component.
+    pub fn hex(self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+}
+
 /// Compute the loader's stable content identifier.
 ///
 /// The identifier is deliberately independent of module names and paths. It
@@ -28,6 +35,32 @@ pub fn content_id(bytes: &[u8]) -> ContentId {
 #[derive(Debug, Default)]
 pub struct ModuleCache {
     entries: HashMap<ContentId, Vec<u8>>,
+}
+
+/// Errors raised by the filesystem-backed content cache.
+#[derive(Debug)]
+pub enum CacheError {
+    /// Filesystem access failed.
+    Io(std::io::Error),
+    /// The file contents do not match their requested content identity.
+    Integrity { expected: ContentId, found: ContentId },
+}
+
+impl core::fmt::Display for CacheError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "module cache I/O failed: {error}"),
+            Self::Integrity { expected, found } => {
+                write!(f, "module cache integrity mismatch: expected {}, found {}", expected.hex(), found.hex())
+            }
+        }
+    }
+}
+
+impl std::error::Error for CacheError {}
+
+impl From<std::io::Error> for CacheError {
+    fn from(error: std::io::Error) -> Self { Self::Io(error) }
 }
 
 impl ModuleCache {
@@ -51,6 +84,28 @@ impl ModuleCache {
     /// Whether the cache has no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Store bytes below `root/<sha256>.zm`, returning the content identity.
+    pub fn store(&mut self, root: impl AsRef<Path>, bytes: &[u8]) -> Result<ContentId, CacheError> {
+        let id = self.insert(bytes);
+        let root = root.as_ref();
+        std::fs::create_dir_all(root)?;
+        let path = root.join(format!("{}.zm", id.hex()));
+        if !path.exists() {
+            std::fs::write(path, bytes)?;
+        }
+        Ok(id)
+    }
+
+    /// Read and integrity-check a content-addressed module from disk.
+    pub fn load(root: impl AsRef<Path>, id: ContentId) -> Result<Vec<u8>, CacheError> {
+        let bytes = std::fs::read(root.as_ref().join(format!("{}.zm", id.hex())))?;
+        let found = content_id(&bytes);
+        if found != id {
+            return Err(CacheError::Integrity { expected: id, found });
+        }
+        Ok(bytes)
     }
 }
 
@@ -773,6 +828,18 @@ mod tests {
     fn content_id_does_not_depend_on_module_name() {
         assert_eq!(content_id(b"same"), content_id(b"same"));
         assert_ne!(content_id(b"same"), content_id(b"different"));
+    }
+
+    #[test]
+    fn filesystem_cache_roundtrips_and_rejects_corruption() {
+        let root = std::env::temp_dir().join(format!("zun-content-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut cache = ModuleCache::default();
+        let id = cache.store(&root, b"module bytes").unwrap();
+        assert_eq!(ModuleCache::load(&root, id).unwrap(), b"module bytes");
+        std::fs::write(root.join(format!("{}.zm", id.hex())), b"tampered").unwrap();
+        assert!(matches!(ModuleCache::load(&root, id), Err(CacheError::Integrity { .. })));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
