@@ -484,6 +484,9 @@ ELF/COFF/Mach-O format and x86-64/AArch64 architecture where supported.
 metadata emission, Rust launcher compilation, and target-specific LLD discovery;
 the default remains the host triple and cross-target runtime provisioning stays
 explicit.
+Runtime discovery accepts `ZUN_RUNTIME_LIB_<TARGET>` and packaged
+`zun_vm-<target>.lib`/`libzun_vm-<target>.a` artifacts, while host-only generic
+runtime names are never reused for a cross-target link.
 The AOT build also emits a relocatable metadata object containing the serialized
 `.zm` payload under the `zun_embedded_module` symbol and supplies it to the link.
 It also exports `zun_embedded_module_len` for runtime initialization.

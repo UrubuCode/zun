@@ -377,13 +377,14 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                         .to_string_lossy()
                                                         .into_owned(),
                                                 );
-                                            let native_manifest = match resolve_runtime_library() {
-                                                Some(runtime) => native_manifest
-                                                    .with_runtime_library(runtime_manifest_path(
-                                                        &runtime,
-                                                    )),
-                                                None => native_manifest,
-                                            };
+                                            let native_manifest =
+                                                match resolve_runtime_library(&target) {
+                                                    Some(runtime) => native_manifest
+                                                        .with_runtime_library(
+                                                            runtime_manifest_path(&runtime),
+                                                        ),
+                                                    None => native_manifest,
+                                                };
                                             if let Err(error) =
                                                 native_manifest.write_file(&manifest_out)
                                             {
@@ -397,7 +398,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                             match link_aot_executable(
                                                 &object_out,
                                                 Some(&metadata_out),
-                                                resolve_runtime_library().as_deref(),
+                                                resolve_runtime_library(&target).as_deref(),
                                                 &executable_out,
                                                 target.clone(),
                                                 module.entry_point.map(|token| token.rid()),
@@ -418,7 +419,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                 }
                                                 Err(e) => {
                                                     if e == "AOT launcher supports only scalar numeric returns" {
-                                                        if let Some(runtime) = resolve_runtime_library() {
+                                                        if let Some(runtime) = resolve_runtime_library(&target) {
                                                             let fallback_manifest = manifest
                                                                 .clone()
                                                                 .without_native_object()
@@ -484,7 +485,8 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                         );
                                         let has_entrypoint = module.entry_point.is_some();
                                         if has_entrypoint {
-                                            if let Some(runtime) = resolve_runtime_library() {
+                                            if let Some(runtime) = resolve_runtime_library(&target)
+                                            {
                                                 let metadata_out = out.with_extension("meta.o");
                                                 match zun_codegen::compile_metadata_object_for_target(&module.write(), target.clone()) {
                                                 Ok(metadata) => {
@@ -644,16 +646,48 @@ fn explicit_lld_override(value: Option<&OsStr>) -> Option<PathBuf> {
 /// Resolve an explicitly provisioned static runtime library for AOT links.
 /// The build remains usable without it while the embedded-IL launcher path is
 /// used; packaged distributions set this to the matching `zun_vm.lib`.
-fn resolve_runtime_library() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("ZUN_RUNTIME_LIB") {
+fn resolve_runtime_library(target: &target_lexicon::Triple) -> Option<PathBuf> {
+    let target_name = target.to_string();
+    let target_env = runtime_library_env_name(&target_name);
+    if let Ok(path) = std::env::var(&target_env).or_else(|_| std::env::var("ZUN_RUNTIME_LIB")) {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
     }
     let directory = std::env::current_exe().ok()?.parent()?.to_owned();
-    ["zun_vm.lib", "libzun_vm.a"]
-        .into_iter()
+    let target_specific = [
+        format!("zun_vm-{target_name}.lib"),
+        format!("libzun_vm-{target_name}.a"),
+    ];
+    target_specific
+        .iter()
         .map(|name| directory.join(name))
         .find(|path| path.is_file())
+        .or_else(|| {
+            if *target == target_lexicon::Triple::host() {
+                ["zun_vm.lib".to_owned(), "libzun_vm.a".to_owned()]
+                    .iter()
+                    .map(|name| directory.join(name))
+                    .find(|path| path.is_file())
+            } else {
+                None
+            }
+        })
+}
+
+fn runtime_library_env_name(target: &str) -> String {
+    format!(
+        "ZUN_RUNTIME_LIB_{}",
+        target
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+    )
 }
 
 fn runtime_manifest_path(path: &Path) -> String {
@@ -896,7 +930,7 @@ fn line_col(source: &str, offset: u32) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{explicit_lld_override, parse_aot_target};
+    use super::{explicit_lld_override, parse_aot_target, runtime_library_env_name};
     use std::ffi::OsStr;
     use std::path::Path;
 
@@ -926,5 +960,13 @@ mod tests {
     fn invalid_aot_target_is_rejected_before_emission() {
         let error = parse_aot_target(Some("not-a-target".to_owned())).unwrap_err();
         assert!(error.contains("invalid ZUN_TARGET"));
+    }
+
+    #[test]
+    fn target_runtime_override_uses_a_shell_safe_environment_name() {
+        assert_eq!(
+            runtime_library_env_name("aarch64-unknown-linux-gnu"),
+            "ZUN_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_GNU"
+        );
     }
 }
