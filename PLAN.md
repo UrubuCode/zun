@@ -1032,6 +1032,9 @@ bridge for string-returning entrypoints and remains restricted to scalar
 returns.
 Its scalar launcher now preserves `u64` as an unsigned C ABI result, including
 values above `i64::MAX`, with an end-to-end `u64::MAX` test.
+The launcher also preserves the exact Cranelift ABI for `i8`, `u8`, `i16`,
+`u16`, `i32`, and `u32` returns; an end-to-end `i32` entry-point test covers
+the narrow signed path. Full-runtime AOT/R2R remains deferred.
 Parameter/field string handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
 are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
