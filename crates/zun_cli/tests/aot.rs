@@ -363,6 +363,11 @@ fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let executable = source.with_extension("exe");
     assert!(executable.is_file(), "{}", String::from_utf8_lossy(&output.stderr));
+    let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
+        .expect("read fallback manifest");
+    assert_eq!(manifest.native_object, None);
+    assert_eq!(manifest.metadata_object.as_deref(), Some("main.meta.o"));
+    assert!(manifest.runtime_library.is_some());
     let run = Command::new(&executable).output().expect("run fallback executable");
     assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "23");

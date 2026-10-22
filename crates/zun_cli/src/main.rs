@@ -391,6 +391,18 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                     if let Err(error) = std::fs::write(&metadata_out, metadata) {
                                                         eprintln!("zun: warning: cannot write fallback metadata object: {error}");
                                                     } else {
+                                                        let fallback_manifest = manifest.clone()
+                                                            .with_metadata_object(
+                                                                metadata_out
+                                                                    .file_name()
+                                                                    .expect("metadata output has a file name")
+                                                                    .to_string_lossy()
+                                                                    .into_owned(),
+                                                            )
+                                                            .with_runtime_library(runtime_manifest_path(&runtime));
+                                                        if let Err(error) = fallback_manifest.write_file(&manifest_out) {
+                                                            eprintln!("zun: warning: cannot update fallback manifest: {error}");
+                                                        }
                                                         let executable_out = out.with_extension("exe");
                                                         let return_kind = module.entry_point.and_then(|token| {
                                                             module.tables.method_defs.get(token.rid() as usize - 1)
