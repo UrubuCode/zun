@@ -1075,6 +1075,9 @@ also participate in Cranelift precise stack-map declarations at JIT
 safepoints. This completes the root-publication side of the current string
 helper ABI; broad string-method eligibility remains gated until its allocation
 and exception contracts are complete.
+The equivalence suite also exercises a managed string result flowing directly
+into a following helper (`concat(...).contains(...)`), preserving the
+intermediate handle across the JIT call boundary.
 The AOT launcher now preserves the Cranelift `i32` ABI for boolean entrypoints
 and prints their logical value. It still requires the managed runtime/helper
 bridge for string-returning entrypoints and remains restricted to scalar
