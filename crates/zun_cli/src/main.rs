@@ -335,6 +335,16 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                         return ExitCode::FAILURE;
                                     }
                                 };
+                                if target != target_lexicon::Triple::host()
+                                    && resolve_runtime_library(&target).is_none()
+                                {
+                                    eprintln!(
+                                        "zun: no runtime library provisioned for cross target `{target}`; set ZUN_RUNTIME_LIB_{}` or package a target-qualified runtime library",
+                                        runtime_library_env_name(&target.to_string())
+                                            .trim_start_matches("ZUN_RUNTIME_LIB_")
+                                    );
+                                    return ExitCode::FAILURE;
+                                }
                                 let object_out = out.with_extension("o");
                                 match zun_codegen::compile_object_for_target(
                                     &module,

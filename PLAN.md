@@ -496,6 +496,8 @@ explicit.
 Runtime discovery accepts `ZUN_RUNTIME_LIB_<TARGET>` and packaged
 `zun_vm-<target>.lib`/`libzun_vm-<target>.a` artifacts, while host-only generic
 runtime names are never reused for a cross-target link.
+Cross-target AOT now fails before emission when that matching runtime artifact is
+absent, rather than deferring the inevitable failure to the linker.
 The AOT build also emits a relocatable metadata object containing the serialized
 `.zm` payload under the `zun_embedded_module` symbol and supplies it to the link.
 It also exports `zun_embedded_module_len` for runtime initialization.
