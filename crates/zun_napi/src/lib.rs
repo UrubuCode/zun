@@ -175,6 +175,20 @@ mod node_api {
         if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK { invalid_call(env) } else { result }
     }
 
+    unsafe extern "C" fn run_i16(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
+        let mut argc = 1;
+        let mut argv = [core::ptr::null_mut(); 1];
+        if unsafe { napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut()) } != NAPI_OK || argc != 1 { return invalid_call(env); }
+        let mut data = core::ptr::null_mut(); let mut length = 0;
+        let status = unsafe { napi_get_arraybuffer_info(env, argv[0], &mut data, &mut length) };
+        let status = if status == NAPI_OK { status } else { unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) } };
+        if status != NAPI_OK || data.is_null() { return invalid_call(env); }
+        let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
+        let Ok(zun_interp::value::Value::Int(value, zun_il::NumKind::I16)) = zun_vm::execute(bytes) else { return execution_failed(env); };
+        let mut result = core::ptr::null_mut();
+        if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK { invalid_call(env) } else { result }
+    }
+
     unsafe extern "C" fn run_u64(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
         let mut argc = 1;
         let mut argv = [core::ptr::null_mut(); 1];
@@ -245,6 +259,20 @@ mod node_api {
         if status != NAPI_OK || data.is_null() { return invalid_call(env); }
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Int(value, zun_il::NumKind::U8)) = zun_vm::execute(bytes) else { return execution_failed(env); };
+        let mut result = core::ptr::null_mut();
+        if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK { invalid_call(env) } else { result }
+    }
+
+    unsafe extern "C" fn run_u16(env: NapiEnv, info: NapiCallbackInfo) -> NapiValue {
+        let mut argc = 1;
+        let mut argv = [core::ptr::null_mut(); 1];
+        if unsafe { napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut()) } != NAPI_OK || argc != 1 { return invalid_call(env); }
+        let mut data = core::ptr::null_mut(); let mut length = 0;
+        let status = unsafe { napi_get_arraybuffer_info(env, argv[0], &mut data, &mut length) };
+        let status = if status == NAPI_OK { status } else { unsafe { napi_get_buffer_info(env, argv[0], &mut data, &mut length) } };
+        if status != NAPI_OK || data.is_null() { return invalid_call(env); }
+        let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
+        let Ok(zun_interp::value::Value::Int(value, zun_il::NumKind::U16)) = zun_vm::execute(bytes) else { return execution_failed(env); };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK { invalid_call(env) } else { result }
     }
@@ -429,10 +457,12 @@ mod node_api {
             (b"runI64\0".as_slice(), run_i64 as NapiCallback),
             (b"runI32\0".as_slice(), run_i32 as NapiCallback),
             (b"runI8\0".as_slice(), run_i8 as NapiCallback),
+            (b"runI16\0".as_slice(), run_i16 as NapiCallback),
             (b"runI64BigInt\0".as_slice(), run_i64_bigint as NapiCallback),
             (b"runU64\0".as_slice(), run_u64 as NapiCallback),
             (b"runU32\0".as_slice(), run_u32 as NapiCallback),
             (b"runU8\0".as_slice(), run_u8 as NapiCallback),
+            (b"runU16\0".as_slice(), run_u16 as NapiCallback),
             (b"runF64\0".as_slice(), run_f64 as NapiCallback),
             (b"runBool\0".as_slice(), run_bool as NapiCallback),
             (b"runString\0".as_slice(), run_string as NapiCallback),
