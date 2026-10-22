@@ -355,10 +355,51 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                     ExitCode::SUCCESS
                                                 }
                                                 Err(e) => {
-                                                    eprintln!(
-                                                        "zun: cannot link AOT executable: {e}"
-                                                    );
-                                                    ExitCode::FAILURE
+                                                    if e == "AOT launcher supports only scalar numeric returns" {
+                                                        if let Some(runtime) = resolve_runtime_library() {
+                                                            let fallback_manifest = manifest
+                                                                .clone()
+                                                                .without_native_object()
+                                                                .with_metadata_object(
+                                                                    metadata_out
+                                                                        .file_name()
+                                                                        .expect("metadata output has a file name")
+                                                                        .to_string_lossy()
+                                                                        .into_owned(),
+                                                                )
+                                                                .with_runtime_library(runtime_manifest_path(&runtime));
+                                                            if let Err(error) = fallback_manifest.write_file(&manifest_out) {
+                                                                eprintln!("zun: cannot update fallback manifest: {error}");
+                                                                return ExitCode::FAILURE;
+                                                            }
+                                                            let return_kind = module.entry_point.and_then(|token| {
+                                                                module.tables.method_defs.get(token.rid() as usize - 1)
+                                                                    .and_then(|method| zun_module::read_body(&module.code, method.body_offset).ok())
+                                                                    .map(|body| body.return_kind)
+                                                            });
+                                                            match link_aot_fallback(
+                                                                &metadata_out,
+                                                                &runtime,
+                                                                &executable_out,
+                                                                return_kind,
+                                                            ) {
+                                                                Ok(()) => {
+                                                                    println!("wrote {}", executable_out.display());
+                                                                    ExitCode::SUCCESS
+                                                                }
+                                                                Err(error) => {
+                                                                    eprintln!("zun: cannot link interpreter fallback: {error}");
+                                                                    ExitCode::FAILURE
+                                                                }
+                                                            }
+                                                        } else {
+                                                            eprintln!("zun: warning: {e}; retaining embedded IL fallback");
+                                                            ExitCode::SUCCESS
+                                                        }
+                                                    } else {
+                                                        eprintln!("zun: cannot link AOT executable: {e}");
+                                                        ExitCode::FAILURE
+                                                    }
                                                 }
                                             }
                                         }

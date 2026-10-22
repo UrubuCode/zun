@@ -1171,6 +1171,12 @@ impl ModuleManifest {
         self
     }
 
+    /// Remove a native object when AOT falls back to the embedded interpreter.
+    pub fn without_native_object(mut self) -> Self {
+        self.native_object = None;
+        self
+    }
+
     /// Associate the object containing embedded module metadata/IL.
     pub fn with_metadata_object(mut self, path: impl Into<String>) -> Self {
         self.metadata_object = Some(path.into());
