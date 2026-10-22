@@ -243,6 +243,55 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
             }],
         }),
+        Statement::ForStatement(for_statement) => {
+            let init = match &for_statement.init {
+                None => None,
+                Some(ForStatementInit::VariableDeclaration(declaration)) => {
+                    if declaration.declarations.len() != 1 {
+                        return Err("OXC adapter supports one for-loop initializer binding".into());
+                    }
+                    let declarator = &declaration.declarations[0];
+                    let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                        return Err("OXC adapter supports identifier for-loop bindings".into());
+                    };
+                    let Some(initializer) = declarator.init.as_ref() else {
+                        return Err(
+                            "OXC adapter requires an initializer for for-loop bindings".into()
+                        );
+                    };
+                    Some(Box::new(Stmt::Let {
+                        name: Name {
+                            span: Span::new(identifier.span.start, identifier.span.end),
+                        },
+                        ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                        init: convert_expression(initializer)?,
+                        span: Span::new(declarator.span.start, declarator.span.end),
+                    }))
+                }
+                Some(init) => Some(Box::new(Stmt::Expr(convert_expression(
+                    init.as_expression()
+                        .ok_or("OXC adapter does not support this for-loop initializer yet")?,
+                )?))),
+            };
+            Ok(Block {
+                span: Span::new(for_statement.span.start, for_statement.span.end),
+                statements: vec![Stmt::For {
+                    init,
+                    cond: for_statement
+                        .test
+                        .as_ref()
+                        .map(convert_expression)
+                        .transpose()?,
+                    update: for_statement
+                        .update
+                        .as_ref()
+                        .map(convert_expression)
+                        .transpose()?,
+                    body: convert_if_branch(source, &for_statement.body)?,
+                    span: Span::new(for_statement.span.start, for_statement.span.end),
+                }],
+            })
+        }
         _ => Err("OXC adapter requires a supported statement branch".into()),
     }
 }
@@ -1498,6 +1547,22 @@ mod tests {
                 then_block: ref block,
                 ..
             } if matches!(block.statements.first(), Some(crate::ast::Stmt::DoWhile { .. }))
+        ));
+    }
+
+    #[test]
+    fn converts_single_statement_for_branch() {
+        let program = parse_subset(
+            "function main(value) { if (value) for (let i = 0; i < value; i = i + 1) break; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::If {
+                then_block: ref block,
+                ..
+            } if matches!(block.statements.first(), Some(crate::ast::Stmt::For { .. }))
         ));
     }
 
