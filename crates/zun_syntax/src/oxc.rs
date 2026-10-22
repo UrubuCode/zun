@@ -8,7 +8,8 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, Expression,
-    ForStatementInit, ForStatementLeft, LogicalOperator, Statement,
+    ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
+    ModuleExportName, Statement,
     UnaryOperator,
 };
 use oxc_parser::Parser;
@@ -268,7 +269,58 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     }
 
     let mut functions = Vec::new();
+    let mut imports = Vec::new();
     for statement in parsed.program.body {
+        if let Statement::ImportDeclaration(import_declaration) = statement {
+            let Some(module) = import_declaration.source.value.as_str() else {
+                return Err(vec!["OXC adapter cannot represent non-UTF-8 import sources".into()]);
+            };
+            let mut names = Vec::new();
+            if let Some(specifiers) = import_declaration.specifiers.as_deref() {
+                for specifier in specifiers {
+                match specifier {
+                    ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                        let ModuleExportName::IdentifierName(imported) = &specifier.imported else {
+                            return Err(vec![
+                                "OXC adapter supports identifier named imports only".into(),
+                            ]);
+                        };
+                        names.push(crate::ast::ImportName {
+                            imported: Name {
+                                span: Span::new(imported.span.start, imported.span.end),
+                            },
+                            local: Name {
+                                span: Span::new(specifier.local.span.start, specifier.local.span.end),
+                            },
+                            is_default: false,
+                        });
+                    }
+                    ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                        names.push(crate::ast::ImportName {
+                            imported: Name {
+                                span: Span::new(specifier.local.span.start, specifier.local.span.end),
+                            },
+                            local: Name {
+                                span: Span::new(specifier.local.span.start, specifier.local.span.end),
+                            },
+                            is_default: true,
+                        });
+                    }
+                    ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => {
+                        return Err(vec![
+                            "OXC adapter does not support namespace imports yet".into(),
+                        ]);
+                    }
+                }
+            }
+            }
+            imports.push(crate::ast::Import {
+                names,
+                module: module.to_owned(),
+                span: Span::new(import_declaration.span.start, import_declaration.span.end),
+            });
+            continue;
+        }
         let Statement::FunctionDeclaration(function) = statement else {
             return Err(vec!["OXC adapter does not support this top-level declaration yet".into()]);
         };
@@ -528,7 +580,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     Ok(Program {
         functions,
         classes: Vec::new(),
-        imports: Vec::new(),
+        imports,
     })
 }
 
@@ -779,5 +831,19 @@ mod tests {
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })
         ));
+    }
+
+    #[test]
+    fn converts_named_and_default_imports() {
+        let program = parse_subset(
+            "import value, { helper as local } from 'zun:std'; function main() { return local; }",
+            false,
+        )
+        .unwrap();
+        assert_eq!(program.imports.len(), 1);
+        assert_eq!(program.imports[0].module, "zun:std");
+        assert_eq!(program.imports[0].names.len(), 2);
+        assert!(program.imports[0].names[0].is_default);
+        assert!(!program.imports[0].names[1].is_default);
     }
 }
