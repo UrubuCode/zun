@@ -304,6 +304,12 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                     .expect("object output has a file name")
                                                     .to_string_lossy()
                                                     .into_owned(),
+                                            ).with_metadata_object(
+                                                metadata_out
+                                                    .file_name()
+                                                    .expect("metadata output has a file name")
+                                                    .to_string_lossy()
+                                                    .into_owned(),
                                             );
                                             if let Err(error) =
                                                 native_manifest.write_file(&manifest_out)

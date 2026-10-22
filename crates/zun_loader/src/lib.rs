@@ -376,6 +376,8 @@ pub struct ModuleManifest {
     /// Optional relocatable native object associated with the canonical module.
     /// The loader may ignore it and use the `.zm` fallback.
     pub native_object: Option<String>,
+    /// Optional relocatable object containing the embedded `.zm` metadata/IL.
+    pub metadata_object: Option<String>,
     /// Fingerprint of the prelude embedded or linked by the compiled modules.
     /// A missing value denotes a legacy or manually assembled manifest.
     pub prelude_fingerprint: Option<u64>,
@@ -392,7 +394,7 @@ pub struct ModuleLock {
 
 impl ModuleLock {
     const MAGIC: &'static [u8; 5] = b"ZLOCK";
-    const VERSION: u16 = 2;
+    const VERSION: u16 = 3;
 
     /// Construct an empty lockfile.
     pub fn new() -> Self { Self { entries: Vec::new(), capabilities: Vec::new() } }
@@ -722,7 +724,7 @@ impl Zmlib {
 
 impl ModuleManifest {
     const MAGIC: &'static [u8; 4] = b"ZMAN";
-    const VERSION: u16 = 2;
+    const VERSION: u16 = 3;
 
     /// Construct a manifest for an entry module and its dependencies.
     pub fn new(entry: impl Into<String>, dependencies: impl IntoIterator<Item = String>) -> Self {
@@ -730,6 +732,7 @@ impl ModuleManifest {
             entry: entry.into(),
             dependencies: dependencies.into_iter().collect(),
             native_object: None,
+            metadata_object: None,
             prelude_fingerprint: None,
         }
     }
@@ -737,6 +740,12 @@ impl ModuleManifest {
     /// Associate an optional R2R/AOT object path with this manifest.
     pub fn with_native_object(mut self, path: impl Into<String>) -> Self {
         self.native_object = Some(path.into());
+        self
+    }
+
+    /// Associate the object containing embedded module metadata/IL.
+    pub fn with_metadata_object(mut self, path: impl Into<String>) -> Self {
+        self.metadata_object = Some(path.into());
         self
     }
 
@@ -751,6 +760,22 @@ impl ModuleManifest {
     /// `None` so callers can use the canonical `.zm` fallback.
     pub fn native_object_path(&self, manifest_path: impl AsRef<Path>) -> Option<PathBuf> {
         let object = PathBuf::from(self.native_object.as_deref()?);
+        if object.is_absolute() {
+            Some(object)
+        } else {
+            Some(
+                manifest_path
+                    .as_ref()
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(object),
+            )
+        }
+    }
+
+    /// Resolve the optional embedded metadata object relative to the manifest.
+    pub fn metadata_object_path(&self, manifest_path: impl AsRef<Path>) -> Option<PathBuf> {
+        let object = PathBuf::from(self.metadata_object.as_deref()?);
         if object.is_absolute() {
             Some(object)
         } else {
@@ -791,6 +816,10 @@ impl ModuleManifest {
         bytes.push(u8::from(self.native_object.is_some()));
         if let Some(native_object) = &self.native_object {
             write_name(&mut bytes, native_object);
+        }
+        bytes.push(u8::from(self.metadata_object.is_some()));
+        if let Some(metadata_object) = &self.metadata_object {
+            write_name(&mut bytes, metadata_object);
         }
         bytes.push(u8::from(self.prelude_fingerprint.is_some()));
         if let Some(fingerprint) = self.prelude_fingerprint {
@@ -833,6 +862,15 @@ impl ModuleManifest {
                 _ => return Err(LoadError::InvalidManifest("invalid native object flag".into())),
             }
         };
+        let metadata_object = if version < 3 {
+            None
+        } else {
+            match take(bytes, &mut cursor, 1) {
+                Some([0]) => None,
+                Some([1]) => Some(read_name(bytes, &mut cursor)?),
+                _ => return Err(LoadError::InvalidManifest("invalid metadata object flag".into())),
+            }
+        };
         let prelude_fingerprint = if version < 2 {
             None
         } else {
@@ -851,6 +889,7 @@ impl ModuleManifest {
             entry,
             dependencies,
             native_object,
+            metadata_object,
             prelude_fingerprint,
         })
     }
@@ -1670,6 +1709,7 @@ mod tests {
     fn manifest_roundtrips_optional_native_object() {
         let manifest = ModuleManifest::new("app", vec!["core".into()])
             .with_native_object("app.o")
+            .with_metadata_object("app.meta.o")
             .with_prelude_fingerprint(0x1234_5678_9abc_def0);
         let decoded = ModuleManifest::read(&manifest.write()).expect("roundtrip");
         assert_eq!(decoded, manifest);
@@ -1681,6 +1721,10 @@ mod tests {
         assert_eq!(
             decoded.native_object_path("dist/app.zman"),
             Some(PathBuf::from("dist/app.o"))
+        );
+        assert_eq!(
+            decoded.metadata_object_path("dist/app.zman"),
+            Some(PathBuf::from("dist/app.meta.o"))
         );
         assert_eq!(
             ModuleManifest::new("app", Vec::<String>::new()).native_object_path("app.zman"),
