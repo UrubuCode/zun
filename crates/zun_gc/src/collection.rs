@@ -470,6 +470,15 @@ impl Heap {
                 r.generation = records::Generation::Old;
             }
         }
+        if evacuate {
+            // Dead young records still point into the nursery chunks that are
+            // about to be released. Do not put those records back on the free
+            // list: reusing their addresses after the chunks are cleared would
+            // turn the next allocation into a use-after-free.
+            for free_indices in self.free.values_mut() {
+                free_indices.retain(|&idx| self.records[idx].generation != records::Generation::Young);
+            }
+        }
         for entry in &mut self.finalizers {
             if entry.target != 0 && !entry.queued && self.by_addr.get(&entry.target).is_none() {
                 entry.queued = true;

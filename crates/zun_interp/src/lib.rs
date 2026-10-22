@@ -1369,7 +1369,22 @@ impl Interp<'_> {
         } else if full {
             roots::collect(&self.types, stack, locals, parent, &extra_roots)
         } else {
-            roots::collect_young(&self.types, stack, locals, parent, &extra_roots)
+            let hook = self.hook;
+            roots::collect_young_evacuating(
+                &self.types,
+                stack,
+                locals,
+                parent,
+                &extra_roots,
+                &mut |relocation| {
+                    for value in self.static_fields.values_mut() {
+                        Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
+                    }
+                    if let Some(hook) = hook {
+                        hook.rewrite_managed_roots(relocation);
+                    }
+                },
+            )
         }
     }
 
