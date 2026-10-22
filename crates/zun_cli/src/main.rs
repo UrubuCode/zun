@@ -183,7 +183,20 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
         _ => None,
     };
-    let module_result = match cached_prelude.as_ref() {
+    let use_oxc = matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("js") | Some("mjs")
+    );
+    let module_result = if use_oxc {
+        if cached_prelude.is_some() {
+            Err(vec![Diagnostic::error(
+                "native OXC JavaScript input cannot be combined with a prelude cache",
+            )])
+        } else {
+            zun_compiler::compile_with_oxc(&source, false)
+        }
+    } else {
+        match cached_prelude.as_ref() {
         Some(prelude) => zun_compiler::compile_with_cached_std(&source, prelude)
             .and_then(|loader| {
                 let scope = loader.get("app").ok_or_else(|| {
@@ -195,6 +208,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                     .map_err(|error| vec![Diagnostic::error(error.to_string())])
             }),
         None => zun_compiler::compile_with_default_std(&source),
+        }
     };
     let module = match module_result {
         Ok(m) => m,

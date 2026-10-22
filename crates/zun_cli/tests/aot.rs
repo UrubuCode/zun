@@ -1,6 +1,31 @@
 use std::process::Command;
 
 #[test]
+fn build_uses_native_oxc_for_javascript_inputs() {
+    let root = std::env::temp_dir().join(format!("zun-oxc-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.js");
+    std::fs::write(&source, "export default function main() {}\n").expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(source.with_extension("zm").is_file());
+
+    for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman")] {
+        let _ = std::fs::remove_file(path);
+    }
+    let _ = std::fs::remove_dir(root);
+}
+
+#[test]
 fn build_can_persist_a_valid_prelude_cache() {
     let root = std::env::temp_dir().join(format!("zun-prelude-cache-cli-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
