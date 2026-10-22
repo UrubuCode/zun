@@ -930,6 +930,20 @@ impl ModuleLoader {
         Ok(())
     }
 
+    /// Fetch and register every module published by a registry index in its
+    /// deterministic order. Content IDs are checked before any scope is
+    /// inserted, so an index cannot silently select altered bytes.
+    pub fn load_index(
+        &mut self,
+        index: &ModuleIndex,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        for (name, id) in &index.entries {
+            self.load_fetched(name, *id, fetcher)?;
+        }
+        Ok(())
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         package.lock.verify()?;
@@ -1371,6 +1385,25 @@ mod tests {
         let mut trailing = index.write();
         trailing.push(0);
         assert!(ModuleIndex::read(&trailing).is_err());
+    }
+
+    #[test]
+    fn loader_consumes_registry_index_with_content_verification() {
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> { Ok(self.0.clone()) }
+        }
+        let bytes = Module::new().write();
+        let id = content_id(&bytes);
+        let mut index = ModuleIndex::new();
+        index.push("indexed", id).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader.load_index(&index, &Registry(bytes)).unwrap();
+        assert!(loader.get("indexed").is_some());
+
+        let mut bad = ModuleIndex::new();
+        bad.push("indexed", content_id(b"different")).unwrap();
+        assert!(ModuleLoader::new().load_index(&bad, &Registry(Module::new().write())).is_err());
     }
 
     #[test]
