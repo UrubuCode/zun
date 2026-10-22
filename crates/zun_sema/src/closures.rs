@@ -415,11 +415,18 @@ impl Checker<'_> {
             ast::Expr::Field { object, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses)
             }
+            ast::Expr::PrivateField { object, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses)
+            }
             ast::Expr::OptionalField { object, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses)
             }
             ast::Expr::Spread { expr, .. } => self.collect_capture_expr(cx, parameters, expr, uses),
             ast::Expr::FieldAssign { object, value, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
+                self.collect_capture_expr(cx, parameters, value, uses);
+            }
+            ast::Expr::PrivateFieldAssign { object, value, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses);
                 self.collect_capture_expr(cx, parameters, value, uses);
             }

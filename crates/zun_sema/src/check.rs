@@ -2159,6 +2159,10 @@ impl Checker<'_> {
                 };
                 hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span }
             }
+            ast::Expr::PrivateField { .. } | ast::Expr::PrivateFieldAssign { .. } => {
+                self.error(span, "private fields are not lowered yet");
+                self.poison(span)
+            }
             ast::Expr::Cast { expr, ty, .. } => {
                 let value = self.check_expr(cx, expr);
                 let target = self.resolve_annotation(ty);
@@ -2950,8 +2954,8 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Call { args, .. } | New { args, .. } => args.iter().map(count_yields_in_expr).sum(),
         ComputedCall { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         MethodCall { receiver, args, .. } | OptionalMethodCall { object: receiver, args, .. } => count_yields_in_expr(receiver) + args.iter().map(count_yields_in_expr).sum::<usize>(),
-        OptionalField { object, .. } | Field { object, .. } => count_yields_in_expr(object),
-        FieldAssign { object, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(value),
+        OptionalField { object, .. } | Field { object, .. } | PrivateField { object, .. } => count_yields_in_expr(object),
+        FieldAssign { object, value, .. } | PrivateFieldAssign { object, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(value),
         Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
         IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
         Template { parts, .. } => parts.iter().map(|p| match p { ast::TemplatePart::Text(_) => 0, ast::TemplatePart::Expr(e) => count_yields_in_expr(e) }).sum(),
@@ -3029,8 +3033,8 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
             count_awaits_in_expr(object) + args.iter().map(count_awaits_in_expr).sum::<usize>()
         }
         New { args, .. } => args.iter().map(count_awaits_in_expr).sum(),
-        Field { object, .. } => count_awaits_in_expr(object),
-        FieldAssign { object, value, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(value),
+        Field { object, .. } | PrivateField { object, .. } => count_awaits_in_expr(object),
+        FieldAssign { object, value, .. } | PrivateFieldAssign { object, value, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(value),
         Index { object, index, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(index),
         IndexAssign { object, index, value, .. } => {
             count_awaits_in_expr(object) + count_awaits_in_expr(index) + count_awaits_in_expr(value)
