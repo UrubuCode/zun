@@ -162,6 +162,9 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
 }
 
 fn allocation_builtin(instr: &zun_il::Instruction) -> bool {
+    if instr.opcode != Opcode::CallBuiltin {
+        return false;
+    }
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some("mapNew" | "setNew"))
 }
