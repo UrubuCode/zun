@@ -977,6 +977,12 @@ the heap at a conservative periodic boundary while rewriting registered JIT
 slots. Multi-threaded stop-the-world coordination remains deferred until the
 VM has multiple mutator threads.
 
+The runtime floor now also contains a normalized sign-magnitude `BigInt`
+implementation with decimal parsing and exact add/subtract/multiply/compare
+operations. It is intentionally not exposed through the language yet: the
+managed carrier, GC tracing contract, literals, verifier, and interpreter/JIT
+lowering must land as one later vertical slice.
+
 The remaining completion gates are broader JIT lowering for managed heap values,
 additional platform coverage for the automatic collection policy at the
 now-published precise JIT-frame safepoint, true OSR frame replacement, and
