@@ -163,7 +163,12 @@ impl ModuleCache {
         let root = root.as_ref();
         std::fs::create_dir_all(root)?;
         let path = root.join(format!("{}.zm", id.hex()));
-        if !path.exists() {
+        let needs_write = match std::fs::read(&path) {
+            Ok(existing) => content_id(&existing) != id,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => return Err(CacheError::Io(error)),
+        };
+        if needs_write {
             std::fs::write(path, bytes)?;
         }
         Ok(id)
@@ -2071,6 +2076,18 @@ mod tests {
             ModuleCache::load(&root, id),
             Err(CacheError::Integrity { .. })
         ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cache_store_repairs_a_corrupted_existing_content_address() {
+        let root = std::env::temp_dir().join(format!("zun-content-cache-repair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut cache = ModuleCache::default();
+        let id = cache.store(&root, b"module bytes").unwrap();
+        std::fs::write(root.join(format!("{}.zm", id.hex())), b"tampered").unwrap();
+        assert_eq!(cache.store(&root, b"module bytes").unwrap(), id);
+        assert_eq!(ModuleCache::load(&root, id).unwrap(), b"module bytes");
         std::fs::remove_dir_all(root).unwrap();
     }
 
