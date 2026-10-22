@@ -410,6 +410,8 @@ Content-addressed cache writes now repair an existing entry whose bytes no longe
 match its content identity, with regression coverage for tampered cache files.
 Verified cache replacements are written to a temporary sibling and renamed into
 place, avoiding partially written final cache entries.
+The temporary file is flushed with sync_all before publication so a successful
+cache store has a durable payload boundary.
 Directory and HTTP registry transports now reject parent, absolute, backslash,
 query, fragment, percent-encoded, colon, and control-character module paths before
 filesystem or URL interpolation; logical lock/index identities remain unchanged.
