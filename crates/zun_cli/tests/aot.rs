@@ -410,6 +410,29 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
 }
 
 #[test]
+fn build_aot_rejects_a_stale_explicit_lld_override() {
+    let root = std::env::temp_dir().join(format!("zun-aot-lld-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    std::fs::write(&source, "function main(): int { return 7; }\n").expect("write source");
+    let missing = root.join("missing-lld.exe");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .env("ZUN_LLD", &missing)
+        .args(["build", "--aot"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("missing-lld.exe"));
+
+    for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
+        let _ = std::fs::remove_file(source.with_extension(extension));
+    }
+    let _ = std::fs::remove_dir(root);
+}
+
+#[test]
 fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
     let runtime = std::env::current_exe()
         .expect("test executable path")
