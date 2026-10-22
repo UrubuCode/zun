@@ -367,6 +367,10 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             value: number.value,
             span: span(number.span),
         }),
+        Expression::BigIntLiteral(bigint) => Ok(Expr::BigInt {
+            value: bigint.value.as_str().to_owned(),
+            span: span(bigint.span),
+        }),
         Expression::StringLiteral(string) => {
             let Some(value) = string.value.as_str() else {
                 return Err("OXC adapter cannot represent non-UTF-8 string literals".into());
@@ -1491,6 +1495,19 @@ mod tests {
                 }),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_bigint_literals() {
+        let program =
+            parse_subset("function main() { return 12345678901234567890n; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::BigInt { ref value, .. }),
+                ..
+            } if value == "12345678901234567890"
         ));
     }
 
