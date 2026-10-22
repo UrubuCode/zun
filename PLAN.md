@@ -470,7 +470,8 @@ An end-to-end local HTTP registry fixture now serves a signed index and module,
 proving the loader verifies the external trust anchor before fetching and
 registering the selected content.
 The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable on
-`PATH`, or the active toolchain's `rust-lld`, and passes it to the external final
+`PATH`, or the active toolchain's target-specific `rustlib` linker directory
+(`rust-lld`/`lld-link`), and passes it to the external final
 link step when available.
 The AOT build also emits a relocatable metadata object containing the serialized
 `.zm` payload under the `zun_embedded_module` symbol and supplies it to the link.
