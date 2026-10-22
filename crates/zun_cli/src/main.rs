@@ -19,12 +19,15 @@ use zun_common::Diagnostic;
 use zun_module::{read_body, Module};
 
 fn aot_target() -> Result<target_lexicon::Triple, String> {
-    match std::env::var("ZUN_TARGET") {
-        Ok(value) => value
+    parse_aot_target(std::env::var("ZUN_TARGET").ok())
+}
+
+fn parse_aot_target(value: Option<String>) -> Result<target_lexicon::Triple, String> {
+    match value {
+        Some(value) => value
             .parse()
             .map_err(|error| format!("invalid ZUN_TARGET `{value}`: {error}")),
-        Err(std::env::VarError::NotPresent) => Ok(target_lexicon::Triple::host()),
-        Err(error) => Err(format!("cannot read ZUN_TARGET: {error}")),
+        None => Ok(target_lexicon::Triple::host()),
     }
 }
 
@@ -893,7 +896,7 @@ fn line_col(source: &str, offset: u32) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::explicit_lld_override;
+    use super::{explicit_lld_override, parse_aot_target};
     use std::ffi::OsStr;
     use std::path::Path;
 
@@ -909,5 +912,19 @@ mod tests {
     fn empty_lld_override_allows_discovery() {
         assert!(explicit_lld_override(Some(OsStr::new(""))).is_none());
         assert!(explicit_lld_override(None).is_none());
+    }
+
+    #[test]
+    fn absent_aot_target_defaults_to_host() {
+        assert_eq!(
+            parse_aot_target(None).unwrap(),
+            target_lexicon::Triple::host()
+        );
+    }
+
+    #[test]
+    fn invalid_aot_target_is_rejected_before_emission() {
+        let error = parse_aot_target(Some("not-a-target".to_owned())).unwrap_err();
+        assert!(error.contains("invalid ZUN_TARGET"));
     }
 }
