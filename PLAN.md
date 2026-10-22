@@ -1313,3 +1313,10 @@ artifacts before loading or execution. `compile_with_cached_prelude` and
 `zun build --prelude-cache` now link the user module against the independent
 artifact; the ordinary source-concatenation path remains available for
 backward-compatible builds.
+
+N-API validation note (2026-10-22): `cargo check -p zun_napi --features
+node-api` succeeds without a host linker configured, and the host boundary
+suite passes all 17 tests. The optional Node module therefore has a verified
+compile-time surface for scalar, BigInt, boolean, floating-point, and
+size-query string exports; production module loading, persistent host state,
+and broader runtime object marshalling remain separate gates.
