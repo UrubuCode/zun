@@ -204,8 +204,8 @@ policy rides on the envelope `VERSION` + the signed index. Closing this is a har
 gate for Phase 7 — without it the signature is authenticity theater.
 
 The loader now exposes `verify_against` on signed lock and index envelopes so callers
-can enforce a release-pinned root key; wiring that key into the registry/fetch path
-remains the final trust-anchor integration gate.
+can enforce a release-pinned root key; the registry/fetch path now requires the
+provisioned external key set before module registration.
 
 `TrustedKeySet` now provides the release-provisioned key set, and signed-index and
 `.zmlib` loading reject envelope keys outside that set before module registration.
