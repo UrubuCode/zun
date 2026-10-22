@@ -1145,6 +1145,12 @@ Ranked by payoff:
 | **Cache the compiled std/prelude (R2R-lite)** | compiling a trivial program costs **~39 µs**, almost all of it the std/prelude, **paid at every process start** | **medium/low effort** — persist the compiled std `.zm` (the format already reserves an R2R extension header, doc 02/05) for fast cold start |
 | **Escape analysis to elide `any` box/unbox** | scalar `Any` box/unbox overhead is **~0.03 ns** (negligible — `Any` is a value type) | **low for scalars** — not worth a pass on its own; the real dynamic cost is heap object allocation, which is covered by generational GC (#1), not escape analysis |
 
+Ledger clarification: the first generational policy is complete (young/old
+classification, remembered-set barriers, and young-only collection). The
+remaining performance work is nursery bump allocation and larger card-table
+scaling; the table's measured ceiling must not be read as an unimplemented
+minor collector.
+
 Takeaway: the two big wins (generational GC and getting hot loops out of Tier 0)
 are already in the section 6 cluster — this confirms their priority with numbers.
 Superinstructions and the std cache are good medium wins. Scalar box/unbox
