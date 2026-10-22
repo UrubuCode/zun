@@ -16,6 +16,7 @@
 //!   (displacements are relative to the end of the branch instruction).
 
 use zun_il::{encode, Instruction, NumKind, Opcode, Operand};
+use zun_common::Span;
 use zun_metadata::{
     BlobIndex, FieldDef, MemberRef, MethodDef, ModuleRef, TableKind, Token, TypeDef,
 };
@@ -119,8 +120,11 @@ pub fn lower(program: &hir::Program) -> Module {
     }
 
     for (index, f) in program.functions.iter().enumerate() {
-        let (code, handlers) =
+        let (code, handlers, points) =
             lower_function(f, &layout, &mut module, program.functions.len() as u32);
+        module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
+            zun_module::SequencePoint { method_rid: index as u32 + 1, pc, source_start: span.start, source_end: span.end }
+        }));
         let local_kinds: Vec<u8> = f.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
@@ -136,12 +140,15 @@ pub fn lower(program: &hir::Program) -> Module {
     }
     let closure_base = program.functions.len();
     for (index, closure) in program.closures.iter().enumerate() {
-        let (code, handlers) = lower_closure_function(
+        let (code, handlers, points) = lower_closure_function(
             closure,
             &layout,
             &mut module,
             program.functions.len() as u32,
         );
+        module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
+            zun_module::SequencePoint { method_rid: (closure_base + index) as u32 + 1, pc, source_start: span.start, source_end: span.end }
+        }));
         let local_kinds: Vec<u8> = closure.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
@@ -236,7 +243,7 @@ fn lower_function(
     layout: &Layout,
     module: &mut Module,
     closure_method_base: u32,
-) -> (Vec<u8>, Vec<ExceptionHandler>) {
+) -> (Vec<u8>, Vec<ExceptionHandler>, Vec<(u32, Span)>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
         layout,
@@ -249,6 +256,7 @@ fn lower_function(
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         closure_method_base,
+        points: Vec::new(),
     };
     gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16);
     gen.stmts(&f.body);
@@ -257,7 +265,7 @@ fn lower_function(
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
     }
-    (gen.code, gen.handlers)
+    (gen.code, gen.handlers, gen.points)
 }
 
 /// Lower a synthetic closure function. Its hidden environment is local slot 0
@@ -267,7 +275,7 @@ fn lower_closure_function(
     layout: &Layout,
     module: &mut Module,
     closure_method_base: u32,
-) -> (Vec<u8>, Vec<ExceptionHandler>) {
+) -> (Vec<u8>, Vec<ExceptionHandler>, Vec<(u32, Span)>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
         layout,
@@ -280,13 +288,14 @@ fn lower_closure_function(
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         closure_method_base,
+        points: Vec::new(),
     };
     gen.emit_defaults(&f.defaults, 1);
     gen.stmts(&f.body);
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
     }
-    (gen.code, gen.handlers)
+    (gen.code, gen.handlers, gen.points)
 }
 
 /// Handle to a forward branch whose displacement is patched once the target
@@ -308,6 +317,7 @@ struct FnLowerer<'a, 'b> {
     handlers: Vec<ExceptionHandler>,
     finally_bodies: Vec<&'a [Stmt]>,
     closure_method_base: u32,
+    points: Vec<(u32, Span)>,
 }
 
 impl<'a, 'b> FnLowerer<'a, 'b> {
@@ -724,6 +734,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     fn expr(&mut self, e: &hir::Expr) {
+        if !e.span.is_empty() {
+            self.points.push((self.code.len() as u32, e.span));
+        }
         match &e.kind {
             ExprKind::Number(v) => self.emit_numeric_const(*v, e.ty),
             ExprKind::String(s) => {
@@ -1295,6 +1308,14 @@ mod tests {
         let text = disassemble(closure.code).unwrap();
         assert!(text.contains("ldloc 1"), "{text}");
         assert!(text.contains("mul.f64"), "{text}");
+    }
+
+    #[test]
+    fn lowers_expression_spans_into_sequence_points() {
+        let module = lower_src("function main(): number { return 1 + 2; }");
+        assert!(!module.sequence_points.is_empty());
+        assert!(module.sequence_points.iter().all(|point| point.method_rid == 1));
+        assert!(module.sequence_points.iter().all(|point| point.source_end > point.source_start));
     }
 
     #[test]

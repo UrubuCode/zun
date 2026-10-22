@@ -10,6 +10,7 @@ description = "Lowers the typed HIR to ZIL and emits a .zm module."
 zun_syntax = { path = "../zun_syntax" }
 
 [dependencies]
+zun_common = { path = "../zun_common" }
 zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
