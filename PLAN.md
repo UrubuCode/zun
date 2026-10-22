@@ -208,6 +208,9 @@ self-declared envelope keys are never trusted on their own. Key rotation/revocat
 policy rides on the envelope `VERSION` + the signed index. Closing this is a hard
 gate for Phase 7 — without it the signature is authenticity theater.
 
+The preceding envelope-only wording is historical and obsolete; the closed gate
+above is authoritative for the current implementation.
+
 The loader now exposes `verify_against` on signed lock and index envelopes so callers
 can enforce a release-pinned root key; the registry/fetch path now requires the
 provisioned external key set before module registration.
