@@ -138,6 +138,28 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
             Statement::IfStatement(if_statement) => {
                 statements.push(convert_if_statement(source, if_statement)?);
             }
+            Statement::WhileStatement(while_statement) => {
+                statements.push(Stmt::While {
+                    cond: convert_expression(&while_statement.test)?,
+                    body: convert_if_branch(source, &while_statement.body)?,
+                    span: span(while_statement.span),
+                });
+            }
+            Statement::DoWhileStatement(do_while_statement) => {
+                statements.push(Stmt::DoWhile {
+                    body: convert_if_branch(source, &do_while_statement.body)?,
+                    cond: convert_expression(&do_while_statement.test)?,
+                    span: span(do_while_statement.span),
+                });
+            }
+            Statement::ForStatement(_) => {
+                let nested = convert_if_branch(source, statement)?;
+                statements.extend(nested.statements);
+            }
+            Statement::ForOfStatement(_) => {
+                let nested = convert_if_branch(source, statement)?;
+                statements.extend(nested.statements);
+            }
             _ => {
                 return Err(
                     "OXC adapter currently supports return and expression statements in branches"
@@ -1605,6 +1627,23 @@ mod tests {
                 then_block: ref block,
                 ..
             } if matches!(block.statements.first(), Some(crate::ast::Stmt::ForOf { .. }))
+        ));
+    }
+
+    #[test]
+    fn converts_loops_inside_block_branches() {
+        let program = parse_subset(
+            "function main(value, values) { if (value) { while (value) break; for (let item of values) break; } }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::If {
+                then_block: ref block,
+                ..
+            } if matches!(block.statements.first(), Some(crate::ast::Stmt::While { .. }))
+                && matches!(block.statements.get(1), Some(crate::ast::Stmt::ForOf { .. }))
         ));
     }
 
