@@ -444,7 +444,8 @@ that callable-property binding to source code, and `proxyGet`, `proxySet`,
 traps or fall back to the target's dynamic property in Tier 0; remaining Proxy
 trap forms and call-site caching are still Phase 4 work. `BigInt` now has a
 managed GC-owned payload and Tier 0 constructor/arithmetic/compare/formatting
-bindings; literals and Cranelift lowering remain deferred. Typed arithmetic,
+bindings; Cranelift lowering remains deferred. Decimal suffixed literals,
+typed arithmetic,
 comparison, division, and remainder operators already use the same Tier 0 floor. `Intl`,
 `SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
@@ -990,8 +991,8 @@ negation through managed
 `CallBuiltin` intrinsics. A thin `std/bigint.zun` source class now binds the
 primitive receiver explicitly through aliased imports. The
 managed payload is GC-owned and the vertical slice is covered by interpreter
-tests plus an interpreter/JIT equivalence test. BigInt literals and Cranelift
-lowering remain deferred; these operations intentionally stay
+tests plus an interpreter/JIT equivalence test. Cranelift lowering remains
+deferred; BigInt operations intentionally stay
 on the Tier 0 fallback until the managed-value JIT representation is designed.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
