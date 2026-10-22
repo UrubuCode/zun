@@ -7,7 +7,8 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, Expression,
+    Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, ChainElement,
+    Expression,
     ClassElement, ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
     MethodDefinitionKind, ModuleExportName, PropertyKey, Statement,
     UnaryOperator,
@@ -158,13 +159,35 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
             span: span(identifier.span),
         })),
-        Expression::StaticMemberExpression(member) => Ok(Expr::Field {
-            object: Box::new(convert_expression(&member.object)?),
-            field: Name {
+        Expression::StaticMemberExpression(member) => {
+            let object = Box::new(convert_expression(&member.object)?);
+            let field = Name {
                 span: span(member.property.span),
-            },
-            span: span(member.span),
-        }),
+            };
+            if member.optional {
+                Ok(Expr::OptionalField {
+                    object,
+                    field,
+                    span: span(member.span),
+                })
+            } else {
+                Ok(Expr::Field {
+                    object,
+                    field,
+                    span: span(member.span),
+                })
+            }
+        }
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::StaticMemberExpression(member) => Ok(Expr::OptionalField {
+                object: Box::new(convert_expression(&member.object)?),
+                field: Name {
+                    span: span(member.property.span),
+                },
+                span: span(chain.span),
+            }),
+            _ => Err("OXC adapter currently supports optional static members only".into()),
+        },
         Expression::BinaryExpression(binary) => {
             let op = match binary.operator {
                 BinaryOperator::Equality | BinaryOperator::StrictEquality => BinaryOp::Eq,
@@ -246,14 +269,27 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                     args,
                     span: span(call.span),
                 }),
-                Expression::StaticMemberExpression(member) => Ok(Expr::MethodCall {
-                    receiver: Box::new(convert_expression(&member.object)?),
-                    method: Name {
+                Expression::StaticMemberExpression(member) => {
+                    let receiver = Box::new(convert_expression(&member.object)?);
+                    let method = Name {
                         span: span(member.property.span),
-                    },
-                    args,
-                    span: span(call.span),
-                }),
+                    };
+                    if member.optional {
+                        Ok(Expr::OptionalMethodCall {
+                            object: receiver,
+                            method,
+                            args,
+                            span: span(call.span),
+                        })
+                    } else {
+                        Ok(Expr::MethodCall {
+                            receiver,
+                            method,
+                            args,
+                            span: span(call.span),
+                        })
+                    }
+                }
                 _ => Err("OXC adapter currently supports identifier and static-member callees only".into()),
             }
         }
@@ -1081,6 +1117,18 @@ mod tests {
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
                 value: Some(crate::ast::Expr::Conditional { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_optional_static_members() {
+        let program = parse_subset("function read(value) { return value?.size; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::OptionalField { .. }),
                 ..
             }
         ));
