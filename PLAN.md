@@ -376,7 +376,8 @@ AST adapter with identifier parameters, local declarations, conditionals, while,
 for, for-of, do-while, loop-control, throw, identifier-assignment, named/default
 imports, constructor calls, templates, conditional/null expressions, and named
 classes with identifier heritage, fields, simple methods, getter/setter kinds,
-optional members, computed member reads, member assignments, and supported statement sequences;
+optional members, computed member reads, member assignments, private members, and
+supported statement sequences;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
