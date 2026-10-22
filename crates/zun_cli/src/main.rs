@@ -374,6 +374,27 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                         eprintln!(
                                             "zun: warning: method #{rid} is not AOT-eligible; keeping embedded IL interpreter fallback"
                                         );
+                                        if let Some(runtime) = resolve_runtime_library() {
+                                            let metadata_out = out.with_extension("meta.o");
+                                            match zun_codegen::compile_metadata_object(&module.write()) {
+                                                Ok(metadata) => {
+                                                    if let Err(error) = std::fs::write(&metadata_out, metadata) {
+                                                        eprintln!("zun: warning: cannot write fallback metadata object: {error}");
+                                                    } else {
+                                                        let executable_out = out.with_extension("exe");
+                                                        match link_aot_fallback(
+                                                            &metadata_out,
+                                                            &runtime,
+                                                            &executable_out,
+                                                        ) {
+                                                            Ok(()) => println!("wrote {}", executable_out.display()),
+                                                            Err(error) => eprintln!("zun: warning: cannot link interpreter fallback: {error}"),
+                                                        }
+                                                    }
+                                                }
+                                                Err(error) => eprintln!("zun: warning: cannot emit fallback metadata object: {error}"),
+                                            }
+                                        }
                                         ExitCode::SUCCESS
                                     }
                                     Err(e) => {
@@ -575,6 +596,39 @@ fn link_aot_executable(
     let result = command
         .output()
         .map_err(|error| error.to_string());
+    let _ = std::fs::remove_file(&launcher);
+    let output = result?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+/// Link an interpreter-backed AOT launcher for a method that cannot be lowered
+/// to native code. The embedded metadata object supplies the original `.zm`
+/// bytes and the static runtime supplies the Tier 0 entrypoint.
+fn link_aot_fallback(metadata: &Path, runtime: &Path, executable: &Path) -> Result<(), String> {
+    let launcher = executable.with_extension("aot.rs");
+    let source = "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_i64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value < 0 { std::process::exit(1); } println!(\"{}\", value); } }\n";
+    std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
+    let mut command = Command::new("rustc");
+    command
+        .arg(&launcher)
+        .arg("--crate-name")
+        .arg("zun_aot_fallback")
+        .arg("-C")
+        .arg("opt-level=3")
+        .arg("-C")
+        .arg(format!("link-arg={}", metadata.display()))
+        .arg("-C")
+        .arg(format!("link-arg={}", runtime.display()))
+        .arg("-o")
+        .arg(executable);
+    if let Some(lld) = resolve_lld() {
+        command.arg("-C").arg(format!("linker={}", lld.display()));
+    }
+    let result = command.output().map_err(|error| error.to_string());
     let _ = std::fs::remove_file(&launcher);
     let output = result?;
     if output.status.success() {
