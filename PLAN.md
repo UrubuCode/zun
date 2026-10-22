@@ -412,8 +412,9 @@ fields/methods, and private `#fields`. *Status: `switch`, `do/while`, C-style
 `for(;;)`, labelled control flow, short-circuit `&&`/`||`, ternary conditional
 expressions, explicit `null`, nullish coalescing `??`, optional property and
 method chaining, trailing default parameters, spread/rest, destructuring, and
-template literals are implemented with complete parser, sema, and lowering
-paths. Getters/setters, `static` members, and private `#fields` remain pending.*
+template literals and static class methods are implemented with complete
+parser, sema, metadata, verifier, and lowering paths. Getters/setters, static
+fields, and private `#fields` remain pending.*
 
 **Group 3 — TypeScript type-level (erased at runtime):** generics, interfaces,
 enums, union types with narrowing, and optional properties. These are handled by
@@ -1047,7 +1048,9 @@ an optimization gate.
    literals, including spread/rest, destructuring, default parameters,
    optional property/method chaining, nullish coalescing, `switch`, loops,
    short-circuit operators, ternary expressions, and labelled loop control.
-   Getters/setters, `static` members, and private `#fields` remain pending.
+   Static methods are complete through parser, sema, metadata, verifier, and
+   direct-call lowering; getters/setters, static fields, and private `#fields`
+   remain pending.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
    replacement, non-blittable FFI marshalling (deferred; ownership modes are
    specified in section 4.4), production N-API, AOT/R2R, and the
