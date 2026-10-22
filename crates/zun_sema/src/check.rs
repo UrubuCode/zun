@@ -2411,8 +2411,21 @@ impl Checker<'_> {
                             span,
                         },
                         None => {
-                            self.error(field.span, format!("no field `{fname}` on this type"));
-                            self.poison(span)
+                            let getter = format!("get_{fname}");
+                            let Some(func) = self.method_of(class, &getter) else {
+                                self.error(field.span, format!("no field or getter `{fname}` on this type"));
+                                return self.poison(span);
+                            };
+                            let sig = &self.signatures[func as usize];
+                            if sig.params.len() != 1 {
+                                self.error(field.span, format!("getter `{getter}` must take no arguments"));
+                                return self.poison(span);
+                            }
+                            hir::Expr {
+                                kind: hir::ExprKind::MethodCall { func, args: vec![object] },
+                                ty: sig.return_ty,
+                                span,
+                            }
                         }
                     },
                     Ty::Error => self.poison(span),
@@ -2609,8 +2622,28 @@ impl Checker<'_> {
                             }
                         }
                         None => {
-                            self.error(field.span, format!("no field `{fname}` on this type"));
-                            self.poison(span)
+                            let setter = format!("set_{fname}");
+                            let Some(func) = self.method_of(class, &setter) else {
+                                self.error(field.span, format!("no field or setter `{fname}` on this type"));
+                                return self.poison(span);
+                            };
+                            let (param_count, expected, return_ty) = {
+                                let sig = &self.signatures[func as usize];
+                                (sig.params.len(), sig.params.get(1).copied().unwrap_or(Ty::Error), sig.return_ty)
+                            };
+                            if param_count != 2 {
+                                self.error(field.span, format!("setter `{setter}` must take one argument"));
+                                return self.poison(span);
+                            }
+                            coerce_numeric_literal(&mut value, expected);
+                            if !expected.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                                self.error(value.span, format!("cannot assign {:?} to setter argument of type {expected:?}", value.ty));
+                            }
+                            hir::Expr {
+                                kind: hir::ExprKind::MethodCall { func, args: vec![object, value] },
+                                ty: return_ty,
+                                span,
+                            }
                         }
                     },
                     Ty::Error => self.poison(span),
