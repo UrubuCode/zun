@@ -231,6 +231,35 @@ fn primitive_string_contains_uses_the_managed_string_abi() {
 }
 
 #[test]
+fn managed_string_result_remains_rooted_across_a_following_helper() {
+    let module = compile(
+        "import { concat, contains } from \"zun:string\"; class String { extern concat(other: string): string; extern contains(needle: string): boolean; } function measure(value: string, suffix: string, needle: string): boolean { return value.concat(suffix).contains(needle); } function main(): boolean { return false; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun"));
+    let suffix = heap.intern_string(std::rc::Rc::from(" runtime"));
+    let needle = heap.intern_string(std::rc::Rc::from("runtime"));
+    assert!(matches!(
+        jit.call_packed_with_heap(
+            rid,
+            &[value as u64, suffix as u64, needle as u64],
+            &mut heap,
+        ),
+        Ok(1)
+    ));
+}
+
+#[test]
 fn primitive_string_char_code_at_uses_the_managed_string_abi() {
     let module = compile(
         "import { charCodeAt } from \"zun:string\"; class String { extern charCodeAt(index: u64): u32; } function measure(value: string, index: u64): u32 { return value.charCodeAt(index); } function main(): u32 { return 0; }",
