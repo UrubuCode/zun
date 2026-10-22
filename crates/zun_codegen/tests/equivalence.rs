@@ -3588,6 +3588,21 @@ fn array_access_methods_keep_interpreter_fallback() {
 }
 
 #[test]
+fn generic_array_allocation_and_access_keep_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "function main(): number { let values = new Array(1); values[0] = 42.0; return values[0] as number; }",
+    )
+    .expect("compile generic Array access");
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
+    assert!(!jit.is_compiled(entry), "generic Array carrier must remain Tier 0");
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(42.0, zun_il::NumKind::F64)
+    ));
+}
+
+#[test]
 fn array_reverse_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
         "class Array { reverse(): Array { let left: u64 = 0; if (this.length == 0) { return this; } let right: u64 = this.length - 1; while (left < right) { let temporary: any = this[left]; this[left] = this[right]; this[right] = temporary; left = left + 1; right = right - 1; } return this; } first(): any { return this[0]; } }\n\
