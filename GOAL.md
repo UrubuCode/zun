@@ -90,7 +90,11 @@ FFI). The current focus is **Phase 5** (PLAN §6).
 
 6. **Phase 7 — distribution** (PLAN §4): the module registry/fetcher (index,
    lockfile, content-addressed cache, signatures, capabilities) + `.zmlib` with type
-   declarations and debug info.
+   declarations and debug info. **Hard gate — trust anchor:** `SignedModuleLock`
+   currently verifies against the public key *inside* the envelope (proves "signed by
+   some key", not "signed by the official key"). Pin the root of trust **outside** the
+   envelope (release-embedded root key / signed official-index key set); never trust a
+   self-declared envelope key. Add key rotation/revocation over `VERSION` + signed index.
 
 Deferred: true OSR (mid-frame transfer), SharedArrayBuffer/Atomics + multi-thread STW
 GC, RegExp engine, full trimming/R2R, LLVM second backend.

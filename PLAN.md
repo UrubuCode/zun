@@ -194,6 +194,15 @@ version** (`.zm` format + intrinsic ids + core-type layouts + host ABI), declare
 release. Each module declares **capabilities** (`fs/net/screen/native`). Pure-Zun
 modules ship one portable `.zm`; native/FFI ship per-arch.
 
+**Trust anchor (open gate, Phase 7).** `SignedModuleLock` today verifies the signature
+against the public key *carried inside the envelope* — it proves "signed by whoever
+holds this key", not "signed by the official `@urubucode/*` key". The root of trust
+**must come from outside the envelope**: a release-embedded root key (or a signed
+official-index key set) that the loader pins and checks the envelope key against;
+self-declared envelope keys are never trusted on their own. Key rotation/revocation
+policy rides on the envelope `VERSION` + the signed index. Closing this is a hard
+gate for Phase 7 — without it the signature is authenticity theater.
+
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
 precompiled module still point at source.
