@@ -414,9 +414,19 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         span: span(for_of_statement.span),
                     });
                 }
+                Statement::DoWhileStatement(do_while_statement) => {
+                    let body = convert_block_statement(&do_while_statement.body)
+                        .map_err(|error| vec![error])?;
+                    statements.push(Stmt::DoWhile {
+                        body,
+                        cond: convert_expression(&do_while_statement.test)
+                            .map_err(|error| vec![error])?,
+                        span: span(do_while_statement.span),
+                    });
+                }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, conditionals, while loops, for loops, for-of loops, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, while loops, for loops, for-of loops, do-while loops, return, and expression statements".into(),
                     ])
                 }
             }
@@ -666,6 +676,19 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::ForOf { .. }
+        ));
+    }
+
+    #[test]
+    fn converts_do_while_statements_with_block_bodies() {
+        let program = parse_subset(
+            "function retry(value) { do { return value; } while (value); }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::DoWhile { .. }
         ));
     }
 }
