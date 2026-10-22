@@ -327,7 +327,7 @@ minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
 Structured method-name/source-span frame resolution is also available to
-diagnostic consumers.
+diagnostic consumers; interpreter errors can render that source-frame context.
 Remaining gates:
 fully default-installed `zun:std` without implicit source concatenation, typed
 VM bindings for native extensions, Error-stack consumption of sequence
