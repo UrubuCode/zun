@@ -403,6 +403,9 @@ impl Heap {
         if self.records.iter().all(|record| !record.alive || record.generation == records::Generation::Old) {
             self.remembered_set.clear();
         }
+        if young_only {
+            self.nursery_bytes = 0;
+        }
         freed
     }
 

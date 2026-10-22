@@ -141,6 +141,10 @@ pub struct Heap {
     chunks: Vec<Box<[u64]>>,
     /// Bump cursor within the last chunk.
     cursor: usize,
+    /// Bytes allocated in the current young-generation nursery epoch.
+    nursery_bytes: usize,
+    /// Allocation budget that requests a minor collection at a safepoint.
+    nursery_budget: usize,
     /// Interned strings, referenced from field slots by index.
     strings: Vec<Rc<str>>,
     /// Symbols belong to this heap/isolate and never share identity globally.
@@ -225,6 +229,16 @@ impl Heap {
         } else {
             false
         }
+    }
+
+    /// Whether the current nursery epoch has exhausted its allocation budget.
+    pub fn nursery_collection_due(&self) -> bool {
+        self.nursery_bytes >= self.nursery_budget()
+    }
+
+    /// Return the current nursery allocation budget in bytes.
+    pub fn nursery_budget(&self) -> usize {
+        self.nursery_budget.max(32 * 1024)
     }
 
     pub(crate) fn native_compaction_due(&mut self) -> bool {
@@ -1537,6 +1551,20 @@ mod tests {
         assert_eq!(heap.generation_counts(), (0, 1));
         assert!(heap.by_addr.contains_key(&(keep.addr() as usize)));
         assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
+    }
+
+    #[test]
+    fn nursery_budget_tracks_bump_allocations_and_resets_after_minor_collection() {
+        let mut heap = Heap::new();
+        assert!(!heap.nursery_collection_due());
+        let _object = heap.alloc(7, 2);
+        assert!(!heap.nursery_collection_due());
+
+        heap.nursery_budget = 32 * 1024;
+        heap.nursery_bytes = heap.nursery_budget;
+        assert!(heap.nursery_collection_due());
+        unsafe { heap.collect_young(&[], &|_| Vec::new()) };
+        assert!(!heap.nursery_collection_due());
     }
 
     #[test]

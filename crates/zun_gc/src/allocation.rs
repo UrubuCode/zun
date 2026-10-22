@@ -31,6 +31,9 @@ impl Heap {
             self.records[idx].marked = false;
             self.records[idx].generation = Generation::Young;
             self.by_addr.insert(addr as usize, idx);
+            self.nursery_bytes = self.nursery_bytes.saturating_add(
+                (zun_core::OBJECT_HEADER_SLOTS + field_count) * std::mem::size_of::<u64>(),
+            );
             return Obj(addr);
         }
 
@@ -56,6 +59,9 @@ impl Heap {
             generation: Generation::Young,
         });
         self.by_addr.insert(base as usize, idx);
+        self.nursery_bytes = self
+            .nursery_bytes
+            .saturating_add(slots * std::mem::size_of::<u64>());
         Obj(base)
     }
 
