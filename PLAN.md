@@ -772,6 +772,9 @@ The following runtime contracts are implemented and covered by tests:
 - A minimal `zun_napi` C ABI host boundary that executes compiled `.zm` modules
   without exposing compiler or AST types, with typed integer, floating-point,
   boolean, and UTF-8 string result APIs plus size-query string copying.
+  Signed and unsigned integer exports validate their exact `NumKind` instead of
+  reinterpreting one ABI as the other; the Node `runU64` export returns a JS
+  `BigInt`.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
   `runI64`, `runU64` (as JavaScript `BigInt`), `runF64`, `runBool`, and
   `runString` ArrayBuffer/Buffer-backed
