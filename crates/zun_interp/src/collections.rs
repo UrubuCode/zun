@@ -905,7 +905,7 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
-            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntCompare"
+            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntDiv" | "bigIntRem" | "bigIntCompare"
             | "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe" => {
                 let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -934,7 +934,14 @@ impl<'a> Interp<'a> {
                     let value = match name {
                         "bigIntAdd" => left.add(&right),
                         "bigIntSub" => left.sub(&right),
-                        _ => left.mul(&right),
+                        "bigIntMul" => left.mul(&right),
+                        "bigIntDiv" | "bigIntRem" => {
+                            let Some((quotient, remainder)) = left.div_rem(&right) else {
+                                return Err(RunError::Native("BigInt division by zero".into()));
+                            };
+                            if name == "bigIntDiv" { quotient } else { remainder }
+                        }
+                        _ => unreachable!(),
                     };
                     let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                     Ok(Value::Object(object))

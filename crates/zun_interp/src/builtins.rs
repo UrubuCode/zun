@@ -56,6 +56,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "bigIntAdd",
         "bigIntSub",
         "bigIntMul",
+        "bigIntDiv",
+        "bigIntRem",
         "bigIntNeg",
         "bigIntCompare",
         "bigIntEq",

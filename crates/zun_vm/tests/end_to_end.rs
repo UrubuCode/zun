@@ -104,6 +104,20 @@ fn bigint_unary_negation_uses_the_managed_floor() {
 }
 
 #[test]
+fn bigint_division_and_remainder_use_truncation_toward_zero() {
+    let out = run_source(
+        r#"function main(): int {
+            let left: BigInt = new BigInt("-17");
+            let right: BigInt = new BigInt("5");
+            print((left / right).toString());
+            print((left % right).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["-3", "-2"]);
+}
+
+#[test]
 fn arithmetic_and_locals() {
     let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);

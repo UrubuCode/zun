@@ -1117,6 +1117,8 @@ impl Checker<'_> {
                         ast::BinaryOp::Add => Some("bigIntAdd"),
                         ast::BinaryOp::Sub => Some("bigIntSub"),
                         ast::BinaryOp::Mul => Some("bigIntMul"),
+                        ast::BinaryOp::Div => Some("bigIntDiv"),
+                        ast::BinaryOp::Rem => Some("bigIntRem"),
                         ast::BinaryOp::Eq => Some("bigIntEq"),
                         ast::BinaryOp::Ne => Some("bigIntNe"),
                         ast::BinaryOp::Lt => Some("bigIntLt"),

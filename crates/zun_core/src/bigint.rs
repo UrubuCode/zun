@@ -97,6 +97,32 @@ impl BigInt {
         Self { negative: self.negative != other.negative, limbs }.normalized()
     }
 
+    /// Divide with truncation toward zero. The remainder has the dividend's
+    /// sign, matching JavaScript BigInt semantics.
+    pub fn div_rem(&self, other: &Self) -> Option<(Self, Self)> {
+        if other.is_zero() { return None; }
+        let mut dividend = self.clone();
+        let mut divisor = other.clone();
+        dividend.negative = false;
+        divisor.negative = false;
+        let mut quotient = Self::zero();
+        let mut remainder = Self::zero();
+        let bit_count = dividend.limbs.len() * 32;
+        for bit in (0..bit_count).rev() {
+            remainder.mul_small(2);
+            if (dividend.limbs[bit / 32] >> (bit % 32)) & 1 != 0 {
+                remainder.add_small(1);
+            }
+            if remainder.cmp(&divisor) != Ordering::Less {
+                remainder = remainder.sub(&divisor);
+                quotient.set_bit(bit);
+            }
+        }
+        quotient.negative = self.negative != other.negative && !quotient.is_zero();
+        remainder.negative = self.negative && !remainder.is_zero();
+        Some((quotient.normalized(), remainder.normalized()))
+    }
+
     pub fn cmp(&self, other: &Self) -> Ordering {
         match (self.negative, other.negative) {
             (true, false) => Ordering::Less,
@@ -134,6 +160,11 @@ impl BigInt {
             if carry == 0 { return; }
         }
         if carry != 0 { self.limbs.push(carry as u32); }
+    }
+    fn set_bit(&mut self, bit: usize) {
+        let limb = bit / 32;
+        if self.limbs.len() <= limb { self.limbs.resize(limb + 1, 0); }
+        self.limbs[limb] |= 1u32 << (bit % 32);
     }
 }
 
@@ -205,5 +236,14 @@ mod tests {
         assert_eq!(a.add(&b).to_string(), "1000000000000000000000");
         assert_eq!(a.sub(&a).to_string(), "0");
         assert_eq!(a.mul(&b).cmp(&a), Ordering::Equal);
+    }
+
+    #[test]
+    fn division_truncates_and_keeps_remainder_sign() {
+        let left = BigInt::parse_decimal("-17").unwrap();
+        let right = BigInt::parse_decimal("5").unwrap();
+        let (quotient, remainder) = left.div_rem(&right).unwrap();
+        assert_eq!(quotient.to_string(), "-3");
+        assert_eq!(remainder.to_string(), "-2");
     }
 }
