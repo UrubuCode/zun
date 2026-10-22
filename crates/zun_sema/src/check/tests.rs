@@ -38,6 +38,17 @@
     }
 
     #[test]
+    fn default_extended_string_import_rebinds_the_frozen_string_type() {
+        let src = "import String from \"extended-string\"; function main(value: String): String { return value; }";
+        let mut diagnostics = Vec::new();
+        let ast = parse(src, &mut diagnostics);
+        let hir = check_with_externals(src, &ast, &mut diagnostics, &[]);
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+        assert_eq!(hir.functions[0].locals[0], Ty::String);
+        assert_eq!(hir.functions[0].return_ty, Ty::String);
+    }
+
+    #[test]
     fn rejects_static_method_calls_through_instances() {
         let message = first_error(
             "class Math { static add(left: number, right: number): number { return left + right; } } function main(): number { let value = new Math(); return value.add(1.0, 2.0); }",

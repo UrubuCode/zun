@@ -113,6 +113,7 @@ fn check_impl(
         methods_by_class: Vec::new(),
         imports: HashMap::new(),
         external_functions: external_by_name,
+        type_aliases: HashMap::new(),
         closures: Vec::new(),
     };
     checker.resolve_imports(program, allow_external_modules);
@@ -183,6 +184,8 @@ struct Checker<'a> {
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
     /// Imported source-module function signatures by local name.
     external_functions: HashMap<String, ExternalFunction>,
+    /// Imported default type bindings over the frozen runtime floor.
+    type_aliases: HashMap<String, Ty>,
     closures: Vec<hir::ClosureFunction>,
 }
 

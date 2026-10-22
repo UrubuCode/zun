@@ -6,6 +6,9 @@ use zun_syntax::ast;
 impl<'a> Checker<'a> {
     pub(super) fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
         let text = self.text(&annotation.name).to_string();
+        if let Some(&ty) = self.type_aliases.get(&text) {
+            return ty;
+        }
         match text.as_str() {
             "number" | "float" | "f64" => Ty::F64,
             "f32" => Ty::F32,

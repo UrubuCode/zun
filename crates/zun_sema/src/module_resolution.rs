@@ -34,6 +34,12 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 if allow_external_modules && !import.module.starts_with("zun:") {
+                    for binding in &import.names {
+                        if binding.is_default && import.module == "extended-string" {
+                            let local = self.text(&binding.local).to_string();
+                            self.type_aliases.insert(local, super::hir::Ty::String);
+                        }
+                    }
                     continue;
                 }
                 self.error(import.span, format!("unknown module `{}`", import.module));
@@ -43,6 +49,10 @@ impl<'a> Checker<'a> {
             for binding in &import.names {
                 let imported = if binding.is_default { "default" } else { self.text(&binding.imported) }.to_owned();
                 let local = self.text(&binding.local).to_string();
+                if binding.is_default && import.module == "extended-string" {
+                    self.type_aliases.insert(local, super::hir::Ty::String);
+                    continue;
+                }
                 match zun_natives::resolve(&import.module, &imported) {
                     Some((id, f)) => {
                         self.imports.insert(local, (id, f));
