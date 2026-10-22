@@ -60,6 +60,50 @@ impl FfiStringReturn {
             _ => Ok(()),
         }
     }
+
+    /// Copy a borrowed or caller-owned return into managed storage. This
+    /// method never frees native memory and rejects lengths outside the
+    /// declared payload boundary.
+    pub fn copy_payload(
+        &self,
+        payload: &[u8],
+        reported_len: Option<usize>,
+    ) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Borrowed {
+                length: FfiStringLength::OutParameter(_),
+            }
+            | Self::OutBuffer { .. } => {
+                let length = reported_len.ok_or("string return requires a reported length")?;
+                if length > payload.len() {
+                    return Err("string return length exceeds the native payload".into());
+                }
+                if let Self::OutBuffer { capacity } = self {
+                    if length > *capacity {
+                        return Err("string return length exceeds the declared capacity".into());
+                    }
+                }
+                Ok(payload[..length].to_vec())
+            }
+            Self::Borrowed {
+                length: FfiStringLength::NullTerminated,
+            } => {
+                let end = payload
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .ok_or("NUL-terminated string return has no terminator")?;
+                if let Some(length) = reported_len {
+                    if length != end {
+                        return Err("reported string length disagrees with the NUL terminator".into());
+                    }
+                }
+                Ok(payload[..end].to_vec())
+            }
+            Self::Owned { .. } => Err(
+                "owned string returns require a generated free callback before copying".into(),
+            ),
+        }
+    }
 }
 
 /// Native argument storage owned only for the duration of one FFI call.
@@ -681,6 +725,30 @@ mod tests {
         assert_eq!(nul_terminated.len_bytes(), 4);
         assert_eq!(unsafe { *nul_terminated.as_ptr().add(4) }, 0);
         assert!(FfiStringArgument::from_utf8("bad\0text", true).is_err());
+    }
+
+    #[test]
+    fn string_return_copy_respects_declared_boundaries() {
+        let borrowed = FfiStringReturn::Borrowed {
+            length: FfiStringLength::OutParameter("len".into()),
+        };
+        assert_eq!(borrowed.copy_payload(b"hello!", Some(5)).unwrap(), b"hello");
+        assert!(borrowed.copy_payload(b"hello", Some(6)).is_err());
+
+        let terminated = FfiStringReturn::Borrowed {
+            length: FfiStringLength::NullTerminated,
+        };
+        assert_eq!(terminated.copy_payload(b"hello\0ignored", None).unwrap(), b"hello");
+        assert!(terminated.copy_payload(b"hello\0", Some(4)).is_err());
+
+        let buffer = FfiStringReturn::OutBuffer { capacity: 4 };
+        assert_eq!(buffer.copy_payload(b"abcd", Some(4)).unwrap(), b"abcd");
+        assert!(buffer.copy_payload(b"abcde", Some(5)).is_err());
+
+        let owned = FfiStringReturn::Owned {
+            free_symbol: "free_text".into(),
+        };
+        assert!(owned.copy_payload(b"owned", Some(5)).is_err());
     }
 
     #[test]
