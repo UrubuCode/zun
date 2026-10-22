@@ -423,6 +423,8 @@ through the adapter, compiler, and native CLI path;
 initialized identifier bindings inside conditional and loop blocks now use the
 same typed annotation and source-span preservation rules;
 `else if` chains are lowered into nested typed `Stmt::If` blocks;
+single-statement return, expression, and throw branches are wrapped in typed
+blocks using the same source spans;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.

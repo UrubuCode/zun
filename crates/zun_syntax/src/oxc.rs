@@ -159,7 +159,34 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
             span: Span::new(if_statement.span.start, if_statement.span.end),
             statements: vec![convert_if_statement(source, if_statement)?],
         }),
-        _ => Err("OXC adapter requires block or if branches for conditional statements".into()),
+        Statement::ReturnStatement(return_statement) => Ok(Block {
+            span: Span::new(return_statement.span.start, return_statement.span.end),
+            statements: vec![Stmt::Return {
+                value: return_statement
+                    .argument
+                    .as_ref()
+                    .map(convert_expression)
+                    .transpose()?,
+                span: Span::new(return_statement.span.start, return_statement.span.end),
+            }],
+        }),
+        Statement::ExpressionStatement(expression_statement) => Ok(Block {
+            span: Span::new(
+                expression_statement.span.start,
+                expression_statement.span.end,
+            ),
+            statements: vec![Stmt::Expr(convert_expression(
+                &expression_statement.expression,
+            )?)],
+        }),
+        Statement::ThrowStatement(throw_statement) => Ok(Block {
+            span: Span::new(throw_statement.span.start, throw_statement.span.end),
+            statements: vec![Stmt::Throw {
+                value: convert_expression(&throw_statement.argument)?,
+                span: Span::new(throw_statement.span.start, throw_statement.span.end),
+            }],
+        }),
+        _ => Err("OXC adapter requires a supported statement branch".into()),
     }
 }
 
@@ -1337,6 +1364,33 @@ mod tests {
                 .as_ref()
                 .and_then(|block| block.statements.first()),
             Some(crate::ast::Stmt::If { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_single_statement_conditional_branches() {
+        let program = parse_subset(
+            "function main(value) { if (value) return 1; else return 0; }",
+            true,
+        )
+        .unwrap();
+        let crate::ast::Stmt::If {
+            ref then_block,
+            ref else_block,
+            ..
+        } = program.functions[0].body.statements[0]
+        else {
+            panic!("expected an if statement");
+        };
+        assert!(matches!(
+            then_block.statements.first(),
+            Some(crate::ast::Stmt::Return { .. })
+        ));
+        assert!(matches!(
+            else_block
+                .as_ref()
+                .and_then(|block| block.statements.first()),
+            Some(crate::ast::Stmt::Return { .. })
         ));
     }
 
