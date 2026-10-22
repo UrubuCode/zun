@@ -352,6 +352,9 @@ payload is retained by the final link.
 `zun_vm` now emits both its normal `rlib` and a Cargo `staticlib` suitable for
 the AOT runtime-library input. The CLI accepts `ZUN_RUNTIME_LIB` and supplies
 that matching static library to the external AOT link when provisioned.
+The runtime static library exports `zun_rt_init`/`zun_rt_shutdown`, and the
+generated launcher calls those hooks around the native entry point when the
+library is linked.
 
 ## 8. Risks & attention points
 
