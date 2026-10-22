@@ -449,6 +449,18 @@ impl ModuleLoader {
         manifest.validate(self)
     }
 
+    /// Load a manifest only when its prelude matches the active compiler
+    /// fingerprint. This is the cache-aware entry point; [`Self::load_manifest`]
+    /// remains available for legacy or manually assembled manifests.
+    pub fn load_manifest_with_prelude(
+        &mut self,
+        manifest: &ModuleManifest,
+        expected_prelude: u64,
+    ) -> Result<(), LoadError> {
+        manifest.validate_prelude_fingerprint(expected_prelude)?;
+        self.load_manifest(manifest)
+    }
+
     /// Register an already loaded scope, rejecting duplicate identities.
     pub fn insert(&mut self, scope: ModuleScope) -> Result<(), LoadError> {
         let name = scope.name().to_owned();
@@ -903,6 +915,17 @@ mod tests {
             ModuleManifest::new("app", vec!["x".into(), "x".into()]).validate(&loader),
             Err(LoadError::InvalidManifest(_))
         ));
+    }
+
+    #[test]
+    fn cache_aware_manifest_loading_rejects_a_stale_prelude_before_io() {
+        let manifest = ModuleManifest::new("app", Vec::<String>::new())
+            .with_prelude_fingerprint(7);
+        let mut loader = ModuleLoader::new();
+        let error = loader
+            .load_manifest_with_prelude(&manifest, 8)
+            .expect_err("stale prelude must be rejected");
+        assert!(matches!(error, LoadError::InvalidManifest(detail) if detail.contains("fingerprint")));
     }
 
     #[test]
