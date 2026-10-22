@@ -93,6 +93,14 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 report.reachable_methods.len(),
                 report.removed_methods.len()
             );
+            for rid in &report.removed_methods {
+                if let Some(method) = module.tables.method_defs.get(*rid as usize - 1) {
+                    println!(
+                        "trim: removing method #{rid} {}",
+                        module.strings.get(method.name)
+                    );
+                }
+            }
             match zun_compiler::trim_module(&module) {
                 Ok(module) => module,
                 Err(error) => {

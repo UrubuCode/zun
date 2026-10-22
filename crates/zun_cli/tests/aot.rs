@@ -92,3 +92,29 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
     }
     let _ = std::fs::remove_dir(root);
 }
+
+#[test]
+fn trim_reports_removed_method_names() {
+    let root = std::env::temp_dir().join(format!("zun-trim-report-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    std::fs::write(
+        &source,
+        "function unused(): int { return 9; }\nfunction main(): int { return 7; }\n",
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build", "--trim"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("trim: removing method #1 unused"));
+
+    for extension in ["ts", "zm", "zman"] {
+        let _ = std::fs::remove_file(source.with_extension(extension));
+    }
+    let _ = std::fs::remove_dir(root);
+}
