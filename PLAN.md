@@ -987,7 +987,8 @@ implementation with decimal parsing and exact add/subtract/multiply/compare
 operations. The language now binds `BigInt` construction, arithmetic,
 comparison, formatting, typed `+`/`-`/`*`/comparison operators, and unary
 negation through managed
-`CallBuiltin` intrinsics. The
+`CallBuiltin` intrinsics. A thin `std/bigint.zun` source class now binds the
+primitive receiver explicitly through aliased imports. The
 managed payload is GC-owned and the vertical slice is covered by interpreter
 tests plus an interpreter/JIT equivalence test. BigInt literals, division,
 remainder, and Cranelift lowering remain deferred; these operations intentionally stay
