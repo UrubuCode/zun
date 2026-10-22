@@ -1520,6 +1520,19 @@ impl ModuleLoader {
         self.load_index(&signed.index, fetcher)
     }
 
+    /// Load a signed index using the key set retained by this loader.
+    pub fn load_signed_index_trusted(
+        &mut self,
+        signed: &SignedModuleIndex,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.as_ref().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        signed.verify_with_keys(trusted)?;
+        self.load_index(&signed.index, fetcher)
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         if let Some(trusted) = &self.trusted_keys {
@@ -2161,6 +2174,13 @@ mod tests {
             .load_signed_index(&signed, &signing.verifying_key().to_bytes(), &Registry(bytes))
             .unwrap();
         assert!(loader.get("indexed").is_some());
+        let mut trusted_loader = ModuleLoader::new_with_trusted_keys(
+            TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap(),
+        );
+        trusted_loader
+            .load_signed_index_trusted(&signed, &Registry(Module::new().write()))
+            .unwrap();
+        assert!(trusted_loader.get("indexed").is_some());
     }
 
     #[test]
