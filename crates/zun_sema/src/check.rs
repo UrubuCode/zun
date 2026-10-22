@@ -271,7 +271,12 @@ impl Checker<'_> {
         self.methods_by_class = vec![HashMap::new(); program.classes.len()];
         for (class_idx, class) in program.classes.iter().enumerate() {
             for m in &class.methods {
-                let name = self.text(&m.name).to_string();
+                let base_name = self.text(&m.name).to_string();
+                let name = match m.accessor {
+                    Some(ast::AccessorKind::Get) => format!("get_{base_name}"),
+                    Some(ast::AccessorKind::Set) => format!("set_{base_name}"),
+                    None => base_name,
+                };
                 let receiver_ty = match self.text(&class.name) {
                     "String" => Ty::String,
                     "Number" => Ty::F64,

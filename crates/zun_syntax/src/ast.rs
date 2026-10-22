@@ -73,6 +73,8 @@ pub struct Function {
     /// modifier yet; the field keeps the representation ready for the full
     /// static-member lowering pass.
     pub is_static: bool,
+    /// Property accessor role when this is a class `get`/`set` declaration.
+    pub accessor: Option<AccessorKind>,
     /// Native library for a top-level source declaration.
     pub external_module: Option<String>,
     /// Whether this declaration uses the source-level `async` modifier.
@@ -83,6 +85,12 @@ pub struct Function {
     pub body: Block,
     /// Span of the whole declaration.
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessorKind {
+    Get,
+    Set,
 }
 
 /// An anonymous function expression or arrow function.

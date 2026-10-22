@@ -168,9 +168,16 @@ impl Parser<'_> {
             let is_static = self.eat(TokenKind::KwStatic);
             let is_extern = self.eat(TokenKind::KwExtern);
             let member_name = self.name("a field or method name");
+            let accessor = if !is_static && !is_extern && !self.at(TokenKind::LParen)
+                && (self.text(self.tokens[self.pos - 1]) == "get" || self.text(self.tokens[self.pos - 1]) == "set")
+            {
+                let kind = if self.text(self.tokens[self.pos - 1]) == "get" { AccessorKind::Get } else { AccessorKind::Set };
+                Some((kind, self.name("a property name")))
+            } else { None };
             // A `(` after the name starts a method; `:` starts a field.
             if self.at(TokenKind::LParen) {
-                methods.push(self.method(member_name, is_extern, is_static));
+                let (accessor, name) = accessor.map_or((None, member_name), |(kind, name)| (Some(kind), name));
+                methods.push(self.method(name, is_extern, is_static, accessor));
             } else {
                 self.expect(TokenKind::Colon, "`:` (fields require a type)");
                 let ty = TypeAnnotation {
@@ -197,7 +204,7 @@ impl Parser<'_> {
 
     /// Parse a method, given its already-consumed name. Shares the parameter,
     /// return-type, and body grammar with top-level functions.
-    fn method(&mut self, name: Name, is_extern: bool, is_static: bool) -> Function {
+    fn method(&mut self, name: Name, is_extern: bool, is_static: bool, accessor: Option<AccessorKind>) -> Function {
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
@@ -240,6 +247,7 @@ impl Parser<'_> {
             return_type,
             is_extern,
             is_static,
+            accessor,
             external_module: None,
             is_async: false,
             is_generator: false,
@@ -300,6 +308,7 @@ impl Parser<'_> {
             return_type,
             is_extern,
             is_static: false,
+            accessor: None,
             external_module,
             is_async,
             is_generator,

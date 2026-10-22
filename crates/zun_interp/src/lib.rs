@@ -4499,7 +4499,7 @@ mod method_tests {
     #[test]
     fn property_syntax_lowers_to_getter_and_setter_methods() {
         let module = zun_compiler::compile(
-            "class Box { get_value(): number { return 41.0; } set_value(v: number): number { return v; } } function main(): number { let b = new Box(); b.value = 42.0; return b.value; }",
+            "class Box { get value(): number { return 41.0; } set value(v: number): number { return v; } } function main(): number { let b = new Box(); b.value = 42.0; return b.value; }",
         ).expect("compile property accessors");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run property accessors");
