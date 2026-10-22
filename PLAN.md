@@ -364,7 +364,8 @@ scalar + string FFI with declared ownership contracts; multi-module loader/manif
 SHA-256 content-addressed cache with deterministic lockfiles, Ed25519 signatures,
 and capability declarations; deterministic registry index metadata with verified
 loader integration; signed registry-index envelopes with HTTP decoding and
-tamper coverage;
+tamper coverage; lock capability declarations reject values outside the
+documented `fs`/`net`/`screen`/`native` vocabulary before signing or loading;
 release-pinned key checks now gate signed-index loading and `.zmlib` verification;
 anchored and self-declared signed-index fixtures are covered;
 HTTP index fetching accepts the rotated `TrustedKeySet` path;
