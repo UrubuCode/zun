@@ -1132,8 +1132,8 @@ then probe, at N=200k and N=1M (5x apart):
 Complexity is confirmed **O(1)** (per-op is flat across a 5x N; it is not an O(n)
 scan). The runtime now uses open addressing with one contiguous bucket array,
 while the insertion-order entry vector remains independent of bucket layout.
-Collision probing, tombstone reuse, compaction, and SameValueZero callbacks are
-covered by core tests. A Robin Hood/Swiss-table probe policy remains an optional
+Collision probing, tombstone reuse, compaction, capacity shrinking after heavy
+deletion, and SameValueZero callbacks are covered by core tests. A Robin Hood/Swiss-table probe policy remains an optional
 constant-factor follow-up, not a correctness or complexity gate.
 Bucket capacities are powers of two and probe advancement now uses a bit mask;
 this preserves the current layout and semantics without asserting a benchmarked
