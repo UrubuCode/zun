@@ -339,6 +339,17 @@ impl ModuleLock {
         }
         Ok(lock)
     }
+
+    /// Write the lockfile to disk.
+    pub fn write_file(&self, path: impl AsRef<Path>) -> Result<(), LoadError> {
+        std::fs::write(path, self.write()).map_err(LoadError::Io)
+    }
+
+    /// Read and validate a lockfile from disk.
+    pub fn read_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
+        let bytes = std::fs::read(path).map_err(LoadError::Io)?;
+        Self::read(&bytes)
+    }
 }
 
 impl ModuleManifest {
@@ -929,6 +940,10 @@ mod tests {
         assert!(lock.push("app", content_id(b"other")).is_err());
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
+        let path = std::env::temp_dir().join(format!("zun-lock-{}.zlock", std::process::id()));
+        lock.write_file(&path).unwrap();
+        assert_eq!(ModuleLock::read_file(&path).unwrap(), lock);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
