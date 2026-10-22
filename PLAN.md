@@ -226,6 +226,8 @@ the loader derives the successor trusted set only after verifying the current
 trusted signer, while version-1 indexes remain readable.
 The canonical rotation signing bytes are public so registry publishers cannot
 produce an envelope without following the loader's exact serialization.
+`ModuleLoader::apply_signed_index_rotation` installs the successor set only after
+authenticating the transition, completing the retained-loader rotation path.
 
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
