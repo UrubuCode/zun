@@ -30,7 +30,10 @@ fn build_uses_native_oxc_for_mts_inputs() {
     let root = std::env::temp_dir().join(format!("zun-oxc-mts-cli-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.mts");
-    std::fs::write(&source, "export default function main(): int { return 7; }\n")
+    std::fs::write(
+        &source,
+        "export default function main(): int { return 7; } export { main };\n",
+    )
         .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
