@@ -139,7 +139,7 @@ impl Parser<'_> {
                 } else {
                     imported.clone()
                 };
-                names.push(ImportName { imported, local, is_default: false });
+                names.push(ImportName { imported, local, is_default: false, is_namespace: false });
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }
@@ -150,7 +150,7 @@ impl Parser<'_> {
             // sema/linking decides whether that export is a type or value.
             let local = self.name("a default import name");
             let imported = local.clone();
-            names.push(ImportName { imported, local, is_default: true });
+            names.push(ImportName { imported, local, is_default: true, is_namespace: false });
         }
         self.expect(TokenKind::KwFrom, "`from`");
         let module = match self.expect(TokenKind::String, "a module string") {

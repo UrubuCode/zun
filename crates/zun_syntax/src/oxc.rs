@@ -837,6 +837,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     ),
                                 },
                                 is_default: false,
+                                is_namespace: false,
                             });
                         }
                         ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
@@ -854,12 +855,23 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     ),
                                 },
                                 is_default: true,
+                                is_namespace: false,
                             });
                         }
-                        ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => {
-                            return Err(vec![
-                                "OXC adapter does not support namespace imports yet".into()
-                            ]);
+                        ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                            names.push(crate::ast::ImportName {
+                                imported: Name {
+                                    span: Span::new(specifier.span.start, specifier.span.start),
+                                },
+                                local: Name {
+                                    span: Span::new(
+                                        specifier.local.span.start,
+                                        specifier.local.span.end,
+                                    ),
+                                },
+                                is_default: false,
+                                is_namespace: true,
+                            });
                         }
                     }
                 }
@@ -2010,6 +2022,15 @@ mod tests {
         assert_eq!(program.imports[0].names.len(), 2);
         assert!(program.imports[0].names[0].is_default);
         assert!(!program.imports[0].names[1].is_default);
+    }
+
+    #[test]
+    fn converts_namespace_imports() {
+        let program = parse_subset("import * as math from 'zun:math'; function main() {}", true).unwrap();
+        let binding = &program.imports[0].names[0];
+        assert!(binding.is_namespace);
+        assert!(!binding.is_default);
+        assert_eq!(binding.local.span, Span::new(12, 16));
     }
 
     #[test]
