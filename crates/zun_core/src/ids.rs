@@ -19,6 +19,8 @@ pub enum CoreTypeId {
     Function = 5,
     /// Managed Promise state-machine result object.
     Promise = 6,
+    /// Managed arbitrary-precision integer payload.
+    BigInt = 7,
 }
 
 impl CoreTypeId {
@@ -31,6 +33,7 @@ impl CoreTypeId {
             4 => Some(Self::Array),
             5 => Some(Self::Function),
             6 => Some(Self::Promise),
+            7 => Some(Self::BigInt),
             _ => None,
         }
     }

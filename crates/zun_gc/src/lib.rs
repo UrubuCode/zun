@@ -59,6 +59,7 @@ mod dates;
 mod buffers;
 mod weak_state;
 mod regexes;
+mod bigints;
 mod proxies;
 mod relocation;
 
@@ -193,6 +194,8 @@ pub struct Heap {
     promises: HashMap<usize, zun_core::ManagedPromise>,
     /// Compiled regular expressions associated with managed RegExp objects.
     regexes: HashMap<usize, zun_core::RegexValue>,
+    /// Arbitrary-precision integer payloads associated with BigInt objects.
+    bigints: HashMap<usize, zun_core::BigInt>,
     /// Strong target/handler pairs owned by managed Proxy objects.
     proxies: HashMap<usize, proxies::ProxyRecord>,
     /// Record index by object address, for tracing child references.
@@ -726,6 +729,15 @@ impl Heap {
             mapped_regexes.insert(mapped, value);
         }
         self.regexes = mapped_regexes;
+
+        let bigints = std::mem::take(&mut self.bigints);
+        let mut mapped_bigints = HashMap::with_capacity(bigints.len());
+        for (address, value) in bigints {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            mapped_bigints.insert(mapped, value);
+        }
+        self.bigints = mapped_bigints;
 
         let records = &mut self.records;
         for record in records.iter_mut().filter(|record| record.alive) {
@@ -2321,5 +2333,19 @@ mod tests {
         let freed = unsafe { heap.collect(&[generator], &|_| Vec::new()) };
         assert_eq!(freed, 0);
         assert_eq!(heap.live_count(), 2);
+    }
+
+    #[test]
+    fn bigint_payload_is_traced_by_its_managed_owner_and_relocated() {
+        let mut heap = Heap::new();
+        let _dead = heap.alloc(1, 0);
+        let bigint = heap.alloc_bigint(
+            zun_core::BigInt::parse_decimal("18446744073709551616").unwrap(),
+        );
+        let mut roots = vec![bigint];
+        let result = unsafe { heap.collect_and_compact(&mut roots, &|_| Vec::new()) };
+        assert_eq!(result.reclaimed_objects, 1);
+        assert_eq!(heap.bigint_value(roots[0]).unwrap().to_string(), "18446744073709551616");
+        assert_eq!(roots[0].type_rid(), zun_core::CoreTypeId::BigInt.get() as u32);
     }
 }
