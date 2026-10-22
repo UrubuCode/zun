@@ -649,7 +649,12 @@ fn explicit_lld_override(value: Option<&OsStr>) -> Option<PathBuf> {
 fn resolve_runtime_library(target: &target_lexicon::Triple) -> Option<PathBuf> {
     let target_name = target.to_string();
     let target_env = runtime_library_env_name(&target_name);
-    if let Ok(path) = std::env::var(&target_env).or_else(|_| std::env::var("ZUN_RUNTIME_LIB")) {
+    let configured = if *target == target_lexicon::Triple::host() {
+        std::env::var("ZUN_RUNTIME_LIB").or_else(|_| std::env::var(&target_env))
+    } else {
+        std::env::var(&target_env)
+    };
+    if let Ok(path) = configured {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
     }
