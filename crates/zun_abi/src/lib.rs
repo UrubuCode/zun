@@ -146,6 +146,20 @@ pub struct OwnedFunction {
     pub invoke: ZunInvoke,
 }
 
+/// A namespace-scoped view over registered extension functions.
+#[derive(Debug, Clone)]
+pub struct ZunModule<'a> {
+    registry: &'a OwnedRegistry,
+    name: String,
+}
+
+impl<'a> ZunModule<'a> {
+    /// Resolve a function by its module-local key.
+    pub fn func(&self, key: &str) -> Option<&'a OwnedFunction> {
+        self.registry.find(&self.name, key)
+    }
+}
+
 /// Registration storage that copies descriptor data before the callback ends.
 ///
 /// The callback API is intended for a loader that owns the backing strings and
@@ -172,6 +186,11 @@ impl OwnedRegistry {
     pub fn find(&self, module: &str, key: &str) -> Option<&OwnedFunction> {
         let index = self.index.get(&(module.to_owned(), key.to_owned()))?;
         self.functions.get(*index)
+    }
+
+    /// Open a namespace view for a registered module.
+    pub fn module(&self, name: &str) -> ZunModule<'_> {
+        ZunModule { registry: self, name: name.to_owned() }
     }
 
     unsafe extern "C" fn capture(
@@ -272,6 +291,8 @@ mod tests {
         assert_eq!(owned.functions[0].key, "answer");
         assert_eq!(owned.functions[0].params, Vec::<ZunTyRepr>::new());
         assert!(owned.find("zun:test", "answer").is_some());
+        assert!(owned.module("zun:test").func("answer").is_some());
+        assert!(owned.module("zun:other").func("answer").is_none());
         assert!(owned.find("zun:test", "missing").is_none());
         assert_eq!(unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) }, Err(-15));
     }
