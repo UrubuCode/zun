@@ -100,7 +100,15 @@ pub struct TrimReport {
     /// Method names containing unresolved member calls that trigger fallback.
     pub dynamic_methods: Vec<String>,
     /// Dynamic/reflection call sites as `(method name, byte PC)` pairs.
-    pub dynamic_sites: Vec<(String, u32)>,
+    pub dynamic_sites: Vec<DynamicSite>,
+}
+
+/// One unresolved dynamic/reflection call site in a trimmed module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicSite {
+    pub method_name: String,
+    pub pc: u32,
+    pub source_span: Option<(u32, u32)>,
 }
 
 /// Analyze a module without changing it, returning the trimmer's decisions.
@@ -116,12 +124,13 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
     let removed_methods: Vec<_> = (1..=module.tables.method_defs.len() as u32)
         .filter(|rid| !reachable.contains(rid))
         .collect();
-    let dynamic_sites: Vec<(String, u32)> = module
+    let dynamic_sites: Vec<DynamicSite> = module
         .tables
         .method_defs
         .iter()
-        .filter(|method| method.body_offset != u32::MAX)
-        .filter_map(|method| {
+        .enumerate()
+        .filter(|(_, method)| method.body_offset != u32::MAX)
+        .filter_map(|(index, method)| {
             let body = read_body(&module.code, method.body_offset).ok()?;
             let method_name = module.strings.get(method.name).to_owned();
             Some(
@@ -132,7 +141,11 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
                         matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
                             && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
                     })
-                    .map(move |(pc, _)| (method_name.clone(), pc))
+                    .map(move |(pc, _)| DynamicSite {
+                        method_name: method_name.clone(),
+                        pc,
+                        source_span: module.source_span_at(index as u32 + 1, pc),
+                    })
                     .collect::<Vec<_>>(),
             )
         })
@@ -140,7 +153,7 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
         .collect();
     let dynamic_methods: Vec<String> = dynamic_sites
         .iter()
-        .map(|(name, _)| name.clone())
+        .map(|site| site.method_name.clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
