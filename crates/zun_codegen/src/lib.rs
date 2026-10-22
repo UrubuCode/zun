@@ -2362,10 +2362,22 @@ impl Jit {
 /// the typed Cranelift subset; linking and runtime entry-point selection are
 /// deliberately left to the host build step.
 pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
+    compile_object_for_target(zm, target_lexicon::Triple::host())
+}
+
+/// Emit a relocatable object for an explicitly selected target ISA.
+///
+/// The host wrapper above preserves the existing AOT behavior. Cross-target
+/// callers must still provide a matching runtime library and linker inputs;
+/// this API only selects the Cranelift object ISA.
+pub fn compile_object_for_target(
+    zm: &Module,
+    target: target_lexicon::Triple,
+) -> Result<Vec<u8>, JitError> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed").unwrap();
     flags.set("preserve_frame_pointers", "true").unwrap();
-    let isa = cranelift_native::builder()
+    let isa = cranelift_codegen::isa::lookup(target)
         .map_err(|e| JitError::UnsupportedHost(e.to_string()))?
         .finish(settings::Flags::new(flags))
         .map_err(|e| JitError::UnsupportedHost(e.to_string()))?;

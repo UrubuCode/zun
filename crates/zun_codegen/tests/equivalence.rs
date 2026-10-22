@@ -5659,6 +5659,17 @@ fn aot_object_contains_the_eligible_entry_point() {
 }
 
 #[test]
+fn aot_object_can_select_the_host_target_explicitly() {
+    let module = compile("function main(): int { return 7; }");
+    let object = zun_codegen::compile_object_for_target(
+        &module,
+        target_lexicon::Triple::host(),
+    )
+    .expect("emit host-targeted object");
+    assert!(!object.is_empty());
+}
+
+#[test]
 fn aot_rejects_an_ineligible_entry_before_linking() {
     let module = compile(
         "function main(): string { if (true) { return \"managed\"; } return \"fallback\"; }",
