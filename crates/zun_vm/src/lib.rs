@@ -6,6 +6,7 @@
 //! behind the same entry points, without changing this surface.
 
 mod ffi;
+mod extension;
 mod jit_hook;
 mod native_hook;
 mod promise;
@@ -20,6 +21,7 @@ pub use ffi::{
     FfiStringReturn, NativeLibrary,
     NativeLibraryResolver,
 };
+pub use extension::LoadedExtension;
 pub use jit_hook::{JitHook, OsrRequest, OsrSnapshot};
 pub use native_hook::NativeCallHook;
 pub use promise::{

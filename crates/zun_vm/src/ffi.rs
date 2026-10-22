@@ -342,6 +342,12 @@ pub struct FfiError {
     message: String,
 }
 
+impl FfiError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
+    }
+}
+
 impl core::fmt::Display for FfiError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(&self.message)

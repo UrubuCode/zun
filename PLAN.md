@@ -1475,6 +1475,9 @@ current launcher is intentionally limited to scalar numeric/boolean returns.
 Extension ABI status (2026-10-22): the standalone `zun_abi` crate now defines
 the versioned `ZunRegistry`, scalar/opaque `ZunValue` carrier, function
 descriptor, and `zun_register_v1` callback contract. Native module loading,
-capability enforcement, and registry-backed source bindings remain later
-distribution work; this ABI is independent of Node/N-API. A public
-`include/zun_abi.h` mirrors the `repr(C)` layouts for C/C++ extensions.
+and owned descriptor storage. `zun_vm::LoadedExtension` now resolves the
+version-1 entry point through the existing native-library loader, enforces the
+absolute-path policy for explicit loads, and keeps the library alive alongside
+the copied descriptors. Capability enforcement and registry-backed source
+bindings remain later distribution work; this ABI is independent of Node/N-API.
+A public `include/zun_abi.h` mirrors the `repr(C)` layouts for C/C++ extensions.

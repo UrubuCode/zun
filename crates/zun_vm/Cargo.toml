@@ -16,6 +16,7 @@ zun_verify = { path = "../zun_verify" }
 zun_codegen = { path = "../zun_codegen" }
 zun_gc = { path = "../zun_gc" }
 zun_natives = { path = "../zun_natives" }
+zun_abi = { path = "../zun_abi" }
 libloading = "0.8"
 
 [dev-dependencies]
