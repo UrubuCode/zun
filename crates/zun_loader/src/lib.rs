@@ -505,6 +505,16 @@ impl SignedModuleIndex {
             })
     }
 
+    /// Verify that this index was signed by a release-pinned root key.
+    pub fn verify_against(&self, trusted_key: &[u8; 32]) -> Result<(), LoadError> {
+        if &self.public_key != trusted_key {
+            return Err(LoadError::InvalidManifest(
+                "registry index key is not trusted by the release".into(),
+            ));
+        }
+        self.verify()
+    }
+
     pub fn write(&self) -> Vec<u8> {
         let payload = self.index.write();
         let mut bytes = Vec::with_capacity(106 + payload.len());
@@ -1903,6 +1913,10 @@ mod tests {
             SignedModuleIndex::new(index, signing.verifying_key().to_bytes(), signature).unwrap();
         let bytes = signed.write();
         assert_eq!(SignedModuleIndex::read(&bytes).unwrap(), signed);
+        assert!(signed
+            .verify_against(&signing.verifying_key().to_bytes())
+            .is_ok());
+        assert!(signed.verify_against(&[99u8; 32]).is_err());
         let mut tampered = bytes;
         *tampered.last_mut().unwrap() ^= 1;
         assert!(SignedModuleIndex::read(&tampered).is_err());
