@@ -163,6 +163,39 @@ pub fn compile_prelude() -> Result<(u64, Module), Vec<Diagnostic>> {
     Ok((zun_prelude::fingerprint(), module))
 }
 
+/// Compile a standalone source module against an already compiled prelude.
+///
+/// The prelude is registered as a real loader dependency and is not
+/// concatenated into the user's source.  The checked-in prelude source is used
+/// only for its stable public signatures; the supplied module remains the
+/// executable artifact.
+pub fn compile_with_cached_prelude(
+    source: &str,
+    prelude: &Module,
+) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
+    let mut externals = collect_function_signatures(zun_prelude::PRELUDE);
+    for function in &mut externals {
+        function.module = "zun:prelude".to_owned();
+    }
+    let imports = externals
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let linked_source = format!("{source}\nimport {{ {imports} }} from \"zun:prelude\";\n");
+    let module = compile_source_with_externals(&linked_source, &externals)?;
+    let mut loader = zun_loader::ModuleLoader::new();
+    let prelude_scope = zun_loader::ModuleScope::from_bytes("zun:prelude", &prelude.write())
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    let app_scope = zun_loader::ModuleScope::from_bytes("app", &module.write())
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    loader
+        .insert(prelude_scope)
+        .and_then(|_| loader.insert(app_scope))
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+    Ok(loader)
+}
+
 /// Errors returned by the standalone prelude cache envelope.
 #[derive(Debug)]
 pub enum PreludeCacheError {
@@ -528,6 +561,19 @@ mod tests {
         )
         .expect("linked prelude import should compile");
         assert_eq!(module.tables.member_refs.len(), 1);
+    }
+
+    #[test]
+    fn compiles_against_a_cached_prelude_module_without_concatenation() {
+        let (_, prelude) = compile_prelude().expect("prelude should compile");
+        let loader = compile_with_cached_prelude(
+            "function main(): int { return abs(-7); }",
+            &prelude,
+        )
+        .expect("cached prelude should link");
+        let app = loader.get("app").expect("app scope");
+        assert_eq!(app.module().tables.member_refs.len(), 1);
+        assert!(loader.get("zun:prelude").is_some());
     }
 
     #[test]
