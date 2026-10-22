@@ -320,8 +320,8 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("method #1 is not JIT-eligible"));
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not AOT-eligible"));
     assert!(source.with_extension("zm").is_file());
     assert!(source.with_extension("zman").is_file());
     let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))

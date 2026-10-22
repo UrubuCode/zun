@@ -370,6 +370,12 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                             ExitCode::FAILURE
                                         }
                                     },
+                                    Err(zun_codegen::JitError::Ineligible(rid)) => {
+                                        eprintln!(
+                                            "zun: warning: method #{rid} is not AOT-eligible; keeping embedded IL interpreter fallback"
+                                        );
+                                        ExitCode::SUCCESS
+                                    }
                                     Err(e) => {
                                         eprintln!("zun: cannot emit AOT object: {e}");
                                         ExitCode::FAILURE
