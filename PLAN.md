@@ -337,7 +337,8 @@ member-call reporting is now implemented),
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
 `.zmlib` package envelope is now implemented, including optional per-module type
-declaration payloads; debug information remains embedded in each `.zm` module. The former
+declaration payloads authenticated by `<module>.d.ts` lock entries; debug information
+remains embedded in each `.zm` module. The former
 `zun_napi` Node embedding crate has been removed (out of scope).
 The AOT launcher now resolves an explicit `ZUN_LLD` override or the active
 toolchain's `rust-lld` and passes it to the external final link step when available.
