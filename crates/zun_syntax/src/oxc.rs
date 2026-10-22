@@ -139,6 +139,9 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
             Statement::IfStatement(if_statement) => {
                 statements.push(convert_if_statement(source, if_statement)?);
             }
+            Statement::TryStatement(try_statement) => {
+                statements.push(convert_try_statement(source, try_statement)?);
+            }
             Statement::WhileStatement(while_statement) => {
                 statements.push(Stmt::While {
                     cond: convert_expression(&while_statement.test)?,
@@ -189,6 +192,10 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
         Statement::IfStatement(if_statement) => Ok(Block {
             span: Span::new(if_statement.span.start, if_statement.span.end),
             statements: vec![convert_if_statement(source, if_statement)?],
+        }),
+        Statement::TryStatement(try_statement) => Ok(Block {
+            span: Span::new(try_statement.span.start, try_statement.span.end),
+            statements: vec![convert_try_statement(source, try_statement)?],
         }),
         Statement::VariableDeclaration(declaration) => {
             let mut statements = Vec::with_capacity(declaration.declarations.len());
@@ -366,6 +373,57 @@ fn convert_if_statement(
             .map(|statement| convert_if_branch(source, statement))
             .transpose()?,
         span: Span::new(if_statement.span.start, if_statement.span.end),
+    })
+}
+
+fn convert_try_statement(
+    source: &str,
+    try_statement: &oxc_ast::ast::TryStatement<'_>,
+) -> Result<Stmt, String> {
+    fn convert_block_node(
+        source: &str,
+        block: &oxc_ast::ast::BlockStatement<'_>,
+    ) -> Result<Block, String> {
+        let mut statements = Vec::new();
+        for statement in &block.body {
+            statements.extend(convert_if_branch(source, statement)?.statements);
+        }
+        Ok(Block {
+            statements,
+            span: Span::new(block.span.start, block.span.end),
+        })
+    }
+
+    let catches = if let Some(handler) = try_statement.handler.as_ref() {
+        let Some(parameter) = handler.param.as_ref() else {
+            return Err("OXC adapter requires an identifier catch binding".into());
+        };
+        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
+            return Err("OXC adapter requires an identifier catch binding".into());
+        };
+        vec![crate::ast::CatchClause {
+            binding: Name {
+                span: Span::new(identifier.span.start, identifier.span.end),
+            },
+            ty: crate::ast::TypeAnnotation {
+                name: Name {
+                    span: Span::new(identifier.span.start, identifier.span.end),
+                },
+            },
+            body: convert_block_node(source, &handler.body)?,
+        }]
+    } else {
+        Vec::new()
+    };
+    Ok(Stmt::Try {
+        body: convert_block_node(source, &try_statement.block)?,
+        catches,
+        finally: try_statement
+            .finalizer
+            .as_ref()
+            .map(|finalizer| convert_block_node(source, finalizer))
+            .transpose()?,
+        span: Span::new(try_statement.span.start, try_statement.span.end),
     })
 }
 
@@ -1002,6 +1060,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                             .map_err(|error| vec![error])?,
                                     );
                                 }
+                                Statement::TryStatement(try_statement) => {
+                                    method_statements.push(
+                                        convert_try_statement(source, try_statement)
+                                            .map_err(|error| vec![error])?,
+                                    );
+                                }
                                 Statement::WhileStatement(while_statement) => {
                                     method_statements.push(Stmt::While {
                                         cond: convert_expression(&while_statement.test)
@@ -1233,6 +1297,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 }
                 Statement::IfStatement(if_statement) => {
                     statements.push(convert_if_statement(source, if_statement).map_err(|error| vec![error])?);
+                }
+                Statement::TryStatement(try_statement) => {
+                    statements.push(convert_try_statement(source, try_statement).map_err(|error| vec![error])?);
                 }
                 Statement::WhileStatement(while_statement) => {
                     let body = convert_block_statement(source, &while_statement.body)
@@ -1538,12 +1605,29 @@ mod tests {
 
     #[test]
     fn accepts_debugger_statements_as_no_ops() {
-        let program = parse_subset("function main(value) { debugger; if (value) debugger; }", false)
-            .unwrap();
+        let program = parse_subset(
+            "function main(value) { debugger; if (value) debugger; }",
+            false,
+        )
+        .unwrap();
         assert!(matches!(
             program.functions[0].body.statements.first(),
             Some(crate::ast::Stmt::If { then_block, .. })
                 if then_block.statements.is_empty()
+        ));
+    }
+
+    #[test]
+    fn converts_try_catch_finally_statements() {
+        let program = parse_subset(
+            "function main(value) { try { throw value; } catch (error) { return error; } finally { debugger; } }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements.first(),
+            Some(crate::ast::Stmt::Try { catches, finally: Some(_), .. })
+                if catches.len() == 1
         ));
     }
 

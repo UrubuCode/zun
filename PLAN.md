@@ -438,6 +438,7 @@ class-method loop-control and throw statements preserve their source spans;
 OXC BigInt literals lower to the existing managed BigInt expression;
 empty OXC statements preserve branch spans without emitting runtime statements;
 OXC `debugger` statements are accepted as span-preserving no-ops;
+OXC try/catch/finally statements lower to typed exception HIR with identifier catches;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
