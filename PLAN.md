@@ -1026,8 +1026,10 @@ the interpreter/JIT equivalence path covers literal `String` methods. The
 runtime JIT now also carries those literals through `newobj` and typed string
 fields. The relocatable/AOT backend now emits `ConstStr` literals into
 relocatable Cranelift data objects rather than embedding process-local pointers.
-The AOT launcher still requires the managed runtime/helper bridge for
-string-returning entrypoints and remains restricted to scalar returns.
+The AOT launcher now preserves the Cranelift `i32` ABI for boolean entrypoints
+and prints their logical value. It still requires the managed runtime/helper
+bridge for string-returning entrypoints and remains restricted to scalar
+returns.
 Its scalar launcher now preserves `u64` as an unsigned C ABI result, including
 values above `i64::MAX`, with an end-to-end `u64::MAX` test.
 Parameter/field string handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
