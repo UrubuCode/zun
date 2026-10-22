@@ -169,18 +169,28 @@ pub struct ModuleManifest {
     pub entry: String,
     /// Module identities in deterministic load order.
     pub dependencies: Vec<String>,
+    /// Optional relocatable native object associated with the canonical module.
+    /// The loader may ignore it and use the `.zm` fallback.
+    pub native_object: Option<String>,
 }
 
 impl ModuleManifest {
     const MAGIC: &'static [u8; 4] = b"ZMAN";
-    const VERSION: u16 = 0;
+    const VERSION: u16 = 1;
 
     /// Construct a manifest for an entry module and its dependencies.
     pub fn new(entry: impl Into<String>, dependencies: impl IntoIterator<Item = String>) -> Self {
         Self {
             entry: entry.into(),
             dependencies: dependencies.into_iter().collect(),
+            native_object: None,
         }
+    }
+
+    /// Associate an optional R2R/AOT object path with this manifest.
+    pub fn with_native_object(mut self, path: impl Into<String>) -> Self {
+        self.native_object = Some(path.into());
+        self
     }
 
     /// Serialize the flattened manifest into a deterministic binary payload.
@@ -192,6 +202,10 @@ impl ModuleManifest {
         write_name(&mut bytes, &self.entry);
         for dependency in &self.dependencies {
             write_name(&mut bytes, dependency);
+        }
+        bytes.push(u8::from(self.native_object.is_some()));
+        if let Some(native_object) = &self.native_object {
+            write_name(&mut bytes, native_object);
         }
         bytes
     }
@@ -209,7 +223,7 @@ impl ModuleManifest {
         }
         let version = read_u16(bytes, &mut cursor)
             .ok_or_else(|| LoadError::InvalidManifest("truncated manifest version".into()))?;
-        if version != Self::VERSION {
+        if version > Self::VERSION {
             return Err(LoadError::InvalidManifest(format!(
                 "unsupported manifest version {version}"
             )));
@@ -221,12 +235,22 @@ impl ModuleManifest {
         for _ in 0..count {
             dependencies.push(read_name(bytes, &mut cursor)?);
         }
+        let native_object = if version == 0 {
+            None
+        } else {
+            match take(bytes, &mut cursor, 1) {
+                Some([0]) => None,
+                Some([1]) => Some(read_name(bytes, &mut cursor)?),
+                _ => return Err(LoadError::InvalidManifest("invalid native object flag".into())),
+            }
+        };
         if cursor != bytes.len() {
             return Err(LoadError::InvalidManifest("trailing manifest bytes".into()));
         }
         Ok(Self {
             entry,
             dependencies,
+            native_object,
         })
     }
 
@@ -768,6 +792,25 @@ mod tests {
             ModuleManifest::read(&manifest.write()).expect("roundtrip"),
             manifest
         );
+    }
+
+    #[test]
+    fn manifest_roundtrips_optional_native_object() {
+        let manifest = ModuleManifest::new("app", vec!["core".into()])
+            .with_native_object("app.o");
+        let decoded = ModuleManifest::read(&manifest.write()).expect("roundtrip");
+        assert_eq!(decoded, manifest);
+    }
+
+    #[test]
+    fn manifest_reads_version_zero_without_native_object() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(ModuleManifest::MAGIC);
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        write_name(&mut bytes, "app");
+        let decoded = ModuleManifest::read(&bytes).expect("legacy manifest");
+        assert_eq!(decoded, ModuleManifest::new("app", Vec::<String>::new()));
     }
 
     #[test]

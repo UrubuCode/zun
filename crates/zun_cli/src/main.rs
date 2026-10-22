@@ -125,8 +125,15 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
             let manifest_out = out.with_extension("zman");
             match std::fs::write(&out, module.write()) {
                 Ok(()) => {
-                    let manifest =
-                        zun_loader::ModuleManifest::new(file, std::iter::empty::<String>());
+                    let manifest = zun_loader::ModuleManifest::new(
+                        file,
+                        std::iter::empty::<String>(),
+                    );
+                    let manifest = if aot {
+                        manifest.with_native_object(out.with_extension("o").display().to_string())
+                    } else {
+                        manifest
+                    };
                     match manifest.write_file(&manifest_out) {
                         Ok(()) => {
                             println!("wrote {}", out.display());
