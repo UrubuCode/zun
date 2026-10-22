@@ -379,6 +379,8 @@ Metadata-only lock entries are also excluded from module fetch/loading.
 The loader now offers a cache-backed fetch path that verifies a module's content
 identity before persisting and registering it, enabling verified offline reuse.
 Lockfile and registry-index bulk loading now expose the same verified cache path.
+Signed registry-index loading exposes anchored cache variants, so envelope trust
+is established before any selected module is persisted or registered.
 The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable on
 `PATH`, or the active toolchain's `rust-lld`, and passes it to the external final
 link step when available.
