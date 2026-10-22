@@ -533,11 +533,11 @@ impl SignedModuleIndex {
             public_key,
             signature,
         };
-        signed.verify()?;
+        signed.verify_signature()?;
         Ok(signed)
     }
 
-    pub fn verify(&self) -> Result<(), LoadError> {
+    fn verify_signature(&self) -> Result<(), LoadError> {
         let key = VerifyingKey::from_bytes(&self.public_key).map_err(|error| {
             LoadError::InvalidManifest(format!("invalid index public key: {error}"))
         })?;
@@ -555,7 +555,7 @@ impl SignedModuleIndex {
                 "registry index key is not trusted by the release".into(),
             ));
         }
-        self.verify()
+        self.verify_signature()
     }
 
     pub fn verify_with_keys(&self, trusted: &TrustedKeySet) -> Result<(), LoadError> {
@@ -564,7 +564,7 @@ impl SignedModuleIndex {
                 "registry index key is not in the trusted key set".into(),
             ));
         }
-        self.verify()
+        self.verify_signature()
     }
 
     pub fn write(&self) -> Vec<u8> {
@@ -833,12 +833,12 @@ impl SignedModuleLock {
             public_key,
             signature,
         };
-        signed.verify()?;
+        signed.verify_signature()?;
         Ok(signed)
     }
 
     /// Verify the Ed25519 signature over the canonical lockfile bytes.
-    pub fn verify(&self) -> Result<(), LoadError> {
+    fn verify_signature(&self) -> Result<(), LoadError> {
         let key = VerifyingKey::from_bytes(&self.public_key).map_err(|error| {
             LoadError::InvalidManifest(format!("invalid lockfile public key: {error}"))
         })?;
@@ -855,7 +855,7 @@ impl SignedModuleLock {
                 "lockfile key is not trusted by the release".into(),
             ));
         }
-        self.verify()
+        self.verify_with_keys(&TrustedKeySet::new([*trusted_key])?)
     }
 
     pub fn verify_with_keys(&self, trusted: &TrustedKeySet) -> Result<(), LoadError> {
@@ -864,7 +864,12 @@ impl SignedModuleLock {
                 "lockfile key is not in the trusted key set".into(),
             ));
         }
-        self.verify()
+        self.verify_signature()
+    }
+
+    /// Verify the signature and require the key to be release-trusted.
+    pub fn verify(&self, trusted: &TrustedKeySet) -> Result<(), LoadError> {
+        self.verify_with_keys(trusted)
     }
 
     /// Serialize the signed envelope.
@@ -929,7 +934,7 @@ impl Zmlib {
 
     /// Construct a package and ensure every payload matches its lock entry.
     pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
-        lock.verify()?;
+        lock.verify_signature()?;
         for (name, bytes) in &modules {
             let expected = lock
                 .lock
@@ -1538,7 +1543,7 @@ impl ModuleLoader {
         if let Some(trusted) = &self.trusted_keys {
             package.lock.verify_with_keys(trusted)?;
         } else {
-            package.lock.verify()?;
+            package.lock.verify_signature()?;
         }
         for (name, bytes) in &package.modules {
             self.load_bytes(name.clone(), bytes)?;
