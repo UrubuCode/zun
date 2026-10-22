@@ -140,7 +140,11 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                         Ok(()) => {
                                             println!("wrote {}", object_out.display());
                                             let native_manifest = manifest.clone().with_native_object(
-                                                object_out.display().to_string(),
+                                                object_out
+                                                    .file_name()
+                                                    .expect("object output has a file name")
+                                                    .to_string_lossy()
+                                                    .into_owned(),
                                             );
                                             if let Err(error) =
                                                 native_manifest.write_file(&manifest_out)

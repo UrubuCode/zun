@@ -23,7 +23,7 @@ fn build_aot_writes_fallback_module_manifest_and_object() {
     assert!(source.with_extension("exe").is_file());
     let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
         .expect("read AOT manifest");
-    assert!(manifest.native_object.is_some());
+    assert_eq!(manifest.native_object.as_deref(), Some("main.o"));
     let executable = Command::new(source.with_extension("exe"))
         .output()
         .expect("run AOT executable");
