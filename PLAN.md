@@ -1083,7 +1083,7 @@ an optimization gate.
    IL lowering.
 6. **Remaining architecture**: broader managed Cranelift values, true OSR frame
    replacement, non-blittable FFI marshalling (deferred; ownership modes are
-   specified in section 4.4), production N-API, AOT/R2R, and the
+   specified in section 4.4), production-grade N-API, full-runtime AOT/R2R, and the
    remaining performance backlog (the first OrderedMap and generational-GC
    policies are complete; only their measured scaling follow-ups remain).
    Async/await source lowering is complete in
