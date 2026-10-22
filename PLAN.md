@@ -370,7 +370,8 @@ release-pinned key checks now gate signed-index loading and `.zmlib` verificatio
 anchored and self-declared signed-index fixtures are covered;
 HTTP index fetching accepts the rotated `TrustedKeySet` path;
 sequence-point PC-to-source metadata in `.zm`;
-native OXC JavaScript/TypeScript parse boundary with isolated diagnostics;
+native OXC JavaScript/TypeScript parse boundary with isolated diagnostics and a
+source-span-preserving numeric-function AST adapter;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
