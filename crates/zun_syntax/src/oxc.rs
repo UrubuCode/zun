@@ -666,7 +666,11 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 name: Name {
                                     span: Span::new(identifier.span.start, identifier.span.end),
                                 },
-                                ty: None,
+                                ty: convert_type_annotation(
+                                    source,
+                                    rest.type_annotation.as_deref(),
+                                )
+                                .map_err(|error| vec![error])?,
                                 default_value: None,
                                 is_rest: true,
                             });
@@ -962,7 +966,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 name: Name {
                     span: span(identifier.span),
                 },
-                ty: None,
+                ty: convert_type_annotation(source, rest.type_annotation.as_deref())
+                    .map_err(|error| vec![error])?,
                 default_value: None,
                 is_rest: true,
             });
@@ -1476,6 +1481,13 @@ mod tests {
     fn converts_rest_parameters() {
         let program = parse_subset("function collect(...values) { return values; }", false).unwrap();
         assert!(program.functions[0].params[0].is_rest);
+    }
+
+    #[test]
+    fn converts_typed_rest_parameters() {
+        let program = parse_subset("function collect(...values: Values) { return values; }", true)
+            .unwrap();
+        assert!(program.functions[0].params[0].ty.is_some());
     }
 
     #[test]
