@@ -470,7 +470,7 @@ fn link_aot_executable(
     };
     let launcher = object.with_extension("aot.rs");
     let source = format!(
-        "extern \"C\" {{ fn m{entry}() -> {return_type}; }}\nfn main() {{ let value = unsafe {{ m{entry}() }}; println!(\"{{}}\", {print_value}); }}\n"
+        "extern \"C\" {{ fn m{entry}() -> {return_type}; static zun_embedded_module: u8; }}\nfn main() {{ let _metadata = unsafe {{ std::hint::black_box(&zun_embedded_module) }}; let value = unsafe {{ m{entry}() }}; println!(\"{{}}\", {print_value}); }}\n"
     );
     std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
     let mut command = Command::new("rustc");
