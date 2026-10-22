@@ -1320,6 +1320,33 @@ mod tests {
     }
 
     #[test]
+    fn encodes_two_string_external_call_types_in_member_metadata() {
+        let src = "extern function join(left: string, right: string): string from \"host\"; function main(): string { return join(\"a\", \"b\"); }";
+        let mut diagnostics = Vec::new();
+        let ast = zun_syntax::parse(src, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "parse: {diagnostics:?}");
+        let hir = zun_sema::check_with_externals(
+            src,
+            &ast,
+            &mut diagnostics,
+            &[zun_sema::ExternalFunction {
+                module: "host".into(),
+                name: "join".into(),
+                params: vec![Ty::String, Ty::String],
+                return_ty: Ty::String,
+            }],
+        );
+        assert!(diagnostics.is_empty(), "sema: {diagnostics:?}");
+        let module = lower(&hir);
+        let member = module
+            .tables
+            .member_refs
+            .first()
+            .expect("external member reference");
+        assert_eq!(module.blobs.get(member.signature), &[2, 4, 4, 4]);
+    }
+
+    #[test]
     fn simple_function_disassembles_as_expected() {
         let module = lower_src("function main() { let x = 1; print(x); }");
         let body = read_body(&module.code, module.tables.method_defs[0].body_offset).unwrap();
