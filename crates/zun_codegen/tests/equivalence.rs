@@ -3944,6 +3944,25 @@ fn scalar_bool_array_allocation_and_access_are_jit_eligible() {
 }
 
 #[test]
+fn f64_array_allocation_and_pop_are_jit_equivalent() {
+    let module = compile(
+        "function main(): number { let values = new Array(1); values[0] = 42.0; return values.pop() as number; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles f64 array pop");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(
+        interp_entry(&module),
+        Value::Float(42.0, zun_il::NumKind::F64)
+    ));
+    let mut heap = zun_gc::Heap::new();
+    assert_eq!(
+        f64::from_bits(jit.call_packed_with_heap(entry, &[], &mut heap).unwrap()),
+        42.0
+    );
+}
+
+#[test]
 fn unsigned_wrap_u8() {
     assert_equivalent("function main(): u8 { let b: u8 = 250; return b + 10 as u8; }");
 }

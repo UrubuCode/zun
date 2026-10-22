@@ -356,7 +356,10 @@ fn scalar_bool_array_access_only(
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Bool
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
+            matches!(
+                instruction.opcode,
+                Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop
+            )
         })
         && instrs.iter().all(|instruction| {
             matches!(
@@ -375,6 +378,7 @@ fn scalar_bool_array_access_only(
                     | Opcode::NewArray
                     | Opcode::LoadArray
                     | Opcode::StoreArray
+                    | Opcode::ArrayPop
                     | Opcode::Ret
             )
         })
@@ -387,7 +391,10 @@ fn scalar_f64_array_access_only(
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::F64)
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
+            matches!(
+                instruction.opcode,
+                Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop
+            )
         })
         && instrs.iter().all(|instruction| {
             matches!(
@@ -405,6 +412,7 @@ fn scalar_f64_array_access_only(
                     | Opcode::NewArray
                     | Opcode::LoadArray
                     | Opcode::StoreArray
+                    | Opcode::ArrayPop
                     | Opcode::Ret
             )
         })
