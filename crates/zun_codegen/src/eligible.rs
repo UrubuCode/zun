@@ -69,6 +69,7 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             && (date_builtin(instr)
                 || math_builtin(instr)
                 || collection_builtin(instr)
+                || allocation_builtin(instr)
                 || string_builtin(instr)))
 }
 
@@ -158,6 +159,11 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "f64ArraySet",
         )
     )
+}
+
+fn allocation_builtin(instr: &zun_il::Instruction) -> bool {
+    let Operand::Imm32(id) = instr.operand else { return false; };
+    matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some("mapNew" | "setNew"))
 }
 
 fn date_builtin(instr: &zun_il::Instruction) -> bool {
@@ -660,6 +666,11 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             }
         }
         if instrs.iter().any(|instruction| requires_exception_bridge(instruction.opcode)) {
+            continue;
+        }
+        if instrs.iter().any(allocation_builtin)
+            && JitKind::from_byte(body.return_kind) != JitKind::Object
+        {
             continue;
         }
         if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
