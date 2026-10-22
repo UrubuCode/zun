@@ -1,6 +1,34 @@
 use std::process::Command;
 
 #[test]
+fn build_can_persist_a_valid_prelude_cache() {
+    let root = std::env::temp_dir().join(format!("zun-prelude-cache-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    let cache = root.join("prelude.zprc");
+    std::fs::write(&source, "function main(): int { return 7; }\n").expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build", "--prelude-cache"])
+        .arg(&cache)
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(cache.is_file());
+    zun_compiler::read_prelude_cache(&cache).expect("cache must be readable");
+
+    for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman"), cache] {
+        let _ = std::fs::remove_file(path);
+    }
+    let _ = std::fs::remove_dir(root);
+}
+
+#[test]
 fn build_aot_writes_fallback_module_manifest_and_object() {
     let root = std::env::temp_dir().join(format!("zun-aot-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");

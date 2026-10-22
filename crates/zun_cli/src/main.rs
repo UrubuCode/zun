@@ -24,6 +24,15 @@ fn main() -> ExitCode {
             Action::Build {
                 trim: false,
                 aot: false,
+                prelude_cache: None,
+            },
+        ),
+        [cmd, flag, cache, file] if cmd == "build" && flag == "--prelude-cache" => dispatch(
+            file,
+            Action::Build {
+                trim: false,
+                aot: false,
+                prelude_cache: Some(PathBuf::from(cache)),
             },
         ),
         [cmd, flag, file] if cmd == "build" && flag == "--trim" => dispatch(
@@ -31,6 +40,7 @@ fn main() -> ExitCode {
             Action::Build {
                 trim: true,
                 aot: false,
+                prelude_cache: None,
             },
         ),
         [cmd, flag, file] if cmd == "build" && flag == "--aot" => dispatch(
@@ -38,6 +48,7 @@ fn main() -> ExitCode {
             Action::Build {
                 trim: true,
                 aot: true,
+                prelude_cache: None,
             },
         ),
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
@@ -51,13 +62,17 @@ fn main() -> ExitCode {
 const USAGE: &str = "\
 usage: zun <command> <file.ts>
   run      compile and execute the program
-  build    compile to a .zm module (use --trim or --aot to remove unreachable bodies)
+  build    compile to a .zm module (use --trim, --aot, or --prelude-cache <path>)
   disasm   compile and print the ZIL disassembly";
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Action {
     Run,
-    Build { trim: bool, aot: bool },
+    Build {
+        trim: bool,
+        aot: bool,
+        prelude_cache: Option<PathBuf>,
+    },
     Disasm,
 }
 
@@ -120,9 +135,16 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Action::Build { aot, .. } => {
+        Action::Build { aot, prelude_cache, .. } => {
             let out = out_path(path);
             let manifest_out = out.with_extension("zman");
+            if let Some(cache) = prelude_cache {
+                if let Err(error) = zun_compiler::write_prelude_cache(&cache) {
+                    eprintln!("zun: cannot write prelude cache {}: {error}", cache.display());
+                    return ExitCode::FAILURE;
+                }
+                println!("wrote {}", cache.display());
+            }
             match std::fs::write(&out, module.write()) {
                 Ok(()) => {
                     let manifest = zun_loader::ModuleManifest::new(
