@@ -4904,6 +4904,19 @@ fn numeric_i32_map_mutation_loop_is_jit_equivalent() {
 }
 
 #[test]
+fn numeric_i32_set_mutation_loop_is_jit_equivalent() {
+    let src = "import { setAddI32, setHasI32 } from \"zun:collections\"; function fill(value: Set): boolean { let index: i32 = 0; while (index < 4) { setAddI32(value, index); index = index + 1; } return setHasI32(value, 3); } function main(): boolean { let value = new Set(); return fill(value); }";
+    let module = compile(src);
+    let fill_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "fill").map(|index| index as u32 + 1).expect("fill method");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 set loop");
+    assert!(jit.is_compiled(fill_rid));
+    let mut heap = zun_gc::Heap::new();
+    let set = heap.alloc_set();
+    assert_eq!(jit.call_packed_with_heap(fill_rid, &[set.addr() as u64], &mut heap).unwrap(), 1);
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
