@@ -402,6 +402,10 @@ Signed registry-index loading exposes anchored cache variants, so envelope trust
 is established before any selected module is persisted or registered.
 Signed lock loading now exposes the same external-key and retained-key paths,
 including cache-backed variants, closing the trust gate at lock registration.
+Signed registry indexes support authenticated version-2 key additions and
+revocations, canonical public signing bytes, malformed-transition rejection, and
+atomic direct/cached loader installation of the successor trusted set; version-1
+indexes remain readable.
 Content-addressed cache writes now repair an existing entry whose bytes no longer
 match its content identity, with regression coverage for tampered cache files.
 Directory and HTTP registry transports now reject parent, absolute, backslash,
