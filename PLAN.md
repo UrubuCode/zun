@@ -373,7 +373,7 @@ sequence-point PC-to-source metadata in `.zm`;
 native OXC JavaScript/TypeScript parse boundary with isolated diagnostics and a
 source-span-preserving literal/identifier/binary/logical/unary/call/member-call
 AST adapter with identifier parameters, local declarations, conditionals, while,
-for, for-of, and do-while loops, and supported statement sequences;
+for, for-of, do-while, and loop-control statements, and supported statement sequences;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
