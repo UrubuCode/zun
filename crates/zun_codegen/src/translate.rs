@@ -1844,6 +1844,7 @@ impl Translator<'_> {
                     }
                     self.builder.declare_value_needs_stack_map(array);
                     let pop_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
+                    let pop_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);
                     let pop_bool = self.method_return_kind == JitKind::Bool;
                     let pop_object = self.method_return_kind == JitKind::Object;
                     let pop = if pop_object {
@@ -1852,6 +1853,8 @@ impl Translator<'_> {
                         self.array_pop_bool_fref()
                     } else if pop_u64 {
                         self.array_pop_u64_fref()
+                    } else if pop_i32 {
+                        self.array_pop_i32_fref()
                     } else {
                         self.array_pop_f64_fref()
                     };
@@ -1861,7 +1864,7 @@ impl Translator<'_> {
                     }
                     stack.push((
                         self.builder.inst_results(inst)[0],
-                        if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else { JitKind::Num(NumKind::F64) },
+                        if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else if pop_i32 { JitKind::Num(NumKind::I32) } else { JitKind::Num(NumKind::F64) },
                     ));
                 }
                 Opcode::ArrayPush => {
@@ -1869,9 +1872,10 @@ impl Translator<'_> {
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
                     let push_object = value_kind == JitKind::Object;
                     let push_u64 = value_kind == JitKind::Num(NumKind::U64);
+                    let push_i32 = value_kind == JitKind::Num(NumKind::I32);
                     let push_bool = value_kind == JitKind::Bool;
                     if !matches!(array_kind, JitKind::Object | JitKind::Array)
-                        || (!push_object && !push_u64 && !push_bool && value_kind != JitKind::Num(NumKind::F64))
+                        || (!push_object && !push_u64 && !push_i32 && !push_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array push requires object and f64/u64 value".into());
                     }
@@ -1885,6 +1889,8 @@ impl Translator<'_> {
                         self.array_push_bool_fref()
                     } else if push_u64 {
                         self.array_push_u64_fref()
+                    } else if push_i32 {
+                        self.array_push_i32_fref()
                     } else {
                         self.array_push_f64_fref()
                     };
@@ -2574,6 +2580,15 @@ impl Translator<'_> {
         self.module.declare_func_in_func(func, self.builder.func)
     }
 
+    fn array_pop_i32_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let func = self.module.declare_function("zun_jit_array_pop_i32", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_pop_i32");
+        self.module.declare_func_in_func(func, self.builder.func)
+    }
+
     fn array_pop_bool_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
@@ -2612,6 +2627,16 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_push_u64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_push_u64");
+        self.module.declare_func_in_func(func, self.builder.func)
+    }
+
+    fn array_push_i32_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.builder.func.signature.call_conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(types::I64));
+        let func = self.module.declare_function("zun_jit_array_push_i32", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_push_i32");
         self.module.declare_func_in_func(func, self.builder.func)
     }
 

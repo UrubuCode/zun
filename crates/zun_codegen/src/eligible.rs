@@ -365,14 +365,14 @@ fn scalar_i32_array_access_only(
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::I32)
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
+            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush)
         })
         && instrs.iter().all(|instruction| {
             matches!(instruction.opcode,
                 Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::Conv
                     | Opcode::UnboxAny | Opcode::BoxAny
                     | Opcode::Pop | Opcode::LoadLocal | Opcode::StoreLocal
-                    | Opcode::NewArray | Opcode::LoadArray | Opcode::StoreArray | Opcode::Ret)
+                    | Opcode::NewArray | Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret)
         })
 }
 
@@ -660,6 +660,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                 || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
                     && JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::U64)
                     && JitKind::from_byte(body.return_kind) != JitKind::Bool
+                    && !scalar_i32_array_access_only(&instrs, &body)
                     && !scalar_bool_array_access_only(&instrs, &body)
                     && !object_array_stack_only(&instrs, &body)))
         {
