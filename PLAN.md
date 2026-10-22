@@ -428,6 +428,9 @@ an interpreter-backed executable for every entry return shape.
 The CLI also routes modules whose object emission succeeds but whose entry return
 shape is not native-launcher-compatible through that fallback, clears the native
 object manifest field, and covers string execution end to end.
+If no runtime library is provisioned, the same path now exits successfully with
+the `.zm` interpreter fallback and a manifest that does not advertise a native
+object; this is covered by the no-runtime AOT fixture.
 
 ## 8. Risks & attention points
 
