@@ -3,8 +3,10 @@
 //! The hook counts how often each method is called. While a method is cold it
 //! returns `None`, so the interpreter runs it. Once its count crosses the
 //! threshold it is compiled on demand (together with its eligible-callee
-//! closure) and every later call goes to native code. Ineligible methods
-//! (anything touching the heap) always return `None`.
+//! closure) and every later call goes to native code. Methods outside the
+//! typed Cranelift subset retain the interpreter fallback; selected managed
+//! object, array, string, and collection paths are eligible when their ABI
+//! and safepoint contract is available.
 //!
 //! Marshalling: argument [`Value`]s are packed into the shim's `u64` buffer and
 //! the packed result is unpacked by the method's return kind.
