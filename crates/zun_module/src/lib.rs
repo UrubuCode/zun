@@ -88,6 +88,18 @@ impl Module {
         }
     }
 
+    /// Resolve the source span covering a method program counter.
+    ///
+    /// Sequence points are emitted in lowering order. The last point at or
+    /// before `pc` is the active source location until the next point.
+    pub fn source_span_at(&self, method_rid: u32, pc: u32) -> Option<(u32, u32)> {
+        self.sequence_points
+            .iter()
+            .filter(|point| point.method_rid == method_rid && point.pc <= pc)
+            .max_by_key(|point| point.pc)
+            .map(|point| (point.source_start, point.source_end))
+    }
+
     /// Serialize to `.zm` bytes.
     pub fn write(&self) -> Vec<u8> {
         let tables_bytes = serial::write_tables(&self.tables);

@@ -69,6 +69,9 @@ fn sequence_points_roundtrip_through_zm() {
     });
     let decoded = Module::read(&module.write()).expect("module with debug info");
     assert_eq!(decoded.sequence_points, module.sequence_points);
+    assert_eq!(decoded.source_span_at(3, 12), Some((40, 47)));
+    assert_eq!(decoded.source_span_at(3, 99), Some((40, 47)));
+    assert_eq!(decoded.source_span_at(2, 12), None);
 }
 
 #[test]
