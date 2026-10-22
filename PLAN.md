@@ -86,11 +86,11 @@ flattened manifest the loader follows (cache → hook → parent → error). Dyn
 `import()` returns `Promise<namespace>`; literal specifiers code-split at build,
 computed specifiers resolved at runtime; the cache gives single instantiation.
 
-**Front-end (future).** Native TS/JS adopts **OXC** (`oxc_parser`) feeding the
-existing sema/HIR/ilgen (benchmarked lighter than SWC: 105 vs 122 crates). Keep the
-hand-written `zun_syntax` and `.zun` during transition; write an `oxc_ast → HIR`
-adapter; express Zun extensions as valid TS (`declare` + decorator), never invented
-keywords.
+**Front-end.** Native TS/JS uses **OXC** (`oxc_parser`) at the parse boundary and
+feeds the existing sema/HIR/ilgen (benchmarked lighter than SWC: 105 vs 122 crates).
+The hand-written `zun_syntax` and `.zun` remain supported during transition; the
+`oxc_ast → HIR` adapter is intentionally conservative, and Zun extensions stay
+valid TS (`declare` + decorator), never invented keywords.
 
 **Backend.** **Cranelift for JIT *and* AOT** (one IR → x64/aarch64/riscv/s390x +
 `cranelift-object` for native binaries, GC stack maps, fast compile) — rts uses
@@ -519,5 +519,5 @@ object; this is covered by the no-runtime AOT fixture.
   analysis — those belong in Zun's IL/MIR before lowering.
 - Dynamic-`Any` performance is intentionally *not* a goal (costly opt-in); do not
   JIT-lower the `Any` carrier at the cost of complexity.
-- The two heavy external dependencies are **Cranelift** (now) and **OXC** (future),
-  both at swappable pipeline edges, both permissively licensed; the nucleus is Zun's.
+- The two heavy external dependencies are **Cranelift** and **OXC**, both at
+  swappable pipeline edges and both permissively licensed; the nucleus is Zun's.
