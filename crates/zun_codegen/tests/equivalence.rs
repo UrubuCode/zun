@@ -5034,6 +5034,24 @@ fn managed_set_values_and_entries_use_managed_arrays() {
 }
 
 #[test]
+fn managed_collection_constructors_use_the_jit_object_abi() {
+    let src = "import { mapNew, setNew } from \"zun:collections\"; function makeMap(): Map { return mapNew(); } function makeSet(): Set { return setNew(); } function main(): boolean { return true; }";
+    let module = compile(src);
+    let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "makeMap").map(|index| index as u32 + 1).expect("map constructor method");
+    let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "makeSet").map(|index| index as u32 + 1).expect("set constructor method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles collection constructors");
+    assert!(jit.is_compiled(map_rid));
+    assert!(jit.is_compiled(set_rid));
+    let mut heap = zun_gc::Heap::new();
+    let map_addr = jit.call_packed_with_heap(map_rid, &[], &mut heap).unwrap();
+    let set_addr = jit.call_packed_with_heap(set_rid, &[], &mut heap).unwrap();
+    let map = unsafe { zun_gc::Obj::from_addr(map_addr as *mut u64) };
+    let set = unsafe { zun_gc::Obj::from_addr(set_addr as *mut u64) };
+    assert_eq!(heap.map_len(map), Some(0));
+    assert_eq!(heap.set_len(set), Some(0));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\

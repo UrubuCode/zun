@@ -95,8 +95,10 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
         zun_natives::by_id(id as u32).map(|f| f.name),
         Some(
             "mapSize"
+                | "mapNew"
                 | "mapHasF64"
                 | "setSize"
+                | "setNew"
                 | "setHasF64"
                 | "setAddF64"
                 | "mapDeleteF64"
