@@ -692,6 +692,8 @@ The following runtime contracts are implemented and covered by tests:
   can publish the coordinator's `(PC, SP)` pair, with packed calls also
   supporting a host that already installed the current heap scope.
 - Promise/microtask scheduling and scalar external-library symbol calls;
+- stable host C ABI execution now includes a raw `u64` result function in
+  addition to the signed integer, float, boolean, and string helpers;
 - managed BigInt construction, add/subtract/multiply/compare, typed arithmetic
   and comparison operators, and `toString`, with GC-owned payloads and an
   explicit Tier 0 boundary;
