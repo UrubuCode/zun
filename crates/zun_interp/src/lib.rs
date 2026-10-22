@@ -1981,6 +1981,7 @@ mod method_tests {
             name: module.strings.intern("add_one"),
             signature: zun_metadata::BlobIndex(0),
             body_offset: add_offset,
+            is_static: false,
         });
         let main_body = [
             Instruction::new(
@@ -2011,6 +2012,7 @@ mod method_tests {
             name: module.strings.intern("main"),
             signature: zun_metadata::BlobIndex(0),
             body_offset: main_offset,
+            is_static: false,
         });
         module.entry_point = Some(Token::new(TableKind::MethodDef, 2));
         let mut output = CaptureOutput::default();
@@ -2073,6 +2075,7 @@ mod method_tests {
             name: module.strings.intern("capturedAddOne"),
             signature: zun_metadata::BlobIndex(0),
             body_offset: target_offset,
+            is_static: false,
         });
         let mut main_body = vec![
             Instruction::new(Opcode::ConstF64, Operand::Float64(41.0)),
@@ -2114,6 +2117,7 @@ mod method_tests {
             name: module.strings.intern("main"),
             signature: zun_metadata::BlobIndex(0),
             body_offset: main_offset,
+            is_static: false,
         });
         module.entry_point = Some(Token::new(TableKind::MethodDef, 2));
         let mut output = CaptureOutput::default();
@@ -2677,6 +2681,7 @@ mod method_tests {
             name: module.strings.intern("main"),
             signature: zun_metadata::BlobIndex(0),
             body_offset: offset,
+            is_static: false,
         });
         module.entry_point = Some(Token::new(TableKind::MethodDef, 1));
 
@@ -2740,6 +2745,7 @@ mod method_tests {
             name: module.strings.intern("main"),
             signature: zun_metadata::BlobIndex(0),
             body_offset: offset,
+            is_static: false,
         });
         module.entry_point = Some(Token::new(TableKind::MethodDef, 1));
         let mut output = CaptureOutput::default();

@@ -102,6 +102,7 @@ pub fn lower(program: &hir::Program) -> Module {
             name,
             signature: BlobIndex(0), // signatures land with the verifier
             body_offset: u32::MAX,
+            is_static: f.is_static,
         });
     }
     for closure in &program.closures {
@@ -110,6 +111,7 @@ pub fn lower(program: &hir::Program) -> Module {
             name,
             signature: BlobIndex(0),
             body_offset: u32::MAX,
+            is_static: false,
         });
     }
 

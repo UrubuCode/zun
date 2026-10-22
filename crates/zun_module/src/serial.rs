@@ -31,7 +31,7 @@ pub fn write_tables(tables: &Tables) -> Vec<u8> {
         w.extend([r.name.0, r.signature.0, r.kind as u32]);
     });
     write_table(&mut out, &tables.method_defs, |w, r| {
-        w.extend([r.name.0, r.signature.0, r.body_offset]);
+        w.extend([r.name.0, r.signature.0, r.body_offset, u32::from(r.is_static)]);
     });
     write_table(&mut out, &tables.type_refs, |w, r| {
         w.extend([r.scope.to_raw(), r.name.0, r.namespace.0]);
@@ -74,6 +74,7 @@ pub fn read_tables(bytes: &[u8]) -> Result<Tables, ReadError> {
             name: StringIndex(r.u32()?),
             signature: BlobIndex(r.u32()?),
             body_offset: r.u32()?,
+            is_static: r.u32()? != 0,
         })
     })?;
     tables.type_refs = r.read_table(|r| {

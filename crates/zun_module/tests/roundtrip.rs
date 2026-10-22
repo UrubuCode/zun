@@ -28,6 +28,7 @@ fn sample_module() -> Module {
         name: method_name,
         signature: method_sig,
         body_offset: 0,
+        is_static: false,
     });
 
     m.tables.add_type_def(TypeDef {

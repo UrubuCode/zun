@@ -642,6 +642,7 @@ mod tests {
             name: main,
             signature: zun_metadata::BlobIndex(0),
             body_offset: u32::MAX,
+            is_static: false,
         });
         let scope = ModuleScope::from_bytes("demo", &module.write()).expect("load");
         assert!(matches!(scope.export("Point"), Some(Export::Type(_))));
@@ -667,6 +668,7 @@ mod tests {
             name,
             signature: zun_metadata::BlobIndex(0),
             body_offset: u32::MAX,
+            is_static: false,
         });
         let mut loader = ModuleLoader::new();
         loader
@@ -687,6 +689,7 @@ mod tests {
                 name,
                 signature: zun_metadata::BlobIndex(0),
                 body_offset: u32::MAX,
+                is_static: false,
             });
         }
         assert!(matches!(
@@ -703,6 +706,7 @@ mod tests {
             name: export_name,
             signature: zun_metadata::BlobIndex(0),
             body_offset: u32::MAX,
+            is_static: false,
         });
 
         let mut requester = Module::new();

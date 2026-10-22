@@ -54,6 +54,8 @@ pub struct MethodDef {
     /// Byte offset of the method body in the module's code section, or
     /// `u32::MAX` for an abstract/external method with no body.
     pub body_offset: u32,
+    /// Whether the method is a class-static member (zero for legacy methods).
+    pub is_static: bool,
 }
 
 /// A reference to a type defined in another module.
@@ -180,11 +182,13 @@ mod tests {
             name: StringIndex(1),
             signature: BlobIndex(0),
             body_offset: 0,
+            is_static: false,
         });
         let m1 = t.add_method_def(MethodDef {
             name: StringIndex(2),
             signature: BlobIndex(0),
             body_offset: 10,
+            is_static: false,
         });
         assert_eq!(m0.rid(), 1);
         assert_eq!(m1.rid(), 2);

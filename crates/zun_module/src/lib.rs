@@ -36,7 +36,7 @@ use zun_metadata::{BlobHeap, StringHeap, Tables, Token};
 /// File magic, `b"ZUNM"`.
 pub const MAGIC: [u8; 4] = *b"ZUNM";
 /// Current format major version. Bump only on breaking layout changes.
-pub const FORMAT_MAJOR: u16 = 0;
+pub const FORMAT_MAJOR: u16 = 1;
 /// Current format minor version. Bump on backward-compatible additions.
 pub const FORMAT_MINOR: u16 = 1;
 
