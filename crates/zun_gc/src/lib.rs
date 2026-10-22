@@ -1237,6 +1237,56 @@ mod tests {
     }
 
     #[test]
+    fn weak_map_stress_cycles_survive_evacuating_minor_collection() {
+        let mut heap = Heap::new();
+        let weak_map = heap.alloc_weak_map();
+        unsafe { heap.collect(&[weak_map], &|_| Vec::new()) };
+        let weak_map_id = heap
+            .weak_map_objects
+            .get(&(weak_map.addr() as usize))
+            .copied()
+            .unwrap();
+
+        let mut roots = vec![weak_map];
+        let mut live_key_indices = Vec::new();
+        let mut key_values = Vec::new();
+        let ref_slots = |type_rid: u32| {
+            if type_rid == 0 {
+                Vec::new()
+            } else {
+                vec![0usize]
+            }
+        };
+
+        for index in 0..32u32 {
+            let key = heap.alloc(index + 1, 1);
+            let value = heap.alloc(index + 100, 1);
+            key.set_field(0, value.addr() as u64);
+            value.set_field(0, key.addr() as u64);
+            assert!(heap.weak_map_set(weak_map_id, key, value));
+            if index % 2 == 0 {
+                live_key_indices.push(index as usize);
+                roots.push(key);
+            }
+            key_values.push((key, value));
+        }
+
+        unsafe {
+            heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {});
+        }
+
+        let entries = heap.weak_map_entries(weak_map_id);
+        assert_eq!(entries.len(), live_key_indices.len());
+        for index in live_key_indices {
+            let key = roots[1 + index / 2];
+            assert!(entries.iter().any(|(candidate, _)| *candidate == key));
+        }
+        assert!(key_values.iter().enumerate().any(|(index, (key, _))| {
+            index % 2 == 1 && !heap.by_addr.contains_key(&(key.addr() as usize))
+        }));
+    }
+
+    #[test]
     fn finalization_queues_token_after_target_is_swept() {
         let mut heap = Heap::new();
         let target = heap.alloc(1, 0);
