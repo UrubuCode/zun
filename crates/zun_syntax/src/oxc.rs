@@ -8,6 +8,7 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, ChainElement,
+    Declaration,
     Expression,
     ClassElement, ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
     MethodDefinitionKind, ModuleExportName, PropertyKey, Statement,
@@ -567,7 +568,15 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             });
             continue;
         }
-        if let Statement::ClassDeclaration(class_declaration) = statement {
+        let class_declaration = match &statement {
+            Statement::ClassDeclaration(class_declaration) => Some(class_declaration),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::ClassDeclaration(class_declaration) => Some(class_declaration),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(class_declaration) = class_declaration {
             let Some(id) = class_declaration.id.as_ref() else {
                 return Err(vec!["OXC adapter requires named classes".into()]);
             };
@@ -741,7 +750,15 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             });
             continue;
         }
-        let Statement::FunctionDeclaration(function) = statement else {
+        let function = match &statement {
+            Statement::FunctionDeclaration(function) => Some(function),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::FunctionDeclaration(function) => Some(function),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(function) = function else {
             return Err(vec!["OXC adapter does not support this top-level declaration yet".into()]);
         };
         let Some(id) = function.id.as_ref() else {
@@ -1542,5 +1559,16 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn converts_exported_declarations() {
+        let program = parse_subset(
+            "export function main(): int { return 7; } export class Box { value: number; }",
+            true,
+        )
+        .unwrap();
+        assert_eq!(program.functions.len(), 1);
+        assert_eq!(program.classes.len(), 1);
     }
 }
