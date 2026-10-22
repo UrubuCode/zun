@@ -163,6 +163,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
             span: span(identifier.span),
         })),
+        Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
+            span: span(this_expression.span),
+        })),
         Expression::StaticMemberExpression(member) => {
             let object = Box::new(convert_expression(&member.object)?);
             let field = Name {
@@ -1280,6 +1283,22 @@ mod tests {
         assert!(matches!(
             generator.functions[0].body.statements[0],
             crate::ast::Stmt::Expr(crate::ast::Expr::Yield { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_this_member_access() {
+        let program = parse_subset(
+            "class Box { value: number; read() { return this.value; } } function main() {}",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.classes[0].methods[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Field { .. }),
+                ..
+            }
         ));
     }
 }
