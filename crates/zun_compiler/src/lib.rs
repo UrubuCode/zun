@@ -173,9 +173,19 @@ pub fn compile_with_cached_prelude(
     source: &str,
     prelude: &Module,
 ) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
+    let prelude_scope = zun_loader::ModuleScope::from_bytes("zun:prelude", &prelude.write())
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
     let mut externals = collect_function_signatures(zun_prelude::PRELUDE);
     for function in &mut externals {
         function.module = "zun:prelude".to_owned();
+    }
+    for function in &externals {
+        if prelude_scope.export(&function.name).is_none() {
+            return Err(vec![Diagnostic::error(format!(
+                "cached prelude is missing export `{}`",
+                function.name
+            ))]);
+        }
     }
     let imports = externals
         .iter()
@@ -185,8 +195,6 @@ pub fn compile_with_cached_prelude(
     let linked_source = format!("{source}\nimport {{ {imports} }} from \"zun:prelude\";\n");
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();
-    let prelude_scope = zun_loader::ModuleScope::from_bytes("zun:prelude", &prelude.write())
-        .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
     let app_scope = zun_loader::ModuleScope::from_bytes("app", &module.write())
         .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
     loader
@@ -574,6 +582,18 @@ mod tests {
         let app = loader.get("app").expect("app scope");
         assert_eq!(app.module().tables.member_refs.len(), 1);
         assert!(loader.get("zun:prelude").is_some());
+    }
+
+    #[test]
+    fn rejects_a_cached_prelude_with_missing_exports() {
+        let error = compile_with_cached_prelude(
+            "function main(): int { return abs(-7); }",
+            &Module::new(),
+        )
+        .expect_err("an incomplete prelude must not link");
+        assert!(error.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("missing export `abs`")));
     }
 
     #[test]
