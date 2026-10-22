@@ -25,4 +25,48 @@ impl core::fmt::Display for RunError {
     }
 }
 
+impl RunError {
+    /// Render an error with the source frame associated with the failing
+    /// method and program counter. This keeps the existing error variants
+    /// stable while allowing hosts to consume `.zm` sequence-point metadata.
+    pub fn with_source_frame(&self, module: &zun_module::Module, method_rid: u32, pc: u32) -> String {
+        let Some(frame) = module.debug_frame_at(method_rid, pc) else {
+            return self.to_string();
+        };
+        match frame.source_span {
+            Some((start, end)) => format!("{} at {} [{}..{}]", self, frame.method_name, start, end),
+            None => format!("{} at {}", self, frame.method_name),
+        }
+    }
+}
+
 impl std::error::Error for RunError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zun_metadata::MethodDef;
+
+    #[test]
+    fn source_frame_formatting_consumes_sequence_points() {
+        let mut module = zun_module::Module::new();
+        let name = module.strings.intern("main");
+        module.tables.add_method_def(MethodDef {
+            name,
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: u32::MAX,
+            is_static: true,
+        });
+        module.sequence_points.push(zun_module::SequencePoint {
+            method_rid: 1,
+            pc: 4,
+            source_start: 12,
+            source_end: 20,
+        });
+        let error = RunError::BadToken;
+        assert_eq!(
+            error.with_source_frame(&module, 1, 5),
+            "call did not resolve to a method at main [12..20]"
+        );
+    }
+}
