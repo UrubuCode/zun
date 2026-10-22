@@ -324,7 +324,8 @@ and capability declarations; deterministic registry index metadata with verified
 loader integration;
 sequence-point PC-to-source metadata in `.zm`;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
-methods; checked typed invocation for registered native extension descriptors.
+methods; checked typed invocation for registered native extension descriptors;
+VM extension loading now exposes that checked invocation boundary.
 Remaining gates:
 fully default-installed `zun:std` without implicit source concatenation, typed
 VM bindings for native extensions, Error-stack consumption of sequence
