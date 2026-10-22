@@ -727,9 +727,10 @@ mod tests {
 
     #[test]
     fn preserve_roots_keep_dynamic_methods_during_trimming() {
-        let module = compile(
+        let module = compile_without_prelude(
             "function dynamic(): int { return 9; }\n\
              function main(): int { return 7; }",
+            &[],
         )
         .expect("compile");
         let report = trim_report_with_roots(&module, &[1]).expect("rooted trim report");
