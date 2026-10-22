@@ -360,6 +360,9 @@ P/Invoke):
   dispatches zero-to-three-argument C thunks. The `u32` path is exercised
   against Windows `GetTickCount`; other narrow widths and generated aggregate
   stubs remain separate follow-up work.
+  In particular, `i8/i16/u8/u16` are not exposed as direct C thunks yet:
+  their parameter ABI must account for C integer promotion rather than
+  assuming that a narrow Rust function parameter is the native contract.
 
 Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
 } from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
