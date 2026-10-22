@@ -198,12 +198,13 @@ contrato observável no código e um teste que o exercite.
 - **Entregue parcialmente:** resolução de exports e `MemberRef` entre escopos
   carregados. Imports de módulos de usuário são validados no build, mas ainda
   não são baixados para uma chamada executável no VM.
-- **Ainda aberto:** integração de generators como iteradores gerenciados com
-  `next()` na superfície da linguagem, ABI/FFI tipado integrado à IL, bindings
-  Node N-API de produção, AOT/R2R completo para métodos fora do subconjunto
-  escalar, substituição de frames por OSR e trimming completo de
-  metadata/diagnósticos. A declaração `function*`, o lowering de `yield` e a
-  retomada persistente no Tier 0 já estão implementados e testados.
+- **Ainda aberto:** otimização Cranelift de generators/async e closures,
+  ABI/FFI tipado integrado à IL, bindings Node N-API de produção, AOT/R2R
+  completo para métodos fora do subconjunto escalar, substituição de frames
+  por OSR e trimming completo de metadata/diagnósticos. A declaração
+  `function*`, o lowering de `yield`, a retomada persistente no Tier 0 e a
+  integração dos generators com `next()`/`for...of` já estão implementados e
+  testados; somente o suporte Tier 1 permanece pendente.
 
 ## 4.1 Modos de distribuição (decisão: suportar os três)
 
