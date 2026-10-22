@@ -424,6 +424,61 @@ impl NativeLibrary {
         &self.path
     }
 
+    /// Call a declared borrowed UTF-8 function with `(ptr, len, out_len)` and
+    /// copy its result before the native pointer can escape the call.
+    pub unsafe fn call_utf8_borrowed(
+        &self,
+        name: &[u8],
+        argument: &FfiStringArgument,
+        declaration: &FfiStringReturn,
+    ) -> Result<Vec<u8>, FfiError> {
+        if !matches!(declaration, FfiStringReturn::Borrowed { .. }) {
+            return Err(FfiError { message: "borrowed UTF-8 call requires a borrowed return declaration".into() });
+        }
+        declaration.validate().map_err(|message| FfiError { message })?;
+        let symbol = unsafe {
+            self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *const u8>(name)
+        }?;
+        let mut length = 0usize;
+        let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
+        if pointer.is_null() && length != 0 {
+            return Err(FfiError { message: "borrowed UTF-8 call returned a null pointer with non-zero length".into() });
+        }
+        let payload = if length == 0 {
+            &[][..]
+        } else {
+            unsafe { core::slice::from_raw_parts(pointer, length) }
+        };
+        declaration
+            .copy_payload(payload, Some(length))
+            .map_err(|message| FfiError { message })
+    }
+
+    /// Call a declared out-buffer UTF-8 function. The caller-owned buffer is
+    /// copied into a managed `Vec` and the native side never owns it.
+    pub unsafe fn call_utf8_out_buffer(
+        &self,
+        name: &[u8],
+        argument: &FfiStringArgument,
+        declaration: &FfiStringReturn,
+    ) -> Result<Vec<u8>, FfiError> {
+        let capacity = match declaration {
+            FfiStringReturn::OutBuffer { capacity } => *capacity,
+            _ => return Err(FfiError { message: "out-buffer UTF-8 call requires an out-buffer declaration".into() }),
+        };
+        declaration.validate().map_err(|message| FfiError { message })?;
+        let symbol = unsafe {
+            self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> usize>(name)
+        }?;
+        let mut buffer = vec![0u8; capacity];
+        let length = unsafe {
+            symbol(argument.as_ptr(), argument.len_bytes(), buffer.as_mut_ptr(), capacity)
+        };
+        declaration
+            .copy_payload(&buffer, Some(length))
+            .map_err(|message| FfiError { message })
+    }
+
     /// Call a C symbol with no arguments and an `i64` result.
     ///
     /// # Safety
@@ -838,6 +893,27 @@ mod tests {
         let error = unsafe { library.call_i64_signature(b"zun_missing_symbol", &signature, &[1]) }
             .expect_err("incompatible signature must be rejected");
         assert!(error.to_string().contains("unsupported i64 FFI signature"));
+    }
+
+    #[test]
+    fn string_call_shapes_reject_mismatched_declarations_before_lookup() {
+        let path = std::env::current_exe().expect("test executable path");
+        let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
+        let argument = FfiStringArgument::from_utf8("input", false).unwrap();
+        let out_buffer = FfiStringReturn::OutBuffer { capacity: 16 };
+        let error = unsafe {
+            library.call_utf8_borrowed(b"zun_missing_symbol", &argument, &out_buffer)
+        }
+        .expect_err("borrowed call must reject an out-buffer declaration");
+        assert!(error.to_string().contains("borrowed UTF-8 call"));
+        let borrowed = FfiStringReturn::Borrowed {
+            length: FfiStringLength::OutParameter("len".into()),
+        };
+        let error = unsafe {
+            library.call_utf8_out_buffer(b"zun_missing_symbol", &argument, &borrowed)
+        }
+        .expect_err("out-buffer call must reject a borrowed declaration");
+        assert!(error.to_string().contains("out-buffer UTF-8 call"));
     }
 
     #[test]
