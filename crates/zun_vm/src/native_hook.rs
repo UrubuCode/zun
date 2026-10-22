@@ -5,7 +5,7 @@ use zun_il::NumKind;
 use zun_interp::value::Value;
 use zun_interp::{CallHook, RunError};
 
-use crate::{FfiScalar, FfiSignature, NativeLibraryResolver};
+use crate::{FfiScalar, FfiSignature, FfiStringArgument, NativeLibraryResolver};
 
 /// Host call hook for the supported blittable native ABI.
 ///
@@ -132,6 +132,33 @@ impl NativeCallHook {
             };
             return Ok(Value::Bool(result));
         }
+        if signature.params() == [FfiScalar::String]
+            && signature.result() == FfiScalar::String
+        {
+            let declaration = signature.string_return().ok_or_else(|| {
+                RunError::Native("string native calls require an explicit return declaration".into())
+            })?;
+            let [Value::Str(value)] = args else {
+                return Err(RunError::Native("native string argument type mismatch".into()));
+            };
+            let argument = FfiStringArgument::from_utf8(value, false)
+                .map_err(RunError::Native)?;
+            let bytes = match declaration {
+                crate::FfiStringReturn::Borrowed { .. } => unsafe {
+                    library.call_utf8_borrowed(export.as_bytes(), &argument, declaration)
+                },
+                crate::FfiStringReturn::Owned { .. } => unsafe {
+                    library.call_utf8_owned(export.as_bytes(), &argument, declaration)
+                },
+                crate::FfiStringReturn::OutBuffer { .. } => unsafe {
+                    library.call_utf8_out_buffer(export.as_bytes(), &argument, declaration)
+                },
+            }
+            .map_err(|error| RunError::Native(error.to_string()))?;
+            let string = String::from_utf8(bytes)
+                .map_err(|error| RunError::Native(error.to_string()))?;
+            return Ok(Value::Str(std::rc::Rc::from(string)));
+        }
         Err(RunError::Native("unsupported native call signature".into()))
     }
 }
@@ -179,6 +206,7 @@ impl CallHook for NativeCallHook {
                     1 => Some(FfiScalar::I64),
                     2 => Some(FfiScalar::F64),
                     3 => Some(FfiScalar::Bool),
+                    4 => Some(FfiScalar::String),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>();

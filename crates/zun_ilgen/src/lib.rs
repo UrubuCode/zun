@@ -76,6 +76,7 @@ fn ffi_type_tag(ty: Ty) -> u8 {
         Ty::Int(IntKind { bits: 64, .. }) => 1,
         Ty::Float(FloatKind::F64) => 2,
         Ty::Boolean => 3,
+        Ty::String => 4,
         _ => 0,
     }
 }

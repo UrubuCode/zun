@@ -17,6 +17,8 @@ pub enum FfiScalar {
     I64,
     F64,
     Bool,
+    /// A string uses the explicit [`FfiStringReturn`] marshalling contract.
+    String,
 }
 
 /// How a borrowed native string reports its valid byte length.
@@ -193,6 +195,7 @@ impl FfiStringArgument {
 pub struct FfiSignature {
     params: Vec<FfiScalar>,
     result: FfiScalar,
+    string_return: Option<FfiStringReturn>,
 }
 
 impl FfiSignature {
@@ -200,7 +203,18 @@ impl FfiSignature {
         Self {
             params: params.into(),
             result,
+            string_return: None,
         }
+    }
+
+    /// Attach the explicit ownership/length declaration for a string result.
+    pub fn with_string_return(mut self, declaration: FfiStringReturn) -> Self {
+        self.string_return = Some(declaration);
+        self
+    }
+
+    pub fn string_return(&self) -> Option<&FfiStringReturn> {
+        self.string_return.as_ref()
     }
 
     pub fn params(&self) -> &[FfiScalar] {
@@ -221,6 +235,11 @@ impl FfiSignature {
     pub fn validate(&self) -> Result<(), String> {
         if self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
             Ok(())
+        } else if self.matches_string_call() {
+            self.string_return
+                .as_ref()
+                .ok_or_else(|| String::from("string FFI signatures require an explicit return declaration"))?
+                .validate()
         } else {
             Err(format!(
                 "unsupported direct FFI signature: {} parameter(s) returning {:?}",
@@ -246,6 +265,12 @@ impl FfiSignature {
         self.result == FfiScalar::Bool
             && self.params.iter().all(|param| *param == FfiScalar::Bool)
             && self.arity() <= 3
+    }
+
+    fn matches_string_call(&self) -> bool {
+        self.result == FfiScalar::String
+            && self.params.len() == 1
+            && self.params[0] == FfiScalar::String
     }
 }
 
@@ -950,6 +975,15 @@ mod tests {
                 .validate()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn string_signature_requires_an_explicit_return_contract() {
+        let signature = FfiSignature::new([FfiScalar::String], FfiScalar::String);
+        assert!(signature.validate().is_err());
+
+        let signature = signature.with_string_return(FfiStringReturn::OutBuffer { capacity: 32 });
+        assert!(signature.validate().is_ok());
     }
 
     #[test]
