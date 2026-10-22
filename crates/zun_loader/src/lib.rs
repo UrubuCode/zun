@@ -611,24 +611,33 @@ impl SignedModuleIndex {
         Ok(signed)
     }
 
-    fn signed_payload(&self) -> Vec<u8> {
-        let index_payload = self.index.write();
-        if self.key_additions.is_empty() && self.key_revocations.is_empty() {
+    /// Return the canonical bytes an index publisher must sign.
+    pub fn signing_bytes(
+        index: &ModuleIndex,
+        key_additions: &[[u8; 32]],
+        key_revocations: &[[u8; 32]],
+    ) -> Vec<u8> {
+        let index_payload = index.write();
+        if key_additions.is_empty() && key_revocations.is_empty() {
             return index_payload;
         }
         let mut payload = Vec::with_capacity(4 + index_payload.len() + 12);
         payload.extend_from_slice(&(index_payload.len() as u32).to_le_bytes());
         payload.extend_from_slice(&index_payload);
         payload.extend_from_slice(b"ZROT");
-        payload.extend_from_slice(&(self.key_additions.len() as u32).to_le_bytes());
-        for key in &self.key_additions {
+        payload.extend_from_slice(&(key_additions.len() as u32).to_le_bytes());
+        for key in key_additions {
             payload.extend_from_slice(key);
         }
-        payload.extend_from_slice(&(self.key_revocations.len() as u32).to_le_bytes());
-        for key in &self.key_revocations {
+        payload.extend_from_slice(&(key_revocations.len() as u32).to_le_bytes());
+        for key in key_revocations {
             payload.extend_from_slice(key);
         }
         payload
+    }
+
+    fn signed_payload(&self) -> Vec<u8> {
+        Self::signing_bytes(&self.index, &self.key_additions, &self.key_revocations)
     }
 
     fn verify_signature(&self) -> Result<(), LoadError> {
@@ -2563,19 +2572,20 @@ mod tests {
         index.push("app", content_id(b"app")).unwrap();
         let signing = SigningKey::from_bytes(&[72u8; 32]);
         let next = [73u8; 32];
-        let unsigned = SignedModuleIndex {
-            index,
-            public_key: signing.verifying_key().to_bytes(),
-            signature: [0u8; 64],
-            key_additions: vec![next],
-            key_revocations: vec![signing.verifying_key().to_bytes()],
-        };
+        let key_additions = vec![next];
+        let key_revocations = vec![signing.verifying_key().to_bytes()];
         let signed = SignedModuleIndex::new_with_rotation(
-            unsigned.index.clone(),
-            unsigned.public_key,
-            unsigned.key_additions.clone(),
-            unsigned.key_revocations.clone(),
-            signing.sign(&unsigned.signed_payload()).to_bytes(),
+            index.clone(),
+            signing.verifying_key().to_bytes(),
+            key_additions.clone(),
+            key_revocations.clone(),
+            signing
+                .sign(&SignedModuleIndex::signing_bytes(
+                    &index,
+                    &key_additions,
+                    &key_revocations,
+                ))
+                .to_bytes(),
         )
         .unwrap();
         let roundtrip = SignedModuleIndex::read(&signed.write()).unwrap();
