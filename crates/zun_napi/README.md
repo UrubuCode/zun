@@ -5,6 +5,7 @@ dependency. The optional `node-api` feature builds a Node addon entry point
 that exports:
 
 - `runI64(arrayBuffer)`
+- `runU64(arrayBuffer)` (returns a JavaScript `BigInt`)
 - `runF64(arrayBuffer)`
 - `runBool(arrayBuffer)`
 - `runString(arrayBuffer)`
