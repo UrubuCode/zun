@@ -714,6 +714,14 @@ mod tests {
     }
 
     #[test]
+    fn compiles_a_typed_native_oxc_entry_point() {
+        let module = compile_with_oxc("function main(): int { return 7; }", true)
+            .expect("typed OXC-adapted source should compile");
+        assert!(module.entry_point.is_some());
+        assert!(!module.code.is_empty());
+    }
+
+    #[test]
     fn compiles_an_independent_module_without_the_implicit_prelude() {
         let module = compile_without_prelude("function main(): int { return 42; }", &[])
             .expect("standalone module should compile");
