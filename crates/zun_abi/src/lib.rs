@@ -62,6 +62,23 @@ pub struct ZunFunction {
     pub invoke: Option<ZunInvoke>,
 }
 
+impl ZunFunction {
+    /// Validate the descriptor before the host stores or invokes it.
+    ///
+    /// # Safety
+    /// `self.params` must point to at least `param_count` entries when
+    /// `param_count` is non-zero.
+    pub unsafe fn validate(&self) -> Result<(), i32> {
+        if self.key.is_null() || self.invoke.is_none() {
+            return Err(-2);
+        }
+        if self.param_count != 0 && self.params.is_null() {
+            return Err(-3);
+        }
+        Ok(())
+    }
+}
+
 /// Host callback used by an extension to publish one function.
 pub type ZunRegisterFunction = unsafe extern "C" fn(
     context: *mut c_void,
@@ -79,6 +96,15 @@ pub struct ZunRegistry {
 }
 
 impl ZunRegistry {
+    /// Validate the host contract before accepting registrations.
+    pub fn validate(&self) -> Result<(), i32> {
+        if self.abi_version != ZUN_ABI_V1 || self.register_function.is_none() {
+            Err(-1)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Publish a descriptor through the host callback.
     ///
     /// # Safety
@@ -89,6 +115,11 @@ impl ZunRegistry {
         module: *const c_char,
         function: *const ZunFunction,
     ) -> Result<(), i32> {
+        self.validate()?;
+        if function.is_null() {
+            return Err(-4);
+        }
+        unsafe { (*function).validate()? };
         let callback = self.register_function.ok_or(-1)?;
         let status = unsafe { callback(self.context, module, function) };
         if status == 0 { Ok(()) } else { Err(status) }
@@ -114,8 +145,23 @@ mod tests {
     #[test]
     fn registration_reports_host_callback_errors() {
         unsafe extern "C" fn reject(_: *mut c_void, _: *const c_char, _: *const ZunFunction) -> i32 { 17 }
+        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 { 0 }
+        static KEY: &[u8] = b"test\0";
+        let function = ZunFunction {
+            key: KEY.as_ptr() as *const c_char,
+            params: core::ptr::null(),
+            param_count: 0,
+            ret: ZunTy::Void.into(),
+            invoke: Some(invoke),
+        };
         let mut registry = ZunRegistry { abi_version: ZUN_ABI_V1, context: core::ptr::null_mut(), register_function: Some(reject) };
-        let result = unsafe { registry.register_function(core::ptr::null(), core::ptr::null()) };
+        let result = unsafe { registry.register_function(core::ptr::null(), &function) };
         assert_eq!(result, Err(17));
+    }
+
+    #[test]
+    fn registry_rejects_wrong_abi_version() {
+        let registry = ZunRegistry { abi_version: 99, context: core::ptr::null_mut(), register_function: None };
+        assert_eq!(registry.validate(), Err(-1));
     }
 }
