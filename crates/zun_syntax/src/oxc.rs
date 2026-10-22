@@ -186,7 +186,29 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         let function_span = span(function.span);
         let mut statements = Vec::with_capacity(body.statements.len());
         for statement in &body.statements {
-            let converted = match statement {
+            match statement {
+                Statement::VariableDeclaration(declaration) => {
+                    for declarator in &declaration.declarations {
+                        let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                            return Err(vec![
+                                "OXC adapter currently supports identifier local bindings".into(),
+                            ]);
+                        };
+                        let Some(initializer) = declarator.init.as_ref() else {
+                            return Err(vec![
+                                "OXC adapter requires an initializer for local bindings".into(),
+                            ]);
+                        };
+                        statements.push(Stmt::Let {
+                            name: Name {
+                                span: span(identifier.span),
+                            },
+                            ty: None,
+                            init: convert_expression(initializer).map_err(|error| vec![error])?,
+                            span: span(declarator.span),
+                        });
+                    }
+                }
                 Statement::ReturnStatement(return_statement) => {
                     let value = return_statement
                         .argument
@@ -194,22 +216,23 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         .map(convert_expression)
                         .transpose()
                         .map_err(|error| vec![error])?;
-                    Stmt::Return {
+                    statements.push(Stmt::Return {
                         value,
                         span: span(return_statement.span),
-                    }
+                    });
                 }
-                Statement::ExpressionStatement(expression_statement) => Stmt::Expr(
-                    convert_expression(&expression_statement.expression)
-                        .map_err(|error| vec![error])?,
-                ),
+                Statement::ExpressionStatement(expression_statement) => {
+                    statements.push(Stmt::Expr(
+                        convert_expression(&expression_statement.expression)
+                            .map_err(|error| vec![error])?,
+                    ));
+                }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports return and expression statements".into(),
+                        "OXC adapter currently supports local declarations, return, and expression statements".into(),
                     ])
                 }
-            };
-            statements.push(converted);
+            }
         }
         let mut params = Vec::with_capacity(function.params.items.len());
         for parameter in &function.params.items {
@@ -367,6 +390,15 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Expr(crate::ast::Expr::Call { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_initialized_local_declarations() {
+        let program = parse_subset("function main() { let value = 42; return value; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Let { .. }
         ));
     }
 }
