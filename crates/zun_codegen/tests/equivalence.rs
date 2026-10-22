@@ -2677,6 +2677,20 @@ fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
             .expect("conversion method");
         assert!(jit.is_compiled(rid), "{name} should use native lowering");
     }
+    let convert_int = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "convertInt")
+        .map(|index| index as u32 + 1)
+        .expect("integer conversion method");
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from(" -42 "));
+    assert_eq!(
+        jit.call_packed_with_heap(convert_int, &[value as u64], &mut heap)
+            .unwrap(),
+        (-42i64) as u64
+    );
 }
 
 #[test]
