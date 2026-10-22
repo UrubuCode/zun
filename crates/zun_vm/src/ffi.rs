@@ -267,13 +267,13 @@ impl FfiSignature {
     fn matches_i32_call(&self) -> bool {
         self.result == FfiScalar::I32
             && self.params.iter().all(|param| *param == FfiScalar::I32)
-            && self.arity() <= 1
+            && self.arity() <= 3
     }
 
     fn matches_u32_call(&self) -> bool {
         self.result == FfiScalar::U32
             && self.params.iter().all(|param| *param == FfiScalar::U32)
-            && self.arity() <= 1
+            && self.arity() <= 3
     }
 
     fn matches_f64_call(&self) -> bool {
@@ -634,6 +634,16 @@ impl NativeLibrary {
         Ok(unsafe { symbol(arg) })
     }
 
+    pub unsafe fn call_i32_2(&self, name: &[u8], first: i32, second: i32) -> Result<i32, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i32, i32) -> i32>(name) }?;
+        Ok(unsafe { symbol(first, second) })
+    }
+
+    pub unsafe fn call_i32_3(&self, name: &[u8], first: i32, second: i32, third: i32) -> Result<i32, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i32, i32, i32) -> i32>(name) }?;
+        Ok(unsafe { symbol(first, second, third) })
+    }
+
     pub unsafe fn call_i32_signature(&self, name: &[u8], signature: &FfiSignature, args: &[i32]) -> Result<i32, FfiError> {
         if !signature.matches_i32_call() || signature.arity() != args.len() {
             return Err(FfiError { message: format!("unsupported i32 FFI signature: arity {}, arguments {}", signature.arity(), args.len()) });
@@ -641,7 +651,9 @@ impl NativeLibrary {
         unsafe { match args {
             [] => self.call_i32_0(name),
             [arg] => self.call_i32_1(name, *arg),
-            _ => Err(FfiError { message: "unsupported i32 FFI arity".into() }),
+            [first, second] => self.call_i32_2(name, *first, *second),
+            [first, second, third] => self.call_i32_3(name, *first, *second, *third),
+            _ => unreachable!(),
         }}
     }
 
@@ -655,6 +667,16 @@ impl NativeLibrary {
         Ok(unsafe { symbol(arg) })
     }
 
+    pub unsafe fn call_u32_2(&self, name: &[u8], first: u32, second: u32) -> Result<u32, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(u32, u32) -> u32>(name) }?;
+        Ok(unsafe { symbol(first, second) })
+    }
+
+    pub unsafe fn call_u32_3(&self, name: &[u8], first: u32, second: u32, third: u32) -> Result<u32, FfiError> {
+        let symbol = unsafe { self.symbol::<unsafe extern "C" fn(u32, u32, u32) -> u32>(name) }?;
+        Ok(unsafe { symbol(first, second, third) })
+    }
+
     pub unsafe fn call_u32_signature(&self, name: &[u8], signature: &FfiSignature, args: &[u32]) -> Result<u32, FfiError> {
         if !signature.matches_u32_call() || signature.arity() != args.len() {
             return Err(FfiError { message: format!("unsupported u32 FFI signature: arity {}, arguments {}", signature.arity(), args.len()) });
@@ -662,7 +684,9 @@ impl NativeLibrary {
         unsafe { match args {
             [] => self.call_u32_0(name),
             [arg] => self.call_u32_1(name, *arg),
-            _ => Err(FfiError { message: "unsupported u32 FFI arity".into() }),
+            [first, second] => self.call_u32_2(name, *first, *second),
+            [first, second, third] => self.call_u32_3(name, *first, *second, *third),
+            _ => unreachable!(),
         }}
     }
 
@@ -959,6 +983,8 @@ mod tests {
     fn u32_signature_is_a_supported_blittable_shape() {
         let signature = FfiSignature::new([FfiScalar::U32], FfiScalar::U32);
         assert!(signature.validate().is_ok());
+        let wide = FfiSignature::new([FfiScalar::U32; 3], FfiScalar::U32);
+        assert!(wide.validate().is_ok());
     }
 
     #[test]
