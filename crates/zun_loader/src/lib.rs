@@ -538,6 +538,17 @@ impl Zmlib {
         if cursor != bytes.len() { return Err(LoadError::InvalidManifest("trailing zmlib bytes".into())); }
         Self::new(lock, modules)
     }
+
+    /// Write a `.zmlib` package to disk.
+    pub fn write_file(&self, path: impl AsRef<Path>) -> Result<(), LoadError> {
+        std::fs::write(path, self.write()).map_err(LoadError::Io)
+    }
+
+    /// Read and validate a `.zmlib` package from disk.
+    pub fn read_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
+        let bytes = std::fs::read(path).map_err(LoadError::Io)?;
+        Self::read(&bytes)
+    }
 }
 
 impl ModuleManifest {
@@ -795,6 +806,15 @@ impl ModuleLoader {
             LoadError::InvalidManifest(format!("cached module `{name}` unavailable: {error}"))
         })?;
         self.load_bytes(name, &bytes)
+    }
+
+    /// Verify and register every module carried by a `.zmlib` package.
+    pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
+        package.lock.verify()?;
+        for (name, bytes) in &package.modules {
+            self.load_bytes(name.clone(), bytes)?;
+        }
+        Ok(())
     }
 
     /// Load and register a module using its path as identity.
@@ -1172,6 +1192,12 @@ mod tests {
         ).unwrap();
         let package = Zmlib::new(signed, vec![("app".into(), payload.clone())]).unwrap();
         assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
+        let path = std::env::temp_dir().join(format!("zun-package-{}.zmlib", std::process::id()));
+        package.write_file(&path).unwrap();
+        let loaded = Zmlib::read_file(&path).unwrap();
+        let mut loader = ModuleLoader::new();
+        assert!(loader.load_zmlib(&loaded).is_err());
+        std::fs::remove_file(path).unwrap();
         assert!(Zmlib::new(package.lock, vec![("app".into(), b"tampered".to_vec())]).is_err());
     }
 
