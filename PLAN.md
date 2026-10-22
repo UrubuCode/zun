@@ -355,6 +355,11 @@ P/Invoke):
   one-string-argument path, and the native hook validates and dispatches it.
   The two-string `out_buffer` path is also available; generated stubs, borrowed/
   owned multi-string returns, and broader aggregate marshalling remain deferred.
+  The direct blittable bridge also carries explicit signed and unsigned
+  `i32`/`u32` metadata tags, validates those signatures before lookup, and
+  dispatches zero-to-three-argument C thunks. The `u32` path is exercised
+  against Windows `GetTickCount`; other narrow widths and generated aggregate
+  stubs remain separate follow-up work.
 
 Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
 } from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
