@@ -2663,6 +2663,21 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::OptionalIndex { object, index, .. } => {
+                let object = self.check_expr(cx, object);
+                let key = self.check_expr(cx, index);
+                if !matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Error) {
+                    self.error(object.span, "optional computed access requires a dynamic receiver");
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::OptionalDynamicGetValue {
+                        object: Box::new(object),
+                        key: Box::new(key),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
             ast::Expr::OptionalMethodCall {
                 object,
                 method,
@@ -3205,6 +3220,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         ComputedCall { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         MethodCall { receiver, args, .. } | OptionalMethodCall { object: receiver, args, .. } => count_yields_in_expr(receiver) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         OptionalField { object, .. } | Field { object, .. } | PrivateField { object, .. } => count_yields_in_expr(object),
+        OptionalIndex { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
         FieldAssign { object, value, .. } | PrivateFieldAssign { object, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(value),
         Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
         IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
@@ -3279,6 +3295,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         StaticMethodCall { args, .. } => args.iter().map(count_awaits_in_expr).sum(),
         StaticField { .. } => 0,
         OptionalField { object, .. } => count_awaits_in_expr(object),
+        OptionalIndex { object, index, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(index),
         OptionalMethodCall { object, args, .. } => {
             count_awaits_in_expr(object) + args.iter().map(count_awaits_in_expr).sum::<usize>()
         }

@@ -97,6 +97,10 @@ pub(super) fn collect_mutated_expr(
         }
         ast::Expr::PrivateField { object, .. } => collect_mutated_expr(checker, object, names),
         ast::Expr::OptionalField { object, .. } => collect_mutated_expr(checker, object, names),
+        ast::Expr::OptionalIndex { object, index, .. } => {
+            collect_mutated_expr(checker, object, names);
+            collect_mutated_expr(checker, index, names);
+        }
         ast::Expr::FieldAssign { object, value, .. } => {
             collect_mutated_expr(checker, object, names);
             collect_mutated_expr(checker, value, names);

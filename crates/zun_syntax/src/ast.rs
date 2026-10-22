@@ -517,6 +517,12 @@ pub enum Expr {
         field: Name,
         span: Span,
     },
+    /// `object?.[index]` — a null-safe computed property read.
+    OptionalIndex {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
     /// `object?.method(args)` — a null-safe managed method call.
     OptionalMethodCall {
         object: Box<Expr>,
@@ -565,7 +571,12 @@ pub enum Expr {
         span: Span,
     },
     /// `object.#field = value` private field write.
-    PrivateFieldAssign { object: Box<Expr>, field: Name, value: Box<Expr>, span: Span },
+    PrivateFieldAssign {
+        object: Box<Expr>,
+        field: Name,
+        value: Box<Expr>,
+        span: Span,
+    },
     /// `object[index]` — read an array element.
     Index {
         /// The array expression.

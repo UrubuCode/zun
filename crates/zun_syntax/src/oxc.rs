@@ -547,7 +547,11 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             let object = Box::new(convert_expression(&member.object)?);
             let index = Box::new(convert_expression(&member.expression)?);
             if member.optional {
-                return Err("OXC adapter does not support optional computed members yet".into());
+                return Ok(Expr::OptionalIndex {
+                    object,
+                    index,
+                    span: span(member.span),
+                });
             }
             Ok(Expr::Index {
                 object,
@@ -573,6 +577,11 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 field: Name {
                     span: span(member.property.span),
                 },
+                span: span(chain.span),
+            }),
+            ChainElement::ComputedMemberExpression(member) => Ok(Expr::OptionalIndex {
+                object: Box::new(convert_expression(&member.object)?),
+                index: Box::new(convert_expression(&member.expression)?),
                 span: span(chain.span),
             }),
             ChainElement::CallExpression(call) => {
@@ -2040,6 +2049,15 @@ mod tests {
         let program = parse_subset("class Point { x: number = 5; }", true).unwrap();
         let field = &program.classes[0].fields[0];
         assert!(matches!(field.initializer.as_deref(), Some(crate::ast::Expr::Number { value, .. }) if *value == 5.0));
+    }
+
+    #[test]
+    fn converts_optional_computed_members() {
+        let program = parse_subset("function main(object: any, key: any): any { return object?.[key]; }", true).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return { value: Some(crate::ast::Expr::OptionalIndex { .. }), .. }
+        ));
     }
 
     #[test]

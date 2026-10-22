@@ -1073,6 +1073,20 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::ConstNull));
                 self.patch_to_here(end);
             }
+            ExprKind::OptionalDynamicGetValue { object, key } => {
+                self.expr(object);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_null = self.emit_branch(Opcode::BranchTrue);
+                self.expr(key);
+                self.emit(Instruction::simple(Opcode::LoadDynamicValue));
+                let end = self.emit_branch(Opcode::Branch);
+                self.patch_to_here(use_null);
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.patch_to_here(end);
+            }
             ExprKind::OptionalCallBuiltin { id, args } => {
                 self.expr(&args[0]);
                 self.emit(Instruction::simple(Opcode::Dup));
