@@ -454,13 +454,7 @@ Structured method-name/source-span frame resolution is also available to
 diagnostic consumers; interpreter operational faults now carry the nearest
 source frame through the public runner boundary, including recursive failures.
 Remaining gates:
-full AOT binary (linker + runtime bundle), OXC AST-to-HIR adapter beyond the
-now-integrated native TS/JS frontend, dynamic-import warnings/fallback (conservative
-member-call reporting is now implemented, with affected method names emitted in
-CLI warnings and dynamic instruction PCs retained by the IL decoder, with
-sequence-point source spans attached when available, reflective property access
-included, and regression coverage),
-and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
+dynamic-import completeness and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
 ineligible AOT entrypoints now preserve the embedded-IL fallback without failing
 the build.
@@ -505,8 +499,8 @@ The codegen layer also exposes target-specific Cranelift object emission via
 `compile_object_for_target`; the existing host-target wrapper remains unchanged,
 the workspace enables Cranelift AArch64 object support. Cross-target runtime
 artifacts are selected by target-qualified environment/package names; producing
-those artifacts and provisioning platform-specific linker inputs remain
-outstanding.
+those artifacts and provisioning platform-specific linker inputs are explicitly
+deferred toolchain provisioning, outside the host-target Phase 6 deliverable.
 Metadata objects now have the same target selection path, emitting target-matched
 ELF/COFF/Mach-O format and x86-64/AArch64 architecture where supported.
 `ZUN_TARGET` now selects that target from the CLI through object emission,
