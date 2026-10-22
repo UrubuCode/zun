@@ -166,6 +166,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
         })),
+        Expression::ParenthesizedExpression(parenthesized) => {
+            convert_expression(&parenthesized.expression)
+        }
         Expression::StaticMemberExpression(member) => {
             let object = Box::new(convert_expression(&member.object)?);
             let field = Name {
@@ -1297,6 +1300,18 @@ mod tests {
             program.classes[0].methods[0].body.statements[0],
             crate::ast::Stmt::Return {
                 value: Some(crate::ast::Expr::Field { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_parenthesized_expressions() {
+        let program = parse_subset("function add(value) { return (value + 1); }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Binary { .. }),
                 ..
             }
         ));
