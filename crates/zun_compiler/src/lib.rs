@@ -152,6 +152,17 @@ pub fn compile_without_prelude(
     compile_source_with_externals(source, external_functions)
 }
 
+/// Compile the standard prelude as an independent module artifact.
+///
+/// The fingerprint travels with the artifact so a future R2R/cache loader can
+/// reject stale prelude code before it is linked with user modules. The normal
+/// [`compile`] path intentionally remains concatenated until module metadata
+/// linking can preserve the existing prelude bindings and RID contracts.
+pub fn compile_prelude() -> Result<(u64, Module), Vec<Diagnostic>> {
+    let module = compile_without_prelude(zun_prelude::PRELUDE, &[])?;
+    Ok((zun_prelude::fingerprint(), module))
+}
+
 fn compile_source_with_externals(
     source: &str,
     external_functions: &[zun_sema::check::ExternalFunction],
@@ -415,6 +426,17 @@ mod tests {
             .method_defs
             .iter()
             .all(|method| module.strings.get(method.name) != "clamp"));
+    }
+
+    #[test]
+    fn emits_the_prelude_as_a_fingerprinted_independent_artifact() {
+        let (fingerprint, module) = compile_prelude().expect("prelude should compile alone");
+        assert_eq!(fingerprint, zun_prelude::fingerprint());
+        assert!(module
+            .tables
+            .method_defs
+            .iter()
+            .any(|method| module.strings.get(method.name) == "clamp"));
     }
 
     #[test]
