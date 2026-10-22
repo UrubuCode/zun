@@ -5243,7 +5243,8 @@ fn bigint_operations_preserve_the_tier0_fallback_boundary() {
             let left: BigInt = new BigInt("10000000000000000000");
             let right: BigInt = new BigInt("2");
             let product: BigInt = left * right;
-            if (product > left) { return 1; }
+            let negated: BigInt = -left;
+            if (product > left && negated < left) { return 1; }
             return 0;
         }"#,
     );
