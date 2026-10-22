@@ -203,6 +203,10 @@ self-declared envelope keys are never trusted on their own. Key rotation/revocat
 policy rides on the envelope `VERSION` + the signed index. Closing this is a hard
 gate for Phase 7 — without it the signature is authenticity theater.
 
+The loader now exposes `verify_against` on signed lock and index envelopes so callers
+can enforce a release-pinned root key; wiring that key into the registry/fetch path
+remains the final trust-anchor integration gate.
+
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
 precompiled module still point at source.
