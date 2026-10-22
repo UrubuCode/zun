@@ -299,6 +299,8 @@ pub struct Function {
     /// machine. The lowering pass remains gated until await suspension is
     /// represented in IL.
     pub is_async: bool,
+    /// Whether this function is a class-static member.
+    pub is_static: bool,
     /// Whether this function is a generator state-machine candidate.
     pub is_generator: bool,
     /// Structural state-machine plan for an async function. The lowering pass

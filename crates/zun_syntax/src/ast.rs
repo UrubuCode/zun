@@ -66,6 +66,10 @@ pub struct Function {
     pub return_type: Option<TypeAnnotation>,
     /// Whether this declaration is implemented by a runtime intrinsic.
     pub is_extern: bool,
+    /// Whether this is a class-static member. The parser does not expose the
+    /// modifier yet; the field keeps the representation ready for the full
+    /// static-member lowering pass.
+    pub is_static: bool,
     /// Native library for a top-level source declaration.
     pub external_module: Option<String>,
     /// Whether this declaration uses the source-level `async` modifier.

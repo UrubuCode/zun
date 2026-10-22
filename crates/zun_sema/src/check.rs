@@ -458,6 +458,7 @@ impl Checker<'_> {
                     locals: cx.locals,
                     return_ty,
                     is_async: f.is_async,
+                    is_static: f.is_static,
                     is_generator: f.is_generator,
                     async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
                         state_count: 1 + count_awaits_in_block(&f.body) as u16,
@@ -554,6 +555,7 @@ impl Checker<'_> {
             locals: cx.locals,
             return_ty,
             is_async: f.is_async,
+            is_static: f.is_static,
             is_generator: f.is_generator,
             async_plan: f.is_async.then(|| hir::AsyncStateMachinePlan {
                 state_count: 1 + count_awaits_in_block(&f.body) as u16,
