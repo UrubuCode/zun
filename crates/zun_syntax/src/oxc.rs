@@ -43,6 +43,39 @@ fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
     }
 }
 
+fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
+    let Statement::BlockStatement(block) = statement else {
+        return Err("OXC adapter requires block branches for conditional statements".into());
+    };
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let mut statements = Vec::with_capacity(block.body.len());
+    for statement in &block.body {
+        match statement {
+            Statement::ReturnStatement(return_statement) => statements.push(Stmt::Return {
+                value: return_statement
+                    .argument
+                    .as_ref()
+                    .map(convert_expression)
+                    .transpose()?,
+                span: span(return_statement.span),
+            }),
+            Statement::ExpressionStatement(expression_statement) => statements.push(Stmt::Expr(
+                convert_expression(&expression_statement.expression)?,
+            )),
+            _ => {
+                return Err(
+                    "OXC adapter currently supports return and expression statements in branches"
+                        .into(),
+                )
+            }
+        }
+    }
+    Ok(Block {
+        statements,
+        span: span(block.span),
+    })
+}
+
 fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match expression {
@@ -242,9 +275,26 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             .map_err(|error| vec![error])?,
                     ));
                 }
+                Statement::IfStatement(if_statement) => {
+                    let then_block = convert_block_statement(&if_statement.consequent)
+                        .map_err(|error| vec![error])?;
+                    let else_block = if_statement
+                        .alternate
+                        .as_ref()
+                        .map(convert_block_statement)
+                        .transpose()
+                        .map_err(|error| vec![error])?;
+                    statements.push(Stmt::If {
+                        cond: convert_expression(&if_statement.test)
+                            .map_err(|error| vec![error])?,
+                        then_block,
+                        else_block,
+                        span: span(if_statement.span),
+                    });
+                }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, return, and expression statements".into(),
                     ])
                 }
             }
@@ -432,6 +482,22 @@ mod tests {
             field.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
                 value: Some(crate::ast::Expr::Field { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_if_statements_with_block_branches() {
+        let program = parse_subset(
+            "function choose(value) { if (value) { return 1; } else { return 2; } }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::If {
+                else_block: Some(_),
                 ..
             }
         ));
