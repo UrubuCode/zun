@@ -912,7 +912,11 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 name: Name {
                                     span: span(identifier.span),
                                 },
-                                ty: None,
+                                ty: convert_type_annotation(
+                                    source,
+                                    declarator.type_annotation.as_deref(),
+                                )
+                                .map_err(|error| vec![error])?,
                                 init: convert_expression(initializer)
                                     .map_err(|error| vec![error])?,
                                 span: span(declarator.span),
@@ -1262,6 +1266,22 @@ mod tests {
                 update: Some(_),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn preserves_typed_for_initializer_bindings() {
+        let program = parse_subset(
+            "function main() { for (let index: int = 0; index < 1; index = index + 1) { } }",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::For {
+                init: Some(ref init),
+                ..
+            } if matches!(init.as_ref(), crate::ast::Stmt::Let { ty: Some(ty), .. } if ty.name.span.start < ty.name.span.end)
         ));
     }
 
