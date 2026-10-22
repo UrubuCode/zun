@@ -14,7 +14,7 @@ use oxc_ast::ast::{
     UnaryOperator,
 };
 use oxc_parser::Parser;
-use oxc_span::SourceType;
+use oxc_span::{GetSpan, SourceType};
 use zun_common::Span;
 
 use crate::ast::{BinaryOp, Block, Expr, Function, Name, Program, Stmt};
@@ -169,6 +169,30 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(&parenthesized.expression)
         }
+        Expression::TSAsExpression(assertion) => Ok(Expr::Cast {
+            expr: Box::new(convert_expression(&assertion.expression)?),
+            ty: crate::ast::TypeAnnotation {
+                name: Name {
+                    span: Span::new(
+                        assertion.type_annotation.span().start,
+                        assertion.type_annotation.span().end,
+                    ),
+                },
+            },
+            span: span(assertion.span),
+        }),
+        Expression::TSTypeAssertion(assertion) => Ok(Expr::Cast {
+            expr: Box::new(convert_expression(&assertion.expression)?),
+            ty: crate::ast::TypeAnnotation {
+                name: Name {
+                    span: Span::new(
+                        assertion.type_annotation.span().start,
+                        assertion.type_annotation.span().end,
+                    ),
+                },
+            },
+            span: span(assertion.span),
+        }),
         Expression::StaticMemberExpression(member) => {
             let object = Box::new(convert_expression(&member.object)?);
             let field = Name {
@@ -1312,6 +1336,22 @@ mod tests {
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
                 value: Some(crate::ast::Expr::Binary { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_typescript_assertions() {
+        let program = parse_subset(
+            "function cast(value: unknown) { return value as number; }",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Cast { .. }),
                 ..
             }
         ));
