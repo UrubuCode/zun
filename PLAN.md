@@ -1002,6 +1002,9 @@ mutation set: `mapHasI32`, `mapGetI32Or`, `mapSetI32`, `mapDeleteI32`,
 `setHasI32`, `setAddI32`, and `setDeleteI32`. Each uses a width-specific
 Cranelift helper and has interpreter/JIT equivalence coverage; generic
 carrier-based collection operations remain Tier 0 by design.
+The corresponding Tier 0 managed-collection dispatcher cases are also present,
+so these typed names are executable through both engines rather than being
+JIT-only declarations.
 
 The dynamic array ABI now has validated load and store helpers for the explicit
 two-word `Any` carrier. Proven scalar `UnboxAny` reads use a temporary
