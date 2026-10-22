@@ -640,7 +640,31 @@ impl SignedModuleIndex {
         Self::signing_bytes(&self.index, &self.key_additions, &self.key_revocations)
     }
 
+    fn validate_rotation(&self) -> Result<(), LoadError> {
+        if self
+            .key_additions
+            .iter()
+            .enumerate()
+            .any(|(index, key)| self.key_additions[..index].contains(key))
+            || self
+                .key_revocations
+                .iter()
+                .enumerate()
+                .any(|(index, key)| self.key_revocations[..index].contains(key))
+            || self
+                .key_additions
+                .iter()
+                .any(|key| self.key_revocations.contains(key))
+        {
+            return Err(LoadError::InvalidManifest(
+                "signed index contains a contradictory or duplicate key rotation".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn verify_signature(&self) -> Result<(), LoadError> {
+        self.validate_rotation()?;
         let key = VerifyingKey::from_bytes(&self.public_key).map_err(|error| {
             LoadError::InvalidManifest(format!("invalid index public key: {error}"))
         })?;
@@ -2640,6 +2664,18 @@ mod tests {
         assert!(rotated.contains(&next));
         let mut loader = ModuleLoader::new_with_trusted_keys(trusted);
         loader.apply_signed_index_rotation(&roundtrip).unwrap();
+        let duplicate = vec![next, next];
+        let duplicate_signature = signing
+            .sign(&SignedModuleIndex::signing_bytes(&roundtrip.index, &duplicate, &[]))
+            .to_bytes();
+        assert!(SignedModuleIndex::new_with_rotation(
+            roundtrip.index.clone(),
+            signing.verifying_key().to_bytes(),
+            duplicate,
+            [],
+            duplicate_signature,
+        )
+        .is_err());
     }
 
     #[test]
