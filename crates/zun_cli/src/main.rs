@@ -324,6 +324,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                             match link_aot_executable(
                                                 &object_out,
                                                 Some(&metadata_out),
+                                                resolve_runtime_library().as_deref(),
                                                 &executable_out,
                                                 module.entry_point.map(|token| token.rid()),
                                                 module.entry_point.and_then(|token| {
@@ -440,9 +441,18 @@ fn resolve_lld() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
+/// Resolve an explicitly provisioned static runtime library for AOT links.
+/// The build remains usable without it while the embedded-IL launcher path is
+/// used; packaged distributions set this to the matching `zun_vm.lib`.
+fn resolve_runtime_library() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var("ZUN_RUNTIME_LIB").ok()?);
+    path.is_file().then_some(path)
+}
+
 fn link_aot_executable(
     object: &Path,
     metadata: Option<&Path>,
+    runtime: Option<&Path>,
     executable: &Path,
     entry: Option<u32>,
     return_kind: Option<u8>,
@@ -486,6 +496,9 @@ fn link_aot_executable(
         .arg(executable);
     if let Some(metadata) = metadata {
         command.arg("-C").arg(format!("link-arg={}", metadata.display()));
+    }
+    if let Some(runtime) = runtime {
+        command.arg("-C").arg(format!("link-arg={}", runtime.display()));
     }
     if let Some(lld) = resolve_lld() {
         command.arg("-C").arg(format!("linker={}", lld.display()));
