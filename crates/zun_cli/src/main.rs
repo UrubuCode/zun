@@ -189,7 +189,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
     );
     let use_oxc = oxc_typescript || matches!(
         path.extension().and_then(|extension| extension.to_str()),
-        Some("js") | Some("mjs")
+        Some("js") | Some("mjs") | Some("cjs") | Some("jsx")
     );
     let module_result = if use_oxc {
         if cached_prelude.is_some() {
