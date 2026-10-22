@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "The Zun virtual machine: loads a .zm module and runs it."
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 zun_interp = { path = "../zun_interp" }
 zun_module = { path = "../zun_module" }
