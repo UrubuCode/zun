@@ -566,17 +566,27 @@ fn resolve_lld() -> Option<PathBuf> {
     }) {
         return Some(path);
     }
-    let sysroot = Command::new("rustc")
-        .args(["--print", "sysroot"])
+    let target_libdir = Command::new("rustc")
+        .args(["--print", "target-libdir"])
         .output()
         .ok()
         .filter(|output| output.status.success())
         .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_owned()))?;
-    let mut candidate = sysroot.join("bin").join("rust-lld");
+    let target_bin = target_libdir.parent()?.join("bin");
+    let mut candidate = target_bin.join("rust-lld");
     if cfg!(windows) {
         candidate.set_extension("exe");
     }
-    candidate.is_file().then_some(candidate)
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    let mut bundled = target_bin.join("gcc-ld").join(if cfg!(windows) {
+        "lld-link.exe"
+    } else {
+        "ld.lld"
+    });
+    bundled = bundled.canonicalize().ok()?;
+    bundled.is_file().then_some(bundled)
 }
 
 fn explicit_lld_override(value: Option<&OsStr>) -> Option<PathBuf> {
