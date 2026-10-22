@@ -18,6 +18,8 @@ and `zun_host_execute_string`, which copies a UTF-8 result
 into caller-owned storage and reports the required size when the buffer is too
 small. Call it first with `out = null` and `out_len = 0` to query the required
 size, then allocate that many bytes and call it again to copy the result.
+The `i64` and `u64` entrypoints validate the compiled method's signed numeric
+kind; they do not reinterpret one kind as the other.
 
 Status codes are exported as `ZUN_HOST_OK`, `ZUN_HOST_INVALID_ARGUMENT`,
 `ZUN_HOST_VM_ERROR`, and `ZUN_HOST_BUFFER_TOO_SMALL`.

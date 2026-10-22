@@ -21,12 +21,14 @@ enum {
 ZunHost *zun_host_create(void);
 void zun_host_destroy(ZunHost *host);
 
+/* The module entry point must use a signed Zun integer kind. */
 int32_t zun_host_execute_i64(
     ZunHost *host,
     const uint8_t *module_ptr,
     size_t module_len,
     int64_t *out);
 
+/* The module entry point must be declared as Zun u64 (unsigned integer kind). */
 int32_t zun_host_execute_u64(
     ZunHost *host,
     const uint8_t *module_ptr,
