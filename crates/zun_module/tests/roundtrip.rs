@@ -59,6 +59,19 @@ fn sample_module() -> Module {
 }
 
 #[test]
+fn sequence_points_roundtrip_through_zm() {
+    let mut module = Module::new();
+    module.sequence_points.push(zun_module::SequencePoint {
+        method_rid: 3,
+        pc: 12,
+        source_start: 40,
+        source_end: 47,
+    });
+    let decoded = Module::read(&module.write()).expect("module with debug info");
+    assert_eq!(decoded.sequence_points, module.sequence_points);
+}
+
+#[test]
 fn emit_read_disassemble() {
     let original = sample_module();
     let bytes = original.write();

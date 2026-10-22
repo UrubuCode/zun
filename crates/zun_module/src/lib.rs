@@ -40,7 +40,16 @@ pub const FORMAT_MAJOR: u16 = 1;
 /// Current format minor version. Bump on backward-compatible additions.
 pub const FORMAT_MINOR: u16 = 1;
 
-const HEADER_LEN: usize = 44;
+const HEADER_LEN: usize = 52;
+
+/// A source mapping for one instruction boundary in one method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SequencePoint {
+    pub method_rid: u32,
+    pub pc: u32,
+    pub source_start: u32,
+    pub source_end: u32,
+}
 
 /// An in-memory module: everything a `.zm` file holds.
 #[derive(Debug)]
@@ -56,6 +65,8 @@ pub struct Module {
     pub blobs: BlobHeap,
     /// Definition and reference tables.
     pub tables: Tables,
+    /// Optional PC-to-source mappings used by stack capture and diagnostics.
+    pub sequence_points: Vec<SequencePoint>,
 }
 
 impl Default for Module {
@@ -73,6 +84,7 @@ impl Module {
             strings: StringHeap::new(),
             blobs: BlobHeap::new(),
             tables: Tables::new(),
+            sequence_points: Vec::new(),
         }
     }
 
@@ -84,8 +96,10 @@ impl Module {
         let strings_off = code_off + self.code.len() as u32;
         let blobs_off = strings_off + self.strings.as_bytes().len() as u32;
         let tables_off = blobs_off + self.blobs.as_bytes().len() as u32;
+        let debug_off = tables_off + tables_bytes.len() as u32;
+        let debug_len = self.sequence_points.len() as u32 * 16;
 
-        let mut out = Vec::with_capacity(tables_off as usize + tables_bytes.len());
+        let mut out = Vec::with_capacity(debug_off as usize + debug_len as usize);
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&FORMAT_MAJOR.to_le_bytes());
         out.extend_from_slice(&FORMAT_MINOR.to_le_bytes());
@@ -95,6 +109,7 @@ impl Module {
             (strings_off, self.strings.as_bytes().len() as u32),
             (blobs_off, self.blobs.as_bytes().len() as u32),
             (tables_off, tables_bytes.len() as u32),
+            (debug_off, debug_len),
         ] {
             out.extend_from_slice(&off.to_le_bytes());
             out.extend_from_slice(&len.to_le_bytes());
@@ -104,6 +119,12 @@ impl Module {
         out.extend_from_slice(self.strings.as_bytes());
         out.extend_from_slice(self.blobs.as_bytes());
         out.extend_from_slice(&tables_bytes);
+        for point in &self.sequence_points {
+            out.extend_from_slice(&point.method_rid.to_le_bytes());
+            out.extend_from_slice(&point.pc.to_le_bytes());
+            out.extend_from_slice(&point.source_start.to_le_bytes());
+            out.extend_from_slice(&point.source_end.to_le_bytes());
+        }
         out
     }
 
@@ -131,6 +152,19 @@ impl Module {
         let strings = StringHeap::from_bytes(section(1)?.to_vec());
         let blobs = BlobHeap::from_bytes(section(2)?.to_vec());
         let tables = serial::read_tables(section(3)?)?;
+        let debug = section(4)?;
+        if debug.len() % 16 != 0 {
+            return Err(ReadError::Truncated);
+        }
+        let sequence_points = debug
+            .chunks_exact(16)
+            .map(|record| SequencePoint {
+                method_rid: u32::from_le_bytes(record[0..4].try_into().unwrap()),
+                pc: u32::from_le_bytes(record[4..8].try_into().unwrap()),
+                source_start: u32::from_le_bytes(record[8..12].try_into().unwrap()),
+                source_end: u32::from_le_bytes(record[12..16].try_into().unwrap()),
+            })
+            .collect();
 
         Ok(Self {
             entry_point: if entry_raw == 0 {
@@ -142,6 +176,7 @@ impl Module {
             strings,
             blobs,
             tables,
+            sequence_points,
         })
     }
 }

@@ -121,6 +121,7 @@ pub fn trim_module(module: &Module) -> Result<Module, String> {
         strings: module.strings.clone(),
         blobs: module.blobs.clone(),
         tables,
+        sequence_points: module.sequence_points.clone(),
     })
 }
 
