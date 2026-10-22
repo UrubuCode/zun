@@ -442,9 +442,10 @@ dynamic handlers can retain named closure traps. `dynamicSetFunction` exposes
 that callable-property binding to source code, and `proxyGet`, `proxySet`,
 `proxyHas`, and `proxyDelete` invoke named `get`/`set`/`has`/`deleteProperty`
 traps or fall back to the target's dynamic property in Tier 0; remaining Proxy
-trap forms and call-site caching are still Phase 4 work. `BigInt`
-needs a bignum
-(deferred); `Intl`, `SharedArrayBuffer`, and `Atomics` are out of scope for now.
+trap forms and call-site caching are still Phase 4 work. `BigInt` now has a
+managed GC-owned payload and Tier 0 constructor/arithmetic/compare/formatting
+bindings; literals, operators, and Cranelift lowering remain deferred. `Intl`,
+`SharedArrayBuffer`, and `Atomics` are out of scope for now.
 
 Cross-cutting rule: data structures with real algorithmic complexity (hashing,
 buffers) live in the Rust intrinsic floor; the TypeScript class is only a thin
