@@ -5,7 +5,7 @@
 //! future resolver a stable scope boundary for type and member identity.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use zun_metadata::{TableKind, Token};
 use zun_module::{Module, ReadError};
 use zun_types::{CoreTypes, TypeError, TypeSystem};
@@ -191,6 +191,24 @@ impl ModuleManifest {
     pub fn with_native_object(mut self, path: impl Into<String>) -> Self {
         self.native_object = Some(path.into());
         self
+    }
+
+    /// Resolve the optional native object relative to the manifest location.
+    /// Absolute paths are preserved; a manifest without native code returns
+    /// `None` so callers can use the canonical `.zm` fallback.
+    pub fn native_object_path(&self, manifest_path: impl AsRef<Path>) -> Option<PathBuf> {
+        let object = PathBuf::from(self.native_object.as_deref()?);
+        if object.is_absolute() {
+            Some(object)
+        } else {
+            Some(
+                manifest_path
+                    .as_ref()
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(object),
+            )
+        }
     }
 
     /// Serialize the flattened manifest into a deterministic binary payload.
@@ -800,6 +818,14 @@ mod tests {
             .with_native_object("app.o");
         let decoded = ModuleManifest::read(&manifest.write()).expect("roundtrip");
         assert_eq!(decoded, manifest);
+        assert_eq!(
+            decoded.native_object_path("dist/app.zman"),
+            Some(PathBuf::from("dist/app.o"))
+        );
+        assert_eq!(
+            ModuleManifest::new("app", Vec::<String>::new()).native_object_path("app.zman"),
+            None
+        );
     }
 
     #[test]
