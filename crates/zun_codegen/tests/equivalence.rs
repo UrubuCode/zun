@@ -70,6 +70,18 @@ fn typed_string_receiver_chain_preserves_managed_result() {
     assert_eq!(jit.call_packed_with_heap(measure, &[value as u64], &mut heap).unwrap(), 1);
 }
 
+#[test]
+fn collection_allocation_ids_only_apply_to_call_builtins() {
+    let (map_new, _) = zun_natives::resolve("zun:collections", "mapNew").expect("mapNew intrinsic");
+    let source = format!(
+        "function main(): i32 {{ return {map_new} as i32; }}"
+    );
+    let module = compile(&source);
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("constant does not look like allocation");
+    assert!(jit.is_compiled(entry));
+}
+
 /// Run the entry point through the interpreter, returning its value.
 fn interp_entry(module: &zun_module::Module) -> Value {
     let mut out = CaptureOutput::default();
