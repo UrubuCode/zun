@@ -600,15 +600,17 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         }
                         let mut params = Vec::with_capacity(method.value.params.items.len());
                         for parameter in &method.value.params.items {
-                            let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern
-                            else {
-                                return Err(vec![
+                            let (identifier_span, is_rest) = match &parameter.pattern {
+                                BindingPattern::BindingIdentifier(identifier) => {
+                                    (identifier.span, false)
+                                }
+                                _ => return Err(vec![
                                     "OXC adapter supports identifier class method parameters only".into(),
-                                ]);
+                                ]),
                             };
                             params.push(crate::ast::Param {
                                 name: Name {
-                                    span: Span::new(identifier.span.start, identifier.span.end),
+                                    span: Span::new(identifier_span.start, identifier_span.end),
                                 },
                                 ty: None,
                                 default_value: parameter
@@ -618,7 +620,23 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     .transpose()
                                     .map_err(|error| vec![error])?
                                     .map(Box::new),
-                                is_rest: false,
+                                is_rest,
+                            });
+                        }
+                        if let Some(rest) = method.value.params.rest.as_ref() {
+                            let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument
+                            else {
+                                return Err(vec![
+                                    "OXC adapter supports identifier rest parameters only".into(),
+                                ]);
+                            };
+                            params.push(crate::ast::Param {
+                                name: Name {
+                                    span: Span::new(identifier.span.start, identifier.span.end),
+                                },
+                                ty: None,
+                                default_value: None,
+                                is_rest: true,
                             });
                         }
                         methods.push(Function {
@@ -878,14 +896,15 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         }
         let mut params = Vec::with_capacity(function.params.items.len());
         for parameter in &function.params.items {
-            let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
-                return Err(vec![
+            let (identifier_span, is_rest) = match &parameter.pattern {
+                BindingPattern::BindingIdentifier(identifier) => (identifier.span, false),
+                _ => return Err(vec![
                     "OXC adapter currently supports identifier parameters".into(),
-                ]);
+                ]),
             };
             params.push(crate::ast::Param {
                 name: Name {
-                    span: span(identifier.span),
+                    span: span(identifier_span),
                 },
                 ty: None,
                 default_value: parameter
@@ -895,7 +914,20 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     .transpose()
                     .map_err(|error| vec![error])?
                     .map(Box::new),
-                is_rest: false,
+                is_rest,
+            });
+        }
+        if let Some(rest) = function.params.rest.as_ref() {
+            let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
+                return Err(vec!["OXC adapter supports identifier rest parameters only".into()]);
+            };
+            params.push(crate::ast::Param {
+                name: Name {
+                    span: span(identifier.span),
+                },
+                ty: None,
+                default_value: None,
+                is_rest: true,
             });
         }
         functions.push(Function {
@@ -1399,5 +1431,11 @@ mod tests {
     fn converts_default_parameters() {
         let program = parse_subset("function greet(name = 'zun') { return name; }", false).unwrap();
         assert!(program.functions[0].params[0].default_value.is_some());
+    }
+
+    #[test]
+    fn converts_rest_parameters() {
+        let program = parse_subset("function collect(...values) { return values; }", false).unwrap();
+        assert!(program.functions[0].params[0].is_rest);
     }
 }
