@@ -1377,9 +1377,11 @@ impl Translator<'_> {
                             Some("mapHasI32") => ("zun_jit_map_has_i32", 2, types::I64, JitKind::Bool, types::I32),
                             Some("setHasI32") => ("zun_jit_set_has_i32", 2, types::I64, JitKind::Bool, types::I32),
                             Some("setAddI64") => ("zun_jit_set_add_i64", 2, types::I64, JitKind::Bool, types::I32),
+                            Some("setAddI32") => ("zun_jit_set_add_i32", 2, types::I64, JitKind::Bool, types::I32),
                             Some("mapDeleteI64") => ("zun_jit_map_delete_i64", 2, types::I64, JitKind::Bool, types::I32),
                             Some("setDeleteI64") => ("zun_jit_set_delete_i64", 2, types::I64, JitKind::Bool, types::I32),
                             Some("mapSetI64") => ("zun_jit_map_set_i64", 3, types::I64, JitKind::Bool, types::I32),
+                            Some("mapSetI32") => ("zun_jit_map_set_i32", 3, types::I64, JitKind::Bool, types::I32),
                             Some("mapGetI64Or") => ("zun_jit_map_get_i64_or", 3, types::I64, JitKind::Num(NumKind::I64), types::I64),
                             Some("mapGetI32Or") => ("zun_jit_map_get_i32_or", 3, types::I64, JitKind::Num(NumKind::I32), types::I32),
                             Some("bufferLength") => (
@@ -1600,10 +1602,12 @@ impl Translator<'_> {
                         | "zun_jit_set_add_i64" | "zun_jit_map_delete_i64"
                         | "zun_jit_set_delete_i64" => vec![types::I64, types::I64],
                         "zun_jit_map_has_i32" | "zun_jit_set_has_i32" => vec![types::I64, types::I32],
+                        "zun_jit_set_add_i32" => vec![types::I64, types::I32],
                         "zun_jit_map_set_i64" | "zun_jit_map_get_i64_or" => {
                             vec![types::I64, types::I64, types::I64]
                         }
                         "zun_jit_map_get_i32_or" => vec![types::I64, types::I32, types::I32],
+                        "zun_jit_map_set_i32" => vec![types::I64, types::I32, types::I32],
                         _ => vec![arg_type; arg_count],
                     };
                     let fid = if let Some(&fid) = builtin_ids.get(name) {

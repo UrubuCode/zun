@@ -225,6 +225,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "setHasI32", params: &[Set, I32], ret: Bool, imp: unavailable },
         NativeFn { name: "setDeleteI64", params: &[Set, I64], ret: Bool, imp: unavailable },
         NativeFn { name: "mapSetI64", params: &[Map, I64, I64], ret: Bool, imp: unavailable },
+        NativeFn { name: "mapSetI32", params: &[Map, I32, I32], ret: Bool, imp: unavailable },
+        NativeFn { name: "setAddI32", params: &[Set, I32], ret: Bool, imp: unavailable },
         NativeFn { name: "mapGetI64Or", params: &[Map, I64, I64], ret: I64, imp: unavailable },
         NativeFn { name: "mapGetI32Or", params: &[Map, I32, I32], ret: I32, imp: unavailable },
         NativeFn { name: "bigIntNew", params: &[Str], ret: BigInt, imp: unavailable },

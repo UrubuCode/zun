@@ -4850,6 +4850,26 @@ fn numeric_i32_map_get_uses_typed_jit_abi() {
 }
 
 #[test]
+fn numeric_i32_map_and_set_mutations_use_typed_jit_abis() {
+    let src = "import { mapSetI32, setAddI32 } from \"zun:collections\"; function put(value: Map, key: i32, item: i32): boolean { return mapSetI32(value, key, item); } function add(value: Set, item: i32): boolean { return setAddI32(value, item); } function main(): boolean { return true; }";
+    let module = compile(src);
+    let put_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "put").map(|index| index as u32 + 1).expect("map put method");
+    let add_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "add").map(|index| index as u32 + 1).expect("set add method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 collection mutations");
+    assert!(jit.is_compiled(put_rid));
+    assert!(jit.is_compiled(add_rid));
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    let set = heap.alloc_set();
+    assert_eq!(jit.call_packed_with_heap(put_rid, &[map.addr() as u64, 7, 42], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(put_rid, &[map.addr() as u64, 7, 99], &mut heap).unwrap(), 0);
+    assert_eq!(heap.map_get(map, zun_core::Any::int(7)).and_then(|value| value.as_int()), Some(99));
+    assert_eq!(jit.call_packed_with_heap(add_rid, &[set.addr() as u64, 7], &mut heap).unwrap(), 1);
+    assert_eq!(jit.call_packed_with_heap(add_rid, &[set.addr() as u64, 7], &mut heap).unwrap(), 0);
+    assert_eq!(heap.set_has(set, zun_core::Any::int(7)), Some(true));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\

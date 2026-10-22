@@ -746,6 +746,11 @@ pub extern "C" fn zun_jit_set_add_i64(address: i64, value: i64) -> i32 {
     zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value)).unwrap_or(false) as i32)
 }
 
+pub extern "C" fn zun_jit_set_add_i32(address: i64, value: i32) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value as i64)).unwrap_or(false) as i32)
+}
+
 #[inline]
 pub extern "C" fn zun_jit_map_delete_i64(address: i64, key: i64) -> i32 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
@@ -778,6 +783,11 @@ pub extern "C" fn zun_jit_map_get_i32_or(address: i64, key: i32, fallback: i32) 
             .map(|value| value as i32)
             .unwrap_or(fallback)
     })
+}
+
+pub extern "C" fn zun_jit_map_set_i32(address: i64, key: i32, value: i32) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::int(key as i64), zun_core::Any::int(value as i64)).is_none() as i32)
 }
 
 /// Allocate an empty managed array without triggering collection.
@@ -1484,11 +1494,13 @@ impl Jit {
     builder.symbol("zun_jit_set_has_i64", zun_jit_set_has_i64 as *const u8);
         builder.symbol("zun_jit_set_has_i32", zun_jit_set_has_i32 as *const u8);
     builder.symbol("zun_jit_set_add_i64", zun_jit_set_add_i64 as *const u8);
+        builder.symbol("zun_jit_set_add_i32", zun_jit_set_add_i32 as *const u8);
     builder.symbol("zun_jit_map_delete_i64", zun_jit_map_delete_i64 as *const u8);
     builder.symbol("zun_jit_set_delete_i64", zun_jit_set_delete_i64 as *const u8);
     builder.symbol("zun_jit_map_set_i64", zun_jit_map_set_i64 as *const u8);
     builder.symbol("zun_jit_map_get_i64_or", zun_jit_map_get_i64_or as *const u8);
         builder.symbol("zun_jit_map_get_i32_or", zun_jit_map_get_i32_or as *const u8);
+        builder.symbol("zun_jit_map_set_i32", zun_jit_map_set_i32 as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
