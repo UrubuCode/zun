@@ -18,6 +18,16 @@ fn compile(src: &str) -> zun_module::Module {
 }
 
 #[test]
+fn realm_global_binding_remains_on_the_tier0_fallback() {
+    let module = compile(
+        "function main(): boolean { return globalThis == global; }",
+    );
+    let entry = module.entry_point.expect("entry point");
+    let jit = zun_codegen::Jit::compile(&module).expect("JIT eligibility analysis");
+    assert!(!jit.is_compiled(entry.rid()), "realm object access requires Tier 0");
+}
+
+#[test]
 fn typed_string_receiver_call_is_jit_equivalent() {
     let module = zun_compiler::compile(
         r#"import { length } from "zun:string";
