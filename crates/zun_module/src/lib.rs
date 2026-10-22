@@ -51,6 +51,14 @@ pub struct SequencePoint {
     pub source_end: u32,
 }
 
+/// Resolved source information for a runtime frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugFrame<'a> {
+    pub method_rid: u32,
+    pub method_name: &'a str,
+    pub source_span: Option<(u32, u32)>,
+}
+
 /// An in-memory module: everything a `.zm` file holds.
 #[derive(Debug)]
 pub struct Module {
@@ -98,6 +106,17 @@ impl Module {
             .filter(|point| point.method_rid == method_rid && point.pc <= pc)
             .max_by_key(|point| point.pc)
             .map(|point| (point.source_start, point.source_end))
+    }
+
+    /// Resolve a runtime method/PC pair into the method name and source span
+    /// used by diagnostic and error-stack consumers.
+    pub fn debug_frame_at(&self, method_rid: u32, pc: u32) -> Option<DebugFrame<'_>> {
+        let method = self.tables.method_defs.get(method_rid.checked_sub(1)? as usize)?;
+        Some(DebugFrame {
+            method_rid,
+            method_name: self.strings.get(method.name),
+            source_span: self.source_span_at(method_rid, pc),
+        })
     }
 
     /// Serialize to `.zm` bytes.

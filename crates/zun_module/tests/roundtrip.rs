@@ -75,6 +75,23 @@ fn sequence_points_roundtrip_through_zm() {
 }
 
 #[test]
+fn debug_frame_resolves_method_name_and_source_span() {
+    let mut module = sample_module();
+    module.sequence_points.push(zun_module::SequencePoint {
+        method_rid: 1,
+        pc: 0,
+        source_start: 8,
+        source_end: 19,
+    });
+    let decoded = Module::read(&module.write()).expect("module with debug frame");
+    let frame = decoded.debug_frame_at(1, 3).expect("method frame");
+    assert_eq!(frame.method_rid, 1);
+    assert_eq!(frame.method_name, "main");
+    assert_eq!(frame.source_span, Some((8, 19)));
+    assert!(decoded.debug_frame_at(0, 0).is_none());
+}
+
+#[test]
 fn emit_read_disassemble() {
     let original = sample_module();
     let bytes = original.write();
