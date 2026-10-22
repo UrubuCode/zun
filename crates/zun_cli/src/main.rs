@@ -11,6 +11,7 @@
 //! The front-end pipeline (parse → check → lower) is shared by all three; only
 //! what happens to the resulting module differs.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -547,14 +548,8 @@ fn out_path(source: &Path) -> PathBuf {
 /// dependency. `ZUN_LLD` is an explicit override; otherwise use the copy
 /// shipped with the active Rust toolchain when available.
 fn resolve_lld() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("ZUN_LLD") {
-        let path = PathBuf::from(path);
-        if !path.as_os_str().is_empty() {
-            // An explicit override is authoritative. Let the linker
-            // invocation report a stale path instead of silently selecting a
-            // different linker and violating the external-LLD contract.
-            return Some(path);
-        }
+    if let Some(path) = explicit_lld_override(std::env::var_os("ZUN_LLD").as_deref()) {
+        return Some(path);
     }
     let path_candidates = if cfg!(windows) {
         ["lld-link.exe", "ld.lld.exe", "lld.exe"]
@@ -582,6 +577,11 @@ fn resolve_lld() -> Option<PathBuf> {
         candidate.set_extension("exe");
     }
     candidate.is_file().then_some(candidate)
+}
+
+fn explicit_lld_override(value: Option<&OsStr>) -> Option<PathBuf> {
+    let value = value?;
+    (!value.is_empty()).then(|| PathBuf::from(value))
 }
 
 /// Resolve an explicitly provisioned static runtime library for AOT links.
@@ -822,4 +822,25 @@ fn line_col(source: &str, offset: u32) -> (usize, usize) {
         }
     }
     (line, col)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::explicit_lld_override;
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    #[test]
+    fn explicit_lld_override_keeps_stale_paths_authoritative() {
+        assert_eq!(
+            explicit_lld_override(Some(OsStr::new("missing-lld"))).as_deref(),
+            Some(Path::new("missing-lld"))
+        );
+    }
+
+    #[test]
+    fn empty_lld_override_allows_discovery() {
+        assert!(explicit_lld_override(Some(OsStr::new(""))).is_none());
+        assert!(explicit_lld_override(None).is_none());
+    }
 }
