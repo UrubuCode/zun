@@ -209,6 +209,24 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 span: Span::new(throw_statement.span.start, throw_statement.span.end),
             }],
         }),
+        Statement::BreakStatement(break_statement) => Ok(Block {
+            span: Span::new(break_statement.span.start, break_statement.span.end),
+            statements: vec![Stmt::Break {
+                label: break_statement.label.as_ref().map(|label| Name {
+                    span: Span::new(label.span.start, label.span.end),
+                }),
+                span: Span::new(break_statement.span.start, break_statement.span.end),
+            }],
+        }),
+        Statement::ContinueStatement(continue_statement) => Ok(Block {
+            span: Span::new(continue_statement.span.start, continue_statement.span.end),
+            statements: vec![Stmt::Continue {
+                label: continue_statement.label.as_ref().map(|label| Name {
+                    span: Span::new(label.span.start, label.span.end),
+                }),
+                span: Span::new(continue_statement.span.start, continue_statement.span.end),
+            }],
+        }),
         _ => Err("OXC adapter requires a supported statement branch".into()),
     }
 }
