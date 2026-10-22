@@ -381,7 +381,7 @@ start; generational GC (nursery bump allocation, budget-triggered evacuating min
 collections, old-to-young barriers, weak/ephemeron stress coverage, and native
 stack-map root rewriting); Cranelift Tier 1 (typed stack, virtual-slot dispatch,
 heap/object/array/string
-+ Map/Set lowering, eager-JIT-for-loops); closures; exceptions (unwind + rethrow
++ Map/Set lowering, type-aware String conversion lowering, eager-JIT-for-loops); closures; exceptions (unwind + rethrow
 routing); iteration; async/await; generators; BigInt; Group 2 syntax; DataView/typed
 arrays; static/private/accessors; Map/Set/WeakMap (ordered O(1) + ephemeron tracing);
 `Any`/`DynamicObject`; cached prelude plus the `zun:std` cached-module boundary;
