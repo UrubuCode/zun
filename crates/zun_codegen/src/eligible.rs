@@ -107,6 +107,7 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "setClear"
                 | "mapValues"
                 | "mapKeys"
+                | "mapEntries"
                 | "mapGet"
                 | "mapHasI64"
                 | "mapHasI32"

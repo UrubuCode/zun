@@ -4994,6 +4994,24 @@ fn managed_map_keys_uses_the_managed_array_abi() {
 }
 
 #[test]
+fn managed_map_entries_uses_nested_managed_arrays() {
+    let src = "import { mapEntries } from \"zun:collections\"; function entries(value: Map): Array { return mapEntries(value); } function main(): boolean { return true; }";
+    let module = compile(src);
+    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "entries").map(|index| index as u32 + 1).expect("map entries method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles map entries");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::int(10));
+    let array_addr = jit.call_packed_with_heap(rid, &[map.addr() as u64], &mut heap).unwrap();
+    let entries = unsafe { zun_gc::Obj::from_addr(array_addr as *mut u64) };
+    let pair = heap.array_get(entries, 0).and_then(|value| value.as_object()).map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }).expect("entry pair");
+    assert_eq!(heap.array_len(entries), Some(1));
+    assert_eq!(heap.array_get(pair, 0).and_then(|value| value.as_int()), Some(1));
+    assert_eq!(heap.array_get(pair, 1).and_then(|value| value.as_int()), Some(10));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\

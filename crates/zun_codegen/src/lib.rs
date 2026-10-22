@@ -651,6 +651,21 @@ pub extern "C" fn zun_jit_map_keys(address: i64) -> i64 {
     }).unwrap_or(0)
 }
 
+pub extern "C" fn zun_jit_map_entries(address: i64) -> i64 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        let entries = heap.map_entries(object)?;
+        let array = heap.alloc_array(entries.len());
+        for (index, (key, value)) in entries.into_iter().enumerate() {
+            let pair = heap.alloc_array(2);
+            heap.array_set(pair, 0, key)?;
+            heap.array_set(pair, 1, value)?;
+            heap.array_set(array, index, zun_core::Any::object(pair.addr() as usize))?;
+        }
+        Some(array.addr() as i64)
+    }).unwrap_or(0)
+}
+
 /// Read a managed Set length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_set_size(address: i64) -> i64 {
@@ -1527,6 +1542,7 @@ impl Jit {
         builder.symbol("zun_jit_map_clear", zun_jit_map_clear as *const u8);
         builder.symbol("zun_jit_map_values", zun_jit_map_values as *const u8);
         builder.symbol("zun_jit_map_keys", zun_jit_map_keys as *const u8);
+        builder.symbol("zun_jit_map_entries", zun_jit_map_entries as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
         builder.symbol("zun_jit_set_clear", zun_jit_set_clear as *const u8);
     builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
