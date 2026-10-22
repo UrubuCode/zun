@@ -13,16 +13,6 @@ pub(super) fn collect(
     collect_with_policy(types, stack, locals, parent, extra_roots, false)
 }
 
-pub(super) fn collect_young(
-    types: &zun_types::TypeSystem,
-    stack: &[Value],
-    locals: &[Value],
-    parent: Option<&RootLink>,
-    extra_roots: &[zun_gc::Obj],
-) -> usize {
-    collect_with_policy(types, stack, locals, parent, extra_roots, true)
-}
-
 /// Run an evacuating minor collection for an explicitly stopped interpreter
 /// chain.  Unlike `collect_young`, this path rewrites the current activation,
 /// every linked caller, and the external roots in the same relocation
