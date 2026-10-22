@@ -347,6 +347,8 @@ It also exports `zun_embedded_module_len` for runtime initialization.
 Manifest v3 records that metadata object's path while retaining reads of older
 manifest versions; the generated launcher references the symbol so the embedded
 payload is retained by the final link.
+`zun_vm` now emits both its normal `rlib` and a Cargo `staticlib` suitable for
+the AOT runtime-library input.
 
 ## 8. Risks & attention points
 
