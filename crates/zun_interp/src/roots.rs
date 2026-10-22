@@ -23,6 +23,39 @@ pub(super) fn collect_young(
     collect_with_policy(types, stack, locals, parent, extra_roots, true)
 }
 
+/// Run an evacuating minor collection for an explicitly stopped interpreter
+/// chain.  Unlike `collect_young`, this path rewrites the current activation,
+/// every linked caller, and the external roots in the same relocation
+/// callback.  It is kept separate from the normal policy until all callers
+/// can provide the complete side-table root contract.
+pub(super) fn collect_young_evacuating(
+    types: &zun_types::TypeSystem,
+    stack: &mut [Value],
+    locals: &mut [Value],
+    parent: Option<&RootLink>,
+    extra_roots: &[zun_gc::Obj],
+    rewrite_external: &mut dyn FnMut(&zun_gc::RelocationMap),
+) -> usize {
+    let mut roots = Vec::new();
+    roots.extend_from_slice(extra_roots);
+    collect_frame_roots(stack, locals, &mut roots);
+    if let Some(link) = parent {
+        unsafe { link.append_roots(&mut roots) };
+    }
+    zun_gc::append_native_roots(&mut roots);
+    let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
+    zun_gc::with_current_heap_mut(|heap| unsafe {
+        heap.collect_young_evacuating(&mut roots, &ref_fn, &mut |relocation| {
+            let _ = Value::rewrite_managed_references(stack, relocation);
+            let _ = Value::rewrite_managed_references(locals, relocation);
+            if let Some(link) = parent {
+                let _ = link.rewrite_managed_references(relocation);
+            }
+            rewrite_external(relocation);
+        })
+    })
+}
+
 /// Run a full collection and compact the heap while the current activation's
 /// value storage is exclusively borrowed by the interpreter. Caller frames
 /// are intentionally excluded; nested execution remains on mark/sweep until
