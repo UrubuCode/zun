@@ -138,8 +138,11 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
                     .ok()?
                     .into_iter()
                     .filter(|(_, instruction)| {
-                        matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
-                            && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
+                        matches!(
+                            instruction.opcode,
+                            Opcode::LoadDynamic | Opcode::StoreDynamic
+                        ) || (matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
+                            && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef)))
                     })
                     .map(move |(pc, _)| DynamicSite {
                         method_name: method_name.clone(),
@@ -881,6 +884,21 @@ mod tests {
         assert_eq!(report.dynamic_sites[0].method_name, "main");
         assert!(report.dynamic_sites[0].pc < module.code.len() as u32);
         assert!(report.dynamic_sites[0].source_span.is_some());
+    }
+
+    #[test]
+    fn dynamic_fallback_report_covers_reflective_property_access() {
+        let module = compile(
+            "function main(): int { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); return 0; }",
+        )
+        .expect("compile reflective access");
+        let report = trim_report(&module).expect("trim report");
+        assert!(report.dynamic_fallback);
+        assert!(!report.dynamic_sites.is_empty());
+        assert!(report
+            .dynamic_sites
+            .iter()
+            .all(|site| site.method_name == "main"));
     }
 
     #[test]
