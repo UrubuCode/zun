@@ -628,10 +628,16 @@ impl Zmlib {
         mut self,
         declarations: Vec<(String, Vec<u8>)>,
     ) -> Result<Self, LoadError> {
+        let mut seen = std::collections::HashSet::new();
         for (name, _) in &declarations {
             if !self.modules.iter().any(|(module, _)| module == name) {
                 return Err(LoadError::InvalidManifest(format!(
                     "type declarations provided for unknown module `{name}`"
+                )));
+            }
+            if !seen.insert(name) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "duplicate type declarations for module `{name}`"
                 )));
             }
         }
@@ -1406,6 +1412,13 @@ mod tests {
         assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
             .unwrap()
             .with_type_declarations(vec![("missing".into(), b"declare const x: int;".to_vec())])
+            .is_err());
+        assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
+            .unwrap()
+            .with_type_declarations(vec![
+                ("app".into(), b"declare function main(): int;".to_vec()),
+                ("app".into(), b"declare const x: int;".to_vec()),
+            ])
             .is_err());
         let path = std::env::temp_dir().join(format!("zun-package-{}.zmlib", std::process::id()));
         package.write_file(&path).unwrap();
