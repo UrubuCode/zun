@@ -704,6 +704,10 @@ The following runtime contracts are implemented and covered by tests:
   integer result functions (`i8..i64` and `u8..u64`) in addition to the float,
   boolean, and string helpers; each rejects mismatched result kinds before
   writing to caller storage;
+- the optional Node N-API registration also exposes `runI8`, `runI16`,
+  `runI32`, `runI64`, `runU8`, `runU16`, `runU32`, and `runU64`; feature
+  compilation is validated without Node installed, while final linking still
+  requires the platform's `node.lib`/`libnode`.
 - managed BigInt construction, add/subtract/multiply/compare, typed arithmetic
   and comparison operators, and `toString`, with GC-owned payloads and an
   explicit Tier 0 boundary;
