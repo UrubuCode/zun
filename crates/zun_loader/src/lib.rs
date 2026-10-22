@@ -832,6 +832,18 @@ impl ModuleLoader {
         self.load_bytes(name.to_owned(), &bytes)
     }
 
+    /// Fetch and register every module in lockfile order.
+    pub fn load_lock(
+        &mut self,
+        lock: &ModuleLock,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        for (name, id) in &lock.entries {
+            self.load_fetched(name, *id, fetcher)?;
+        }
+        Ok(())
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         package.lock.verify()?;
@@ -1250,6 +1262,13 @@ mod tests {
         loader.load_fetched("remote", content_id(&bytes), &registry).unwrap();
         assert!(loader.get("remote").is_some());
         assert!(loader.load_fetched("bad", content_id(b"other"), &registry).is_err());
+        let mut lock = ModuleLock::new();
+        lock.push("remote-a", content_id(&bytes)).unwrap();
+        lock.push("remote-b", content_id(&bytes)).unwrap();
+        let mut all = ModuleLoader::new();
+        all.load_lock(&lock, &registry).unwrap();
+        assert!(all.get("remote-a").is_some());
+        assert!(all.get("remote-b").is_some());
     }
 
     #[test]
