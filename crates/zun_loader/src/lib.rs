@@ -1852,6 +1852,20 @@ impl ModuleLoader {
         self.load_index_cached(cache_root, &signed.index, fetcher)
     }
 
+    /// Authenticate and install the successor key set carried by a signed
+    /// index. The retained set is changed only after the transition verifies.
+    pub fn apply_signed_index_rotation(
+        &mut self,
+        signed: &SignedModuleIndex,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.as_ref().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        let next = signed.rotated_trusted_keys(trusted)?;
+        self.trusted_keys = Some(next);
+        Ok(())
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         let trusted = self.trusted_keys.as_ref().ok_or_else(|| {
@@ -2593,6 +2607,8 @@ mod tests {
         let rotated = roundtrip.rotated_trusted_keys(&trusted).unwrap();
         assert!(!rotated.contains(&signing.verifying_key().to_bytes()));
         assert!(rotated.contains(&next));
+        let mut loader = ModuleLoader::new_with_trusted_keys(trusted);
+        loader.apply_signed_index_rotation(&roundtrip).unwrap();
     }
 
     #[test]
