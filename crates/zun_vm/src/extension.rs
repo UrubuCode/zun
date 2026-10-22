@@ -1,6 +1,7 @@
 //! Loading and registration of trusted Zun native extensions.
 
 use std::path::Path;
+use std::collections::HashMap;
 
 use zun_abi::{OwnedFunction, OwnedRegistry, ZunRegisterV1, ZunRegistry};
 
@@ -14,6 +15,50 @@ use crate::{FfiError, NativeLibrary};
 pub struct LoadedExtension {
     library: NativeLibrary,
     registry: OwnedRegistry,
+}
+
+/// Owns loaded extensions for one VM/host scope and caches them by logical
+/// name. A failed load is not cached, so a later retry can observe a repaired
+/// deployment.
+#[derive(Default)]
+pub struct ExtensionResolver {
+    extensions: HashMap<String, LoadedExtension>,
+}
+
+impl core::fmt::Debug for ExtensionResolver {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ExtensionResolver")
+            .field("extensions", &self.extensions.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl ExtensionResolver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Resolve and cache a logical extension name.
+    ///
+    /// # Safety
+    /// The resolved library must be trusted native code implementing the v1
+    /// registration contract.
+    pub unsafe fn load_named(&mut self, name: &str) -> Result<&LoadedExtension, FfiError> {
+        if !self.extensions.contains_key(name) {
+            // SAFETY: forwarded from the caller's trusted-extension contract.
+            let extension = unsafe { LoadedExtension::load_named(name) }?;
+            self.extensions.insert(name.to_owned(), extension);
+        }
+        Ok(self.extensions.get(name).expect("extension inserted or cached"))
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.extensions.contains_key(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.extensions.len()
+    }
 }
 
 impl core::fmt::Debug for LoadedExtension {
@@ -90,5 +135,14 @@ mod tests {
         let result = unsafe { LoadedExtension::load_path("relative-extension.dll") };
         let error = result.expect_err("relative extension paths must be rejected");
         assert!(error.to_string().contains("absolute"));
+    }
+
+    #[test]
+    fn extension_resolver_does_not_cache_failed_loads() {
+        let mut resolver = ExtensionResolver::new();
+        let result = unsafe { resolver.load_named("zun-extension-that-does-not-exist") };
+        assert!(result.is_err());
+        assert!(!resolver.contains("zun-extension-that-does-not-exist"));
+        assert_eq!(resolver.len(), 0);
     }
 }
