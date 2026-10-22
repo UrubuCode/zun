@@ -88,7 +88,12 @@ fn check_impl(
     allow_external_modules: bool,
 ) -> hir::Program {
     let mut external_by_name: HashMap<String, ExternalFunction> = HashMap::new();
+    let mut external_by_module_name: HashMap<(String, String), ExternalFunction> = HashMap::new();
     for function in external_functions {
+        external_by_module_name.insert(
+            (function.module.clone(), function.name.clone()),
+            function.clone(),
+        );
         if let Some(previous) = external_by_name.get(&function.name) {
             if previous.module != function.module {
                 diagnostics.push(
@@ -114,6 +119,7 @@ fn check_impl(
         imports: HashMap::new(),
         namespace_imports: HashMap::new(),
         external_functions: external_by_name,
+        external_namespace_functions: external_by_module_name,
         type_aliases: HashMap::new(),
         closures: Vec::new(),
     };
@@ -187,6 +193,8 @@ struct Checker<'a> {
     namespace_imports: HashMap<String, String>,
     /// Imported source-module function signatures by local name.
     external_functions: HashMap<String, ExternalFunction>,
+    /// Export signatures indexed by module and name for namespace imports.
+    external_namespace_functions: HashMap<(String, String), ExternalFunction>,
     /// Imported default type bindings over the frozen runtime floor.
     type_aliases: HashMap<String, Ty>,
     closures: Vec<hir::ClosureFunction>,
@@ -1779,6 +1787,9 @@ impl Checker<'_> {
                 if let ast::Expr::Ident(class) = receiver.as_ref() {
                     let class_name = self.text(class).to_string();
                     if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
+                        if zun_natives::module(&module).is_none() {
+                            // Source-module namespaces are handled below.
+                        } else {
                         let Some((id, native)) = zun_natives::resolve(&module, self.text(method)) else {
                             self.error(method.span, format!("`{}` has no export named `{}`", module, self.text(method)));
                             return self.poison(span);
@@ -1801,6 +1812,37 @@ impl Checker<'_> {
                             ty: native_ty(native.ret),
                             span,
                         };
+                        }
+                    }
+                    if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
+                        if let Some(external) = self
+                            .external_namespace_functions
+                            .get(&(module.clone(), self.text(method).to_string()))
+                            .cloned()
+                        {
+                            if external.params.len() != args.len() {
+                                self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), external.params.len(), args.len()));
+                                return self.poison(span);
+                            }
+                            let mut checked = Vec::with_capacity(args.len());
+                            for (arg, &expected) in args.iter().zip(&external.params) {
+                                let mut value = self.check_expr(cx, arg);
+                                coerce_numeric_literal(&mut value, expected);
+                                if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                                    self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                                }
+                                checked.push(value);
+                            }
+                            return hir::Expr {
+                                kind: hir::ExprKind::ExternalCall {
+                                    module: external.module,
+                                    name: external.name,
+                                    args: checked,
+                                },
+                                ty: external.return_ty,
+                                span,
+                            };
+                        }
                     }
                     if let Some(&class_index) = self.classes_by_name.get(&class_name) {
                         if let Some(func) = self.method_of(class_index, self.text(method)) {

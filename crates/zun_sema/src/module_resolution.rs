@@ -35,7 +35,12 @@ impl<'a> Checker<'a> {
                 }
                 if allow_external_modules && !import.module.starts_with("zun:") {
                     for binding in &import.names {
-                        if binding.is_default && import.module == "extended-string" {
+                        if binding.is_namespace {
+                            self.namespace_imports.insert(
+                                self.text(&binding.local).to_string(),
+                                import.module.clone(),
+                            );
+                        } else if binding.is_default && import.module == "extended-string" {
                             let local = self.text(&binding.local).to_string();
                             self.type_aliases.insert(local, super::hir::Ty::String);
                         }
@@ -53,7 +58,12 @@ impl<'a> Checker<'a> {
                             self.text(&binding.local).to_string(),
                             import.module.clone(),
                         );
-                    } else if !allow_external_modules || import.module.starts_with("zun:") {
+                    } else if allow_external_modules && !import.module.starts_with("zun:") {
+                        self.namespace_imports.insert(
+                            self.text(&binding.local).to_string(),
+                            import.module.clone(),
+                        );
+                    } else {
                         self.error(binding.local.span, format!("unknown module `{}`", import.module));
                     }
                     continue;

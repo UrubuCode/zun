@@ -542,6 +542,29 @@
     }
 
     #[test]
+    fn namespace_import_member_call_lowers_to_static_external_call() {
+        let source = "import * as math from 'pkg'; function main(): int { return math.answer(41); }";
+        let mut diagnostics = Vec::new();
+        let ast = parse_subset(source, true).unwrap();
+        let hir = check_with_externals(
+            source,
+            &ast,
+            &mut diagnostics,
+            &[ExternalFunction {
+                module: "pkg".into(),
+                name: "answer".into(),
+                params: vec![Ty::INT],
+                return_ty: Ty::INT,
+            }],
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let hir::Stmt::Return(Some(expr)) = &hir.functions[0].body[0] else {
+            panic!("expected return statement")
+        };
+        assert!(matches!(expr.kind, hir::ExprKind::ExternalCall { ref module, ref name, .. } if module == "pkg" && name == "answer"));
+    }
+
+    #[test]
     fn error_does_not_cascade() {
         // `y` is unknown; the addition and the assignment must not pile on
         // extra diagnostics.
