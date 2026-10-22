@@ -374,7 +374,17 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                         eprintln!(
                                             "zun: warning: method #{rid} is not AOT-eligible; keeping embedded IL interpreter fallback"
                                         );
-                                        if let Some(runtime) = resolve_runtime_library() {
+                                        let scalar_fallback = module.entry_point.map(|token| {
+                                            module.tables.method_defs.get(token.rid() as usize - 1)
+                                                .and_then(|method| zun_module::read_body(&module.code, method.body_offset).ok())
+                                                .map(|body| matches!(
+                                                    zun_il::JitKind::from_byte(body.return_kind),
+                                                    zun_il::JitKind::Bool | zun_il::JitKind::Num(zun_il::NumKind::I8 | zun_il::NumKind::U8 | zun_il::NumKind::I16 | zun_il::NumKind::U16 | zun_il::NumKind::I32 | zun_il::NumKind::U32 | zun_il::NumKind::I64 | zun_il::NumKind::U64)
+                                                ))
+                                                .unwrap_or(false)
+                                        }).unwrap_or(false);
+                                        if scalar_fallback {
+                                            if let Some(runtime) = resolve_runtime_library() {
                                             let metadata_out = out.with_extension("meta.o");
                                             match zun_codegen::compile_metadata_object(&module.write()) {
                                                 Ok(metadata) => {
@@ -393,6 +403,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                     }
                                                 }
                                                 Err(error) => eprintln!("zun: warning: cannot emit fallback metadata object: {error}"),
+                                            }
                                             }
                                         }
                                         ExitCode::SUCCESS
@@ -589,6 +600,13 @@ fn link_aot_executable(
     }
     if let Some(runtime) = runtime {
         command.arg("-C").arg(format!("link-arg={}", runtime.display()));
+        if cfg!(windows) {
+            command
+                .arg("-C")
+                .arg("link-arg=bcrypt.lib")
+                .arg("-C")
+                .arg("link-arg=advapi32.lib");
+        }
     }
     if let Some(lld) = resolve_lld() {
         command.arg("-C").arg(format!("linker={}", lld.display()));
@@ -625,6 +643,13 @@ fn link_aot_fallback(metadata: &Path, runtime: &Path, executable: &Path) -> Resu
         .arg(format!("link-arg={}", runtime.display()))
         .arg("-o")
         .arg(executable);
+    if cfg!(windows) {
+        command
+            .arg("-C")
+            .arg("link-arg=bcrypt.lib")
+            .arg("-C")
+            .arg("link-arg=advapi32.lib");
+    }
     if let Some(lld) = resolve_lld() {
         command.arg("-C").arg(format!("linker={}", lld.display()));
     }
