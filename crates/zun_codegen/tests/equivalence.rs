@@ -3588,18 +3588,23 @@ fn array_access_methods_keep_interpreter_fallback() {
 }
 
 #[test]
-fn generic_array_allocation_and_access_keep_interpreter_fallback() {
+fn f64_array_allocation_and_access_are_jit_equivalent() {
     let module = zun_compiler::compile(
         "function main(): number { let values = new Array(1); values[0] = 42.0; return values[0] as number; }",
     )
     .expect("compile generic Array access");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with Array fallback");
-    assert!(!jit.is_compiled(entry), "generic Array carrier must remain Tier 0");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles f64 Array access");
+    assert!(jit.is_compiled(entry), "typed f64 Array access should be eligible");
     assert!(matches!(
         interp_entry(&module),
         Value::Float(42.0, zun_il::NumKind::F64)
     ));
+    let mut heap = zun_gc::Heap::new();
+    assert_eq!(
+        f64::from_bits(jit.call_packed_with_heap(entry, &[], &mut heap).unwrap()),
+        42.0
+    );
 }
 
 #[test]

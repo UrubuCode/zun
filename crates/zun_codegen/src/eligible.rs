@@ -378,6 +378,36 @@ fn scalar_bool_array_access_only(
         })
 }
 
+fn scalar_f64_array_access_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
+    body.returns_value
+        && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::F64)
+        && instrs.iter().any(|instruction| {
+            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
+        })
+        && instrs.iter().all(|instruction| {
+            matches!(
+                instruction.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::ConstF64
+                    | Opcode::Conv
+                    | Opcode::UnboxAny
+                    | Opcode::BoxAny
+                    | Opcode::Pop
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::NewArray
+                    | Opcode::LoadArray
+                    | Opcode::StoreArray
+                    | Opcode::Ret
+            )
+        })
+}
+
 /// Allow a narrow object-array ABI. The aggregate `Any` carrier remains out
 /// of the JIT; only methods whose array result/value is a managed object use
 /// the single-pointer helper ABI.
@@ -598,6 +628,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             )
             && !scalar_bool_array_access_only(&instrs, &body)
             && !scalar_u64_array_access_only(&instrs, &body)
+            && !scalar_f64_array_access_only(&instrs, &body)
             && !scalar_array_length_only(&instrs, &body)
         {
             continue;
