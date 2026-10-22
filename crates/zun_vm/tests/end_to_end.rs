@@ -629,6 +629,29 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
 }
 
 #[test]
+fn loop_with_exception_region_keeps_tier0_fallback() {
+    use zun_interp::{run_with, CaptureOutput};
+
+    let src = "class Error {} function guarded(n: int): int { let i: int = 0; try { while (i < n) { i = i + 1; } } catch (error: Error) { return -1; } return i; }\n\
+               function main(): int { return guarded(5); }";
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    assert!(diags.is_empty());
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty());
+    let module = zun_ilgen::lower(&hir);
+    let loaded = zun_vm::load(&module.write()).unwrap();
+    let guarded_rid = 1;
+    let jit = zun_codegen::Jit::new(&loaded).unwrap();
+    let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 1);
+    let mut out = CaptureOutput::default();
+    let result = run_with(&loaded, &mut out, Some(&hook)).unwrap();
+
+    assert!(matches!(result, zun_interp::value::Value::Int(5, _)));
+    assert!(!hook.jit_is_defined(guarded_rid));
+}
+
+#[test]
 fn osr_rejects_snapshots_with_a_live_evaluation_stack() {
     use zun_interp::value::Value;
 
