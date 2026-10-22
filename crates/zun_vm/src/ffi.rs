@@ -19,7 +19,41 @@ pub enum FfiScalar {
     Bool,
 }
 
-/// A validated signature for a direct C-ABI call.
+/// Declared ownership for a native string returned by a future marshalling
+/// stub. The runtime never guesses ownership from the symbol or return type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FfiStringReturn {
+    /// The native side retains ownership and supplies a length through the
+    /// named companion value or a declared NUL-terminated convention.
+    Borrowed { length_source: String },
+    /// The native side transfers ownership and exposes the named deallocator.
+    Owned { free_symbol: String },
+    /// The caller owns the temporary buffer and the native side returns the
+    /// number of initialized bytes.
+    OutBuffer { capacity: usize },
+}
+
+impl FfiStringReturn {
+    /// Reject an incomplete ownership declaration before a symbol is loaded.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Borrowed { length_source } if length_source.trim().is_empty() => {
+                Err("borrowed string returns require a length source".into())
+            }
+            Self::Owned { free_symbol } if free_symbol.trim().is_empty() => {
+                Err("owned string returns require a free symbol".into())
+            }
+            Self::OutBuffer { capacity: 0 } => {
+                Err("out-buffer string returns require positive capacity".into())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A validated signature for a direct C-ABI call. Non-blittable string
+/// signatures use [`FfiStringReturn`] as a separate, explicit contract until
+/// their generated marshalling stub is available.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FfiSignature {
     params: Vec<FfiScalar>,
@@ -552,6 +586,36 @@ mod tests {
             &[FfiScalar::I64, FfiScalar::F64, FfiScalar::Bool]
         );
         assert_eq!(signature.result(), FfiScalar::I64);
+    }
+
+    #[test]
+    fn string_return_ownership_requires_an_explicit_safe_mode() {
+        assert!(FfiStringReturn::Borrowed {
+            length_source: "out_len".into()
+        }
+        .validate()
+        .is_ok());
+        assert!(FfiStringReturn::Owned {
+            free_symbol: "free_text".into()
+        }
+        .validate()
+        .is_ok());
+        assert!(FfiStringReturn::OutBuffer { capacity: 256 }
+            .validate()
+            .is_ok());
+        assert!(FfiStringReturn::Borrowed {
+            length_source: String::new()
+        }
+        .validate()
+        .is_err());
+        assert!(FfiStringReturn::Owned {
+            free_symbol: "  ".into()
+        }
+        .validate()
+        .is_err());
+        assert!(FfiStringReturn::OutBuffer { capacity: 0 }
+            .validate()
+            .is_err());
     }
 
     #[test]
