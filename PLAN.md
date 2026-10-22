@@ -918,12 +918,13 @@ layouts, plus a source-level `toString()` implementation. The heap also stores
 managed `ErrorValue` name/message pairs with mutation and sweep cleanup,
 providing the runtime backing for those source-level error objects.
 
-The release benchmark rerun on 2026-10-21 measured 348.041 ns/iteration for
-the integer Tier 0 loop and 3.125 ns/iteration for the equivalent JIT loop
-(111.36x). The metadata-focused Tier 0 workloads measured 330.878
-ns/iteration for field load/store and 556.505 ns/iteration for virtual
-dispatch. These figures are machine-specific and should be re-run after
-interpreter or OSR changes; the benchmark source is
+The release benchmark rerun on 2026-10-21 measured 414.802 ns/iteration for
+the integer Tier 0 loop and 3.256 ns/iteration for the equivalent JIT loop
+(127.38x). The metadata-focused Tier 0 workloads measured 331.762
+ns/iteration for field load/store and 509.932 ns/iteration for virtual
+dispatch. The result was identical between interpreter and JIT. These figures
+are machine-specific and should be re-run after interpreter or OSR changes;
+the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
 The narrow scalar array ABI is also implemented: Cranelift lowers `LoadArray`
