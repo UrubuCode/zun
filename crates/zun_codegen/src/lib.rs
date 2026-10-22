@@ -724,10 +724,20 @@ pub extern "C" fn zun_jit_map_has_i64(address: i64, key: i64) -> i32 {
     zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key)).unwrap_or(false) as i32)
 }
 
+pub extern "C" fn zun_jit_map_has_i32(address: i64, key: i32) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key as i64)).unwrap_or(false) as i32)
+}
+
 #[inline]
 pub extern "C" fn zun_jit_set_has_i64(address: i64, value: i64) -> i32 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value)).unwrap_or(false) as i32)
+}
+
+pub extern "C" fn zun_jit_set_has_i32(address: i64, value: i32) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value as i64)).unwrap_or(false) as i32)
 }
 
 #[inline]
@@ -1460,7 +1470,9 @@ impl Jit {
     builder.symbol("zun_jit_map_get_f64_or", zun_jit_map_get_f64_or as *const u8);
     builder.symbol("zun_jit_map_get_any", zun_jit_map_get_any as *const u8);
     builder.symbol("zun_jit_map_has_i64", zun_jit_map_has_i64 as *const u8);
+        builder.symbol("zun_jit_map_has_i32", zun_jit_map_has_i32 as *const u8);
     builder.symbol("zun_jit_set_has_i64", zun_jit_set_has_i64 as *const u8);
+        builder.symbol("zun_jit_set_has_i32", zun_jit_set_has_i32 as *const u8);
     builder.symbol("zun_jit_set_add_i64", zun_jit_set_add_i64 as *const u8);
     builder.symbol("zun_jit_map_delete_i64", zun_jit_map_delete_i64 as *const u8);
     builder.symbol("zun_jit_set_delete_i64", zun_jit_set_delete_i64 as *const u8);
