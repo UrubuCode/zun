@@ -410,6 +410,8 @@ The fallback linker supplies the Windows cryptography system libraries required
 by the runtime static library, and leaves non-scalar managed returns on `.zm` only.
 The CLI has an integration fixture that provisions `zun_vm.lib` when available,
 builds an ineligible scalar entrypoint, and executes the resulting fallback binary.
+Signed and unsigned scalar fallback ABIs are both covered, including the generated
+launcher’s `u64` path.
 
 ## 8. Risks & attention points
 
