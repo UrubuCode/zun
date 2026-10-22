@@ -348,13 +348,13 @@ P/Invoke):
   No return ownership mode is inferred; every native pointer is copied before
   the call boundary ends.
   The VM now exposes `FfiStringReturn` as the validated ownership contract for
-  the future generated stub. `FfiStringArgument` provides call-scoped storage
+  the marshalling boundary. `FfiStringArgument` provides call-scoped storage
   with UTF-16-to-UTF-8 conversion, explicit byte length, and NUL termination;
   `NativeLibrary` has explicit borrowed, owned, and caller-buffer copy helpers.
   The compiler/IL metadata now carries the explicit string contract for the
   one-string-argument path, and the native hook validates and dispatches it.
-  Generated stubs, multiple string arguments, and broader aggregate marshalling
-  remain deferred.
+  The two-string `out_buffer` path is also available; generated stubs, borrowed/
+  owned multi-string returns, and broader aggregate marshalling remain deferred.
 
 Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
 } from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
