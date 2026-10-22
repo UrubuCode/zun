@@ -1891,6 +1891,11 @@ impl Checker<'_> {
                     (Ty::String, "toFloat") => Some(("toFloat", Ty::F64, vec![])),
                     (Ty::String, "toBoolean") => Some(("toBoolean", Ty::Boolean, vec![])),
                     (Ty::String, "reverse") => Some(("reverse", Ty::String, vec![])),
+                    (Ty::String, "length") => Some(("length", Ty::Int(IntKind::U64), vec![])),
+                    (Ty::String, "toUpperCase") => Some(("toUpperCase", Ty::String, vec![])),
+                    (Ty::String, "toLowerCase") => Some(("toLowerCase", Ty::String, vec![])),
+                    (Ty::String, "trim") => Some(("trim", Ty::String, vec![])),
+                    (Ty::String, "includes") => Some(("includes", Ty::Boolean, vec![Ty::String])),
                     (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
                         "u8ArrayGet",
                         Ty::Int(IntKind::U8),
