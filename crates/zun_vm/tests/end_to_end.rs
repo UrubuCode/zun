@@ -61,6 +61,21 @@ fn bigint_subtraction_preserves_negative_values() {
 }
 
 #[test]
+fn bigint_arithmetic_operators_use_the_managed_floor() {
+    let out = run_source(
+        r#"function main(): int {
+            let left: BigInt = new BigInt("7");
+            let right: BigInt = new BigInt("3");
+            print((left + right).toString());
+            print((left - right).toString());
+            print((left * right).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["10", "4", "21"]);
+}
+
+#[test]
 fn arithmetic_and_locals() {
     let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);

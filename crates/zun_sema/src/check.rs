@@ -1111,6 +1111,28 @@ impl Checker<'_> {
                 // Let an integral number literal take on an Int sibling's type
                 // so `x + 1` type-checks when `x: int` (and vice versa).
                 unify_numeric_literal(&mut lhs, &mut rhs);
+                if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
+                    let intrinsic = match op {
+                        ast::BinaryOp::Add => Some("bigIntAdd"),
+                        ast::BinaryOp::Sub => Some("bigIntSub"),
+                        ast::BinaryOp::Mul => Some("bigIntMul"),
+                        _ => None,
+                    };
+                    if let Some(name) = intrinsic {
+                        if let Some((id, native)) = zun_natives::resolve("zun:collections", name) {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![lhs, rhs],
+                                },
+                                ty: native_ty(native.ret),
+                                span,
+                            };
+                        }
+                    }
+                    self.error(span, "BigInt supports only `+`, `-`, and `*` operators");
+                    return self.poison(span);
+                }
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
                 hir::Expr {
                     kind: hir::ExprKind::Binary {

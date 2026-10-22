@@ -5242,7 +5242,7 @@ fn bigint_operations_preserve_the_tier0_fallback_boundary() {
         r#"function main(): int {
             let left: BigInt = new BigInt("10000000000000000000");
             let right: BigInt = new BigInt("2");
-            let product: BigInt = left.mul(right);
+            let product: BigInt = left * right;
             return product.compare(left);
         }"#,
     );
