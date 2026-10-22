@@ -221,7 +221,9 @@ pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
             }
             JitKind::Num(n) => Value::Int(slot as i64, n),
             JitKind::Bool => Value::Bool(slot != 0),
-            JitKind::Object => Value::Object(unsafe { zun_gc::Obj::from_addr(slot as *mut u64) }),
+            JitKind::Object | JitKind::Array => {
+                Value::Object(unsafe { zun_gc::Obj::from_addr(slot as *mut u64) })
+            }
             JitKind::String => Value::Str(heap.string(slot as u32).clone()),
             JitKind::Other => Value::Void,
         },
@@ -243,7 +245,7 @@ pub fn encode_field(kind: u8, v: &Value, heap: &mut zun_gc::Heap) -> u64 {
             JitKind::Num(NumKind::F32) => (v.as_number() as f32).to_bits() as u64,
             JitKind::Num(_) => v.as_int() as u64,
             JitKind::Bool => matches!(v, Value::Bool(true)) as u64,
-            JitKind::Object => v.as_object().addr() as u64,
+            JitKind::Object | JitKind::Array => v.as_object().addr() as u64,
             JitKind::String => match v {
                 Value::Str(s) => heap.intern_string(s.clone()) as u64,
                 _ => 0,

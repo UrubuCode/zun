@@ -382,7 +382,10 @@ fn object_array_access_only(
     body: &zun_module::MethodBody<'_>,
 ) -> bool {
     body.returns_value
-        && JitKind::from_byte(body.return_kind) == JitKind::Object
+        && matches!(
+            JitKind::from_byte(body.return_kind),
+            JitKind::Object | JitKind::Array
+        )
         && instrs.iter().any(|instruction| {
             matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
         })
@@ -403,7 +406,11 @@ fn object_array_access_only(
 }
 
 fn object_array_stack_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
-    (body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Object
+    (body.returns_value
+        && matches!(
+            JitKind::from_byte(body.return_kind),
+            JitKind::Object | JitKind::Array
+        )
         && instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
         && instrs.iter().all(|i| matches!(i.opcode,
             Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPop | Opcode::Ret)))
@@ -581,7 +588,10 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             continue;
         }
         if instrs.iter().any(|i| i.opcode == Opcode::NewArray)
-            && (JitKind::from_byte(body.return_kind) != JitKind::Object)
+            && !matches!(
+                JitKind::from_byte(body.return_kind),
+                JitKind::Object | JitKind::Array
+            )
             && !scalar_array_length_only(&instrs, &body)
         {
             continue;

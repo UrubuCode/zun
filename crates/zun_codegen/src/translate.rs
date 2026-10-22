@@ -26,7 +26,7 @@ use zun_types::TypeSystem;
 pub fn clif_ty(kind: JitKind) -> Type {
     match kind {
         JitKind::Bool => types::I32,
-        JitKind::Object | JitKind::String => types::I64,
+        JitKind::Object | JitKind::Array | JitKind::String => types::I64,
         JitKind::Other => types::I64,  // never used; eligibility excludes it
         JitKind::Num(n) => match n {
             NumKind::I8 | NumKind::U8 => types::I8,
@@ -42,7 +42,7 @@ pub fn clif_ty(kind: JitKind) -> Type {
 fn is_signed(kind: JitKind) -> bool {
     match kind {
         JitKind::Num(n) => n.int_parts().map(|(_, s)| s).unwrap_or(false),
-        JitKind::Bool | JitKind::Object | JitKind::String | JitKind::Other => false,
+        JitKind::Bool | JitKind::Object | JitKind::Array | JitKind::String | JitKind::Other => false,
     }
 }
 
@@ -99,7 +99,7 @@ pub fn translate_body(
     let mut vars = Vec::with_capacity(local_kinds.len());
     for &k in &local_kinds {
         let var = builder.declare_var(clif_ty(k));
-        if k == JitKind::Object {
+        if matches!(k, JitKind::Object | JitKind::Array) {
             builder.declare_var_needs_stack_map(var);
         }
         vars.push(var);
@@ -133,7 +133,7 @@ pub fn translate_body(
         } else {
             let p = entry_params[param_value];
             builder.def_var(vars[i], p);
-            if kind == JitKind::Object {
+            if matches!(kind, JitKind::Object | JitKind::Array) {
                 builder.declare_value_needs_stack_map(p);
             }
             param_value += 1;
@@ -1679,7 +1679,7 @@ impl Translator<'_> {
                     let inst = self.builder.ins().call(alloc, &[length]);
                     let result = self.builder.inst_results(inst)[0];
                     self.builder.declare_value_needs_stack_map(result);
-                    stack.push((result, JitKind::Object));
+                    stack.push((result, JitKind::Array));
                 }
                 // A numeric array load already decodes the dynamic carrier at
                 // the helper boundary; the source-level cast is therefore a
@@ -1722,7 +1722,7 @@ impl Translator<'_> {
                 }
                 Opcode::CastClass => {
                     let value = stack.pop().ok_or("stack underflow")?;
-                    if value.1 != JitKind::Object {
+                    if !matches!(value.1, JitKind::Object | JitKind::Array) {
                         return Err("castclass requires a managed object value".into());
                     }
                     self.builder.declare_value_needs_stack_map(value.0);
@@ -1741,7 +1741,7 @@ impl Translator<'_> {
                 Opcode::LoadArray => {
                     let (index, index_kind) = stack.pop().ok_or("stack underflow")?;
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
-                    if array_kind != JitKind::Object {
+                    if !matches!(array_kind, JitKind::Object | JitKind::Array) {
                         return Err("array load requires an object receiver".into());
                     }
                     self.builder.declare_value_needs_stack_map(array);
@@ -1792,10 +1792,10 @@ impl Translator<'_> {
                     let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
                     let (index, index_kind) = stack.pop().ok_or("stack underflow")?;
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
-                    let store_object = value_kind == JitKind::Object;
+                    let store_object = matches!(value_kind, JitKind::Object | JitKind::Array);
                     let store_u64 = value_kind == JitKind::Num(NumKind::U64);
                     let store_bool = value_kind == JitKind::Bool;
-                    if array_kind != JitKind::Object
+                    if !matches!(array_kind, JitKind::Object | JitKind::Array)
                         || (!store_object && !store_u64 && !store_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array store requires object and f64/u64 value".into());
@@ -1820,7 +1820,7 @@ impl Translator<'_> {
                 }
                 Opcode::ArrayPop => {
                     let (array, kind) = stack.pop().ok_or("stack underflow")?;
-                    if kind != JitKind::Object {
+                    if !matches!(kind, JitKind::Object | JitKind::Array) {
                         return Err("array pop requires an object receiver".into());
                     }
                     self.builder.declare_value_needs_stack_map(array);
@@ -1851,7 +1851,7 @@ impl Translator<'_> {
                     let push_object = value_kind == JitKind::Object;
                     let push_u64 = value_kind == JitKind::Num(NumKind::U64);
                     let push_bool = value_kind == JitKind::Bool;
-                    if array_kind != JitKind::Object
+                    if !matches!(array_kind, JitKind::Object | JitKind::Array)
                         || (!push_object && !push_u64 && !push_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array push requires object and f64/u64 value".into());

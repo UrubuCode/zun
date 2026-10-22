@@ -2142,6 +2142,7 @@ impl Jit {
                     RetVal::Int(f())
                 }
                 Some(JitKind::Other) => return Err(JitError::Ineligible(method_rid)),
+                Some(JitKind::Array) => return Err(JitError::Ineligible(method_rid)),
             })
         }
     }

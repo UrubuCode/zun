@@ -24,13 +24,13 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
             if matches!(
                 ty,
                 Ty::Instance(_)
-                    | Ty::Array
                     | Ty::Buffer
                     | Ty::BufferView(_)
                     | Ty::Map
                     | Ty::Set
                     | Ty::WeakMap
             ) => JitKind::Object,
+        None if ty == Ty::Array => JitKind::Array,
         None => JitKind::Other,
     };
     kind.to_byte()

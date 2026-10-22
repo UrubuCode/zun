@@ -99,6 +99,8 @@ pub enum JitKind {
     Object,
     /// An interned string handle (an index, not a movable object pointer).
     String,
+    /// A managed Array pointer, kept distinct from arbitrary object pointers.
+    Array,
     /// Anything the typed JIT does not handle (void).
     Other,
 }
@@ -111,6 +113,7 @@ impl JitKind {
             JitKind::Bool => 10,
             JitKind::Object => 11,
             JitKind::String => 12,
+            JitKind::Array => 13,
             JitKind::Other => 255,
         }
     }
@@ -121,6 +124,7 @@ impl JitKind {
             10 => JitKind::Bool,
             11 => JitKind::Object,
             12 => JitKind::String,
+            13 => JitKind::Array,
             255 => JitKind::Other,
             n => match NumKind::from_imm(n as i32) {
                 Some(k) => JitKind::Num(k),
@@ -141,6 +145,7 @@ mod tests {
             JitKind::Num(NumKind::F32),
             JitKind::Bool,
             JitKind::String,
+            JitKind::Array,
             JitKind::Other,
         ] {
             assert_eq!(JitKind::from_byte(k.to_byte()), k);
