@@ -235,6 +235,14 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 span: Span::new(while_statement.span.start, while_statement.span.end),
             }],
         }),
+        Statement::DoWhileStatement(do_while_statement) => Ok(Block {
+            span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
+            statements: vec![Stmt::DoWhile {
+                body: convert_if_branch(source, &do_while_statement.body)?,
+                cond: convert_expression(&do_while_statement.test)?,
+                span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
+            }],
+        }),
         _ => Err("OXC adapter requires a supported statement branch".into()),
     }
 }
@@ -1474,6 +1482,22 @@ mod tests {
         assert!(matches!(
             then_block.statements.first(),
             Some(crate::ast::Stmt::While { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_single_statement_do_while_branch() {
+        let program = parse_subset(
+            "function main(value) { if (value) do break; while (value); }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::If {
+                then_block: ref block,
+                ..
+            } if matches!(block.statements.first(), Some(crate::ast::Stmt::DoWhile { .. }))
         ));
     }
 
