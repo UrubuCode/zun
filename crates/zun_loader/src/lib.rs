@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
 use zun_metadata::{TableKind, Token};
 use zun_module::{Module, ReadError};
@@ -359,6 +360,72 @@ impl ModuleLock {
             })?;
         }
         Ok(())
+    }
+}
+
+/// A lockfile plus the public key and signature that authenticate it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedModuleLock {
+    /// The authenticated lockfile.
+    pub lock: ModuleLock,
+    /// Ed25519 verification key used for the signature.
+    pub public_key: [u8; 32],
+    /// Ed25519 signature over [`ModuleLock::write`].
+    pub signature: [u8; 64],
+}
+
+impl SignedModuleLock {
+    const MAGIC: &'static [u8; 4] = b"ZSIG";
+    const VERSION: u16 = 1;
+
+    /// Construct and verify a signed lockfile envelope.
+    pub fn new(lock: ModuleLock, public_key: [u8; 32], signature: [u8; 64]) -> Result<Self, LoadError> {
+        let signed = Self { lock, public_key, signature };
+        signed.verify()?;
+        Ok(signed)
+    }
+
+    /// Verify the Ed25519 signature over the canonical lockfile bytes.
+    pub fn verify(&self) -> Result<(), LoadError> {
+        let key = VerifyingKey::from_bytes(&self.public_key)
+            .map_err(|error| LoadError::InvalidManifest(format!("invalid lockfile public key: {error}")))?;
+        let signature = Signature::from_bytes(&self.signature);
+        key.verify(&self.lock.write(), &signature)
+            .map_err(|error| LoadError::InvalidManifest(format!("invalid lockfile signature: {error}")))
+    }
+
+    /// Serialize the signed envelope.
+    pub fn write(&self) -> Vec<u8> {
+        let payload = self.lock.write();
+        let mut bytes = Vec::with_capacity(4 + 2 + 32 + 64 + 4 + payload.len());
+        bytes.extend_from_slice(Self::MAGIC);
+        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        bytes.extend_from_slice(&self.public_key);
+        bytes.extend_from_slice(&self.signature);
+        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&payload);
+        bytes
+    }
+
+    /// Parse and verify a signed lockfile envelope.
+    pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        if bytes.len() < 106 || &bytes[..4] != Self::MAGIC {
+            return Err(LoadError::InvalidManifest("bad signed lockfile header".into()));
+        }
+        let version = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
+        if version > Self::VERSION {
+            return Err(LoadError::InvalidManifest(format!("unsupported signed lockfile version {version}")));
+        }
+        let mut public_key = [0u8; 32];
+        public_key.copy_from_slice(&bytes[6..38]);
+        let mut signature = [0u8; 64];
+        signature.copy_from_slice(&bytes[38..102]);
+        let payload_len = u32::from_le_bytes(bytes[102..106].try_into().unwrap()) as usize;
+        let end = 106usize.checked_add(payload_len).ok_or_else(|| LoadError::InvalidManifest("signed lockfile overflow".into()))?;
+        if end != bytes.len() {
+            return Err(LoadError::InvalidManifest("invalid signed lockfile payload length".into()));
+        }
+        Self::new(ModuleLock::read(&bytes[106..end])?, public_key, signature)
     }
 }
 
@@ -961,6 +1028,21 @@ mod tests {
         assert_eq!(ModuleLock::read_file(&path).unwrap(), lock);
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn signed_lockfile_roundtrips_and_rejects_tampering() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(b"app")).unwrap();
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let signature = signing.sign(&lock.write()).to_bytes();
+        let signed = SignedModuleLock::new(lock, signing.verifying_key().to_bytes(), signature).unwrap();
+        let bytes = signed.write();
+        assert_eq!(SignedModuleLock::read(&bytes).unwrap(), signed);
+        let mut tampered = bytes;
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(SignedModuleLock::read(&tampered).is_err());
     }
 
     #[test]
