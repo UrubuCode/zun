@@ -645,19 +645,14 @@ The following runtime contracts are implemented and covered by tests:
   minor/full collection policy, and the GC boundary has RAII thread-local
   registration for nested stopped frames; the Cranelift host boundary can
   publish caller-supplied `(PC, SP)` coordinates, and ordinary mark-sweep and
-  compaction can consume every registered frame once the stop-the-world
-  coordinator has suspended it;
-- the non-moving heap now exposes a read-only compaction-plan snapshot with
-  live/reclaimable object and slot counts. It does not relocate objects;
-  an isolated `RelocationMap` now provides forwarding-address translation and
-  reference-slot rewriting as a tested contract, and the heap can rewrite
-  metadata-declared object reference fields. Rewriting interpreter roots,
-  strong collection side tables beyond arrays/dynamic objects/maps/sets, raw
-  fields outside ordinary object fields, followed by actual movement, are
-  still required before compaction is enabled; promise and proxy side-table
-  state and address-keyed runtime carriers (buffers, views, dates, errors,
-  regexes, records, and remembered-set entries) are now covered alongside the
-  other strong references; DataView buffer fields are explicitly rewritten;
+  compaction can consume every registered frame at the single-thread
+  allocation safepoint;
+- the heap exposes a read-only compaction-plan snapshot and an opt-in moving
+  compaction path. `RelocationMap` provides forwarding-address translation;
+  metadata-declared object fields, interpreter roots, native roots, stopped JIT
+  frames, strong side tables, generators, views, weak metadata, promises,
+  proxies, and runtime carriers are rewritten before old chunks are released;
+  DataView buffer fields are explicitly rewritten;
   iterator/typed-view side tables and weak metadata translation are covered,
   while weak liveness remains a separate phase. Active native root scopes and
   stopped frames can now rewrite their reference slots through the forwarding
