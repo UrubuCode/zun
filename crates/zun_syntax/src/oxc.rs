@@ -6,12 +6,61 @@
 //! arena-owned AST types.
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{BindingPattern, Expression, Statement};
+use oxc_ast::ast::{BinaryOperator, BindingPattern, Expression, Statement};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use zun_common::Span;
 
-use crate::ast::{Block, Expr, Function, Name, Program, Stmt};
+use crate::ast::{BinaryOp, Block, Expr, Function, Name, Program, Stmt};
+
+fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    match expression {
+        Expression::NumericLiteral(number) => Ok(Expr::Number {
+            value: number.value,
+            span: span(number.span),
+        }),
+        Expression::StringLiteral(string) => {
+            let Some(value) = string.value.as_str() else {
+                return Err("OXC adapter cannot represent non-UTF-8 string literals".into());
+            };
+            Ok(Expr::String {
+                value: value.to_owned(),
+                span: span(string.span),
+            })
+        }
+        Expression::BooleanLiteral(boolean) => Ok(Expr::Bool {
+            value: boolean.value,
+            span: span(boolean.span),
+        }),
+        Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
+            span: span(identifier.span),
+        })),
+        Expression::BinaryExpression(binary) => {
+            let op = match binary.operator {
+                BinaryOperator::Equality | BinaryOperator::StrictEquality => BinaryOp::Eq,
+                BinaryOperator::Inequality | BinaryOperator::StrictInequality => BinaryOp::Ne,
+                BinaryOperator::LessThan => BinaryOp::Lt,
+                BinaryOperator::LessEqualThan => BinaryOp::Le,
+                BinaryOperator::GreaterThan => BinaryOp::Gt,
+                BinaryOperator::GreaterEqualThan => BinaryOp::Ge,
+                BinaryOperator::Addition => BinaryOp::Add,
+                BinaryOperator::Subtraction => BinaryOp::Sub,
+                BinaryOperator::Multiplication => BinaryOp::Mul,
+                BinaryOperator::Division => BinaryOp::Div,
+                BinaryOperator::Remainder => BinaryOp::Rem,
+                _ => return Err("OXC adapter does not support this binary operator yet".into()),
+            };
+            Ok(Expr::Binary {
+                op,
+                lhs: Box::new(convert_expression(&binary.left)?),
+                rhs: Box::new(convert_expression(&binary.right)?),
+                span: span(binary.span),
+            })
+        }
+        _ => Err("OXC adapter currently supports literal, identifier, and binary expressions".into()),
+    }
+}
 
 /// Parse standard JavaScript or TypeScript with OXC.
 ///
@@ -71,35 +120,10 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         let span = |span: oxc_span::Span| Span::new(span.start, span.end);
         let function_span = span(function.span);
         let return_span = span(return_statement.span);
-        let value = match return_statement.argument.as_ref() {
-            Some(Expression::NumericLiteral(number)) => Expr::Number {
-                value: number.value,
-                span: span(number.span),
-            },
-            Some(Expression::StringLiteral(string)) => {
-                let Some(value) = string.value.as_str() else {
-                    return Err(vec![
-                        "OXC adapter cannot represent non-UTF-8 string literals".into(),
-                    ]);
-                };
-                Expr::String {
-                    value: value.to_owned(),
-                    span: span(string.span),
-                }
-            }
-            Some(Expression::BooleanLiteral(boolean)) => Expr::Bool {
-                value: boolean.value,
-                span: span(boolean.span),
-            },
-            Some(Expression::Identifier(identifier)) => Expr::Ident(Name {
-                span: span(identifier.span),
-            }),
-            _ => {
-                return Err(vec![
-            "OXC adapter currently supports literal or identifier return expressions".into(),
-                ])
-            }
+        let Some(argument) = return_statement.argument.as_ref() else {
+            return Err(vec!["OXC adapter requires a return expression".into()]);
         };
+        let value = convert_expression(argument).map_err(|error| vec![error])?;
         let mut params = Vec::with_capacity(function.params.items.len());
         for parameter in &function.params.items {
             let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
@@ -204,6 +228,21 @@ mod tests {
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return {
                 value: Some(crate::ast::Expr::Ident(_)),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_binary_return_expressions() {
+        let program = parse_subset("function add(value) { return value + 2; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Binary {
+                    op: crate::ast::BinaryOp::Add,
+                    ..
+                }),
                 ..
             }
         ));
