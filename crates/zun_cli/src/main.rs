@@ -35,6 +35,30 @@ fn main() -> ExitCode {
                 prelude_cache: Some(PathBuf::from(cache)),
             },
         ),
+        [cmd, trim, cache_flag, cache, file]
+            if cmd == "build" && trim == "--trim" && cache_flag == "--prelude-cache" =>
+        {
+            dispatch(
+                file,
+                Action::Build {
+                    trim: true,
+                    aot: false,
+                    prelude_cache: Some(PathBuf::from(cache)),
+                },
+            )
+        },
+        [cmd, aot, cache_flag, cache, file]
+            if cmd == "build" && aot == "--aot" && cache_flag == "--prelude-cache" =>
+        {
+            dispatch(
+                file,
+                Action::Build {
+                    trim: true,
+                    aot: true,
+                    prelude_cache: Some(PathBuf::from(cache)),
+                },
+            )
+        },
         [cmd, flag, file] if cmd == "build" && flag == "--trim" => dispatch(
             file,
             Action::Build {
