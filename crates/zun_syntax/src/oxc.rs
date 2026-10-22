@@ -6,12 +6,42 @@
 //! arena-owned AST types.
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{BinaryOperator, BindingPattern, Expression, LogicalOperator, Statement, UnaryOperator};
+use oxc_ast::ast::{
+    Argument, BinaryOperator, BindingPattern, Expression, LogicalOperator, Statement,
+    UnaryOperator,
+};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use zun_common::Span;
 
 use crate::ast::{BinaryOp, Block, Expr, Function, Name, Program, Stmt};
+
+fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    match argument {
+        Argument::NumericLiteral(number) => Ok(Expr::Number {
+            value: number.value,
+            span: span(number.span),
+        }),
+        Argument::StringLiteral(string) => {
+            let Some(value) = string.value.as_str() else {
+                return Err("OXC adapter cannot represent non-UTF-8 string literals".into());
+            };
+            Ok(Expr::String {
+                value: value.to_owned(),
+                span: span(string.span),
+            })
+        }
+        Argument::BooleanLiteral(boolean) => Ok(Expr::Bool {
+            value: boolean.value,
+            span: span(boolean.span),
+        }),
+        Argument::Identifier(identifier) => Ok(Expr::Ident(Name {
+            span: span(identifier.span),
+        })),
+        _ => Err("OXC adapter currently supports literal and identifier arguments".into()),
+    }
+}
 
 fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
@@ -81,6 +111,22 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 op,
                 operand: Box::new(convert_expression(&unary.argument)?),
                 span: span(unary.span),
+            })
+        }
+        Expression::CallExpression(call) => {
+            let Expression::Identifier(identifier) = &call.callee else {
+                return Err("OXC adapter currently supports identifier callees only".into());
+            };
+            let mut args = Vec::with_capacity(call.arguments.len());
+            for argument in &call.arguments {
+                args.push(convert_argument(argument)?);
+            }
+            Ok(Expr::Call {
+                callee: Name {
+                    span: span(identifier.span),
+                },
+                args,
+                span: span(call.span),
             })
         }
         _ => Err("OXC adapter currently supports literal, identifier, and binary expressions".into()),
@@ -286,6 +332,18 @@ mod tests {
                 }),
                 ..
             } if matches!(**lhs, crate::ast::Expr::Unary { op: crate::ast::UnaryOp::Not, .. })
+        ));
+    }
+
+    #[test]
+    fn converts_identifier_calls_and_arguments() {
+        let program = parse_subset("function main() { return add(20, 22); }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Call { ref callee, ref args, .. }),
+                ..
+            } if callee.span.start < callee.span.end && args.len() == 2
         ));
     }
 }
