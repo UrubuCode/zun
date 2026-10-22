@@ -2733,6 +2733,32 @@ impl Checker<'_> {
             }
             ast::Expr::Index { object, index, .. } => {
                 let object = self.check_expr(cx, object);
+                if let ast::Expr::String { value: key, .. } = index.as_ref() {
+                    if let Ty::Instance(class) = object.ty {
+                        if let Some((field_slot, ty)) = self.field_of(class, key) {
+                            return hir::Expr {
+                                kind: hir::ExprKind::FieldGet {
+                                    object: Box::new(object),
+                                    class,
+                                    field_slot,
+                                },
+                                ty,
+                                span,
+                            };
+                        }
+                    }
+                }
+                if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                    let key = self.check_expr(cx, index);
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicGetValue {
+                            object: Box::new(object),
+                            key: Box::new(key),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 let mut index = self.check_expr(cx, index);
                 coerce_numeric_literal(&mut index, Ty::INT);
                 if object.ty != Ty::Array && !object.ty.is_error() {

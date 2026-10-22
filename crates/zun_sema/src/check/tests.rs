@@ -565,6 +565,29 @@
     }
 
     #[test]
+    fn computed_literal_field_uses_the_frozen_instance_slot() {
+        let hir = check_ok(
+            r#"class Point { x: int; } function main(): int { let p = new Point(7); return p["x"]; }"#,
+        );
+        let hir::Stmt::Return(Some(expr)) = &hir.functions[0].body[1] else {
+            panic!("expected return statement")
+        };
+        assert!(matches!(expr.kind, hir::ExprKind::FieldGet { .. }));
+        assert_eq!(expr.ty, Ty::INT);
+    }
+
+    #[test]
+    fn computed_any_member_uses_dynamic_value_lookup() {
+        let hir = check_ok(
+            r#"function main(): any { let object = dynamic_new(); let key = "x"; return object[key]; }"#,
+        );
+        let hir::Stmt::Return(Some(expr)) = &hir.functions[0].body[2] else {
+            panic!("expected return statement")
+        };
+        assert!(matches!(expr.kind, hir::ExprKind::DynamicGetValue { .. }));
+    }
+
+    #[test]
     fn error_does_not_cascade() {
         // `y` is unknown; the addition and the assignment must not pile on
         // extra diagnostics.
