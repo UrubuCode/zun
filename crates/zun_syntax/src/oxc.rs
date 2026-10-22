@@ -88,6 +88,9 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
     let mut statements = Vec::with_capacity(block.body.len());
     for statement in &block.body {
         match statement {
+            Statement::EmptyStatement(empty) => {
+                let _ = empty;
+            }
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
                     let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
@@ -176,6 +179,10 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
 
 fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
     match statement {
+        Statement::EmptyStatement(empty) => Ok(Block {
+            statements: Vec::new(),
+            span: Span::new(empty.span.start, empty.span.end),
+        }),
         Statement::BlockStatement(_) => convert_block_statement(source, statement),
         Statement::IfStatement(if_statement) => Ok(Block {
             span: Span::new(if_statement.span.start, if_statement.span.end),
@@ -899,6 +906,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         let mut method_statements = Vec::with_capacity(body.statements.len());
                         for statement in &body.statements {
                             match statement {
+                                Statement::EmptyStatement(_) => {}
                                 Statement::VariableDeclaration(declaration) => {
                                     for declarator in &declaration.declarations {
                                         let BindingPattern::BindingIdentifier(identifier) =
@@ -1156,6 +1164,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         let mut statements = Vec::with_capacity(body.statements.len());
         for statement in &body.statements {
             match statement {
+                Statement::EmptyStatement(_) => {}
                 Statement::VariableDeclaration(declaration) => {
                     for declarator in &declaration.declarations {
                         let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
@@ -1508,6 +1517,20 @@ mod tests {
                 value: Some(crate::ast::Expr::BigInt { ref value, .. }),
                 ..
             } if value == "12345678901234567890"
+        ));
+    }
+
+    #[test]
+    fn accepts_empty_statements_in_functions_and_branches() {
+        let program = parse_subset(
+            "function main(value) { ; if (value) ; return value; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements.first(),
+            Some(crate::ast::Stmt::If { then_block, .. })
+                if then_block.statements.is_empty()
         ));
     }
 
