@@ -390,6 +390,9 @@ query, fragment, percent-encoded, colon, and control-character module paths befo
 filesystem or URL interpolation; logical lock/index identities remain unchanged.
 HTTP registry base URLs likewise reject query, fragment, backslash, and control
 characters before endpoint construction.
+An end-to-end local HTTP registry fixture now serves a signed index and module,
+proving the loader verifies the external trust anchor before fetching and
+registering the selected content.
 The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable on
 `PATH`, or the active toolchain's `rust-lld`, and passes it to the external final
 link step when available.
