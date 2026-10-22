@@ -96,6 +96,35 @@ fn main() -> ExitCode {
                 },
             )
         }
+        [cmd, aot, roots_flag, roots, file]
+            if cmd == "build" && aot == "--aot" && roots_flag == "--preserve-roots" =>
+        {
+            dispatch(
+                file,
+                Action::Build {
+                    trim: true,
+                    aot: true,
+                    prelude_cache: None,
+                    preserve_roots: Some(PathBuf::from(roots)),
+                },
+            )
+        }
+        [cmd, trim, aot, roots_flag, roots, file]
+            if cmd == "build"
+                && trim == "--trim"
+                && aot == "--aot"
+                && roots_flag == "--preserve-roots" =>
+        {
+            dispatch(
+                file,
+                Action::Build {
+                    trim: true,
+                    aot: true,
+                    prelude_cache: None,
+                    preserve_roots: Some(PathBuf::from(roots)),
+                },
+            )
+        }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
         _ => {
             eprintln!("{USAGE}");
