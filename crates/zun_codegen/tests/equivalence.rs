@@ -4871,10 +4871,11 @@ fn numeric_i32_map_and_set_mutations_use_typed_jit_abis() {
 
 #[test]
 fn numeric_i32_map_and_set_deletions_use_typed_jit_abis() {
-    let src = "import { mapDeleteI32, setDeleteI32 } from \"zun:collections\"; function removeMap(value: Map, key: i32): boolean { return mapDeleteI32(value, key); } function removeSet(value: Set, item: i32): boolean { return setDeleteI32(value, item); } function main(): boolean { return true; }";
+    let src = "import { mapSetI32, setAddI32, mapDeleteI32, setDeleteI32 } from \"zun:collections\"; function removeMap(value: Map, key: i32): boolean { return mapDeleteI32(value, key); } function removeSet(value: Set, item: i32): boolean { return setDeleteI32(value, item); } function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 7, 1); setAddI32(set, 7); return mapDeleteI32(map, 7) && setDeleteI32(set, 7); }";
     let module = compile(src);
     let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "removeMap").map(|index| index as u32 + 1).expect("map delete method");
     let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "removeSet").map(|index| index as u32 + 1).expect("set delete method");
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 collection deletions");
     assert!(jit.is_compiled(map_rid));
     assert!(jit.is_compiled(set_rid));
