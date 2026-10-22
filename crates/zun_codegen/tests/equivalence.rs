@@ -2477,6 +2477,35 @@ fn string_prefix_helpers_with_managed_parameters_are_jit_equivalent() {
 }
 
 #[test]
+fn string_suffix_helper_with_managed_parameters_is_jit_equivalent() {
+    let module = zun_compiler::compile(
+        "import { endsWith } from \"zun:string\";\n\\
+         class String { extern endsWith(needle: string): boolean; }\n\\
+         function check(value: string, suffix: string): boolean { return value.endsWith(suffix); }\n\\
+         function main(): boolean { return true; }",
+    )
+    .expect("compile parameterized String suffix helper");
+    let check = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "check")
+        .map(|index| index as u32 + 1)
+        .expect("check method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds String suffix helper");
+    assert!(jit.is_compiled(check));
+
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun runtime"));
+    let suffix = heap.intern_string(std::rc::Rc::from("runtime"));
+    assert_eq!(
+        jit.call_packed_with_heap(check, &[value as u64, suffix as u64], &mut heap)
+            .expect("jit suffix helper"),
+        1
+    );
+}
+
+#[test]
 fn string_count_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { count } from \"zun:string\";\n\
