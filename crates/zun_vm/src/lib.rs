@@ -64,6 +64,30 @@ pub unsafe extern "C" fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u6
     }
 }
 
+/// Execute an embedded module and write a floating-point result for an AOT
+/// launcher. The return value is zero on success and negative on failure.
+#[no_mangle]
+pub unsafe extern "C" fn zun_rt_run_embedded_f64(
+    ptr: *const u8,
+    len: u64,
+    out: *mut f64,
+) -> i32 {
+    if ptr.is_null() || out.is_null() {
+        return -1;
+    }
+    let Ok(len) = usize::try_from(len) else {
+        return -1;
+    };
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match execute(bytes) {
+        Ok(Value::Float(value, _)) => {
+            unsafe { *out = value };
+            0
+        }
+        _ => -1,
+    }
+}
+
 pub use ffi::{
     library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
     FfiStringReturn, NativeLibrary,

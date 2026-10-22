@@ -379,7 +379,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                 .and_then(|method| zun_module::read_body(&module.code, method.body_offset).ok())
                                                 .map(|body| matches!(
                                                     zun_il::JitKind::from_byte(body.return_kind),
-                                                    zun_il::JitKind::Bool | zun_il::JitKind::Num(zun_il::NumKind::I8 | zun_il::NumKind::U8 | zun_il::NumKind::I16 | zun_il::NumKind::U16 | zun_il::NumKind::I32 | zun_il::NumKind::U32 | zun_il::NumKind::I64 | zun_il::NumKind::U64)
+                                                    zun_il::JitKind::Bool | zun_il::JitKind::Num(zun_il::NumKind::I8 | zun_il::NumKind::U8 | zun_il::NumKind::I16 | zun_il::NumKind::U16 | zun_il::NumKind::I32 | zun_il::NumKind::U32 | zun_il::NumKind::I64 | zun_il::NumKind::U64 | zun_il::NumKind::F32 | zun_il::NumKind::F64)
                                                 ))
                                                 .unwrap_or(false)
                                         }).unwrap_or(false);
@@ -649,10 +649,16 @@ fn link_aot_fallback(
         ))
     );
     let boolean = matches!(return_kind.map(zun_il::JitKind::from_byte), Some(zun_il::JitKind::Bool));
+    let floating = matches!(
+        return_kind.map(zun_il::JitKind::from_byte),
+        Some(zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64))
+    );
     let source = if unsigned {
         "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_u64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value == u64::MAX { std::process::exit(1); } println!(\"{}\", value); } }\n"
     } else if boolean {
         "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_i64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value < 0 { std::process::exit(1); } println!(\"{}\", value != 0); } }\n"
+    } else if floating {
+        "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_f64(ptr: *const u8, len: u64, out: *mut f64) -> i32; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let mut value = 0.0; let status = zun_rt_run_embedded_f64(&zun_embedded_module, zun_embedded_module_len, &mut value); zun_rt_shutdown(); if status != 0 { std::process::exit(1); } println!(\"{}\", value); } }\n"
     } else {
         "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_i64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value < 0 { std::process::exit(1); } println!(\"{}\", value); } }\n"
     };
