@@ -53,7 +53,7 @@ impl OrderedMap {
         let removed = self.entries[index].take()?;
         self.live_len -= 1;
         self.dead_len += 1;
-        if self.dead_len >= 8 && self.dead_len > self.live_len {
+        if self.live_len == 0 || (self.dead_len >= 8 && self.dead_len > self.live_len) {
             self.compact();
         }
         Some((removed.0, removed.1))
