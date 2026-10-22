@@ -112,6 +112,7 @@ fn check_impl(
         classes_by_name: HashMap::new(),
         methods_by_class: Vec::new(),
         imports: HashMap::new(),
+        namespace_imports: HashMap::new(),
         external_functions: external_by_name,
         type_aliases: HashMap::new(),
         closures: Vec::new(),
@@ -182,6 +183,8 @@ struct Checker<'a> {
     methods_by_class: Vec<HashMap<String, u32>>,
     /// Imported intrinsic name -> (dispatch id, its native signature).
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
+    /// Namespace binding -> native module identity for static member calls.
+    namespace_imports: HashMap<String, String>,
     /// Imported source-module function signatures by local name.
     external_functions: HashMap<String, ExternalFunction>,
     /// Imported default type bindings over the frozen runtime floor.
@@ -1775,6 +1778,30 @@ impl Checker<'_> {
             } => {
                 if let ast::Expr::Ident(class) = receiver.as_ref() {
                     let class_name = self.text(class).to_string();
+                    if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
+                        let Some((id, native)) = zun_natives::resolve(&module, self.text(method)) else {
+                            self.error(method.span, format!("`{}` has no export named `{}`", module, self.text(method)));
+                            return self.poison(span);
+                        };
+                        if native.params.len() != args.len() {
+                            self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                            return self.poison(span);
+                        }
+                        let mut checked = Vec::with_capacity(args.len());
+                        for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+                            let mut value = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut value, expected);
+                            if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                                self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                            }
+                            checked.push(value);
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                            ty: native_ty(native.ret),
+                            span,
+                        };
+                    }
                     if let Some(&class_index) = self.classes_by_name.get(&class_name) {
                         if let Some(func) = self.method_of(class_index, self.text(method)) {
                             let (param_tys, return_ty) = {
@@ -2197,6 +2224,30 @@ impl Checker<'_> {
             }
             ast::Expr::StaticMethodCall { class, method, args, .. } => {
                 let class_name = self.text(class).to_string();
+                if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
+                    let Some((id, native)) = zun_natives::resolve(&module, self.text(method)) else {
+                        self.error(method.span, format!("`{}` has no export named `{}`", module, self.text(method)));
+                        return self.poison(span);
+                    };
+                    if native.params.len() != args.len() {
+                        self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                        return self.poison(span);
+                    }
+                    let mut checked = Vec::with_capacity(args.len());
+                    for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+                        let mut value = self.check_expr(cx, arg);
+                        coerce_numeric_literal(&mut value, expected);
+                        if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                            self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                        }
+                        checked.push(value);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
                 let Some(&class_index) = self.classes_by_name.get(&class_name) else {
                     self.error(class.span, format!("unknown class `{class_name}`"));
                     return self.poison(span);

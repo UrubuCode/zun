@@ -47,6 +47,17 @@ impl<'a> Checker<'a> {
             };
             let _ = module;
             for binding in &import.names {
+                if binding.is_namespace {
+                    if zun_natives::module(&import.module).is_some() {
+                        self.namespace_imports.insert(
+                            self.text(&binding.local).to_string(),
+                            import.module.clone(),
+                        );
+                    } else if !allow_external_modules || import.module.starts_with("zun:") {
+                        self.error(binding.local.span, format!("unknown module `{}`", import.module));
+                    }
+                    continue;
+                }
                 let imported = if binding.is_default { "default" } else { self.text(&binding.imported) }.to_owned();
                 let local = self.text(&binding.local).to_string();
                 if binding.is_default && import.module == "extended-string" {
