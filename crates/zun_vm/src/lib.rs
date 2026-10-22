@@ -172,6 +172,22 @@ pub fn execute_manifest(
         .map_err(VmError::Run)
 }
 
+/// Execute a manifest after validating the prelude identity used to compile
+/// it. This is the cache-safe entry point for packaged modules; callers that
+/// intentionally support legacy manifests may continue using
+/// [`execute_manifest`].
+pub fn execute_manifest_with_prelude(
+    loader: &zun_loader::ModuleLoader,
+    manifest: &zun_loader::ModuleManifest,
+    expected_prelude: u64,
+    output: &mut dyn Output,
+) -> Result<Value, VmError> {
+    manifest
+        .validate_prelude_fingerprint(expected_prelude)
+        .map_err(VmError::Load)?;
+    execute_manifest(loader, manifest, output)
+}
+
 /// Validate every module selected by a manifest before any code executes.
 pub fn verify_manifest(
     loader: &zun_loader::ModuleLoader,
@@ -236,6 +252,17 @@ mod tests {
             execute_manifest(&loader, &manifest, &mut output).unwrap(),
             zun_interp::value::Value::Int(23, zun_il::NumKind::I32)
         ));
+    }
+
+    #[test]
+    fn cache_safe_manifest_execution_rejects_a_stale_prelude() {
+        let manifest = zun_loader::ModuleManifest::new("app", Vec::<String>::new())
+            .with_prelude_fingerprint(1);
+        let loader = zun_loader::ModuleLoader::new();
+        let mut output = zun_interp::CaptureOutput::default();
+        let error = execute_manifest_with_prelude(&loader, &manifest, 2, &mut output)
+            .expect_err("stale prelude must fail before execution");
+        assert!(matches!(error, VmError::Load(zun_loader::LoadError::InvalidManifest(detail)) if detail.contains("fingerprint")));
     }
 
     #[test]
