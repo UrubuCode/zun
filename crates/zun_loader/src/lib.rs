@@ -359,6 +359,16 @@ impl HttpFetcher {
             .map_err(LoadError::Io)?;
         SignedModuleIndex::read(&bytes)
     }
+
+    /// Fetch the registry index and enforce the release-pinned trust anchor.
+    pub fn fetch_verified_index(
+        &self,
+        trusted_key: &[u8; 32],
+    ) -> Result<ModuleIndex, LoadError> {
+        let signed = self.fetch_signed_index()?;
+        signed.verify_against(trusted_key)?;
+        Ok(signed.index)
+    }
 }
 
 impl ModuleFetcher for HttpFetcher {
@@ -891,6 +901,11 @@ impl Zmlib {
             modules,
             type_declarations: Vec::new(),
         })
+    }
+
+    /// Verify the package lock against a release-pinned registry key.
+    pub fn verify_against(&self, trusted_key: &[u8; 32]) -> Result<(), LoadError> {
+        self.lock.verify_against(trusted_key)
     }
 
     /// Attach deterministic type declaration payloads to locked modules.
@@ -1831,6 +1846,10 @@ mod tests {
             .unwrap()
             .with_type_declarations(vec![("app".into(), declaration.clone())])
             .unwrap();
+        assert!(package
+            .verify_against(&signing.verifying_key().to_bytes())
+            .is_ok());
+        assert!(package.verify_against(&[99u8; 32]).is_err());
         assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
         assert!(
             Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
