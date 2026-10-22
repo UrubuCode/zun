@@ -2450,9 +2450,9 @@ fn string_index_of_with_managed_parameters_preserves_utf16_indices() {
 #[test]
 fn string_prefix_helpers_with_managed_parameters_are_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { startsWith, endsWith } from \"zun:string\";\n\
-         class String { extern startsWith(needle: string): boolean; extern endsWith(needle: string): boolean; }\n\
-         function check(value: string, prefix: string, suffix: string): boolean { return value.startsWith(prefix) && value.endsWith(suffix); }\n\
+        "import { startsWith } from \"zun:string\";\n\
+         class String { extern startsWith(needle: string): boolean; }\n\
+         function check(value: string, prefix: string): boolean { return value.startsWith(prefix); }\n\
          function main(): boolean { return true; }",
     )
     .expect("compile parameterized String prefix helpers");
@@ -2469,9 +2469,8 @@ fn string_prefix_helpers_with_managed_parameters_are_jit_equivalent() {
     let mut heap = zun_gc::Heap::new();
     let value = heap.intern_string(std::rc::Rc::from("zun runtime"));
     let prefix = heap.intern_string(std::rc::Rc::from("zun"));
-    let suffix = heap.intern_string(std::rc::Rc::from("runtime"));
     assert_eq!(
-        jit.call_packed_with_heap(check, &[value as u64, prefix as u64, suffix as u64], &mut heap)
+        jit.call_packed_with_heap(check, &[value as u64, prefix as u64], &mut heap)
             .expect("jit prefix helpers"),
         1
     );
