@@ -17,7 +17,7 @@ use cranelift_codegen::ir::{
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::Linkage;
-use cranelift_module::{FuncId, Module as ClifModule};
+use cranelift_module::{DataId, FuncId, Module as ClifModule};
 use zun_il::{decode_all, JitKind, NumKind, Opcode, Operand};
 use zun_module::{read_body, MethodBody, Module as ZmModule};
 use zun_types::TypeSystem;
@@ -64,6 +64,7 @@ pub fn translate_body(
     types: &TypeSystem,
     virtual_table_ptrs: *const u64,
     literal_ptrs: *const u64,
+    literal_data_ids: *const u32,
     body: &MethodBody<'_>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
@@ -157,6 +158,7 @@ pub fn translate_body(
         types,
         virtual_table_ptrs,
         literal_ptrs,
+        literal_data_ids,
         module,
         zm,
         osr_counter,
@@ -222,6 +224,7 @@ struct Translator<'a> {
     types: &'a TypeSystem,
     virtual_table_ptrs: *const u64,
     literal_ptrs: *const u64,
+    literal_data_ids: *const u32,
     osr_counter: Variable,
     method_return_kind: JitKind,
 }
@@ -276,16 +279,24 @@ impl Translator<'_> {
                     let Operand::StringRef(index) = instr.operand else {
                         return Err("const.str operand".into());
                     };
-                    if self.literal_ptrs.is_null() {
+                    if self.literal_data_ids.is_null() && self.literal_ptrs.is_null() {
                         return Err("const.str requires runtime literal storage".into());
                     }
-                    let ptr = unsafe { *self.literal_ptrs.add(index as usize) };
                     let len = self
                         .zm
                         .strings
                         .get(zun_metadata::StringIndex(index))
                         .len();
-                    let ptr = self.builder.ins().iconst(types::I64, ptr as i64);
+                    let ptr = if self.literal_data_ids.is_null() {
+                        let address = unsafe { *self.literal_ptrs.add(index as usize) };
+                        self.builder.ins().iconst(types::I64, address as i64)
+                    } else {
+                        let data_id = unsafe { *self.literal_data_ids.add(index as usize) };
+                        let global = self
+                            .module
+                            .declare_data_in_func(DataId::from_u32(data_id), self.builder.func);
+                        self.builder.ins().global_value(types::I64, global)
+                    };
                     let len = self.builder.ins().iconst(types::I64, len as i64);
                     let literal = self.string_literal_fref();
                     let call = self.builder.ins().call(literal, &[ptr, len]);

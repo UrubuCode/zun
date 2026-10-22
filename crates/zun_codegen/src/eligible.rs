@@ -597,7 +597,12 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             let direct_literal_callvirt = instrs.iter().all(|i| {
                 matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret)
             }) && instrs.iter().filter(|i| i.opcode == Opcode::CallVirt).count() == 1;
-            if !allow_const_str || (!extended_literal_path && !direct_literal_callvirt) {
+            let relocatable_literal_only = instrs
+                .iter()
+                .all(|i| matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::Ret));
+            if !allow_const_str
+                || (!extended_literal_path && !direct_literal_callvirt && !relocatable_literal_only)
+            {
                 continue;
             }
         }

@@ -1220,7 +1220,7 @@ use cranelift_codegen::ir::{types, AbiParam};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{FuncId, Linkage, Module as ClifModule};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module as ClifModule};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use zun_module::{read_body, Module};
 
@@ -1713,6 +1713,7 @@ impl Jit {
             &self.types,
             self.virtual_table_ptrs.as_ptr(),
             self.literal_ptrs.as_ptr(),
+            core::ptr::null(),
             &body,
         )
         .map_err(|detail| JitError::Compile {
@@ -2195,7 +2196,7 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
     let builder = ObjectBuilder::new(isa, "zun-aot", cranelift_module::default_libcall_names())
         .map_err(|e| JitError::Module(e.to_string()))?;
     let mut module = ObjectModule::new(builder);
-    let eligible = eligible_methods(zm);
+    let eligible = eligible_methods_with_literals(zm, true);
     if let Some(entry) = zm.entry_point {
         let rid = entry.rid();
         if !eligible.contains(&rid) {
@@ -2204,6 +2205,26 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
     }
     let types =
         zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
+    let mut literal_data = Vec::<(DataId, DataDescription)>::new();
+    let mut literal_data_ids = vec![0u32; zm.strings.as_bytes().len()];
+    let mut string_offset = 0usize;
+    while string_offset < zm.strings.as_bytes().len() {
+        let value = zm
+            .strings
+            .get(zun_metadata::StringIndex(string_offset as u32));
+        let data_id = module
+            .declare_anonymous_data(false, false)
+            .map_err(|e| JitError::Module(e.to_string()))?;
+        let mut description = DataDescription::new();
+        description.define(value.as_bytes().to_vec().into_boxed_slice());
+        description.set_used(true);
+        module
+            .define_data(data_id, &description)
+            .map_err(|e| JitError::Module(e.to_string()))?;
+        literal_data_ids[string_offset] = data_id.as_u32();
+        literal_data.push((data_id, description));
+        string_offset += value.len() + 1;
+    }
     let mut func_ids = HashMap::new();
     let mut ctx = cranelift_codegen::Context::new();
     let mut fb_ctx = FunctionBuilderContext::new();
@@ -2248,6 +2269,7 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
             &types,
             core::ptr::null(),
             core::ptr::null(),
+            literal_data_ids.as_ptr(),
             &body,
         )
         .map_err(|detail| JitError::Compile {

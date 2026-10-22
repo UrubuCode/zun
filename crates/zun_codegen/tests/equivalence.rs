@@ -4966,9 +4966,18 @@ fn aot_object_contains_the_eligible_entry_point() {
 
 #[test]
 fn aot_rejects_an_ineligible_entry_before_linking() {
-    let module = compile("function main(): string { return \"managed\"; }");
+    let module = compile(
+        "function main(): string { if (true) { return \"managed\"; } return \"fallback\"; }",
+    );
     let error = zun_codegen::compile_object(&module).expect_err("string entry is not AOT-eligible");
     assert!(matches!(error, zun_codegen::JitError::Ineligible(1)));
+}
+
+#[test]
+fn aot_object_contains_a_relocatable_string_literal() {
+    let module = compile("function main(): string { return \"managed\"; }");
+    let object = zun_codegen::compile_object(&module).expect("emit string object");
+    assert!(object.windows(b"managed".len()).any(|bytes| bytes == b"managed"));
 }
 
 #[test]
