@@ -5670,6 +5670,17 @@ fn aot_object_can_select_the_host_target_explicitly() {
 }
 
 #[test]
+fn aot_object_can_select_aarch64_target_isa() {
+    let module = compile("function main(): int { return 7; }");
+    let target = "aarch64-unknown-linux-gnu"
+        .parse::<target_lexicon::Triple>()
+        .expect("parse AArch64 target");
+    let object = zun_codegen::compile_object_for_target(&module, target)
+        .expect("emit AArch64-targeted object");
+    assert!(!object.is_empty());
+}
+
+#[test]
 fn aot_rejects_an_ineligible_entry_before_linking() {
     let module = compile(
         "function main(): string { if (true) { return \"managed\"; } return \"fallback\"; }",

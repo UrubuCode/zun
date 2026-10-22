@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.dependencies]
-cranelift-codegen = "0.131"
+cranelift-codegen = { version = "0.131", features = ["arm64"] }
 cranelift-frontend = "0.131"
 cranelift-jit = "0.131"
 cranelift-module = "0.131"
