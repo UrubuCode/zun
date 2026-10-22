@@ -635,4 +635,44 @@ impl Heap {
         })
     }
 
+    /// Evacuate young objects from the stopped JIT frame at the current
+    /// allocation safepoint, rewriting both stack-map slots and registered
+    /// native roots before execution resumes.
+    ///
+    /// # Safety
+    /// `pc` and `sp` must identify the stopped frame covered by the active
+    /// stack-map registry for this thread.
+    pub unsafe fn collect_young_evacuating_with_active_native_frame(
+        &mut self,
+        roots: &mut [Obj],
+        pc: usize,
+        sp: *mut u8,
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+    ) -> usize {
+        super::with_active_stack_map_registry(|registry| {
+            let Some(registry) = registry else {
+                let mut all_roots = roots.to_vec();
+                append_native_roots(&mut all_roots);
+                return unsafe {
+                    self.collect_young_evacuating(&mut all_roots, ref_slots, &mut |_| {})
+                };
+            };
+            let frame = StoppedNativeFrame { registry, pc, sp };
+            let root_count = roots.len();
+            let mut all_roots = roots.to_vec();
+            append_native_roots(&mut all_roots);
+            all_roots.extend(unsafe { registry.roots_at(pc, sp) });
+            let freed = unsafe {
+                self.collect_young_evacuating_with_native_frames(
+                    &mut all_roots,
+                    ref_slots,
+                    &[frame],
+                    &mut |_| {},
+                )
+            };
+            roots.copy_from_slice(&all_roots[..root_count]);
+            freed
+        })
+    }
+
 }

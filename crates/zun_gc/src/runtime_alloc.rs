@@ -69,10 +69,10 @@ pub unsafe extern "C" fn zun_rt_alloc(
                             &ref_slots,
                         );
                     } else {
-                        heap.collect_young_with_active_native_frame(
-                            &[],
+                        heap.collect_young_evacuating_with_active_native_frame(
+                            &mut Vec::new(),
                             pc,
-                            caller_sp as *const u8,
+                            caller_sp as *mut u8,
                             &ref_slots,
                         );
                     }
