@@ -12,7 +12,7 @@
 //! what happens to the resulting module differs.
 
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 use zun_common::Diagnostic;
 use zun_module::{read_body, Module};
@@ -399,6 +399,27 @@ fn out_path(source: &Path) -> PathBuf {
     source.with_extension("zm")
 }
 
+/// Resolve an external LLD linker without making it a mandatory host
+/// dependency. `ZUN_LLD` is an explicit override; otherwise use the copy
+/// shipped with the active Rust toolchain when available.
+fn resolve_lld() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("ZUN_LLD") {
+        let path = PathBuf::from(path);
+        return path.is_file().then_some(path);
+    }
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_owned()))?;
+    let mut candidate = sysroot.join("bin").join("rust-lld");
+    if cfg!(windows) {
+        candidate.set_extension("exe");
+    }
+    candidate.is_file().then_some(candidate)
+}
+
 fn link_aot_executable(
     object: &Path,
     executable: &Path,
@@ -431,7 +452,8 @@ fn link_aot_executable(
         "extern \"C\" {{ fn m{entry}() -> {return_type}; }}\nfn main() {{ let value = unsafe {{ m{entry}() }}; println!(\"{{}}\", {print_value}); }}\n"
     );
     std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
-    let result = std::process::Command::new("rustc")
+    let mut command = Command::new("rustc");
+    command
         .arg(&launcher)
         .arg("--crate-name")
         .arg("zun_aot")
@@ -440,7 +462,11 @@ fn link_aot_executable(
         .arg("-C")
         .arg(format!("link-arg={}", object.display()))
         .arg("-o")
-        .arg(executable)
+        .arg(executable);
+    if let Some(lld) = resolve_lld() {
+        command.arg("-C").arg(format!("linker={}", lld.display()));
+    }
+    let result = command
         .output()
         .map_err(|error| error.to_string());
     let _ = std::fs::remove_file(&launcher);
