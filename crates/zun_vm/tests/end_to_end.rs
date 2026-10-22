@@ -48,6 +48,19 @@ fn bigint_constructor_arithmetic_and_formatting_use_the_managed_floor() {
 }
 
 #[test]
+fn bigint_subtraction_preserves_negative_values() {
+    let out = run_source(
+        r#"function main(): int {
+            let left: BigInt = new BigInt("2");
+            let right: BigInt = new BigInt("5");
+            print(left.sub(right).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["-3"]);
+}
+
+#[test]
 fn arithmetic_and_locals() {
     let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);
