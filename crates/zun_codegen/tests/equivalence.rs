@@ -3913,6 +3913,19 @@ fn managed_array_length_is_jit_eligible_while_allocation_stays_tier0() {
 }
 
 #[test]
+fn scalar_u64_array_allocation_and_access_are_jit_eligible() {
+    let module = compile(
+        "function main(): u64 { let values = new Array(1); values[0] = 42 as u64; return values[0] as u64; }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles scalar array access");
+    assert!(jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(42, _)));
+    let mut heap = zun_gc::Heap::new();
+    assert_eq!(jit.call_packed_with_heap(entry, &[], &mut heap).unwrap(), 42);
+}
+
+#[test]
 fn unsigned_wrap_u8() {
     assert_equivalent("function main(): u8 { let b: u8 = 250; return b + 10 as u8; }");
 }

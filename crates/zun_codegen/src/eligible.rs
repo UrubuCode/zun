@@ -333,12 +333,14 @@ fn scalar_u64_array_access_only(
                 Opcode::Nop
                     | Opcode::ConstI32
                     | Opcode::ConstI64
+                    | Opcode::ConstF64
                     | Opcode::Conv
                     | Opcode::UnboxAny
                     | Opcode::BoxAny
                     | Opcode::Pop
                     | Opcode::LoadLocal
                     | Opcode::StoreLocal
+                    | Opcode::NewArray
                     | Opcode::LoadArray
                     | Opcode::StoreArray
                     | Opcode::ArrayPop
@@ -362,11 +364,13 @@ fn scalar_bool_array_access_only(
                 Opcode::Nop
                     | Opcode::ConstI32
                     | Opcode::ConstI64
+                    | Opcode::ConstF64
                     | Opcode::UnboxAny
                     | Opcode::BoxAny
                     | Opcode::Pop
                     | Opcode::LoadLocal
                     | Opcode::StoreLocal
+                    | Opcode::NewArray
                     | Opcode::LoadArray
                     | Opcode::StoreArray
                     | Opcode::Ret
@@ -592,6 +596,8 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                 JitKind::from_byte(body.return_kind),
                 JitKind::Object | JitKind::Array
             )
+            && !scalar_bool_array_access_only(&instrs, &body)
+            && !scalar_u64_array_access_only(&instrs, &body)
             && !scalar_array_length_only(&instrs, &body)
         {
             continue;
