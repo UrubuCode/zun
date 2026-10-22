@@ -257,16 +257,31 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             if assignment.operator != AssignmentOperator::Assign {
                 return Err("OXC adapter currently supports only simple assignments".into());
             }
-            let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
-                return Err("OXC adapter currently supports identifier assignments only".into());
-            };
-            Ok(Expr::Assign {
-                target: Name {
-                    span: span(identifier.span),
-                },
-                value: Box::new(convert_expression(&assignment.right)?),
-                span: span(assignment.span),
-            })
+            let value = Box::new(convert_expression(&assignment.right)?);
+            match &assignment.left {
+                AssignmentTarget::AssignmentTargetIdentifier(identifier) => Ok(Expr::Assign {
+                    target: Name {
+                        span: span(identifier.span),
+                    },
+                    value,
+                    span: span(assignment.span),
+                }),
+                AssignmentTarget::StaticMemberExpression(member) => Ok(Expr::FieldAssign {
+                    object: Box::new(convert_expression(&member.object)?),
+                    field: Name {
+                        span: span(member.property.span),
+                    },
+                    value,
+                    span: span(assignment.span),
+                }),
+                AssignmentTarget::ComputedMemberExpression(member) => Ok(Expr::IndexAssign {
+                    object: Box::new(convert_expression(&member.object)?),
+                    index: Box::new(convert_expression(&member.expression)?),
+                    value,
+                    span: span(assignment.span),
+                }),
+                _ => Err("OXC adapter supports identifier, field, and index assignments only".into()),
+            }
         }
         Expression::CallExpression(call) => {
             let mut args = Vec::with_capacity(call.arguments.len());
@@ -1156,6 +1171,23 @@ mod tests {
                 value: Some(crate::ast::Expr::Index { .. }),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_field_and_index_assignments() {
+        let program = parse_subset(
+            "function write(value, values, index) { value.size = 1; values[index] = 2; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Expr(crate::ast::Expr::FieldAssign { .. })
+        ));
+        assert!(matches!(
+            program.functions[0].body.statements[1],
+            crate::ast::Stmt::Expr(crate::ast::Expr::IndexAssign { .. })
         ));
     }
 }
