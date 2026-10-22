@@ -1465,7 +1465,8 @@ removed from the workspace. The supported core boundary is the Zun extension
 ABI (`zun_abi`/`zun_register_vN`); Node compatibility, if ever needed, belongs
 in a separate `@urubucode/napi` module.
 
-AOT status (2026-10-22): `zun build --aot` emits a Cranelift native object but
-does not yet link a standalone executable. The remaining full-AOT gate is
-invoking the platform linker (`link.exe`, `cc`, `ld`, or `lld`) and linking the
-Zun runtime/startup, including GC, intrinsics, and the interpreter fallback.
+AOT status (2026-10-22): `zun build --aot` emits a Cranelift native object and
+links scalar-return executables through a generated Rust launcher. The
+remaining full-AOT gate is a self-contained runtime/startup link for managed
+heap values, including GC, intrinsics, and the interpreter fallback; the
+current launcher is intentionally limited to scalar numeric/boolean returns.
