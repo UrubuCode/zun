@@ -1404,6 +1404,14 @@ generations; they are not missing pieces of the current generational policy.
 
 ### 7.3 Benchmarked opportunity sizing (2026-10-20)
 
+Fresh release validation on 2026-10-22 measured the checked-in benchmark at
+**257.666 ns/iter** Tier 0 versus **2.239 ns/iter** Tier 1 for the integer loop
+(**115.10x**), **1456.663** versus **27.037 ns/iter** for the typed Map mutation
+loop (**53.88x**), and **324.180** versus **33.816 ns/iter** for the typed array
+increment loop (**9.59x**). The metadata-only probes measured **253.320 ns/iter**
+for field load/store and **431.828 ns/iter** for virtual dispatch; those remain
+Tier 0 by design.
+
 An isolated release run on 2026-10-22 measured the current benchmark example
 at **256.423 ns/iter** Tier 0 versus **2.231 ns/iter** Tier 1 for the integer
 loop (**114.93x**), **1459.490** versus **24.924 ns/iter** for the typed Map
