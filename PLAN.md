@@ -377,7 +377,7 @@ for, for-of, do-while, loop-control, throw, identifier-assignment, named/default
 imports, constructor calls, templates, conditional/null expressions, and named
 classes with identifier heritage, fields, simple methods, getter/setter kinds,
 optional members, computed member reads, member assignments, private members,
-spread arguments, await/yield expressions, and supported statement sequences;
+spread arguments, await/yield expressions, `this` member access, and supported statement sequences;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
