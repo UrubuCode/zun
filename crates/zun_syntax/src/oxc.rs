@@ -915,8 +915,42 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                             .map_err(|error| vec![error])?,
                                     ));
                                 }
+                                Statement::WhileStatement(while_statement) => {
+                                    method_statements.push(Stmt::While {
+                                        cond: convert_expression(&while_statement.test)
+                                            .map_err(|error| vec![error])?,
+                                        body: convert_if_branch(source, &while_statement.body)
+                                            .map_err(|error| vec![error])?,
+                                        span: Span::new(
+                                            while_statement.span.start,
+                                            while_statement.span.end,
+                                        ),
+                                    });
+                                }
+                                Statement::DoWhileStatement(do_while_statement) => {
+                                    method_statements.push(Stmt::DoWhile {
+                                        body: convert_if_branch(source, &do_while_statement.body)
+                                            .map_err(|error| vec![error])?,
+                                        cond: convert_expression(&do_while_statement.test)
+                                            .map_err(|error| vec![error])?,
+                                        span: Span::new(
+                                            do_while_statement.span.start,
+                                            do_while_statement.span.end,
+                                        ),
+                                    });
+                                }
+                                Statement::ForStatement(_) => {
+                                    let nested = convert_if_branch(source, statement)
+                                        .map_err(|error| vec![error])?;
+                                    method_statements.extend(nested.statements);
+                                }
+                                Statement::ForOfStatement(_) => {
+                                    let nested = convert_if_branch(source, statement)
+                                        .map_err(|error| vec![error])?;
+                                    method_statements.extend(nested.statements);
+                                }
                                 _ => return Err(vec![
-                                    "OXC adapter class methods currently support return and expression statements".into(),
+                                    "OXC adapter class methods currently support return, expression, and loop statements".into(),
                                 ]),
                             }
                         }
@@ -1933,6 +1967,19 @@ mod tests {
                 value: Some(crate::ast::Expr::Field { .. }),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_loops_in_class_methods() {
+        let program = parse_subset(
+            "class Box { value: number; read(value) { while (value) break; return this.value; } } function main() {}",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.classes[0].methods[0].body.statements.first(),
+            Some(crate::ast::Stmt::While { .. })
         ));
     }
 
