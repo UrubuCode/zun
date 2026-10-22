@@ -130,6 +130,28 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             value: boolean.value,
             span: span(boolean.span),
         }),
+        Expression::TemplateLiteral(template) => {
+            let mut parts = Vec::with_capacity(template.quasis.len() + template.expressions.len());
+            for (index, quasi) in template.quasis.iter().enumerate() {
+                let text = quasi
+                    .value
+                    .cooked
+                    .as_ref()
+                    .and_then(|value| value.as_str())
+                    .or_else(|| Some(quasi.value.raw.as_str()))
+                    .ok_or_else(|| "OXC adapter cannot represent this template segment".to_owned())?;
+                parts.push(crate::ast::TemplatePart::Text(text.to_owned()));
+                if let Some(expression) = template.expressions.get(index) {
+                    parts.push(crate::ast::TemplatePart::Expr(Box::new(
+                        convert_expression(expression)?,
+                    )));
+                }
+            }
+            Ok(Expr::Template {
+                parts,
+                span: span(template.span),
+            })
+        }
         Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
             span: span(identifier.span),
         })),
@@ -940,5 +962,17 @@ mod tests {
         assert!(program.classes[0].base.is_some());
         assert_eq!(program.classes[0].fields.len(), 2);
         assert!(program.classes[0].fields[1].is_private);
+    }
+
+    #[test]
+    fn converts_template_literals_and_interpolations() {
+        let program = parse_subset("function greet(name) { return `hello ${name}`; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Template { ref parts, .. }),
+                ..
+            } if parts.len() == 3
+        ));
     }
 }
