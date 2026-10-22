@@ -193,6 +193,21 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             },
             span: span(assertion.span),
         }),
+        Expression::TSSatisfiesExpression(assertion) => Ok(Expr::Cast {
+            expr: Box::new(convert_expression(&assertion.expression)?),
+            ty: crate::ast::TypeAnnotation {
+                name: Name {
+                    span: Span::new(
+                        assertion.type_annotation.span().start,
+                        assertion.type_annotation.span().end,
+                    ),
+                },
+            },
+            span: span(assertion.span),
+        }),
+        Expression::TSNonNullExpression(assertion) => {
+            convert_expression(&assertion.expression)
+        }
         Expression::StaticMemberExpression(member) => {
             let object = Box::new(convert_expression(&member.object)?);
             let field = Name {
@@ -1345,6 +1360,22 @@ mod tests {
     fn converts_typescript_assertions() {
         let program = parse_subset(
             "function cast(value: unknown) { return value as number; }",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Cast { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn converts_satisfies_and_non_null_assertions() {
+        let program = parse_subset(
+            "function check(value: unknown) { return value! satisfies number; }",
             true,
         )
         .unwrap();
