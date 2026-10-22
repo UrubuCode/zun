@@ -446,6 +446,21 @@ fn resolve_lld() -> Option<PathBuf> {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
     }
+    let path_candidates = if cfg!(windows) {
+        ["lld-link.exe", "ld.lld.exe", "lld.exe"]
+    } else {
+        ["ld.lld", "lld", "lld-link"]
+    };
+    if let Some(path) = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|directory| {
+            path_candidates
+                .iter()
+                .map(|name| directory.join(name))
+                .find(|candidate| candidate.is_file())
+        })
+    }) {
+        return Some(path);
+    }
     let sysroot = Command::new("rustc")
         .args(["--print", "sysroot"])
         .output()
