@@ -170,7 +170,15 @@ impl ModuleCache {
         };
         if needs_write {
             let temporary = root.join(format!(".{}.zm.tmp", id.hex()));
-            if let Err(error) = std::fs::write(&temporary, bytes) {
+            use std::io::Write;
+            let mut file = match std::fs::File::create(&temporary) {
+                Ok(file) => file,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(CacheError::Io(error));
+                }
+            };
+            if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
                 let _ = std::fs::remove_file(&temporary);
                 return Err(CacheError::Io(error));
             }
