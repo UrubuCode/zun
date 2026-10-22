@@ -45,9 +45,13 @@ impl<'a> Checker<'a> {
         for (index, c) in program.classes.iter().enumerate() {
             let mut own = Vec::new();
             for f in &c.fields {
-                let fname = self.text(&f.name).to_string();
+                let fname = if f.is_private {
+                    format!("#{}#{}", self.text(&c.name), self.text(&f.name))
+                } else {
+                    self.text(&f.name).to_string()
+                };
                 let ty = self.resolve_annotation(&f.ty);
-                own.push((fname, ty, f.is_static));
+                own.push((fname, ty, f.is_static, f.is_private));
             }
             self.classes[index].own_fields = own;
         }
@@ -57,7 +61,7 @@ impl<'a> Checker<'a> {
             let fields = self
                 .full_fields(index as u32)
                 .into_iter()
-                .map(|(name, ty, is_static)| hir::ClassField { name, ty, is_static })
+                .map(|(name, ty, is_static, is_private)| hir::ClassField { name, ty, is_static, is_private })
                 .collect();
             out.push(hir::Class {
                 name: self.text(&c.name).to_string(),

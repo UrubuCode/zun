@@ -4497,6 +4497,16 @@ mod method_tests {
     }
 
     #[test]
+    fn private_fields_lower_inside_the_declaring_class() {
+        let module = zun_compiler::compile(
+            "class Box { #value: number; getValue(): number { return this.#value; } setValue(v: number): number { this.#value = v; return v; } } function main(): number { let b = new Box(41.0); b.setValue(42.0); return b.getValue(); }",
+        ).expect("compile private field access");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run private field access");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
+
+    #[test]
     fn property_syntax_lowers_to_getter_and_setter_methods() {
         let module = zun_compiler::compile(
             "class Box { get value(): number { return 41.0; } set value(v: number): number { return v; } } function main(): number { let b = new Box(); b.value = 42.0; return b.value; }",

@@ -5,7 +5,7 @@ use crate::hir::Ty;
 impl<'a> Checker<'a> {
     /// The full field layout of a class: inherited fields first (base's full
     /// layout), then the class's own fields, in slot order.
-    pub(super) fn full_fields(&self, class: u32) -> Vec<(String, Ty, bool)> {
+    pub(super) fn full_fields(&self, class: u32) -> Vec<(String, Ty, bool, bool)> {
         let info = &self.classes[class as usize];
         let mut fields = match info.base {
             Some(b) => self.full_fields(b),
@@ -20,16 +20,25 @@ impl<'a> Checker<'a> {
         self.full_fields(class)
             .into_iter()
             .enumerate()
-            .find(|(_, (n, _, _))| n == name)
-            .map(|(slot, (_, ty, _))| (slot as u16, ty))
+            .find(|(_, (n, _, _, _))| n == name)
+            .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
     }
 
     pub(super) fn static_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
         self.full_fields(class)
             .into_iter()
             .enumerate()
-            .find(|(_, (n, _, is_static))| n == name && *is_static)
-            .map(|(slot, (_, ty, _))| (slot as u16, ty))
+            .find(|(_, (n, _, is_static, _))| n == name && *is_static)
+            .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
+    }
+
+    pub(super) fn private_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
+        let suffix = format!("#{name}");
+        self.full_fields(class)
+            .into_iter()
+            .enumerate()
+            .find(|(_, (n, _, _, is_private))| *is_private && n.ends_with(&suffix))
+            .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
     }
 
     /// Resolve a method name to its function index, searching base classes.

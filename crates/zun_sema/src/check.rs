@@ -167,7 +167,7 @@ struct Signature {
 struct ClassInfo {
     base: Option<u32>,
     base_name: Option<String>,
-    own_fields: Vec<(String, Ty, bool)>,
+    own_fields: Vec<(String, Ty, bool, bool)>,
 }
 
 struct Checker<'a> {
@@ -201,6 +201,7 @@ struct FunctionCx {
     mutated_names: HashSet<String>,
     boxed: HashSet<hir::LocalSlot>,
     captures: HashMap<String, hir::Capture>,
+    this_class: Option<u32>,
 }
 
 #[derive(Default)]
@@ -381,6 +382,7 @@ impl Checker<'_> {
             mutated_names: HashSet::new(),
             boxed: HashSet::new(),
             captures: HashMap::new(),
+            this_class,
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -2159,8 +2161,25 @@ impl Checker<'_> {
                 };
                 hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span }
             }
-            ast::Expr::PrivateField { .. } | ast::Expr::PrivateFieldAssign { .. } => {
-                self.error(span, "private fields are not lowered yet");
+            ast::Expr::PrivateField { object, field, .. } => {
+                let object = self.check_expr(cx, object);
+                let name = self.text(field).to_string();
+                let Some(class) = (match object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
+                    self.error(span, "private fields require an instance receiver");
+                    return self.poison(span);
+                };
+                if cx.this_class != Some(class) {
+                    self.error(field.span, "private field is only accessible inside its declaring class");
+                    return self.poison(span);
+                }
+                let Some((field_slot, ty)) = self.private_field_of(class, &name) else {
+                    self.error(field.span, format!("unknown private field `#{name}`"));
+                    return self.poison(span);
+                };
+                hir::Expr { kind: hir::ExprKind::FieldGet { object: Box::new(object), class, field_slot }, ty, span }
+            }
+            ast::Expr::PrivateFieldAssign { .. } => {
+                self.error(span, "private field assignment is not lowered yet");
                 self.poison(span)
             }
             ast::Expr::Cast { expr, ty, .. } => {
@@ -2346,7 +2365,7 @@ impl Checker<'_> {
                 let field_tys: Vec<Ty> = self
                     .full_fields(class_idx)
                     .into_iter()
-                    .map(|(_, ty, _)| ty)
+                    .map(|(_, ty, _, _)| ty)
                     .collect();
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
@@ -2591,6 +2610,28 @@ impl Checker<'_> {
                 value,
                 ..
             } => {
+                if let ast::Expr::PrivateField { object: private_object, field, .. } = object.as_ref() {
+                    let checked_object = self.check_expr(cx, private_object);
+                    let name = self.text(field).to_string();
+                    let Some(class) = (match checked_object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
+                        self.error(span, "private fields require an instance receiver");
+                        return self.poison(span);
+                    };
+                    if cx.this_class != Some(class) {
+                        self.error(field.span, "private field is only accessible inside its declaring class");
+                        return self.poison(span);
+                    }
+                    let Some((field_slot, ty)) = self.private_field_of(class, &name) else {
+                        self.error(field.span, format!("unknown private field `#{name}`"));
+                        return self.poison(span);
+                    };
+                    let mut value = self.check_expr(cx, value);
+                    coerce_numeric_literal(&mut value, ty);
+                    if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
+                        self.error(value.span, format!("cannot assign {:?} to private field of type {ty:?}", value.ty));
+                    }
+                    return hir::Expr { kind: hir::ExprKind::FieldSet { object: Box::new(checked_object), class, field_slot, value: Box::new(value) }, ty, span };
+                }
                 let fname = self.text(field).to_string();
                 if let ast::Expr::Ident(class_name) = object.as_ref() {
                     if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {

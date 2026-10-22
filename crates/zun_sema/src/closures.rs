@@ -56,6 +56,7 @@ impl Checker<'_> {
                 .iter()
                 .map(|capture| (capture.name.clone(), capture.clone()))
                 .collect(),
+            this_class: outer.this_class,
         };
         // The hidden environment is always local zero. User parameters and
         // ordinary locals follow it, matching the indirect-call ABI.

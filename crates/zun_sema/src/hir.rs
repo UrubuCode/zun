@@ -280,6 +280,8 @@ pub struct ClassField {
     pub ty: Ty,
     /// Whether the field is stored on the class rather than an instance.
     pub is_static: bool,
+    /// Whether this field originated from `#` private syntax.
+    pub is_private: bool,
 }
 
 /// A checked function.

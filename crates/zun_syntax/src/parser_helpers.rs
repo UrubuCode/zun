@@ -478,7 +478,9 @@ impl Parser<'_> {
                 }
                 Expr::PrivateField { object, field, .. } => {
                     let span = object.span().to(value.span());
-                    return Expr::PrivateFieldAssign { object, field, value: Box::new(value), span };
+                    let private_span = object.span().to(field.span);
+                    let private = Expr::PrivateField { object, field, span: private_span };
+                    return Expr::FieldAssign { object: Box::new(private), field, value: Box::new(value), span };
                 }
                 Expr::Index { object, index, .. } => {
                     let span = object.span().to(value.span());
