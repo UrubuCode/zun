@@ -358,6 +358,32 @@ pub unsafe extern "C" fn zun_host_execute_i64(
     ZUN_HOST_OK
 }
 
+/// Execute a compiled module and return the raw unsigned integer result.
+/// The value is copied without narrowing through the signed C ABI.
+#[no_mangle]
+pub unsafe extern "C" fn zun_host_execute_u64(
+    host: *mut ZunHost,
+    module_ptr: *const u8,
+    module_len: usize,
+    out: *mut u64,
+) -> i32 {
+    if host.is_null() || module_ptr.is_null() || out.is_null() {
+        return ZUN_HOST_INVALID_ARGUMENT;
+    }
+    // SAFETY: caller supplies a valid immutable byte range for this call.
+    let bytes = unsafe { slice::from_raw_parts(module_ptr, module_len) };
+    let value = match zun_vm::execute(bytes) {
+        Ok(value) => value,
+        Err(_) => return ZUN_HOST_VM_ERROR,
+    };
+    let zun_interp::value::Value::Int(value, _) = value else {
+        return ZUN_HOST_VM_ERROR;
+    };
+    // SAFETY: caller supplies writable storage for one u64.
+    unsafe { *out = value as u64 };
+    ZUN_HOST_OK
+}
+
 /// Execute a compiled module and return its floating-point result through
 /// `out`. The status codes match [`zun_host_execute_i64`].
 #[no_mangle]
@@ -488,6 +514,20 @@ mod tests {
         unsafe { zun_host_destroy(host) };
         assert_eq!(status, 0);
         assert_eq!(result, 7);
+    }
+
+    #[test]
+    fn host_executes_a_compiled_unsigned_integer_module() {
+        let module = zun_compiler::compile("function main(): u64 { return 42; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = 0;
+        let status = unsafe {
+            zun_host_execute_u64(host, bytes.as_ptr(), bytes.len(), &mut result)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, 0);
+        assert_eq!(result, 42);
     }
 
     #[test]

@@ -27,6 +27,12 @@ int32_t zun_host_execute_i64(
     size_t module_len,
     int64_t *out);
 
+int32_t zun_host_execute_u64(
+    ZunHost *host,
+    const uint8_t *module_ptr,
+    size_t module_len,
+    uint64_t *out);
+
 int32_t zun_host_execute_f64(
     ZunHost *host,
     const uint8_t *module_ptr,
