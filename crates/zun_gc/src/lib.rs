@@ -554,18 +554,45 @@ impl Heap {
     pub fn rewrite_auxiliary_references(&mut self, relocation: &RelocationMap) -> usize {
         let map = |address| relocation.relocate_address(address);
         let mut rewritten = 0;
-        for array in self.arrays.values_mut() {
+        let arrays = std::mem::take(&mut self.arrays);
+        let mut mapped_arrays = HashMap::with_capacity(arrays.len());
+        for (address, mut array) in arrays {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
             rewritten += array.rewrite_object_references(map);
+            mapped_arrays.insert(mapped, array);
         }
-        for object in self.dynamic_objects.values_mut() {
+        self.arrays = mapped_arrays;
+
+        let objects = std::mem::take(&mut self.dynamic_objects);
+        let mut mapped_objects = HashMap::with_capacity(objects.len());
+        for (address, mut object) in objects {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
             rewritten += object.rewrite_object_references(map);
+            mapped_objects.insert(mapped, object);
         }
-        for map_storage in self.maps.values_mut() {
+        self.dynamic_objects = mapped_objects;
+
+        let maps = std::mem::take(&mut self.maps);
+        let mut mapped_maps = HashMap::with_capacity(maps.len());
+        for (address, mut map_storage) in maps {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
             rewritten += map_storage.rewrite_object_references(map);
+            mapped_maps.insert(mapped, map_storage);
         }
-        for set_storage in self.sets.values_mut() {
+        self.maps = mapped_maps;
+
+        let sets = std::mem::take(&mut self.sets);
+        let mut mapped_sets = HashMap::with_capacity(sets.len());
+        for (address, mut set_storage) in sets {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
             rewritten += set_storage.rewrite_object_references(map);
+            mapped_sets.insert(mapped, set_storage);
         }
+        self.sets = mapped_sets;
         rewritten
     }
 
