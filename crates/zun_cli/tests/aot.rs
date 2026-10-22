@@ -67,3 +67,28 @@ fn build_aot_runs_a_floating_point_entry_point() {
     }
     let _ = std::fs::remove_dir(root);
 }
+
+#[test]
+fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
+    let root = std::env::temp_dir().join(format!("zun-aot-fallback-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    std::fs::write(&source, "function main(): string { return \"managed\"; }\n")
+        .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build", "--aot"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("method #1 is not JIT-eligible"));
+    assert!(source.with_extension("zm").is_file());
+    assert!(source.with_extension("zman").is_file());
+    assert!(!source.with_extension("exe").exists());
+
+    for extension in ["ts", "zm", "zman", "o", "exe"] {
+        let _ = std::fs::remove_file(source.with_extension(extension));
+    }
+    let _ = std::fs::remove_dir(root);
+}
