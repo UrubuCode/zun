@@ -4965,6 +4965,13 @@ fn aot_object_contains_the_eligible_entry_point() {
 }
 
 #[test]
+fn aot_rejects_an_ineligible_entry_before_linking() {
+    let module = compile("function main(): string { return \"managed\"; }");
+    let error = zun_codegen::compile_object(&module).expect_err("string entry is not AOT-eligible");
+    assert!(matches!(error, zun_codegen::JitError::Ineligible(1)));
+}
+
+#[test]
 fn overridden_virtual_call_is_jit_eligible_and_dispatches_dynamically() {
     let src = "class Base { speak(): int { return 1; } }\n\
                class Derived extends Base { speak(): int { return 2; } }\n\

@@ -2196,6 +2196,12 @@ pub fn compile_object(zm: &Module) -> Result<Vec<u8>, JitError> {
         .map_err(|e| JitError::Module(e.to_string()))?;
     let mut module = ObjectModule::new(builder);
     let eligible = eligible_methods(zm);
+    if let Some(entry) = zm.entry_point {
+        let rid = entry.rid();
+        if !eligible.contains(&rid) {
+            return Err(JitError::Ineligible(rid));
+        }
+    }
     let types =
         zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
     let mut func_ids = HashMap::new();
