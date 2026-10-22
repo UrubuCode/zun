@@ -1605,6 +1605,19 @@ impl ModuleLoader {
         self.load_index(&signed.index, fetcher)
     }
 
+    /// Verify a signed index against the release root, then cache and load its
+    /// selected modules only after the envelope has been authenticated.
+    pub fn load_signed_index_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        signed: &SignedModuleIndex,
+        trusted_key: &[u8; 32],
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        signed.verify_against(trusted_key)?;
+        self.load_index_cached(cache_root, &signed.index, fetcher)
+    }
+
     /// Verify a signed index against a release-provisioned key set before
     /// fetching any selected module.
     pub fn load_signed_index_with_keys(
@@ -1615,6 +1628,19 @@ impl ModuleLoader {
     ) -> Result<(), LoadError> {
         signed.verify_with_keys(trusted)?;
         self.load_index(&signed.index, fetcher)
+    }
+
+    /// Verify a signed index against rotated release keys, then cache and load
+    /// its selected modules only after the envelope has been authenticated.
+    pub fn load_signed_index_with_keys_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        signed: &SignedModuleIndex,
+        trusted: &TrustedKeySet,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        signed.verify_with_keys(trusted)?;
+        self.load_index_cached(cache_root, &signed.index, fetcher)
     }
 
     /// Load a signed index using the key set retained by this loader.
@@ -1628,6 +1654,21 @@ impl ModuleLoader {
         })?;
         signed.verify_with_keys(trusted)?;
         self.load_index(&signed.index, fetcher)
+    }
+
+    /// Verify a signed index using this loader's retained key set, then cache
+    /// and load its selected modules.
+    pub fn load_signed_index_trusted_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        signed: &SignedModuleIndex,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.as_ref().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        signed.verify_with_keys(trusted)?;
+        self.load_index_cached(cache_root, &signed.index, fetcher)
     }
 
     /// Verify and register every module carried by a `.zmlib` package.
@@ -2296,6 +2337,39 @@ mod tests {
         .unwrap();
         let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
         assert!(signed.verify_with_keys(&trusted).is_ok());
+    }
+
+    #[test]
+    fn trusted_signed_index_caches_only_after_anchor_verification() {
+        use ed25519_dalek::{Signer, SigningKey};
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
+        }
+        let root = std::env::temp_dir().join(format!("zun-loader-signed-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bytes = Module::new().write();
+        let id = content_id(&bytes);
+        let mut index = ModuleIndex::new();
+        index.push("signed", id).unwrap();
+        let signing = SigningKey::from_bytes(&[61u8; 32]);
+        let payload = index.write();
+        let signed = SignedModuleIndex::new(
+            index,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&payload).to_bytes(),
+        )
+        .unwrap();
+        let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader
+            .load_signed_index_with_keys_cached(&root, &signed, &trusted, &Registry(bytes.clone()))
+            .unwrap();
+        assert!(loader.get("signed").is_some());
+        assert_eq!(ModuleCache::load(&root, id).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
