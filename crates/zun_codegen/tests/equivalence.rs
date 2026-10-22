@@ -2300,7 +2300,7 @@ fn string_reverse_uses_interpreter_fallback() {
 }
 
 #[test]
-fn string_is_ascii_uses_interpreter_fallback() {
+fn string_receiver_loop_method_is_jit_equivalent() {
     let module = zun_compiler::compile(
         "import { length, charCodeAt } from \"zun:string\";\n\
          class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAscii(): boolean { let index: u64 = 0; while (index < this.length()) { if (this.charCodeAt(index) > 127) { return false; } index = index + 1; } return true; } }\n\
@@ -2310,6 +2310,17 @@ fn string_is_ascii_uses_interpreter_fallback() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
     assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
+    let is_ascii = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "isAscii")
+        .map(|index| index as u32 + 1)
+        .expect("isAscii method");
+    assert!(jit.is_compiled(is_ascii), "string-receiver method should be JIT-eligible");
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun"));
+    assert_eq!(jit.call_packed_with_heap(is_ascii, &[value as u64], &mut heap).expect("jit isAscii"), 1);
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 

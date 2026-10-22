@@ -304,9 +304,14 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
     let Ok(body) = read_body(&module.code, method.body_offset) else {
         return false;
     };
-    body.local_kinds
-        .first()
-        .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object)
+    body.local_kinds.first().is_some_and(|&kind| {
+        matches!(
+            JitKind::from_byte(kind),
+            // Primitive-backed classes are sealed and use the direct typed
+            // call path; object receivers still require the vtable contract.
+            JitKind::Object | JitKind::String
+        )
+    })
 }
 
 /// Whether a value-type code is one the typed JIT can represent.
