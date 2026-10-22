@@ -101,6 +101,10 @@ pub(super) fn collect_mutated_expr(
             collect_mutated_expr(checker, object, names);
             collect_mutated_expr(checker, index, names);
         }
+        ast::Expr::OptionalCall { callee, args, .. } => {
+            collect_mutated_expr(checker, callee, names);
+            for arg in args { collect_mutated_expr(checker, arg, names); }
+        }
         ast::Expr::FieldAssign { object, value, .. } => {
             collect_mutated_expr(checker, object, names);
             collect_mutated_expr(checker, value, names);

@@ -1028,6 +1028,25 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::TokenImm32(token, args.len() as i32),
                 ));
             }
+            ExprKind::OptionalIndirectCall { callee, args, func } => {
+                self.expr(callee);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_null = self.emit_branch(Opcode::BranchTrue);
+                for arg in args { self.expr(arg); }
+                let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
+                    Token::null(TableKind::MethodDef)
+                } else if *func == hir::DYNAMIC_REDUCER {
+                    Token::null(TableKind::MemberRef)
+                } else { Token::new(TableKind::MethodDef, *func + 1) };
+                self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
+                let end = self.emit_branch(Opcode::Branch);
+                self.patch_to_here(use_null);
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.patch_to_here(end);
+            }
             ExprKind::CallBuiltin { id, args } => {
                 for a in args {
                     self.expr(a);

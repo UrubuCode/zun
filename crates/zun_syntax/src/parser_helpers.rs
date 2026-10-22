@@ -35,6 +35,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::Spread { expr, .. } => rebase_expression_names(expr, base),
         Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } | Expr::PrivateField { object, field, .. } => { rebase_expression_names(object, base); shift(&mut field.span); }
         Expr::OptionalIndex { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
+        Expr::OptionalCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
         Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }
         Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }

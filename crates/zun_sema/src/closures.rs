@@ -426,6 +426,12 @@ impl Checker<'_> {
                 self.collect_capture_expr(cx, parameters, object, uses);
                 self.collect_capture_expr(cx, parameters, index, uses);
             }
+            ast::Expr::OptionalCall { callee, args, .. } => {
+                self.collect_capture_expr(cx, parameters, callee, uses);
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
+            }
             ast::Expr::Spread { expr, .. } => self.collect_capture_expr(cx, parameters, expr, uses),
             ast::Expr::FieldAssign { object, value, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses);

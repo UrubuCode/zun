@@ -596,6 +596,12 @@ pub enum ExprKind {
         /// Function index providing the static signature token.
         func: FuncIndex,
     },
+    /// Null-safe indirect call through a function value.
+    OptionalIndirectCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        func: FuncIndex,
+    },
     /// Call a runtime intrinsic by its stable id (see `zun_intrinsics`).
     CallBuiltin {
         /// The intrinsic dispatch id.

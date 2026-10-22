@@ -2678,6 +2678,28 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::OptionalCall { callee, args, .. } => {
+                let callee = self.check_expr(cx, callee);
+                let Ty::Function(func) = callee.ty else {
+                    self.error(callee.span, "optional call requires a function value");
+                    return self.poison(span);
+                };
+                let checked: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                let return_ty = match func {
+                    hir::DYNAMIC_FUNCTION | hir::DYNAMIC_REDUCER => Ty::Any,
+                    hir::DYNAMIC_PREDICATE => Ty::Boolean,
+                    _ => self.signatures[func as usize].return_ty,
+                };
+                hir::Expr {
+                    kind: hir::ExprKind::OptionalIndirectCall {
+                        callee: Box::new(callee),
+                        args: checked,
+                        func,
+                    },
+                    ty: return_ty,
+                    span,
+                }
+            }
             ast::Expr::OptionalMethodCall {
                 object,
                 method,
@@ -3221,6 +3243,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         MethodCall { receiver, args, .. } | OptionalMethodCall { object: receiver, args, .. } => count_yields_in_expr(receiver) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         OptionalField { object, .. } | Field { object, .. } | PrivateField { object, .. } => count_yields_in_expr(object),
         OptionalIndex { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
+        OptionalCall { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         FieldAssign { object, value, .. } | PrivateFieldAssign { object, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(value),
         Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
         IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
@@ -3296,6 +3319,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         StaticField { .. } => 0,
         OptionalField { object, .. } => count_awaits_in_expr(object),
         OptionalIndex { object, index, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(index),
+        OptionalCall { callee, args, .. } => count_awaits_in_expr(callee) + args.iter().map(count_awaits_in_expr).sum::<usize>(),
         OptionalMethodCall { object, args, .. } => {
             count_awaits_in_expr(object) + args.iter().map(count_awaits_in_expr).sum::<usize>()
         }

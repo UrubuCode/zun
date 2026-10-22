@@ -585,18 +585,20 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 span: span(chain.span),
             }),
             ChainElement::CallExpression(call) => {
-                let Expression::StaticMemberExpression(member) = &call.callee else {
-                    return Err("OXC adapter supports optional static-member calls only".into());
-                };
                 let mut args = Vec::with_capacity(call.arguments.len());
                 for argument in &call.arguments {
                     args.push(convert_argument(argument)?);
                 }
-                Ok(Expr::OptionalMethodCall {
-                    object: Box::new(convert_expression(&member.object)?),
-                    method: Name {
-                        span: span(member.property.span),
-                    },
+                if let Expression::StaticMemberExpression(member) = &call.callee {
+                    return Ok(Expr::OptionalMethodCall {
+                        object: Box::new(convert_expression(&member.object)?),
+                        method: Name { span: span(member.property.span) },
+                        args,
+                        span: span(chain.span),
+                    });
+                }
+                Ok(Expr::OptionalCall {
+                    callee: Box::new(convert_expression(&call.callee)?),
                     args,
                     span: span(chain.span),
                 })
@@ -2057,6 +2059,15 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Return { value: Some(crate::ast::Expr::OptionalIndex { .. }), .. }
+        ));
+    }
+
+    #[test]
+    fn converts_optional_indirect_calls() {
+        let program = parse_subset("function main(f: Function): any { return f?.(); }", true).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return { value: Some(crate::ast::Expr::OptionalCall { ref args, .. }), .. } if args.is_empty()
         ));
     }
 

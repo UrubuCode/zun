@@ -523,6 +523,12 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// `callee?.(args)` — a null-safe indirect call.
+    OptionalCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        span: Span,
+    },
     /// `object?.method(args)` — a null-safe managed method call.
     OptionalMethodCall {
         object: Box<Expr>,
@@ -619,6 +625,8 @@ impl Expr {
             | Expr::StaticMethodCall { span, .. }
             | Expr::StaticField { span, .. }
             | Expr::OptionalField { span, .. }
+            | Expr::OptionalIndex { span, .. }
+            | Expr::OptionalCall { span, .. }
             | Expr::OptionalMethodCall { span, .. }
             | Expr::Spread { span, .. }
             | Expr::Cast { span, .. }
