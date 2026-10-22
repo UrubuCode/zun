@@ -217,6 +217,10 @@ impl Interp<'_> {
 
             match instr.opcode {
                 Opcode::Nop => {}
+                // Static-field storage is represented in metadata first; the
+                // source checker still rejects it until class storage and GC
+                // roots are wired through the runtime.
+                Opcode::LoadStatic | Opcode::StoreStatic => return Err(RunError::BadToken),
                 Opcode::ConstF64 => stack.push(Value::Float(
                     operand_f64(&instr.operand),
                     zun_il::NumKind::F64,

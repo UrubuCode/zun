@@ -228,6 +228,10 @@ define_opcodes! {
     /// Store an object field, leaving the stored value on the stack so a field
     /// assignment can be used as an expression.
     StoreField = 0x72, Token, "stfld", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Load a class-static field by metadata token.
+    LoadStatic = 0x92, Token, "ldsfld", StackEffect::Fixed { pops: 0, pushes: 1 };
+    /// Store a class-static field, leaving the value on the stack.
+    StoreStatic = 0x93, Token, "stsfld", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Direct (static / non-virtual) call.
     Call = 0x73, Token, "call", StackEffect::Call;
     /// Virtual / interface call.

@@ -728,6 +728,20 @@ fn fixture_invalid_unknown_call_arity() {
 }
 
 #[test]
+fn fixture_valid_static_field_stack_effects() {
+    let code = asm(&[
+        Instruction::new(Opcode::LoadStatic, Operand::Token(Token::new(TableKind::FieldDef, 1))),
+        Instruction::simple(Opcode::Pop),
+        Instruction::new(Opcode::ConstI64, Operand::Imm64(1)),
+        Instruction::new(Opcode::StoreStatic, Operand::Token(Token::new(TableKind::FieldDef, 1))),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    let resolve = |_: Opcode, _: &Operand| Some((0, 1));
+    assert_eq!(verify(&code, VOID, &resolve), Ok(()));
+}
+
+#[test]
 fn fixture_valid_handler_region_accepts_error_type() {
     let mut section = Vec::new();
     let body_offset = zun_module::write_body_with_handlers(
