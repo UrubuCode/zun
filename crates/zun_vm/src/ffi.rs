@@ -4,7 +4,7 @@
 //! implemented by Zun, while this API loads third-party native libraries.
 
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{CStr, OsStr};
 use std::path::Path;
 
 /// Scalar types supported by the first, blittable FFI ABI.
@@ -487,7 +487,7 @@ impl NativeLibrary {
         argument: &FfiStringArgument,
         declaration: &FfiStringReturn,
     ) -> Result<Vec<u8>, FfiError> {
-        let (free_symbol, _) = match declaration {
+        let (free_symbol, length_mode) = match declaration {
             FfiStringReturn::Owned { free_symbol, length } => (free_symbol, length),
             _ => return Err(FfiError { message: "owned UTF-8 call requires an owned return declaration".into() }),
         };
@@ -495,21 +495,37 @@ impl NativeLibrary {
         let free = unsafe {
             self.symbol::<unsafe extern "C" fn(*mut u8, usize)>(free_symbol.as_bytes())
         }?;
-        let symbol = unsafe {
-            self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *mut u8>(name)
-        }?;
-        let mut length = 0usize;
-        let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
-        if pointer.is_null() && length != 0 {
-            return Err(FfiError { message: "owned UTF-8 call returned a null pointer with non-zero length".into() });
+        match length_mode {
+            FfiStringLength::OutParameter(_) => {
+                let symbol = unsafe {
+                    self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *mut u8>(name)
+                }?;
+                let mut length = 0usize;
+                let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
+                if pointer.is_null() && length != 0 {
+                    return Err(FfiError { message: "owned UTF-8 call returned a null pointer with non-zero length".into() });
+                }
+                let payload = if length == 0 {
+                    Vec::new()
+                } else {
+                    unsafe { core::slice::from_raw_parts(pointer, length) }.to_vec()
+                };
+                unsafe { free(pointer, length) };
+                Ok(payload)
+            }
+            FfiStringLength::NullTerminated => {
+                let symbol = unsafe {
+                    self.symbol::<unsafe extern "C" fn(*const u8, usize) -> *mut u8>(name)
+                }?;
+                let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes()) };
+                if pointer.is_null() {
+                    return Err(FfiError { message: "owned NUL-terminated UTF-8 call returned a null pointer".into() });
+                }
+                let payload = unsafe { CStr::from_ptr(pointer.cast()) }.to_bytes().to_vec();
+                unsafe { free(pointer, payload.len()) };
+                Ok(payload)
+            }
         }
-        let payload = if length == 0 {
-            Vec::new()
-        } else {
-            unsafe { core::slice::from_raw_parts(pointer, length) }.to_vec()
-        };
-        unsafe { free(pointer, length) };
-        Ok(payload)
     }
 
     /// Call a C symbol with no arguments and an `i64` result.
