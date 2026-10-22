@@ -7,8 +7,8 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, BinaryOperator, BindingPattern, Expression, ForStatementInit, ForStatementLeft,
-    LogicalOperator, Statement,
+    Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, Expression,
+    ForStatementInit, ForStatementLeft, LogicalOperator, Statement,
     UnaryOperator,
 };
 use oxc_parser::Parser;
@@ -184,6 +184,21 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 op,
                 operand: Box::new(convert_expression(&unary.argument)?),
                 span: span(unary.span),
+            })
+        }
+        Expression::AssignmentExpression(assignment) => {
+            if assignment.operator != AssignmentOperator::Assign {
+                return Err("OXC adapter currently supports only simple assignments".into());
+            }
+            let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
+                return Err("OXC adapter currently supports identifier assignments only".into());
+            };
+            Ok(Expr::Assign {
+                target: Name {
+                    span: span(identifier.span),
+                },
+                value: Box::new(convert_expression(&assignment.right)?),
+                span: span(assignment.span),
             })
         }
         Expression::CallExpression(call) => {
@@ -754,6 +769,15 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Throw { .. }
+        ));
+    }
+
+    #[test]
+    fn converts_identifier_assignments() {
+        let program = parse_subset("function set(value) { value = 42; return value; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })
         ));
     }
 }
