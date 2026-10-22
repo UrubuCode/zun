@@ -1475,4 +1475,5 @@ Extension ABI status (2026-10-22): the standalone `zun_abi` crate now defines
 the versioned `ZunRegistry`, scalar/opaque `ZunValue` carrier, function
 descriptor, and `zun_register_v1` callback contract. Native module loading,
 capability enforcement, and registry-backed source bindings remain later
-distribution work; this ABI is independent of Node/N-API.
+distribution work; this ABI is independent of Node/N-API. A public
+`include/zun_abi.h` mirrors the `repr(C)` layouts for C/C++ extensions.
