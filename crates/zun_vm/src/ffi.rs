@@ -30,8 +30,8 @@ pub enum FfiStringLength {
     NullTerminated,
 }
 
-/// Declared ownership for a native string returned by a future marshalling
-/// stub. The runtime never guesses ownership from the symbol or return type.
+/// Declared ownership for a native string returned by the explicit marshalling
+/// boundary. The runtime never guesses ownership from the symbol or return type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FfiStringReturn {
     /// The native side retains ownership and supplies a length through the
@@ -190,7 +190,7 @@ impl FfiStringArgument {
 
 /// A validated signature for a direct C-ABI call. Non-blittable string
 /// signatures use [`FfiStringReturn`] as a separate, explicit contract until
-/// their generated marshalling stub is available.
+/// generated stubs support broader argument shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FfiSignature {
     params: Vec<FfiScalar>,
