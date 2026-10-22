@@ -88,6 +88,27 @@ pub unsafe extern "C" fn zun_rt_run_embedded_f64(
     }
 }
 
+/// Execute an embedded module through Tier 0 and print its result using the
+/// interpreter's normal display representation. This is the generic AOT
+/// fallback for managed, dynamic, and otherwise non-scalar entry results.
+#[no_mangle]
+pub unsafe extern "C" fn zun_rt_run_embedded_print(ptr: *const u8, len: u64) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    let Ok(len) = usize::try_from(len) else {
+        return -1;
+    };
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match execute(bytes) {
+        Ok(value) => {
+            println!("{}", value.display());
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
 pub use ffi::{
     library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
     FfiStringReturn, NativeLibrary,
@@ -321,6 +342,17 @@ mod tests {
         let result = unsafe { zun_rt_run_embedded_i64(bytes.as_ptr(), bytes.len() as u64) };
         assert_eq!(result, 23);
         assert_eq!(unsafe { zun_rt_run_embedded_i64(std::ptr::null(), 0) }, -1);
+    }
+
+    #[test]
+    fn embedded_runtime_hook_accepts_non_scalar_results_for_aot_fallback() {
+        let module = zun_compiler::compile("function main(): string { return \"managed\"; }").unwrap();
+        let bytes = module.write();
+        assert_eq!(
+            unsafe { zun_rt_run_embedded_print(bytes.as_ptr(), bytes.len() as u64) },
+            0
+        );
+        assert_eq!(unsafe { zun_rt_run_embedded_print(std::ptr::null(), 0) }, -1);
     }
 
     #[test]

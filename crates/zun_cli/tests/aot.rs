@@ -327,7 +327,13 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
     let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
         .expect("read fallback manifest");
     assert!(manifest.native_object.is_none());
-    assert!(!source.with_extension("exe").exists());
+    if source.with_extension("exe").is_file() {
+        let output = Command::new(source.with_extension("exe"))
+            .output()
+            .expect("run interpreter fallback executable");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "managed");
+    }
 
     for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
