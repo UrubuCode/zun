@@ -403,6 +403,9 @@ generated launcher calls those hooks around the native entry point when the
 library is linked.
 The runtime static library also exports a scalar embedded-IL interpreter hook for
 the forthcoming ineligible-entry AOT launcher fallback.
+When a matching runtime library is provisioned, the CLI now links that hook and
+the embedded metadata object into a runnable fallback executable for ineligible
+scalar entrypoints; without the library it retains the portable `.zm` fallback.
 
 ## 8. Risks & attention points
 
