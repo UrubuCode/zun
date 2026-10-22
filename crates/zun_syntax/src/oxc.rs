@@ -7,8 +7,8 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, BinaryOperator, BindingPattern, Expression, ForStatementInit, LogicalOperator,
-    Statement,
+    Argument, BinaryOperator, BindingPattern, Expression, ForStatementInit, ForStatementLeft,
+    LogicalOperator, Statement,
     UnaryOperator,
 };
 use oxc_parser::Parser;
@@ -379,9 +379,44 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         span: span(for_statement.span),
                     });
                 }
+                Statement::ForOfStatement(for_of_statement) => {
+                    if for_of_statement.r#await {
+                        return Err(vec![
+                            "OXC adapter does not support await in for-of loops yet".into(),
+                        ]);
+                    }
+                    let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left
+                    else {
+                        return Err(vec![
+                            "OXC adapter supports identifier for-of bindings only".into(),
+                        ]);
+                    };
+                    if declaration.declarations.len() != 1 {
+                        return Err(vec![
+                            "OXC adapter supports one for-of binding".into(),
+                        ]);
+                    }
+                    let declarator = &declaration.declarations[0];
+                    let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                        return Err(vec![
+                            "OXC adapter supports identifier for-of bindings only".into(),
+                        ]);
+                    };
+                    let body = convert_block_statement(&for_of_statement.body)
+                        .map_err(|error| vec![error])?;
+                    statements.push(Stmt::ForOf {
+                        name: Name {
+                            span: span(identifier.span),
+                        },
+                        iterable: convert_expression(&for_of_statement.right)
+                            .map_err(|error| vec![error])?,
+                        body,
+                        span: span(for_of_statement.span),
+                    });
+                }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, conditionals, while loops, for loops, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, while loops, for loops, for-of loops, return, and expression statements".into(),
                     ])
                 }
             }
@@ -618,6 +653,19 @@ mod tests {
                 update: Some(_),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_for_of_statements_with_identifier_bindings() {
+        let program = parse_subset(
+            "function visit(items) { for (const item of items) { return item; } }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::ForOf { .. }
         ));
     }
 }
