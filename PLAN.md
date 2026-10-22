@@ -422,6 +422,9 @@ launcher’s `u64` path; boolean fallback output preserves native `true`/`false`
 Floating fallback now uses an out-parameter ABI and is covered for `f64` output.
 Fallback AOT manifests now record the emitted metadata object and runtime library,
 while leaving `native_object` unset.
+The runtime also exposes a generic display-result fallback for managed, dynamic,
+and other non-scalar entrypoints, allowing a provisioned runtime library to link
+an interpreter-backed executable for every entry return shape.
 
 ## 8. Risks & attention points
 
