@@ -374,8 +374,8 @@ native OXC JavaScript/TypeScript parse boundary with isolated diagnostics and a
 source-span-preserving literal/identifier/binary/logical/unary/call/member-call
 AST adapter with identifier parameters, local declarations, conditionals, while,
 for, for-of, do-while, loop-control, throw, identifier-assignment, named/default
-imports, constructor calls, templates, and named classes with identifier heritage
-and uninitialized fields, and supported statement sequences;
+imports, constructor calls, templates, conditional/null expressions, and named
+classes with identifier heritage and uninitialized fields, and supported statement sequences;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
