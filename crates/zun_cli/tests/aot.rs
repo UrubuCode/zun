@@ -178,6 +178,36 @@ fn build_aot_runs_a_boolean_entry_point() {
 }
 
 #[test]
+fn build_aot_preserves_f32_entry_abi() {
+    let root = std::env::temp_dir().join(format!("zun-aot-f32-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create temporary directory");
+    let source = root.join("main.ts");
+    std::fs::write(&source, "function main(): f32 { return 7.5; }\n")
+        .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .args(["build", "--aot"])
+        .arg(&source)
+        .output()
+        .expect("run zun");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let executable = Command::new(source.with_extension("exe"))
+        .output()
+        .expect("run AOT executable");
+    assert!(executable.status.success());
+    assert_eq!(String::from_utf8_lossy(&executable.stdout).trim(), "7.5");
+
+    for extension in ["ts", "zm", "zman", "o", "exe"] {
+        let _ = std::fs::remove_file(source.with_extension(extension));
+    }
+    let _ = std::fs::remove_dir(root);
+}
+
+#[test]
 fn build_aot_preserves_unsigned_64_bit_entry_points() {
     let root = std::env::temp_dir().join(format!("zun-aot-u64-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");

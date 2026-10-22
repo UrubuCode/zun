@@ -330,7 +330,8 @@ fn link_aot_executable(
     let entry = entry.ok_or_else(|| "module has no entry point".to_string())?;
     let kind = return_kind.ok_or_else(|| "entry point has no readable body".to_string())?;
     let (return_type, print_value) = match zun_il::JitKind::from_byte(kind) {
-        zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64) => ("f64", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::F32) => ("f32", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::F64) => ("f64", "value"),
         zun_il::JitKind::Num(zun_il::NumKind::U64) => ("u64", "value"),
         zun_il::JitKind::Num(_) => ("i64", "value"),
         zun_il::JitKind::Bool => ("i32", "value != 0"),
