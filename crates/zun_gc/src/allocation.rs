@@ -36,16 +36,19 @@ impl Heap {
             );
             return Obj(addr);
         }
-
         let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
         assert!(slots <= CHUNK_SLOTS, "object larger than a heap chunk");
-        if self.chunks.is_empty() || self.cursor + slots > CHUNK_SLOTS {
-            self.chunks.push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
-            self.cursor = 0;
+        if self.nursery_chunks.is_empty() || self.nursery_cursor + slots > CHUNK_SLOTS {
+            self.nursery_chunks
+                .push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
+            self.nursery_cursor = 0;
         }
-        let chunk = self.chunks.last_mut().expect("just pushed a chunk");
-        let base = &mut chunk[self.cursor] as *mut u64;
-        self.cursor += slots;
+        let chunk = self
+            .nursery_chunks
+            .last_mut()
+            .expect("just pushed a nursery chunk");
+        let base = &mut chunk[self.nursery_cursor] as *mut u64;
+        self.nursery_cursor += slots;
         unsafe {
             *base = type_rid as u64;
             *base.add(1) = identity_hash;
@@ -63,6 +66,20 @@ impl Heap {
             .nursery_bytes
             .saturating_add(slots * std::mem::size_of::<u64>());
         Obj(base)
+    }
+
+    /// Reserve storage in the tenured heap for a survivor promoted out of the
+    /// nursery. The caller copies the object payload and updates its record.
+    pub(super) fn alloc_old_slots(&mut self, slots: usize) -> *mut u64 {
+        assert!(slots <= CHUNK_SLOTS, "object larger than a heap chunk");
+        if self.chunks.is_empty() || self.cursor + slots > CHUNK_SLOTS {
+            self.chunks.push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
+            self.cursor = 0;
+        }
+        let chunk = self.chunks.last_mut().expect("just pushed an old chunk");
+        let base = &mut chunk[self.cursor] as *mut u64;
+        self.cursor += slots;
+        base
     }
 
     pub fn alloc_dynamic(&mut self) -> Obj {

@@ -8,6 +8,6 @@ impl Heap {
 
     /// Number of objects' worth of chunks currently held (for diagnostics).
     pub fn chunk_count(&self) -> usize {
-        self.chunks.len()
+        self.chunks.len() + self.nursery_chunks.len()
     }
 }

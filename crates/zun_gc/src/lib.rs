@@ -141,6 +141,10 @@ pub struct Heap {
     chunks: Vec<Box<[u64]>>,
     /// Bump cursor within the last chunk.
     cursor: usize,
+    /// Ephemeral chunks owned exclusively by the current nursery epoch.
+    nursery_chunks: Vec<Box<[u64]>>,
+    /// Bump cursor within the last nursery chunk.
+    nursery_cursor: usize,
     /// Bytes allocated in the current young-generation nursery epoch.
     nursery_bytes: usize,
     /// Allocation budget that requests a minor collection at a safepoint.
@@ -2024,6 +2028,31 @@ mod tests {
         assert!(heap.by_addr.contains_key(&(old.addr() as usize)));
         assert!(heap.by_addr.contains_key(&(young.addr() as usize)));
         assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
+        assert_eq!(heap.generation_counts(), (0, 2));
+    }
+
+    #[test]
+    fn evacuating_minor_collection_rewrites_roots_and_old_to_young_fields() {
+        let mut heap = Heap::new();
+        let old = heap.alloc(7, 1);
+        unsafe { heap.collect(&[old], &|_| vec![0]) };
+        let young = heap.alloc(8, 0);
+        let old_young_address = young.addr();
+        heap.store_field(old, 0, old_young_address as u64, true);
+        let mut roots = vec![old, young];
+        let mut relocated = false;
+
+        let freed = unsafe {
+            heap.collect_young_evacuating(&mut roots, &|_| vec![0], &mut |map| {
+                relocated = map.relocate_address(old_young_address as usize)
+                    != old_young_address as usize;
+            })
+        };
+
+        assert_eq!(freed, 0);
+        assert!(relocated);
+        assert_ne!(roots[1].addr(), old_young_address);
+        assert_eq!(old.field(0), roots[1].addr() as u64);
         assert_eq!(heap.generation_counts(), (0, 2));
     }
 

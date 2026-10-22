@@ -33,7 +33,7 @@ impl Heap {
     ) -> usize {
         // SAFETY: callers uphold the root contract documented on the public
         // entry point; this is the complete-heap policy.
-        unsafe { self.collect_generation(roots, ref_slots, false) }
+        unsafe { self.collect_generation(roots, ref_slots, false, false, None) }
     }
 
     /// Collect only young objects while retaining every old allocation.
@@ -48,7 +48,17 @@ impl Heap {
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
     ) -> usize {
         // SAFETY: same root contract as `collect`.
-        unsafe { self.collect_generation(roots, ref_slots, true) }
+        unsafe { self.collect_generation(roots, ref_slots, true, false, None) }
+    }
+
+    /// Collect young objects and evacuate survivors into tenured chunks.
+    pub unsafe fn collect_young_evacuating(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        on_relocation: &mut dyn FnMut(&RelocationMap),
+    ) -> usize {
+        unsafe { self.collect_generation(roots, ref_slots, true, true, Some(on_relocation)) }
     }
 
     /// Collect only young objects using roots from an explicit stopped-frame
@@ -99,6 +109,8 @@ impl Heap {
         roots: &[Obj],
         ref_slots: &dyn Fn(u32) -> Vec<usize>,
         young_only: bool,
+        evacuate: bool,
+        mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
     ) -> usize {
         for r in &mut self.records {
             r.marked = false;
@@ -351,6 +363,48 @@ impl Heap {
                     weak.target = None;
                 }
             }
+        }
+
+        if evacuate {
+            let mut relocation = RelocationMap::new();
+            let survivors: Vec<_> = self
+                .records
+                .iter()
+                .enumerate()
+                .filter(|(_, record)| {
+                    record.alive
+                        && record.marked
+                        && record.generation == records::Generation::Young
+                })
+                .map(|(idx, record)| (idx, record.addr, record.field_count))
+                .collect();
+            for (idx, old, field_count) in survivors {
+                let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
+                let new = self.alloc_old_slots(slots);
+                unsafe { std::ptr::copy_nonoverlapping(old, new, slots) };
+                relocation.insert_addresses(old as usize, new as usize);
+                self.records[idx].addr = new;
+                self.records[idx].generation = records::Generation::Old;
+                self.by_addr.remove(&(old as usize));
+                self.by_addr.insert(new as usize, idx);
+            }
+
+            let roots = unsafe {
+                std::slice::from_raw_parts_mut(roots.as_ptr() as *mut Obj, roots.len())
+            };
+            for root in roots {
+                let address = root.addr() as usize;
+                let mapped = relocation.relocate_address(address);
+                if mapped != address {
+                    *root = unsafe { Obj::from_addr(mapped as *mut u64) };
+                }
+            }
+            self.rewrite_all_references(&relocation, ref_slots);
+            if let Some(callback) = on_relocation.as_mut() {
+                callback(&relocation);
+            }
+            self.nursery_chunks.clear();
+            self.nursery_cursor = 0;
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
