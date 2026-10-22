@@ -1235,6 +1235,12 @@ values above `i64::MAX`, with an end-to-end `u64::MAX` test.
 The launcher also preserves the exact Cranelift ABI for `i8`, `u8`, `i16`,
 `u16`, `i32`, and `u32` returns; an end-to-end `i32` entry-point test covers
 the narrow signed path. Full-runtime AOT/R2R remains deferred.
+Managed string helper calls with typed string parameters now have direct JIT
+equivalence coverage for `includes`, UTF-16 `indexOf`, `startsWith`, and
+`endsWith`. A method combining multiple such calls with short-circuit `&&`
+remains Tier 0 because the current Cranelift CFG builder requires empty
+evaluation stacks at block boundaries. This is an explicit lowering boundary,
+not a reason to weaken verification or promote an ineligible method.
 Parameter/field string handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
 are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
