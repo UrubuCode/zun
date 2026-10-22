@@ -53,7 +53,7 @@ impl<'a> Checker<'a> {
                     );
                 }
                 let ty = self.resolve_annotation(&f.ty);
-                own.push((fname, ty));
+                own.push((fname, ty, f.is_static));
             }
             self.classes[index].own_fields = own;
         }
@@ -63,7 +63,7 @@ impl<'a> Checker<'a> {
             let fields = self
                 .full_fields(index as u32)
                 .into_iter()
-                .map(|(name, ty)| hir::ClassField { name, ty })
+                .map(|(name, ty, is_static)| hir::ClassField { name, ty, is_static })
                 .collect();
             out.push(hir::Class {
                 name: self.text(&c.name).to_string(),

@@ -167,7 +167,7 @@ struct Signature {
 struct ClassInfo {
     base: Option<u32>,
     base_name: Option<String>,
-    own_fields: Vec<(String, Ty)>,
+    own_fields: Vec<(String, Ty, bool)>,
 }
 
 struct Checker<'a> {
@@ -2325,7 +2325,7 @@ impl Checker<'_> {
                 let field_tys: Vec<Ty> = self
                     .full_fields(class_idx)
                     .into_iter()
-                    .map(|(_, ty)| ty)
+                    .map(|(_, ty, _)| ty)
                     .collect();
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();

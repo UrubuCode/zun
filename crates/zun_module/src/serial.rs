@@ -28,7 +28,8 @@ pub fn write_tables(tables: &Tables) -> Vec<u8> {
         ]);
     });
     write_table(&mut out, &tables.field_defs, |w, r| {
-        w.extend([r.name.0, r.signature.0, r.kind as u32]);
+        let kind = r.kind as u32 | (u32::from(r.is_static) << 7);
+        w.extend([r.name.0, r.signature.0, kind]);
     });
     write_table(&mut out, &tables.method_defs, |w, r| {
         w.extend([r.name.0, r.signature.0, r.body_offset, u32::from(r.is_static)]);
@@ -63,10 +64,14 @@ pub fn read_tables(bytes: &[u8]) -> Result<Tables, ReadError> {
         })
     })?;
     tables.field_defs = r.read_table(|r| {
+        let name = StringIndex(r.u32()?);
+        let signature = BlobIndex(r.u32()?);
+        let encoded_kind = r.u32()? as u8;
         Ok(FieldDef {
-            name: StringIndex(r.u32()?),
-            signature: BlobIndex(r.u32()?),
-            kind: r.u32()? as u8,
+            name,
+            signature,
+            kind: encoded_kind & 0x7f,
+            is_static: encoded_kind & 0x80 != 0,
         })
     })?;
     tables.method_defs = r.read_table(|r| {

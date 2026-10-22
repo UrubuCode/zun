@@ -186,6 +186,7 @@ fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
                 name: fname,
                 signature: BlobIndex(0),
                 kind: field_kind_byte(field.ty),
+                is_static: field.is_static,
             });
             this_class_fields.push(tok);
         }

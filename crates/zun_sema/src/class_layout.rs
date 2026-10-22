@@ -5,7 +5,7 @@ use crate::hir::Ty;
 impl<'a> Checker<'a> {
     /// The full field layout of a class: inherited fields first (base's full
     /// layout), then the class's own fields, in slot order.
-    pub(super) fn full_fields(&self, class: u32) -> Vec<(String, Ty)> {
+    pub(super) fn full_fields(&self, class: u32) -> Vec<(String, Ty, bool)> {
         let info = &self.classes[class as usize];
         let mut fields = match info.base {
             Some(b) => self.full_fields(b),
@@ -20,8 +20,8 @@ impl<'a> Checker<'a> {
         self.full_fields(class)
             .into_iter()
             .enumerate()
-            .find(|(_, (n, _))| n == name)
-            .map(|(slot, (_, ty))| (slot as u16, ty))
+            .find(|(_, (n, _, _))| n == name)
+            .map(|(slot, (_, ty, _))| (slot as u16, ty))
     }
 
     /// Resolve a method name to its function index, searching base classes.

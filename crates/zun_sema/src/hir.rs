@@ -278,6 +278,8 @@ pub struct ClassField {
     pub name: String,
     /// The field's type.
     pub ty: Ty,
+    /// Whether the field is stored on the class rather than an instance.
+    pub is_static: bool,
 }
 
 /// A checked function.

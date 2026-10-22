@@ -21,6 +21,7 @@ fn sample_module() -> Module {
         name: field_name,
         signature: field_sig,
         kind: 2, // i32
+        is_static: true,
     });
 
     // The method body starts at code offset 0.

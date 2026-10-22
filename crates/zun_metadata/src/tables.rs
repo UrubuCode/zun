@@ -42,6 +42,9 @@ pub struct FieldDef {
     /// Value-type code of the field (a `zun_il::JitKind` byte), giving its
     /// machine representation for the object layout the typed JIT will use.
     pub kind: u8,
+    /// Whether the field belongs to type storage rather than an instance.
+    /// The metadata writer stores this flag in the high bit of the kind word.
+    pub is_static: bool,
 }
 
 /// A method defined in this module.
@@ -219,11 +222,13 @@ mod tests {
             name: StringIndex(1),
             signature: BlobIndex(0),
             kind: 0,
+            is_static: false,
         });
         let f1 = t.add_field_def(FieldDef {
             name: StringIndex(2),
             signature: BlobIndex(0),
             kind: 0,
+            is_static: true,
         });
         let ty = t.add_type_def(TypeDef {
             name: StringIndex(3),
@@ -236,5 +241,7 @@ mod tests {
         });
         let def = t.type_def(ty).unwrap();
         assert_eq!(def.field_end - def.field_start, 2);
+        assert!(!t.field_def(f0).unwrap().is_static);
+        assert!(t.field_def(f1).unwrap().is_static);
     }
 }

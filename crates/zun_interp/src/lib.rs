@@ -2027,6 +2027,7 @@ mod method_tests {
             name: module.strings.intern("captured"),
             signature: zun_metadata::BlobIndex(0),
             kind: zun_il::JitKind::Num(zun_il::NumKind::F64).to_byte(),
+            is_static: false,
         });
         let environment_type = module.tables.add_type_def(TypeDef {
             name: module.strings.intern("ClosureEnvironment"),
