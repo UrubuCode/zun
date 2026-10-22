@@ -335,7 +335,7 @@ points, full AOT binary (linker + runtime bundle), native TS/JS front-end, full
 remote module transport/index integration (with a safe local directory
 fetcher now implemented), dynamic-import warnings/fallback,
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
-preserve-root manifest path are now implemented. The signed
+preserve-root manifest path—including AOT builds—are now implemented. The signed
 `.zmlib` package envelope is now implemented. The former
 `zun_napi` Node embedding crate has been removed (out of scope).
 
