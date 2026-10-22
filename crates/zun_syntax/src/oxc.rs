@@ -88,9 +88,7 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
     let mut statements = Vec::with_capacity(block.body.len());
     for statement in &block.body {
         match statement {
-            Statement::EmptyStatement(empty) => {
-                let _ = empty;
-            }
+            Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
                     let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
@@ -182,6 +180,10 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
         Statement::EmptyStatement(empty) => Ok(Block {
             statements: Vec::new(),
             span: Span::new(empty.span.start, empty.span.end),
+        }),
+        Statement::DebuggerStatement(debugger) => Ok(Block {
+            statements: Vec::new(),
+            span: Span::new(debugger.span.start, debugger.span.end),
         }),
         Statement::BlockStatement(_) => convert_block_statement(source, statement),
         Statement::IfStatement(if_statement) => Ok(Block {
@@ -906,7 +908,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         let mut method_statements = Vec::with_capacity(body.statements.len());
                         for statement in &body.statements {
                             match statement {
-                                Statement::EmptyStatement(_) => {}
+                                Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
                                 Statement::VariableDeclaration(declaration) => {
                                     for declarator in &declaration.declarations {
                                         let BindingPattern::BindingIdentifier(identifier) =
@@ -1164,7 +1166,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         let mut statements = Vec::with_capacity(body.statements.len());
         for statement in &body.statements {
             match statement {
-                Statement::EmptyStatement(_) => {}
+                Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
                 Statement::VariableDeclaration(declaration) => {
                     for declarator in &declaration.declarations {
                         let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
@@ -1527,6 +1529,17 @@ mod tests {
             false,
         )
         .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements.first(),
+            Some(crate::ast::Stmt::If { then_block, .. })
+                if then_block.statements.is_empty()
+        ));
+    }
+
+    #[test]
+    fn accepts_debugger_statements_as_no_ops() {
+        let program = parse_subset("function main(value) { debugger; if (value) debugger; }", false)
+            .unwrap();
         assert!(matches!(
             program.functions[0].body.statements.first(),
             Some(crate::ast::Stmt::If { then_block, .. })
