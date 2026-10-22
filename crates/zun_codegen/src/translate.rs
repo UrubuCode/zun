@@ -550,6 +550,7 @@ impl Translator<'_> {
                                 let helper = self.string_concat_fref();
                                 let call = self.builder.ins().call(helper, &[left, right]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -576,6 +577,7 @@ impl Translator<'_> {
                                 let helper = self.string_substring_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, start, end]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -587,6 +589,7 @@ impl Translator<'_> {
                                 let helper = self.string_trim_fref("trim");
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -598,6 +601,7 @@ impl Translator<'_> {
                                 let helper = self.string_trim_fref(method_name.unwrap_or("trim"));
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -609,6 +613,7 @@ impl Translator<'_> {
                                 let helper = self.string_transform_fref(method_name.unwrap_or("toLowerCase"));
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -628,6 +633,7 @@ impl Translator<'_> {
                                 let helper = self.string_repeat_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, count]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -639,6 +645,7 @@ impl Translator<'_> {
                                 let helper = self.string_reverse_fref();
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -660,6 +667,7 @@ impl Translator<'_> {
                                 let helper = self.string_pad_fref(method_name.unwrap_or("padStart"));
                                 let call = self.builder.ins().call(helper, &[receiver, target, fill]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
@@ -676,6 +684,7 @@ impl Translator<'_> {
                                 let helper = self.string_replace_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, needle, replacement]);
                                 let result = self.builder.inst_results(call)[0];
+                                self.builder.declare_value_needs_stack_map(result);
                                 stack.push((result, JitKind::String));
                                 continue;
                             }
