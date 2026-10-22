@@ -864,6 +864,26 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_fallback_report_identifies_memberref_pc_and_source_mapping() {
+        let module = compile_with_externals(
+            "import { answer } from \"core\"; function main(): int { return answer(41); }",
+            &[zun_sema::check::ExternalFunction {
+                module: "core".into(),
+                name: "answer".into(),
+                params: vec![zun_sema::Ty::INT],
+                return_ty: zun_sema::Ty::INT,
+            }],
+        )
+        .expect("compile external call");
+        let report = trim_report(&module).expect("trim report");
+        assert!(report.dynamic_fallback);
+        assert_eq!(report.dynamic_sites.len(), 1);
+        assert_eq!(report.dynamic_sites[0].method_name, "main");
+        assert!(report.dynamic_sites[0].pc < module.code.len() as u32);
+        assert!(report.dynamic_sites[0].source_span.is_some());
+    }
+
+    #[test]
     fn compiles_source_extern_function_to_typed_member_reference() {
         let module = compile_with_externals(
             "extern function answer(value: i64): i64 from \"core\"; function main(): i64 { return answer(41); }",
