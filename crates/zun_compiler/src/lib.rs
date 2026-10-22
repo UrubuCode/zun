@@ -97,6 +97,8 @@ pub struct TrimReport {
     /// Whether the module contains unresolved member calls that require the
     /// embedded interpreter fallback for dynamic/reflection behavior.
     pub dynamic_fallback: bool,
+    /// Method names containing unresolved member calls that trigger fallback.
+    pub dynamic_methods: Vec<String>,
 }
 
 /// Analyze a module without changing it, returning the trimmer's decisions.
@@ -112,22 +114,26 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
     let removed_methods: Vec<_> = (1..=module.tables.method_defs.len() as u32)
         .filter(|rid| !reachable.contains(rid))
         .collect();
-    let dynamic_fallback = module
+    let dynamic_methods: Vec<String> = module
         .tables
         .method_defs
         .iter()
         .filter(|method| method.body_offset != u32::MAX)
-        .filter_map(|method| read_body(&module.code, method.body_offset).ok())
-        .filter_map(|body| decode_all(body.code).ok())
-        .flatten()
-        .any(|instruction| {
-            matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
-                && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
-        });
+        .filter_map(|method| {
+            let body = read_body(&module.code, method.body_offset).ok()?;
+            let dynamic = decode_all(body.code).ok()?.into_iter().any(|instruction| {
+                matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
+                    && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
+            });
+            dynamic.then(|| module.strings.get(method.name).to_owned())
+        })
+        .collect();
+    let dynamic_fallback = !dynamic_methods.is_empty();
     Ok(TrimReport {
         reachable_methods,
         removed_methods,
         dynamic_fallback,
+        dynamic_methods,
     })
 }
 
