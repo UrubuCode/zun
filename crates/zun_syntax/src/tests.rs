@@ -431,7 +431,17 @@
         assert_eq!(p.imports.len(), 1);
         assert_eq!(p.imports[0].module, "zun:fs");
         assert_eq!(p.imports[0].names.len(), 2);
+        assert_eq!(ident_text(src, &p.imports[0].names[0].imported), "readText");
+        assert_eq!(ident_text(src, &p.imports[0].names[0].local), "readText");
         assert_eq!(p.functions.len(), 1);
+    }
+
+    #[test]
+    fn parses_import_alias() {
+        let src = "import { bigIntAdd as add } from \"zun:collections\";\nfunction main() {}";
+        let p = parse_ok(src);
+        assert_eq!(ident_text(src, &p.imports[0].names[0].imported), "bigIntAdd");
+        assert_eq!(ident_text(src, &p.imports[0].names[0].local), "add");
     }
     #[test]
     fn parses_class_with_methods() {

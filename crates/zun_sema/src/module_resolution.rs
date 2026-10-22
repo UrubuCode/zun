@@ -18,15 +18,16 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let _ = module;
-            for name in &import.names {
-                let text = self.text(name).to_string();
-                match zun_natives::resolve(&import.module, &text) {
+            for binding in &import.names {
+                let imported = self.text(&binding.imported).to_string();
+                let local = self.text(&binding.local).to_string();
+                match zun_natives::resolve(&import.module, &imported) {
                     Some((id, f)) => {
-                        self.imports.insert(text, (id, f));
+                        self.imports.insert(local, (id, f));
                     }
                     None => self.error(
-                        name.span,
-                        format!("`{}` has no export named `{text}`", import.module),
+                        binding.imported.span,
+                        format!("`{}` has no export named `{imported}`", import.module),
                     ),
                 }
             }

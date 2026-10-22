@@ -133,7 +133,13 @@ impl Parser<'_> {
         self.expect(TokenKind::LBrace, "`{`");
         let mut names = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            names.push(self.name("an imported name"));
+            let imported = self.name("an imported name");
+            let local = if self.eat(TokenKind::KwAs) {
+                self.name("an import alias")
+            } else {
+                imported.clone()
+            };
+            names.push(ImportName { imported, local });
             if !self.eat(TokenKind::Comma) {
                 break;
             }

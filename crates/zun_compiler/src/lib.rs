@@ -199,8 +199,8 @@ where
         let mut parse_diagnostics = Vec::new();
         let ast = zun_syntax::parse(source, &mut parse_diagnostics);
         for import in ast.imports {
-            for name in import.names {
-                let imported = &source[name.span.start as usize..name.span.end as usize];
+            for binding in import.names {
+                let imported = &source[binding.imported.span.start as usize..binding.imported.span.end as usize];
                 if let Some(function) = exports.get(&(import.module.clone(), imported.to_owned())) {
                     externals.push(function.clone());
                 }
@@ -340,8 +340,8 @@ where
 
     for (module, source, program) in parsed {
         for import in program.imports {
-            for name in import.names {
-                let imported = &source[name.span.start as usize..name.span.end as usize];
+            for binding in import.names {
+                let imported = &source[binding.imported.span.start as usize..binding.imported.span.end as usize];
                 let found = if import.module.starts_with("zun:") {
                     zun_natives::resolve(&import.module, imported).is_some()
                 } else {

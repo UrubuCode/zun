@@ -22,11 +22,20 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
     /// The imported names.
-    pub names: Vec<Name>,
+    pub names: Vec<ImportName>,
     /// The module string (decoded, e.g. `"zun:fs"`).
     pub module: String,
     /// Span of the whole declaration.
     pub span: Span,
+}
+
+/// One named import, optionally renamed in the importing module.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportName {
+    /// The export name in the source module.
+    pub imported: Name,
+    /// The local binding name.
+    pub local: Name,
 }
 
 /// `class Name { field: type; method(...) {...} ... }`. Fields are initialized
