@@ -631,7 +631,7 @@ impl Zmlib {
         declarations: Vec<(String, Vec<u8>)>,
     ) -> Result<Self, LoadError> {
         let mut seen = std::collections::HashSet::new();
-        for (name, _) in &declarations {
+        for (name, payload) in &declarations {
             if !self.modules.iter().any(|(module, _)| module == name) {
                 return Err(LoadError::InvalidManifest(format!(
                     "type declarations provided for unknown module `{name}`"
@@ -640,6 +640,22 @@ impl Zmlib {
             if !seen.insert(name) {
                 return Err(LoadError::InvalidManifest(format!(
                     "duplicate type declarations for module `{name}`"
+                )));
+            }
+            let identity_name = format!("{name}.d.ts");
+            let expected = self
+                .lock
+                .lock
+                .entries
+                .iter()
+                .find(|(entry, _)| entry == &identity_name)
+                .map(|(_, id)| *id)
+                .ok_or_else(|| LoadError::InvalidManifest(format!(
+                    "type declaration `{identity_name}` is not locked"
+                )))?;
+            if expected != content_id(payload) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "type declaration `{identity_name}` has content identity mismatch"
                 )));
             }
         }
@@ -1435,17 +1451,20 @@ mod tests {
     fn zmlib_roundtrips_signed_modules_and_rejects_identity_mismatch() {
         use ed25519_dalek::{Signer, SigningKey};
         let payload = b"serialized zm".to_vec();
+        let declaration = b"declare function main(): int;".to_vec();
         let mut lock = ModuleLock::new();
         lock.push("app", content_id(&payload)).unwrap();
+        lock.push("app.d.ts", content_id(&declaration)).unwrap();
         let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let lock_bytes = lock.write();
         let signed = SignedModuleLock::new(
             lock,
             signing.verifying_key().to_bytes(),
-            signing.sign(&ModuleLock { entries: vec![("app".into(), content_id(&payload))], capabilities: vec![] }.write()).to_bytes(),
+            signing.sign(&lock_bytes).to_bytes(),
         ).unwrap();
         let package = Zmlib::new(signed, vec![("app".into(), payload.clone())])
             .unwrap()
-            .with_type_declarations(vec![("app".into(), b"declare function main(): int;".to_vec())])
+            .with_type_declarations(vec![("app".into(), declaration.clone())])
             .unwrap();
         assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
         assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
@@ -1458,6 +1477,10 @@ mod tests {
                 ("app".into(), b"declare function main(): int;".to_vec()),
                 ("app".into(), b"declare const x: int;".to_vec()),
             ])
+            .is_err());
+        assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
+            .unwrap()
+            .with_type_declarations(vec![("app".into(), b"tampered declarations".to_vec())])
             .is_err());
         let path = std::env::temp_dir().join(format!("zun-package-{}.zmlib", std::process::id()));
         package.write_file(&path).unwrap();
