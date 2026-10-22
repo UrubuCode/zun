@@ -320,14 +320,15 @@ relocatable per-realm global singleton with `globalThis`/`global` bindings;
 versioned native extension ABI with owned `namespace`/`module().func` lookup;
 scalar + string FFI with declared ownership contracts; multi-module loader/manifest;
 SHA-256 content-addressed cache with deterministic lockfiles, Ed25519 signatures,
-and capability declarations; sequence-point PC-to-source metadata in `.zm`;
+and capability declarations; deterministic registry index metadata;
+sequence-point PC-to-source metadata in `.zm`;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors.
 Remaining gates:
 fully default-installed `zun:std` without implicit source concatenation, typed
 VM bindings for native extensions, Error-stack consumption of sequence
 points, full AOT binary (linker + runtime bundle), native TS/JS front-end, full
-module registry/fetcher and remote index integration, true OSR. The signed
+remote module transport/index integration, true OSR. The signed
 `.zmlib` package envelope is now implemented. The former
 `zun_napi` Node embedding crate has been removed (out of scope).
 
