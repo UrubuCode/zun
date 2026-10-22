@@ -468,6 +468,78 @@ impl SignedModuleLock {
     }
 }
 
+/// A deterministic `.zmlib` package containing signed module metadata and
+/// serialized `.zm` payloads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Zmlib {
+    /// Authenticated package lockfile.
+    pub lock: SignedModuleLock,
+    /// Named serialized modules included in the package.
+    pub modules: Vec<(String, Vec<u8>)>,
+}
+
+impl Zmlib {
+    const MAGIC: &'static [u8; 5] = b"ZMLIB";
+    const VERSION: u16 = 1;
+
+    /// Construct a package and ensure every payload matches its lock entry.
+    pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
+        lock.verify()?;
+        for (name, bytes) in &modules {
+            let expected = lock.lock.entries.iter().find(|(entry, _)| entry == name)
+                .map(|(_, id)| *id)
+                .ok_or_else(|| LoadError::InvalidManifest(format!("package module `{name}` is not locked")))?;
+            let found = content_id(bytes);
+            if expected != found {
+                return Err(LoadError::InvalidManifest(format!("package module `{name}` has content identity mismatch")));
+            }
+        }
+        Ok(Self { lock, modules })
+    }
+
+    /// Serialize the package deterministically.
+    pub fn write(&self) -> Vec<u8> {
+        let lock = self.lock.write();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(Self::MAGIC);
+        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(lock.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&lock);
+        bytes.extend_from_slice(&(self.modules.len() as u32).to_le_bytes());
+        for (name, payload) in &self.modules {
+            write_name(&mut bytes, name);
+            bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(payload);
+        }
+        bytes
+    }
+
+    /// Parse and validate a `.zmlib` package.
+    pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        if bytes.len() < 11 || &bytes[..5] != Self::MAGIC {
+            return Err(LoadError::InvalidManifest("bad zmlib header".into()));
+        }
+        let version = u16::from_le_bytes(bytes[5..7].try_into().unwrap());
+        if version > Self::VERSION {
+            return Err(LoadError::InvalidManifest(format!("unsupported zmlib version {version}")));
+        }
+        let lock_len = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
+        let lock_end = 11usize.checked_add(lock_len).ok_or_else(|| LoadError::InvalidManifest("zmlib overflow".into()))?;
+        let lock = SignedModuleLock::read(bytes.get(11..lock_end).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib lock".into()))?)?;
+        let mut cursor = lock_end;
+        let count = read_u32(bytes, &mut cursor).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module count".into()))? as usize;
+        let mut modules = Vec::with_capacity(count);
+        for _ in 0..count {
+            let name = read_name(bytes, &mut cursor)?;
+            let len = read_u32(bytes, &mut cursor).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module length".into()))? as usize;
+            let payload = take(bytes, &mut cursor, len).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module".into()))?.to_vec();
+            modules.push((name, payload));
+        }
+        if cursor != bytes.len() { return Err(LoadError::InvalidManifest("trailing zmlib bytes".into())); }
+        Self::new(lock, modules)
+    }
+}
+
 impl ModuleManifest {
     const MAGIC: &'static [u8; 4] = b"ZMAN";
     const VERSION: u16 = 2;
@@ -1084,6 +1156,23 @@ mod tests {
         let mut tampered = bytes;
         *tampered.last_mut().unwrap() ^= 1;
         assert!(SignedModuleLock::read(&tampered).is_err());
+    }
+
+    #[test]
+    fn zmlib_roundtrips_signed_modules_and_rejects_identity_mismatch() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let payload = b"serialized zm".to_vec();
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(&payload)).unwrap();
+        let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let signed = SignedModuleLock::new(
+            lock,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&ModuleLock { entries: vec![("app".into(), content_id(&payload))], capabilities: vec![] }.write()).to_bytes(),
+        ).unwrap();
+        let package = Zmlib::new(signed, vec![("app".into(), payload.clone())]).unwrap();
+        assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
+        assert!(Zmlib::new(package.lock, vec![("app".into(), b"tampered".to_vec())]).is_err());
     }
 
     #[test]
