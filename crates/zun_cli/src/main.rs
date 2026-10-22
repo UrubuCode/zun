@@ -479,8 +479,23 @@ fn link_aot_executable(
         }
     };
     let launcher = object.with_extension("aot.rs");
+    let runtime_declarations = if runtime.is_some() {
+        "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); }\n"
+    } else {
+        ""
+    };
+    let runtime_start = if runtime.is_some() {
+        "unsafe { zun_rt_init(); }"
+    } else {
+        ""
+    };
+    let runtime_stop = if runtime.is_some() {
+        "unsafe { zun_rt_shutdown(); }"
+    } else {
+        ""
+    };
     let source = format!(
-        "extern \"C\" {{ fn m{entry}() -> {return_type}; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }}\nfn main() {{ let _metadata = unsafe {{ std::hint::black_box((&zun_embedded_module, &zun_embedded_module_len)) }}; let value = unsafe {{ m{entry}() }}; println!(\"{{}}\", {print_value}); }}\n"
+        "{runtime_declarations}extern \"C\" {{ fn m{entry}() -> {return_type}; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }}\nfn main() {{ {runtime_start} let _metadata = unsafe {{ std::hint::black_box((&zun_embedded_module, &zun_embedded_module_len)) }}; let value = unsafe {{ m{entry}() }}; println!(\"{{}}\", {print_value}); {runtime_stop} }}\n"
     );
     std::fs::write(&launcher, source).map_err(|error| error.to_string())?;
     let mut command = Command::new("rustc");

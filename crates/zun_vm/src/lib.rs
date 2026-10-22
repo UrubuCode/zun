@@ -16,6 +16,14 @@ use zun_interp::value::Value;
 use zun_interp::{run_with, CallHook, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
+/// AOT runtime startup hook exposed by the static runtime library.
+#[no_mangle]
+pub extern "C" fn zun_rt_init() {}
+
+/// AOT runtime shutdown hook paired with [`zun_rt_init`].
+#[no_mangle]
+pub extern "C" fn zun_rt_shutdown() {}
+
 pub use ffi::{
     library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
     FfiStringReturn, NativeLibrary,
