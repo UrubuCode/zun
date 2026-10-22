@@ -344,7 +344,8 @@ toolchain's `rust-lld` and passes it to the external final link step when availa
 The AOT build also emits a relocatable metadata object containing the serialized
 `.zm` payload under the `zun_embedded_module` symbol and supplies it to the link.
 Manifest v3 records that metadata object's path while retaining reads of older
-manifest versions.
+manifest versions; the generated launcher references the symbol so the embedded
+payload is retained by the final link.
 
 ## 8. Risks & attention points
 
