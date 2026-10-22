@@ -2084,6 +2084,20 @@ mod tests {
     }
 
     #[test]
+    fn evacuating_minor_collection_rewrites_addressed_array_side_tables() {
+        let mut heap = Heap::new();
+        let array = heap.alloc_array(1);
+        let old_address = array.addr();
+        let mut roots = vec![array];
+
+        unsafe { heap.collect_young_evacuating(&mut roots, &|_| Vec::new(), &mut |_| {}) };
+
+        assert_ne!(roots[0].addr(), old_address);
+        assert_eq!(heap.array_len(roots[0]), Some(1));
+        assert_eq!(heap.array_len(array), None);
+    }
+
+    #[test]
     fn evacuating_minor_collection_rewrites_stopped_native_frame_roots() {
         let mut heap = Heap::new();
         let old = heap.alloc(7, 0);
