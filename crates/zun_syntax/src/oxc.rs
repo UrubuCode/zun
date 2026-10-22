@@ -66,6 +66,13 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
             span: span(identifier.span),
         })),
+        Expression::StaticMemberExpression(member) => Ok(Expr::Field {
+            object: Box::new(convert_expression(&member.object)?),
+            field: Name {
+                span: span(member.property.span),
+            },
+            span: span(member.span),
+        }),
         Expression::BinaryExpression(binary) => {
             let op = match binary.operator {
                 BinaryOperator::Equality | BinaryOperator::StrictEquality => BinaryOp::Eq,
@@ -114,20 +121,28 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             })
         }
         Expression::CallExpression(call) => {
-            let Expression::Identifier(identifier) = &call.callee else {
-                return Err("OXC adapter currently supports identifier callees only".into());
-            };
             let mut args = Vec::with_capacity(call.arguments.len());
             for argument in &call.arguments {
                 args.push(convert_argument(argument)?);
             }
-            Ok(Expr::Call {
-                callee: Name {
-                    span: span(identifier.span),
-                },
-                args,
-                span: span(call.span),
-            })
+            match &call.callee {
+                Expression::Identifier(identifier) => Ok(Expr::Call {
+                    callee: Name {
+                        span: span(identifier.span),
+                    },
+                    args,
+                    span: span(call.span),
+                }),
+                Expression::StaticMemberExpression(member) => Ok(Expr::MethodCall {
+                    receiver: Box::new(convert_expression(&member.object)?),
+                    method: Name {
+                        span: span(member.property.span),
+                    },
+                    args,
+                    span: span(call.span),
+                }),
+                _ => Err("OXC adapter currently supports identifier and static-member callees only".into()),
+            }
         }
         _ => Err("OXC adapter currently supports literal, identifier, and binary expressions".into()),
     }
@@ -399,6 +414,26 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::Let { .. }
+        ));
+    }
+
+    #[test]
+    fn converts_static_member_access_and_method_calls() {
+        let program = parse_subset("function main(value) { return value.size(); }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::MethodCall { .. }),
+                ..
+            }
+        ));
+        let field = parse_subset("function read(value) { return value.size; }", false).unwrap();
+        assert!(matches!(
+            field.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Field { .. }),
+                ..
+            }
         ));
     }
 }
