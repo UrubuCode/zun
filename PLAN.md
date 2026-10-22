@@ -1479,6 +1479,7 @@ descriptor, `zun_register_v1` callback contract, and owned descriptor storage.
 existing native-library loader, enforces the absolute-path policy for explicit
 loads, and keeps the library alive alongside the copied descriptors.
 `ExtensionResolver` caches successful logical-name loads without caching
-failures. Capability enforcement and registry-backed source bindings remain
-later distribution work; this ABI is independent of Node/N-API.
+failures, and registered functions resolve by their stable `(module, key)` pair.
+Capability enforcement and registry-backed source bindings remain later
+distribution work; this ABI is independent of Node/N-API.
 A public `include/zun_abi.h` mirrors the `repr(C)` layouts for C/C++ extensions.
