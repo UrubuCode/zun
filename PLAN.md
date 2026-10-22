@@ -982,6 +982,9 @@ scalar boundary covers `Array.push` and `Array.pop` for these scalar kinds.
 `Any`-valued
 and reference-valued array access remains Tier 0 until the two-word
 managed-value ABI and its precise GC/write-barrier contract are complete.
+The `i8`/`i16` array path remains deferred: its source-level conversion and
+method-return verifier/shim contract must be widened together before those
+widths can reuse the `I32` machine ABI safely.
 
 The same boundary also covers managed-object `Array.push`/`Array.pop` through
 the pointer ABI, including
