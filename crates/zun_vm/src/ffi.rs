@@ -19,13 +19,22 @@ pub enum FfiScalar {
     Bool,
 }
 
+/// How a borrowed native string reports its valid byte length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FfiStringLength {
+    /// The native call writes the length to the named out parameter.
+    OutParameter(String),
+    /// The native string is terminated by a zero byte.
+    NullTerminated,
+}
+
 /// Declared ownership for a native string returned by a future marshalling
 /// stub. The runtime never guesses ownership from the symbol or return type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FfiStringReturn {
     /// The native side retains ownership and supplies a length through the
     /// named companion value or a declared NUL-terminated convention.
-    Borrowed { length_source: String },
+    Borrowed { length: FfiStringLength },
     /// The native side transfers ownership and exposes the named deallocator.
     Owned { free_symbol: String },
     /// The caller owns the temporary buffer and the native side returns the
@@ -37,8 +46,10 @@ impl FfiStringReturn {
     /// Reject an incomplete ownership declaration before a symbol is loaded.
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Borrowed { length_source } if length_source.trim().is_empty() => {
-                Err("borrowed string returns require a length source".into())
+            Self::Borrowed {
+                length: FfiStringLength::OutParameter(name),
+            } if name.trim().is_empty() => {
+                Err("borrowed string returns require a non-empty length parameter".into())
             }
             Self::Owned { free_symbol } if free_symbol.trim().is_empty() => {
                 Err("owned string returns require a free symbol".into())
@@ -591,7 +602,12 @@ mod tests {
     #[test]
     fn string_return_ownership_requires_an_explicit_safe_mode() {
         assert!(FfiStringReturn::Borrowed {
-            length_source: "out_len".into()
+            length: FfiStringLength::OutParameter("out_len".into())
+        }
+        .validate()
+        .is_ok());
+        assert!(FfiStringReturn::Borrowed {
+            length: FfiStringLength::NullTerminated
         }
         .validate()
         .is_ok());
@@ -604,7 +620,7 @@ mod tests {
             .validate()
             .is_ok());
         assert!(FfiStringReturn::Borrowed {
-            length_source: String::new()
+            length: FfiStringLength::OutParameter(String::new())
         }
         .validate()
         .is_err());
