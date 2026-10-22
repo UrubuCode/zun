@@ -49,6 +49,16 @@
     }
 
     #[test]
+    fn rebound_string_exposes_frozen_floor_extensions() {
+        let src = "import String from \"extended-string\"; function main(value: String, needle: String): boolean { let size: u64 = value.length(); let upper: String = value.toUpperCase(); let lower: String = value.toLowerCase(); let trimmed: String = value.trim(); return value.includes(needle) && size >= 0 && upper == upper && lower == lower && trimmed == trimmed; }";
+        let mut diagnostics = Vec::new();
+        let ast = parse(src, &mut diagnostics);
+        let hir = check_with_externals(src, &ast, &mut diagnostics, &[]);
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {diagnostics:?}");
+        assert!(hir.functions.iter().any(|function| function.name == "main"));
+    }
+
+    #[test]
     fn rejects_static_method_calls_through_instances() {
         let message = first_error(
             "class Math { static add(left: number, right: number): number { return left + right; } } function main(): number { let value = new Math(); return value.add(1.0, 2.0); }",
