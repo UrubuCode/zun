@@ -975,6 +975,12 @@ are machine-specific and should be re-run after interpreter or OSR changes;
 the benchmark source is
 `crates/zun_codegen/examples/bench.rs`.
 
+The same benchmark now includes a mutable typed `i32` array loop. The latest
+release run measured **315.614 ns/iteration** in Tier 0 and **32.221
+ns/iteration** in Tier 1 (**9.80x**), with identical results. The helper path
+is intentionally narrower than the metadata-free arithmetic loop because each
+iteration crosses the managed array ABI.
+
 The narrow scalar array ABI is also implemented: Cranelift lowers `LoadArray`
 and `StoreArray` for `f64`, `i32`, `i64`, `u64`, and `boolean` values through
 heap-scoped helpers, with interpreter/JIT equivalence coverage. The same
