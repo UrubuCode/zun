@@ -348,8 +348,10 @@ P/Invoke):
   No return ownership mode is inferred; every native pointer is copied before
   the call boundary ends.
   The VM now exposes `FfiStringReturn` as the validated ownership contract for
-  the future generated stub; dispatch and native allocation remain deferred
-  until the marshalling implementation is added.
+  the future generated stub. `FfiStringArgument` provides call-scoped UTF-8
+  storage with explicit byte length or NUL termination. Symbol dispatch,
+  return copying/free callbacks, and generated stubs remain deferred until the
+  complete marshalling implementation is added.
 
 Resolução de módulo: o prefixo `zun:` marca módulos embutidos. `import { readText
 } from "zun:fs"` → o compilador procura o módulo no registro de intrinsics,
