@@ -1800,6 +1800,11 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
+                    (Ty::BigInt, "add") => Some(("bigIntAdd", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "sub") => Some(("bigIntSub", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "mul") => Some(("bigIntMul", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "compare") => Some(("bigIntCompare", Ty::Int(IntKind::I32), vec![Ty::BigInt])),
+                    (Ty::BigInt, "toString") => Some(("bigIntToString", Ty::String, vec![])),
                     (Ty::FinalizationRegistry, "register") => Some((
                         "finalizationRegister",
                         Ty::Int(IntKind::U64),
@@ -2300,6 +2305,7 @@ impl Checker<'_> {
                     "Set" => Some(("setNew", Ty::Set)),
                     "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
                     "RegExp" => Some(("regexpNew", Ty::RegExp)),
+                    "BigInt" => Some(("bigIntNew", Ty::BigInt)),
                     "FinalizationRegistry" => Some((
                         "finalizationRegistryNew",
                         Ty::FinalizationRegistry,
@@ -2310,6 +2316,7 @@ impl Checker<'_> {
                 };
                 if let Some((native_name, ty)) = managed_collection {
                     let valid_args = (name == "RegExp" && args.len() == 1)
+                        || (name == "BigInt" && args.len() == 1)
                         || (name == "Proxy" && args.len() == 2);
                     if !args.is_empty() && !valid_args {
                         self.error(span, format!("`{name}` expects no constructor arguments"));
@@ -2330,7 +2337,7 @@ impl Checker<'_> {
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
-                            args: if name == "RegExp" || name == "Proxy" {
+                            args: if name == "RegExp" || name == "BigInt" || name == "Proxy" {
                                 args.iter().map(|arg| self.check_expr(cx, arg)).collect()
                             } else {
                                 Vec::new()

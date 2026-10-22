@@ -34,6 +34,20 @@ fn hello_world() {
 }
 
 #[test]
+fn bigint_constructor_arithmetic_and_formatting_use_the_managed_floor() {
+    let out = run_source(
+        r#"function main(): int {
+            let left: BigInt = new BigInt("18446744073709551616");
+            let right: BigInt = new BigInt("2");
+            let sum: BigInt = left.add(right);
+            if (sum.toString() == "18446744073709551618") { print(sum.compare(left)); return 0; }
+            print(0); return 0;
+        }"#,
+    );
+    assert_eq!(out, ["1"]);
+}
+
+#[test]
 fn arithmetic_and_locals() {
     let out = run_source("function main() { let a = 6; let b = 7; print(a * b); }");
     assert_eq!(out, ["42"]);

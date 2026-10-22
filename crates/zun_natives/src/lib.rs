@@ -90,6 +90,8 @@ pub enum NativeTy {
     Promise,
     /// A managed compiled regular expression.
     RegExp,
+    /// A managed arbitrary-precision integer.
+    BigInt,
     /// A managed finalization callback registry.
     FinalizationRegistry,
     /// A dictionary-backed dynamic object.

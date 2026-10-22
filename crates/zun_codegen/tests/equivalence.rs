@@ -5236,3 +5236,19 @@ fn template_literals_parse_expression_interpolations() {
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "sum=3"));
 }
 
+#[test]
+fn bigint_operations_preserve_the_tier0_fallback_boundary() {
+    let module = compile(
+        r#"function main(): int {
+            let left: BigInt = new BigInt("10000000000000000000");
+            let right: BigInt = new BigInt("2");
+            let product: BigInt = left.mul(right);
+            return product.compare(left);
+        }"#,
+    );
+    let entry = module.entry_point.unwrap().rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds with BigInt fallback");
+    assert!(!jit.is_compiled(entry));
+    assert!(matches!(interp_entry(&module), Value::Int(1, _)));
+}
+

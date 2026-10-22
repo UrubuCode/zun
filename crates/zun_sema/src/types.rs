@@ -25,6 +25,7 @@ impl<'a> Checker<'a> {
             "Set" | "set" => Ty::Set,
             "WeakMap" | "weakmap" => Ty::WeakMap,
             "RegExp" | "regexp" => Ty::RegExp,
+            "BigInt" | "bigint" => Ty::BigInt,
             "FinalizationRegistry" | "finalizationregistry" => Ty::FinalizationRegistry,
             "Proxy" | "proxy" => Ty::Proxy,
             "Promise" | "promise" => Ty::Promise,

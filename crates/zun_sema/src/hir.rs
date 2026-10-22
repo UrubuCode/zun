@@ -95,6 +95,8 @@ pub enum Ty {
     WeakMap,
     /// A Rust-engine-backed regular expression.
     RegExp,
+    /// An arbitrary-precision integer backed by the managed heap.
+    BigInt,
     /// A GC-backed finalization callback registry.
     FinalizationRegistry,
     /// A managed target/handler proxy pair.

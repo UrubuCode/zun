@@ -895,6 +895,45 @@ impl<'a> Interp<'a> {
                     .map_err(|error| RunError::Native(error.to_string()))?;
                 Ok(Value::Object(object))
             }
+            "bigIntNew" => {
+                let text = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = zun_core::BigInt::parse_decimal(text)
+                    .map_err(|error| RunError::Native(error.into()))?;
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
+                Ok(Value::Object(object))
+            }
+            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntCompare" => {
+                let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let (left, right) = zun_gc::with_current_heap(|heap| {
+                    Some((heap.bigint_value(left)?.clone(), heap.bigint_value(right)?.clone()))
+                }).ok_or(RunError::BadToken)?;
+                if name == "bigIntCompare" {
+                    let result = match left.cmp(&right) {
+                        std::cmp::Ordering::Less => -1,
+                        std::cmp::Ordering::Equal => 0,
+                        std::cmp::Ordering::Greater => 1,
+                    };
+                    Ok(Value::Int(result, zun_il::NumKind::I32))
+                } else {
+                    let value = match name {
+                        "bigIntAdd" => left.add(&right),
+                        "bigIntSub" => left.sub(&right),
+                        _ => left.mul(&right),
+                    };
+                    let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
+                    Ok(Value::Object(object))
+                }
+            }
+            "bigIntToString" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Str(value.to_string().into()))
+            }
             "regexpIsMatch" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;

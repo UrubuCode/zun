@@ -30,6 +30,7 @@ pub(super) fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::WeakMap => Ty::WeakMap,
         N::Promise => Ty::Promise,
         N::RegExp => Ty::RegExp,
+        N::BigInt => Ty::BigInt,
         N::FinalizationRegistry => Ty::FinalizationRegistry,
         N::DynamicObject => Ty::DynamicObject,
         N::Proxy => Ty::Proxy,
