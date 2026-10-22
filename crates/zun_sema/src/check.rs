@@ -1042,6 +1042,9 @@ impl Checker<'_> {
                         span,
                     },
                     None => {
+                        if text == "globalThis" || text == "global" {
+                            return hir::Expr { kind: hir::ExprKind::RealmGlobal, ty: Ty::DynamicObject, span };
+                        }
                         if let Some(capture) = cx.captures.get(&text) {
                             return hir::Expr {
                                 kind: hir::ExprKind::CaptureLoad {

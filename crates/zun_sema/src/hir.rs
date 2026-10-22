@@ -605,6 +605,8 @@ pub enum ExprKind {
     },
     /// Allocate a dynamic object.
     DynamicNew,
+    /// Load the per-realm global singleton.
+    RealmGlobal,
     /// Read a named property from a dynamic object.
     DynamicGet {
         /// The object expression.

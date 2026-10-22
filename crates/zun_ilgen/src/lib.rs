@@ -1027,6 +1027,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::DynamicNew => {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
             }
+            ExprKind::RealmGlobal => {
+                self.emit(Instruction::simple(Opcode::RealmGlobal));
+            }
             ExprKind::DynamicGet { object, name } => {
                 self.expr(object);
                 let property = self.module.strings.intern(name);

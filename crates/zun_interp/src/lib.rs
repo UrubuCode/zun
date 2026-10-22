@@ -343,6 +343,10 @@ impl Interp<'_> {
                     let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                     stack.push(Value::Object(object));
                 }
+                Opcode::RealmGlobal => {
+                    let object = zun_gc::with_current_heap_mut(|heap| heap.global_object());
+                    stack.push(Value::Object(object));
+                }
                 Opcode::LoadDynamic => {
                     let name = self.dynamic_name(&instr.operand)?;
                     let object = pop(&mut stack)?.as_object();
