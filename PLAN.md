@@ -780,7 +780,8 @@ The following runtime contracts are implemented and covered by tests:
   `runBool`, and `runString` ArrayBuffer/Buffer-backed JavaScript functions.
   Signed and unsigned integer entry points preserve their declared ZIL numeric
   kind; the BigInt variants avoid JavaScript Number precision loss. Invalid
-  input and VM/type failures become JavaScript TypeErrors. This is the current
+  input or module-buffer failures become JavaScript TypeErrors, while execution
+  failures and result-type mismatches become JavaScript Errors. This is the current
   minimal embedding surface, not the production Node integration gate. Linking
   the shared library requires the host's N-API import library through
   `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
