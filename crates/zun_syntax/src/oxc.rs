@@ -290,6 +290,23 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 },
                 span: span(chain.span),
             }),
+            ChainElement::CallExpression(call) => {
+                let Expression::StaticMemberExpression(member) = &call.callee else {
+                    return Err("OXC adapter supports optional static-member calls only".into());
+                };
+                let mut args = Vec::with_capacity(call.arguments.len());
+                for argument in &call.arguments {
+                    args.push(convert_argument(argument)?);
+                }
+                Ok(Expr::OptionalMethodCall {
+                    object: Box::new(convert_expression(&member.object)?),
+                    method: Name {
+                        span: span(member.property.span),
+                    },
+                    args,
+                    span: span(chain.span),
+                })
+            }
             _ => Err("OXC adapter currently supports optional static members only".into()),
         },
         Expression::BinaryExpression(binary) => {
@@ -1512,5 +1529,18 @@ mod tests {
         let program = parse_subset("class Box { value: number; } function main() {}", true)
             .unwrap();
         assert_eq!(program.classes[0].fields[0].ty.name.span, Span::new(19, 25));
+    }
+
+    #[test]
+    fn converts_optional_method_calls() {
+        let program = parse_subset("function read(value) { return value?.trim(); }", false)
+            .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::OptionalMethodCall { .. }),
+                ..
+            }
+        ));
     }
 }
