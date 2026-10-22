@@ -129,6 +129,11 @@ impl LoadedExtension {
     pub fn functions(&self) -> &[OwnedFunction] {
         &self.registry.functions
     }
+
+    /// Resolve a registered native function by its stable module/key pair.
+    pub fn find_function(&self, module: &str, key: &str) -> Option<&OwnedFunction> {
+        self.registry.find(module, key)
+    }
 }
 
 #[cfg(test)]

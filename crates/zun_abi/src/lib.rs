@@ -163,6 +163,13 @@ impl OwnedRegistry {
         }
     }
 
+    /// Resolve a copied function descriptor by its stable module/key pair.
+    pub fn find(&self, module: &str, key: &str) -> Option<&OwnedFunction> {
+        self.functions
+            .iter()
+            .find(|function| function.module == module && function.key == key)
+    }
+
     unsafe extern "C" fn capture(
         context: *mut c_void,
         module: *const c_char,
@@ -236,5 +243,7 @@ mod tests {
         assert_eq!(owned.functions[0].module, "zun:test");
         assert_eq!(owned.functions[0].key, "answer");
         assert_eq!(owned.functions[0].params, Vec::<ZunTyRepr>::new());
+        assert!(owned.find("zun:test", "answer").is_some());
+        assert!(owned.find("zun:test", "missing").is_none());
     }
 }
