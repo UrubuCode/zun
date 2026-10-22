@@ -10,6 +10,54 @@ use zun_metadata::{TableKind, Token};
 use zun_module::{Module, ReadError};
 use zun_types::{CoreTypes, TypeError, TypeSystem};
 
+/// A deterministic content identifier for a serialized module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContentId(pub u64);
+
+/// Compute the loader's stable content identifier.
+///
+/// The identifier is deliberately independent of module names and paths. It
+/// is a cache key only; signature verification remains a separate registry
+/// concern.
+pub fn content_id(bytes: &[u8]) -> ContentId {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    ContentId(hash)
+}
+
+/// A content-addressed cache of serialized module bytes.
+#[derive(Debug, Default)]
+pub struct ModuleCache {
+    entries: HashMap<ContentId, Vec<u8>>,
+}
+
+impl ModuleCache {
+    /// Insert bytes and return their content identifier.
+    pub fn insert(&mut self, bytes: &[u8]) -> ContentId {
+        let id = content_id(bytes);
+        self.entries.entry(id).or_insert_with(|| bytes.to_vec());
+        id
+    }
+
+    /// Retrieve the bytes for an identifier, if present.
+    pub fn get(&self, id: ContentId) -> Option<&[u8]> {
+        self.entries.get(&id).map(Vec::as_slice)
+    }
+
+    /// Number of unique content entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// A loaded module together with its loader-visible identity.
 #[derive(Debug)]
 pub struct ModuleScope {
@@ -714,6 +762,22 @@ impl ModuleLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_cache_deduplicates_identical_module_bytes() {
+        let mut cache = ModuleCache::default();
+        let first = cache.insert(b"module");
+        let second = cache.insert(b"module");
+        assert_eq!(first, second);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(first), Some(&b"module"[..]));
+    }
+
+    #[test]
+    fn content_id_does_not_depend_on_module_name() {
+        assert_eq!(content_id(b"same"), content_id(b"same"));
+        assert_ne!(content_id(b"same"), content_id(b"different"));
+    }
 
     #[test]
     fn loads_and_preserves_scope_identity() {
