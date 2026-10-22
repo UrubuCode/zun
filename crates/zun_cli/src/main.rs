@@ -27,6 +27,7 @@ fn main() -> ExitCode {
                 trim: false,
                 aot: false,
                 prelude_cache: None,
+                preserve_roots: None,
             },
         ),
         [cmd, flag, cache, file] if cmd == "build" && flag == "--prelude-cache" => dispatch(
@@ -35,6 +36,7 @@ fn main() -> ExitCode {
                 trim: false,
                 aot: false,
                 prelude_cache: Some(PathBuf::from(cache)),
+                preserve_roots: None,
             },
         ),
         [cmd, trim, cache_flag, cache, file]
@@ -46,6 +48,7 @@ fn main() -> ExitCode {
                     trim: true,
                     aot: false,
                     prelude_cache: Some(PathBuf::from(cache)),
+                    preserve_roots: None,
                 },
             )
         },
@@ -58,6 +61,7 @@ fn main() -> ExitCode {
                     trim: true,
                     aot: true,
                     prelude_cache: Some(PathBuf::from(cache)),
+                    preserve_roots: None,
                 },
             )
         },
@@ -67,6 +71,7 @@ fn main() -> ExitCode {
                 trim: true,
                 aot: false,
                 prelude_cache: None,
+                preserve_roots: None,
             },
         ),
         [cmd, flag, file] if cmd == "build" && flag == "--aot" => dispatch(
@@ -75,8 +80,22 @@ fn main() -> ExitCode {
                 trim: true,
                 aot: true,
                 prelude_cache: None,
+                preserve_roots: None,
             },
         ),
+        [cmd, trim, roots_flag, roots, file]
+            if cmd == "build" && trim == "--trim" && roots_flag == "--preserve-roots" =>
+        {
+            dispatch(
+                file,
+                Action::Build {
+                    trim: true,
+                    aot: false,
+                    prelude_cache: None,
+                    preserve_roots: Some(PathBuf::from(roots)),
+                },
+            )
+        }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
         _ => {
             eprintln!("{USAGE}");
@@ -88,7 +107,7 @@ fn main() -> ExitCode {
 const USAGE: &str = "\
 usage: zun <command> <file.ts>
   run      compile and execute the program
-  build    compile to a .zm module (use --trim, --aot, or --prelude-cache <path>)
+  build    compile to a .zm module (use --trim, --aot, --preserve-roots <path>, or --prelude-cache <path>)
   disasm   compile and print the ZIL disassembly";
 
 #[derive(Clone)]
@@ -98,6 +117,7 @@ enum Action {
         trim: bool,
         aot: bool,
         prelude_cache: Option<PathBuf>,
+        preserve_roots: Option<PathBuf>,
     },
     Disasm,
 }
@@ -155,9 +175,20 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
     };
 
+    let preserve_roots = match &action {
+        Action::Build { preserve_roots: Some(path), .. } => match read_preserve_roots(path) {
+            Ok(roots) => roots,
+            Err(error) => {
+                eprintln!("zun: cannot read preserve roots {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        _ => Vec::new(),
+    };
+
     let module = match action {
         Action::Build { trim: true, .. } => {
-            let report = match zun_compiler::trim_report(&module) {
+            let report = match zun_compiler::trim_report_with_roots(&module, &preserve_roots) {
                 Ok(report) => report,
                 Err(error) => {
                     eprintln!("zun: cannot analyze trim: {error}");
@@ -177,7 +208,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                     );
                 }
             }
-            match zun_compiler::trim_module(&module) {
+            match zun_compiler::trim_module_with_roots(&module, &preserve_roots) {
                 Ok(module) => module,
                 Err(error) => {
                     eprintln!("zun: cannot trim module: {error}");
@@ -298,6 +329,19 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+fn read_preserve_roots(path: &Path) -> Result<Vec<u32>, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .map(|(line, value)| {
+            value.trim().parse::<u32>().map_err(|error| {
+                format!("invalid method RID on line {}: {error}", line + 1)
+            })
+        })
+        .collect()
 }
 
 /// Print each function's name and ZIL body.
