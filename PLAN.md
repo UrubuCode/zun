@@ -336,6 +336,7 @@ SHA-256 content-addressed cache with deterministic lockfiles, Ed25519 signatures
 and capability declarations; deterministic registry index metadata with verified
 loader integration; signed registry-index envelopes with HTTP decoding and
 tamper coverage;
+release-pinned key checks now gate signed-index loading and `.zmlib` verification;
 sequence-point PC-to-source metadata in `.zm`;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
