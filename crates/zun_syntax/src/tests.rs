@@ -443,6 +443,15 @@
         assert_eq!(ident_text(src, &p.imports[0].names[0].imported), "bigIntAdd");
         assert_eq!(ident_text(src, &p.imports[0].names[0].local), "add");
     }
+
+    #[test]
+    fn parses_default_import() {
+        let src = "import String from \"extended-string\";\nfunction main() {}";
+        let p = parse_ok(src);
+        assert_eq!(p.imports[0].module, "extended-string");
+        assert!(p.imports[0].names[0].is_default);
+        assert_eq!(ident_text(src, &p.imports[0].names[0].local), "String");
+    }
     #[test]
     fn parses_class_with_methods() {
         let src = "class Counter { n: number; inc() { n = n + 1; } get(): number { return n; } }";

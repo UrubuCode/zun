@@ -130,21 +130,28 @@ impl Parser<'_> {
 
     fn import(&mut self) -> Import {
         let start = self.bump().span; // `import`
-        self.expect(TokenKind::LBrace, "`{`");
         let mut names = Vec::new();
-        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            let imported = self.name("an imported name");
-            let local = if self.eat(TokenKind::KwAs) {
-                self.name("an import alias")
-            } else {
-                imported.clone()
-            };
-            names.push(ImportName { imported, local });
-            if !self.eat(TokenKind::Comma) {
-                break;
+        if self.eat(TokenKind::LBrace) {
+            while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+                let imported = self.name("an imported name");
+                let local = if self.eat(TokenKind::KwAs) {
+                    self.name("an import alias")
+                } else {
+                    imported.clone()
+                };
+                names.push(ImportName { imported, local, is_default: false });
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
             }
+            self.expect(TokenKind::RBrace, "`}`");
+        } else {
+            // A default import is represented as an export named `default`;
+            // sema/linking decides whether that export is a type or value.
+            let local = self.name("a default import name");
+            let imported = local.clone();
+            names.push(ImportName { imported, local, is_default: true });
         }
-        self.expect(TokenKind::RBrace, "`}`");
         self.expect(TokenKind::KwFrom, "`from`");
         let module = match self.expect(TokenKind::String, "a module string") {
             Some(t) => decode_string(self.text(t)),

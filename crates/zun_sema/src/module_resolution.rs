@@ -15,7 +15,7 @@ impl<'a> Checker<'a> {
                     && matches!(import.module.as_str(), "zun:prelude" | "zun:std")
                 {
                     for binding in &import.names {
-                        let imported = self.text(&binding.imported).to_string();
+                        let imported = if binding.is_default { "default" } else { self.text(&binding.imported) }.to_owned();
                         match self.external_functions.get(&imported) {
                             Some(external) if external.module == import.module => {}
                             Some(external) => self.error(
@@ -41,7 +41,7 @@ impl<'a> Checker<'a> {
             };
             let _ = module;
             for binding in &import.names {
-                let imported = self.text(&binding.imported).to_string();
+                let imported = if binding.is_default { "default" } else { self.text(&binding.imported) }.to_owned();
                 let local = self.text(&binding.local).to_string();
                 match zun_natives::resolve(&import.module, &imported) {
                     Some((id, f)) => {

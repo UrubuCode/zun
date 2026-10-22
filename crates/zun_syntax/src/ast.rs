@@ -36,6 +36,8 @@ pub struct ImportName {
     pub imported: Name,
     /// The local binding name.
     pub local: Name,
+    /// Whether this is the module's default export rather than a named export.
+    pub is_default: bool,
 }
 
 /// `class Name { field: type; method(...) {...} ... }`. Fields are initialized
