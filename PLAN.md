@@ -550,12 +550,14 @@ object; this is covered by the no-runtime AOT fixture.
 
 ## 8. Risks & attention points
 
-- Generational + evacuating nursery is the highest-value and hardest remaining
+- Generational + evacuating nursery is implemented; its correctness remains
   runtime work; correctness needs **stress testing** (forced GC, cyclic WeakMap
   graphs), not just unit tests — green unit suites do not prove weak-GC correctness.
 - Cranelift has no mature GC statepoints beyond stack maps, no inlining, no escape
   analysis — those belong in Zun's IL/MIR before lowering.
 - Dynamic-`Any` performance is intentionally *not* a goal (costly opt-in); do not
   JIT-lower the `Any` carrier at the cost of complexity.
+- Cross-target AOT still depends on provisioned target-matched runtime libraries
+  and platform linker inputs from the release toolchain.
 - The two heavy external dependencies are **Cranelift** and **OXC**, both at
   swappable pipeline edges and both permissively licensed; the nucleus is Zun's.
