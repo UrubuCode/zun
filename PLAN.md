@@ -406,6 +406,8 @@ the forthcoming ineligible-entry AOT launcher fallback.
 When a matching runtime library is provisioned, the CLI now links that hook and
 the embedded metadata object into a runnable fallback executable for ineligible
 scalar entrypoints; without the library it retains the portable `.zm` fallback.
+The fallback linker supplies the Windows cryptography system libraries required
+by the runtime static library, and leaves non-scalar managed returns on `.zm` only.
 
 ## 8. Risks & attention points
 
