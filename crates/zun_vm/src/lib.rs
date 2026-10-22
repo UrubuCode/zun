@@ -16,7 +16,7 @@ use zun_interp::{run_with, CallHook, Output, RunError, StdoutOutput};
 use zun_module::Module;
 
 pub use ffi::{
-    library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringLength,
+    library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
     FfiStringReturn, NativeLibrary,
     NativeLibraryResolver,
 };

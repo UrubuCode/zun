@@ -62,6 +62,44 @@ impl FfiStringReturn {
     }
 }
 
+/// Native argument storage owned only for the duration of one FFI call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FfiStringArgument {
+    bytes: Vec<u8>,
+    nul_terminated: bool,
+}
+
+impl FfiStringArgument {
+    /// Encode a managed string into call-scoped UTF-8 storage. The caller
+    /// keeps ownership and must not retain the pointer after the call.
+    pub fn from_utf8(value: &str, nul_terminated: bool) -> Result<Self, String> {
+        if nul_terminated && value.as_bytes().contains(&0) {
+            return Err("NUL-terminated string arguments cannot contain an interior NUL".into());
+        }
+        let mut bytes = value.as_bytes().to_vec();
+        if nul_terminated {
+            bytes.push(0);
+        }
+        Ok(Self { bytes, nul_terminated })
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.bytes.as_ptr()
+    }
+
+    pub fn len_bytes(&self) -> usize {
+        if self.nul_terminated {
+            self.bytes.len() - 1
+        } else {
+            self.bytes.len()
+        }
+    }
+
+    pub fn is_nul_terminated(&self) -> bool {
+        self.nul_terminated
+    }
+}
+
 /// A validated signature for a direct C-ABI call. Non-blittable string
 /// signatures use [`FfiStringReturn`] as a separate, explicit contract until
 /// their generated marshalling stub is available.
@@ -632,6 +670,17 @@ mod tests {
         assert!(FfiStringReturn::OutBuffer { capacity: 0 }
             .validate()
             .is_err());
+    }
+
+    #[test]
+    fn string_arguments_are_call_scoped_and_validate_nul_termination() {
+        let length_delimited = FfiStringArgument::from_utf8("olá", false).unwrap();
+        assert_eq!(length_delimited.len_bytes(), 4);
+        assert!(!length_delimited.is_nul_terminated());
+        let nul_terminated = FfiStringArgument::from_utf8("olá", true).unwrap();
+        assert_eq!(nul_terminated.len_bytes(), 4);
+        assert_eq!(unsafe { *nul_terminated.as_ptr().add(4) }, 0);
+        assert!(FfiStringArgument::from_utf8("bad\0text", true).is_err());
     }
 
     #[test]
