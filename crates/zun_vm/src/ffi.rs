@@ -233,6 +233,9 @@ impl FfiSignature {
     /// direct-call ABI. Non-blittable shapes must use a generated marshalling
     /// stub instead of reaching the fixed-arity thunks.
     pub fn validate(&self) -> Result<(), String> {
+        if self.string_return.is_some() && !self.matches_string_call() {
+            return Err("string return declaration requires a string -> string signature".into());
+        }
         if self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
             Ok(())
         } else if self.matches_string_call() {
@@ -984,6 +987,10 @@ mod tests {
 
         let signature = signature.with_string_return(FfiStringReturn::OutBuffer { capacity: 32 });
         assert!(signature.validate().is_ok());
+        assert!(FfiSignature::new([], FfiScalar::I64)
+            .with_string_return(FfiStringReturn::OutBuffer { capacity: 32 })
+            .validate()
+            .is_err());
     }
 
     #[test]
