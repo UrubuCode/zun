@@ -53,6 +53,9 @@ pub struct ClassField {
     pub name: Name,
     /// The field's declared type.
     pub ty: TypeAnnotation,
+    /// Whether the field was declared with the `static` modifier. Static
+    /// field storage is not lowered yet, so sema reports it explicitly.
+    pub is_static: bool,
 }
 
 /// `function name(params): ret { body }`

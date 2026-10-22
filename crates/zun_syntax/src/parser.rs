@@ -180,6 +180,7 @@ impl Parser<'_> {
                 fields.push(ClassField {
                     name: member_name,
                     ty,
+                    is_static,
                 });
             }
         }
