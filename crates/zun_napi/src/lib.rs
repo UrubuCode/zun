@@ -574,6 +574,19 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_host_export_rejects_signed_integer_modules() {
+        let module = zun_compiler::compile("function main(): int { return -1; }").unwrap();
+        let bytes = module.write();
+        let host = zun_host_create();
+        let mut result = 0u64;
+        let status = unsafe {
+            zun_host_execute_u64(host, bytes.as_ptr(), bytes.len(), &mut result)
+        };
+        unsafe { zun_host_destroy(host) };
+        assert_eq!(status, ZUN_HOST_VM_ERROR);
+    }
+
+    #[test]
     fn host_executes_a_compiled_float_module() {
         let module = zun_compiler::compile("function main(): number { return 7.5; }").unwrap();
         let bytes = module.write();
