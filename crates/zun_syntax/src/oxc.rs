@@ -1614,5 +1614,6 @@ mod tests {
         assert!(error
             .iter()
             .any(|message| message.contains("unchanged local export names")));
+        assert!(parse_subset("export { main } from \"other\";", false).is_err());
     }
 }
