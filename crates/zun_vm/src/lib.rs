@@ -546,4 +546,23 @@ mod tests {
             zun_interp::value::Value::Int(42, zun_il::NumKind::I32)
         ));
     }
+
+    #[test]
+    fn executes_a_module_linked_against_the_cached_prelude() {
+        let (fingerprint, prelude) = zun_compiler::compile_prelude().expect("compile prelude");
+        let loader = zun_compiler::compile_with_cached_prelude(
+            "function main(): int { return abs(-7); }",
+            &prelude,
+        )
+        .expect("link cached prelude");
+        let manifest = zun_loader::ModuleManifest::new("app", vec!["zun:prelude".into()])
+            .with_prelude_fingerprint(fingerprint);
+        let mut output = zun_interp::CaptureOutput::default();
+        let result = execute_manifest_with_prelude(&loader, &manifest, fingerprint, &mut output)
+            .expect("execute linked prelude");
+        assert!(matches!(
+            result,
+            zun_interp::value::Value::Int(7, zun_il::NumKind::I32)
+        ));
+    }
 }
