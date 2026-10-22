@@ -42,7 +42,11 @@ fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
         Argument::Identifier(identifier) => Ok(Expr::Ident(Name {
             span: span(identifier.span),
         })),
-        _ => Err("OXC adapter currently supports literal and identifier arguments".into()),
+        Argument::SpreadElement(spread) => Ok(Expr::Spread {
+            expr: Box::new(convert_expression(&spread.argument)?),
+            span: span(spread.span),
+        }),
+        _ => Err("OXC adapter currently supports literal, identifier, and spread arguments".into()),
     }
 }
 
@@ -1228,6 +1232,18 @@ mod tests {
                 value: Some(crate::ast::Expr::PrivateField { .. }),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_spread_call_arguments() {
+        let program = parse_subset("function call(values) { return merge(...values); }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Call { ref args, .. }),
+                ..
+            } if matches!(args.first(), Some(crate::ast::Expr::Spread { .. }))
         ));
     }
 }
