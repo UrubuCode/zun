@@ -33,11 +33,15 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn private_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
-        let suffix = format!("#{name}");
+        let owner = self
+            .classes_by_name
+            .iter()
+            .find_map(|(name, &index)| (index == class).then_some(name.as_str()))?;
+        let internal_name = format!("#{owner}#{name}");
         self.full_fields(class)
             .into_iter()
             .enumerate()
-            .find(|(_, (n, _, _, is_private))| *is_private && n.ends_with(&suffix))
+            .find(|(_, (n, _, _, is_private))| *is_private && n == &internal_name)
             .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
     }
 

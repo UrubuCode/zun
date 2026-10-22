@@ -54,6 +54,17 @@
     }
 
     #[test]
+    fn rejects_private_field_access_from_a_derived_type() {
+        let (_, diagnostics) = check_src(
+            "class Base { #value: number; } class Derived extends Base { read(): number { return this.#value; } } function main(): number { return 0.0; }",
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.message.contains("private field")),
+            "expected private-field diagnostic, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn async_source_with_await_builds_a_state_machine_plan() {
         let (hir, diagnostics) = check_src(
             "async function main(): Promise { let p = new Promise(); await p; return p; }",
