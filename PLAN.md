@@ -348,6 +348,7 @@ loader integration; signed registry-index envelopes with HTTP decoding and
 tamper coverage;
 release-pinned key checks now gate signed-index loading and `.zmlib` verification;
 anchored and self-declared signed-index fixtures are covered;
+HTTP index fetching accepts the rotated `TrustedKeySet` path;
 sequence-point PC-to-source metadata in `.zm`;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
