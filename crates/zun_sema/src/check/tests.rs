@@ -39,7 +39,7 @@
 
     #[test]
     fn default_extended_string_import_rebinds_the_frozen_string_type() {
-        let src = "import String from \"extended-string\"; function main(value: String): String { return value; }";
+        let src = "import String from \"extended-string\"; function main(value: String): String { return value.reverse(); }";
         let mut diagnostics = Vec::new();
         let ast = parse(src, &mut diagnostics);
         let hir = check_with_externals(src, &ast, &mut diagnostics, &[]);

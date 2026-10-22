@@ -1890,6 +1890,7 @@ impl Checker<'_> {
                     (Ty::String, "toInt") => Some(("toInt", Ty::Int(IntKind::I32), vec![])),
                     (Ty::String, "toFloat") => Some(("toFloat", Ty::F64, vec![])),
                     (Ty::String, "toBoolean") => Some(("toBoolean", Ty::Boolean, vec![])),
+                    (Ty::String, "reverse") => Some(("reverse", Ty::String, vec![])),
                     (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
                         "u8ArrayGet",
                         Ty::Int(IntKind::U8),
