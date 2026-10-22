@@ -183,7 +183,11 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
         _ => None,
     };
-    let use_oxc = matches!(
+    let oxc_typescript = matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("mts") | Some("tsx")
+    );
+    let use_oxc = oxc_typescript || matches!(
         path.extension().and_then(|extension| extension.to_str()),
         Some("js") | Some("mjs")
     );
@@ -193,7 +197,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 "native OXC JavaScript input cannot be combined with a prelude cache",
             )])
         } else {
-            zun_compiler::compile_with_oxc(&source, false)
+            zun_compiler::compile_with_oxc(&source, oxc_typescript)
         }
     } else {
         match cached_prelude.as_ref() {
