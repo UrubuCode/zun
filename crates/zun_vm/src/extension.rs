@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use zun_abi::{OwnedFunction, OwnedRegistry, ZunRegisterV1, ZunRegistry};
+use zun_abi::{OwnedFunction, OwnedRegistry, ZunRegisterV1, ZunRegistry, ZunValue};
 
 use crate::{FfiError, NativeLibrary};
 
@@ -133,6 +133,24 @@ impl LoadedExtension {
     /// Resolve a registered native function by its stable module/key pair.
     pub fn find_function(&self, module: &str, key: &str) -> Option<&OwnedFunction> {
         self.registry.find(module, key)
+    }
+
+    /// Invoke a registered extension function through its checked ABI shape.
+    ///
+    /// The extension library remains owned by `self` for the duration of the
+    /// call, and descriptor mismatches are reported before native code runs.
+    pub fn invoke(
+        &self,
+        module: &str,
+        key: &str,
+        args: &[ZunValue],
+    ) -> Result<Option<ZunValue>, FfiError> {
+        let function = self.find_function(module, key).ok_or_else(|| {
+            FfiError::new(format!("extension function `{module}.{key}` is not registered"))
+        })?;
+        function
+            .invoke_checked(args)
+            .map_err(|status| FfiError::new(format!("extension function `{module}.{key}` failed with status {status}")))
     }
 }
 
