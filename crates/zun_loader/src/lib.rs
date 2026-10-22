@@ -4,10 +4,10 @@
 //! [`ModuleScope`] owns the bytes decoded from one `.zm` module and gives the
 //! future resolver a stable scope boundary for type and member identity.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use zun_metadata::{TableKind, Token};
 use zun_module::{Module, ReadError};
 use zun_types::{CoreTypes, TypeError, TypeSystem};
@@ -44,7 +44,10 @@ pub enum CacheError {
     /// Filesystem access failed.
     Io(std::io::Error),
     /// The file contents do not match their requested content identity.
-    Integrity { expected: ContentId, found: ContentId },
+    Integrity {
+        expected: ContentId,
+        found: ContentId,
+    },
 }
 
 impl core::fmt::Display for CacheError {
@@ -52,7 +55,12 @@ impl core::fmt::Display for CacheError {
         match self {
             Self::Io(error) => write!(f, "module cache I/O failed: {error}"),
             Self::Integrity { expected, found } => {
-                write!(f, "module cache integrity mismatch: expected {}, found {}", expected.hex(), found.hex())
+                write!(
+                    f,
+                    "module cache integrity mismatch: expected {}, found {}",
+                    expected.hex(),
+                    found.hex()
+                )
             }
         }
     }
@@ -61,7 +69,9 @@ impl core::fmt::Display for CacheError {
 impl std::error::Error for CacheError {}
 
 impl From<std::io::Error> for CacheError {
-    fn from(error: std::io::Error) -> Self { Self::Io(error) }
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 impl ModuleCache {
@@ -104,7 +114,10 @@ impl ModuleCache {
         let bytes = std::fs::read(root.as_ref().join(format!("{}.zm", id.hex())))?;
         let found = content_id(&bytes);
         if found != id {
-            return Err(CacheError::Integrity { expected: id, found });
+            return Err(CacheError::Integrity {
+                expected: id,
+                found,
+            });
         }
         Ok(bytes)
     }
@@ -286,9 +299,9 @@ impl ModuleFetcher for DirectoryFetcher {
     fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
         let relative = Path::new(name);
         if relative.is_absolute()
-            || relative.components().any(|component| {
-                matches!(component, std::path::Component::ParentDir)
-            })
+            || relative
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
         {
             return Err(LoadError::InvalidManifest(format!(
                 "unsafe registry module path `{name}`"
@@ -321,15 +334,30 @@ impl HttpFetcher {
     pub fn fetch_index(&self) -> Result<ModuleIndex, LoadError> {
         let url = format!("{}/index.zidx", self.base_url);
         use std::io::Read;
-        let response = ureq::get(&url)
-            .call()
-            .map_err(|error| LoadError::InvalidManifest(format!("HTTP registry index fetch failed: {error}")))?;
+        let response = ureq::get(&url).call().map_err(|error| {
+            LoadError::InvalidManifest(format!("HTTP registry index fetch failed: {error}"))
+        })?;
         let mut bytes = Vec::new();
         response
             .into_reader()
             .read_to_end(&mut bytes)
             .map_err(LoadError::Io)?;
         ModuleIndex::read(&bytes)
+    }
+
+    /// Fetch and verify the signed registry index envelope.
+    pub fn fetch_signed_index(&self) -> Result<SignedModuleIndex, LoadError> {
+        let url = format!("{}/index.zidx", self.base_url);
+        use std::io::Read;
+        let response = ureq::get(&url).call().map_err(|error| {
+            LoadError::InvalidManifest(format!("HTTP signed registry index fetch failed: {error}"))
+        })?;
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(LoadError::Io)?;
+        SignedModuleIndex::read(&bytes)
     }
 }
 
@@ -338,9 +366,9 @@ impl ModuleFetcher for HttpFetcher {
         let relative = Path::new(name);
         if name.is_empty()
             || relative.is_absolute()
-            || relative.components().any(|component| {
-                matches!(component, std::path::Component::ParentDir)
-            })
+            || relative
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
         {
             return Err(LoadError::InvalidManifest(format!(
                 "unsafe registry module path `{name}`"
@@ -348,9 +376,9 @@ impl ModuleFetcher for HttpFetcher {
         }
         let url = format!("{}/{}.zm", self.base_url, name);
         use std::io::Read;
-        let response = ureq::get(&url)
-            .call()
-            .map_err(|error| LoadError::InvalidManifest(format!("HTTP module fetch failed: {error}")))?;
+        let response = ureq::get(&url).call().map_err(|error| {
+            LoadError::InvalidManifest(format!("HTTP module fetch failed: {error}"))
+        })?;
         let mut bytes = Vec::new();
         response
             .into_reader()
@@ -373,20 +401,27 @@ impl ModuleIndex {
     const VERSION: u16 = 1;
 
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, name: impl Into<String>, id: ContentId) -> Result<(), LoadError> {
         let name = name.into();
         if name.is_empty() || self.entries.iter().any(|(existing, _)| existing == &name) {
-            return Err(LoadError::InvalidManifest(format!("duplicate or empty index entry `{name}`")));
+            return Err(LoadError::InvalidManifest(format!(
+                "duplicate or empty index entry `{name}`"
+            )));
         }
         self.entries.push((name, id));
         Ok(())
     }
 
     pub fn resolve(&self, name: &str) -> Option<ContentId> {
-        self.entries.iter().find(|(entry, _)| entry == name).map(|(_, id)| *id)
+        self.entries
+            .iter()
+            .find(|(entry, _)| entry == name)
+            .map(|(_, id)| *id)
     }
 
     pub fn write(&self) -> Vec<u8> {
@@ -404,10 +439,14 @@ impl ModuleIndex {
     pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
         let mut cursor = 0;
         if take(bytes, &mut cursor, 5) != Some(Self::MAGIC.as_slice()) {
-            return Err(LoadError::InvalidManifest("bad registry index magic".into()));
+            return Err(LoadError::InvalidManifest(
+                "bad registry index magic".into(),
+            ));
         }
         if read_u16(bytes, &mut cursor) != Some(Self::VERSION) {
-            return Err(LoadError::InvalidManifest("unsupported registry index version".into()));
+            return Err(LoadError::InvalidManifest(
+                "unsupported registry index version".into(),
+            ));
         }
         let count = read_u32(bytes, &mut cursor)
             .ok_or_else(|| LoadError::InvalidManifest("truncated registry index".into()))?;
@@ -421,9 +460,89 @@ impl ModuleIndex {
             index.push(name, ContentId(id))?;
         }
         if cursor != bytes.len() {
-            return Err(LoadError::InvalidManifest("trailing registry index data".into()));
+            return Err(LoadError::InvalidManifest(
+                "trailing registry index data".into(),
+            ));
         }
         Ok(index)
+    }
+}
+
+/// A registry index authenticated by an Ed25519 signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedModuleIndex {
+    pub index: ModuleIndex,
+    pub public_key: [u8; 32],
+    pub signature: [u8; 64],
+}
+
+impl SignedModuleIndex {
+    const MAGIC: &'static [u8; 4] = b"ZISG";
+    const VERSION: u16 = 1;
+
+    pub fn new(
+        index: ModuleIndex,
+        public_key: [u8; 32],
+        signature: [u8; 64],
+    ) -> Result<Self, LoadError> {
+        let signed = Self {
+            index,
+            public_key,
+            signature,
+        };
+        signed.verify()?;
+        Ok(signed)
+    }
+
+    pub fn verify(&self) -> Result<(), LoadError> {
+        let key = VerifyingKey::from_bytes(&self.public_key).map_err(|error| {
+            LoadError::InvalidManifest(format!("invalid index public key: {error}"))
+        })?;
+        let signature = Signature::from_bytes(&self.signature);
+        key.verify(&self.index.write(), &signature)
+            .map_err(|error| {
+                LoadError::InvalidManifest(format!("invalid index signature: {error}"))
+            })
+    }
+
+    pub fn write(&self) -> Vec<u8> {
+        let payload = self.index.write();
+        let mut bytes = Vec::with_capacity(106 + payload.len());
+        bytes.extend_from_slice(Self::MAGIC);
+        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        bytes.extend_from_slice(&self.public_key);
+        bytes.extend_from_slice(&self.signature);
+        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&payload);
+        bytes
+    }
+
+    pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        if bytes.len() < 106 || &bytes[..4] != Self::MAGIC {
+            return Err(LoadError::InvalidManifest(
+                "bad signed registry index header".into(),
+            ));
+        }
+        let version = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
+        if version > Self::VERSION {
+            return Err(LoadError::InvalidManifest(format!(
+                "unsupported signed registry index version {version}"
+            )));
+        }
+        let mut public_key = [0u8; 32];
+        public_key.copy_from_slice(&bytes[6..38]);
+        let mut signature = [0u8; 64];
+        signature.copy_from_slice(&bytes[38..102]);
+        let payload_len = u32::from_le_bytes(bytes[102..106].try_into().unwrap()) as usize;
+        let end = 106usize
+            .checked_add(payload_len)
+            .ok_or_else(|| LoadError::InvalidManifest("signed registry index overflow".into()))?;
+        if end != bytes.len() {
+            return Err(LoadError::InvalidManifest(
+                "invalid signed registry index payload length".into(),
+            ));
+        }
+        Self::new(ModuleIndex::read(&bytes[106..end])?, public_key, signature)
     }
 }
 
@@ -460,13 +579,20 @@ impl ModuleLock {
     const VERSION: u16 = 3;
 
     /// Construct an empty lockfile.
-    pub fn new() -> Self { Self { entries: Vec::new(), capabilities: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            capabilities: Vec::new(),
+        }
+    }
 
     /// Add a module identity, rejecting duplicate names.
     pub fn push(&mut self, name: impl Into<String>, id: ContentId) -> Result<(), LoadError> {
         let name = name.into();
         if self.entries.iter().any(|(existing, _)| existing == &name) {
-            return Err(LoadError::InvalidManifest(format!("duplicate lock entry `{name}`")));
+            return Err(LoadError::InvalidManifest(format!(
+                "duplicate lock entry `{name}`"
+            )));
         }
         self.entries.push((name, id));
         Ok(())
@@ -480,16 +606,21 @@ impl ModuleLock {
     ) -> Result<(), LoadError> {
         let name = name.into();
         if !self.entries.iter().any(|(entry, _)| entry == &name) {
-            return Err(LoadError::InvalidManifest(format!("capabilities reference unknown module `{name}`")));
+            return Err(LoadError::InvalidManifest(format!(
+                "capabilities reference unknown module `{name}`"
+            )));
         }
         if self.capabilities.iter().any(|(entry, _)| entry == &name) {
-            return Err(LoadError::InvalidManifest(format!("duplicate capabilities for `{name}`")));
+            return Err(LoadError::InvalidManifest(format!(
+                "duplicate capabilities for `{name}`"
+            )));
         }
         let mut capabilities: Vec<_> = capabilities.into_iter().collect();
         capabilities.sort();
         capabilities.dedup();
         self.capabilities.push((name, capabilities));
-        self.capabilities.sort_by(|left, right| left.0.cmp(&right.0));
+        self.capabilities
+            .sort_by(|left, right| left.0.cmp(&right.0));
         Ok(())
     }
 
@@ -503,7 +634,11 @@ impl ModuleLock {
 
     /// Require one capability for a module before performing a host operation.
     pub fn require_capability(&self, name: &str, capability: &str) -> Result<(), LoadError> {
-        if self.capabilities_for(name).iter().any(|granted| granted == capability) {
+        if self
+            .capabilities_for(name)
+            .iter()
+            .any(|granted| granted == capability)
+        {
             Ok(())
         } else {
             Err(LoadError::InvalidManifest(format!(
@@ -526,7 +661,9 @@ impl ModuleLock {
         for (name, capabilities) in &self.capabilities {
             write_name(&mut bytes, name);
             bytes.extend_from_slice(&(capabilities.len() as u32).to_le_bytes());
-            for capability in capabilities { write_name(&mut bytes, capability); }
+            for capability in capabilities {
+                write_name(&mut bytes, capability);
+            }
         }
         bytes
     }
@@ -538,28 +675,38 @@ impl ModuleLock {
         }
         let version = u16::from_le_bytes(bytes[5..7].try_into().unwrap());
         if version > Self::VERSION {
-            return Err(LoadError::InvalidManifest(format!("unsupported lockfile version {version}")));
+            return Err(LoadError::InvalidManifest(format!(
+                "unsupported lockfile version {version}"
+            )));
         }
         let count = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
         let mut cursor = 11;
         let mut lock = Self::new();
         for _ in 0..count {
             let name = read_name(bytes, &mut cursor)?;
-            let end = cursor.checked_add(32).ok_or_else(|| LoadError::InvalidManifest("lockfile overflow".into()))?;
-            let raw = bytes.get(cursor..end).ok_or_else(|| LoadError::InvalidManifest("truncated lock entry".into()))?;
+            let end = cursor
+                .checked_add(32)
+                .ok_or_else(|| LoadError::InvalidManifest("lockfile overflow".into()))?;
+            let raw = bytes
+                .get(cursor..end)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated lock entry".into()))?;
             cursor = end;
             let mut id = [0u8; 32];
             id.copy_from_slice(raw);
             lock.push(name, ContentId(id))?;
         }
         let capability_count = read_u32(bytes, &mut cursor)
-            .ok_or_else(|| LoadError::InvalidManifest("truncated capability section".into()))? as usize;
+            .ok_or_else(|| LoadError::InvalidManifest("truncated capability section".into()))?
+            as usize;
         for _ in 0..capability_count {
             let name = read_name(bytes, &mut cursor)?;
             let count = read_u32(bytes, &mut cursor)
-                .ok_or_else(|| LoadError::InvalidManifest("truncated capability count".into()))? as usize;
+                .ok_or_else(|| LoadError::InvalidManifest("truncated capability count".into()))?
+                as usize;
             let mut capabilities = Vec::with_capacity(count);
-            for _ in 0..count { capabilities.push(read_name(bytes, &mut cursor)?); }
+            for _ in 0..count {
+                capabilities.push(read_name(bytes, &mut cursor)?);
+            }
             lock.grant_capabilities(name, capabilities)?;
         }
         if cursor != bytes.len() {
@@ -589,7 +736,9 @@ impl ModuleLock {
                 continue;
             }
             ModuleCache::load(&cache_root, *id).map_err(|error| {
-                LoadError::InvalidManifest(format!("locked module `{name}` failed verification: {error}"))
+                LoadError::InvalidManifest(format!(
+                    "locked module `{name}` failed verification: {error}"
+                ))
             })?;
         }
         Ok(())
@@ -612,19 +761,29 @@ impl SignedModuleLock {
     const VERSION: u16 = 1;
 
     /// Construct and verify a signed lockfile envelope.
-    pub fn new(lock: ModuleLock, public_key: [u8; 32], signature: [u8; 64]) -> Result<Self, LoadError> {
-        let signed = Self { lock, public_key, signature };
+    pub fn new(
+        lock: ModuleLock,
+        public_key: [u8; 32],
+        signature: [u8; 64],
+    ) -> Result<Self, LoadError> {
+        let signed = Self {
+            lock,
+            public_key,
+            signature,
+        };
         signed.verify()?;
         Ok(signed)
     }
 
     /// Verify the Ed25519 signature over the canonical lockfile bytes.
     pub fn verify(&self) -> Result<(), LoadError> {
-        let key = VerifyingKey::from_bytes(&self.public_key)
-            .map_err(|error| LoadError::InvalidManifest(format!("invalid lockfile public key: {error}")))?;
+        let key = VerifyingKey::from_bytes(&self.public_key).map_err(|error| {
+            LoadError::InvalidManifest(format!("invalid lockfile public key: {error}"))
+        })?;
         let signature = Signature::from_bytes(&self.signature);
-        key.verify(&self.lock.write(), &signature)
-            .map_err(|error| LoadError::InvalidManifest(format!("invalid lockfile signature: {error}")))
+        key.verify(&self.lock.write(), &signature).map_err(|error| {
+            LoadError::InvalidManifest(format!("invalid lockfile signature: {error}"))
+        })
     }
 
     /// Serialize the signed envelope.
@@ -643,20 +802,28 @@ impl SignedModuleLock {
     /// Parse and verify a signed lockfile envelope.
     pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
         if bytes.len() < 106 || &bytes[..4] != Self::MAGIC {
-            return Err(LoadError::InvalidManifest("bad signed lockfile header".into()));
+            return Err(LoadError::InvalidManifest(
+                "bad signed lockfile header".into(),
+            ));
         }
         let version = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
         if version > Self::VERSION {
-            return Err(LoadError::InvalidManifest(format!("unsupported signed lockfile version {version}")));
+            return Err(LoadError::InvalidManifest(format!(
+                "unsupported signed lockfile version {version}"
+            )));
         }
         let mut public_key = [0u8; 32];
         public_key.copy_from_slice(&bytes[6..38]);
         let mut signature = [0u8; 64];
         signature.copy_from_slice(&bytes[38..102]);
         let payload_len = u32::from_le_bytes(bytes[102..106].try_into().unwrap()) as usize;
-        let end = 106usize.checked_add(payload_len).ok_or_else(|| LoadError::InvalidManifest("signed lockfile overflow".into()))?;
+        let end = 106usize
+            .checked_add(payload_len)
+            .ok_or_else(|| LoadError::InvalidManifest("signed lockfile overflow".into()))?;
         if end != bytes.len() {
-            return Err(LoadError::InvalidManifest("invalid signed lockfile payload length".into()));
+            return Err(LoadError::InvalidManifest(
+                "invalid signed lockfile payload length".into(),
+            ));
         }
         Self::new(ModuleLock::read(&bytes[106..end])?, public_key, signature)
     }
@@ -683,15 +850,27 @@ impl Zmlib {
     pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
         lock.verify()?;
         for (name, bytes) in &modules {
-            let expected = lock.lock.entries.iter().find(|(entry, _)| entry == name)
+            let expected = lock
+                .lock
+                .entries
+                .iter()
+                .find(|(entry, _)| entry == name)
                 .map(|(_, id)| *id)
-                .ok_or_else(|| LoadError::InvalidManifest(format!("package module `{name}` is not locked")))?;
+                .ok_or_else(|| {
+                    LoadError::InvalidManifest(format!("package module `{name}` is not locked"))
+                })?;
             let found = content_id(bytes);
             if expected != found {
-                return Err(LoadError::InvalidManifest(format!("package module `{name}` has content identity mismatch")));
+                return Err(LoadError::InvalidManifest(format!(
+                    "package module `{name}` has content identity mismatch"
+                )));
             }
         }
-        Ok(Self { lock, modules, type_declarations: Vec::new() })
+        Ok(Self {
+            lock,
+            modules,
+            type_declarations: Vec::new(),
+        })
     }
 
     /// Attach deterministic type declaration payloads to locked modules.
@@ -719,9 +898,11 @@ impl Zmlib {
                 .iter()
                 .find(|(entry, _)| entry == &identity_name)
                 .map(|(_, id)| *id)
-                .ok_or_else(|| LoadError::InvalidManifest(format!(
-                    "type declaration `{identity_name}` is not locked"
-                )))?;
+                .ok_or_else(|| {
+                    LoadError::InvalidManifest(format!(
+                        "type declaration `{identity_name}` is not locked"
+                    ))
+                })?;
             if expected != content_id(payload) {
                 return Err(LoadError::InvalidManifest(format!(
                     "type declaration `{identity_name}` has content identity mismatch"
@@ -762,36 +943,56 @@ impl Zmlib {
         }
         let version = u16::from_le_bytes(bytes[5..7].try_into().unwrap());
         if version > Self::VERSION {
-            return Err(LoadError::InvalidManifest(format!("unsupported zmlib version {version}")));
+            return Err(LoadError::InvalidManifest(format!(
+                "unsupported zmlib version {version}"
+            )));
         }
         let lock_len = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
-        let lock_end = 11usize.checked_add(lock_len).ok_or_else(|| LoadError::InvalidManifest("zmlib overflow".into()))?;
-        let lock = SignedModuleLock::read(bytes.get(11..lock_end).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib lock".into()))?)?;
+        let lock_end = 11usize
+            .checked_add(lock_len)
+            .ok_or_else(|| LoadError::InvalidManifest("zmlib overflow".into()))?;
+        let lock = SignedModuleLock::read(
+            bytes
+                .get(11..lock_end)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib lock".into()))?,
+        )?;
         let mut cursor = lock_end;
-        let count = read_u32(bytes, &mut cursor).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module count".into()))? as usize;
+        let count = read_u32(bytes, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module count".into()))?
+            as usize;
         let mut modules = Vec::with_capacity(count);
         for _ in 0..count {
             let name = read_name(bytes, &mut cursor)?;
-            let len = read_u32(bytes, &mut cursor).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module length".into()))? as usize;
-            let payload = take(bytes, &mut cursor, len).ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module".into()))?.to_vec();
+            let len = read_u32(bytes, &mut cursor)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module length".into()))?
+                as usize;
+            let payload = take(bytes, &mut cursor, len)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib module".into()))?
+                .to_vec();
             modules.push((name, payload));
         }
         let mut type_declarations = Vec::new();
         if version >= 2 {
-            let declaration_count = read_u32(bytes, &mut cursor)
-                .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib declaration count".into()))? as usize;
+            let declaration_count = read_u32(bytes, &mut cursor).ok_or_else(|| {
+                LoadError::InvalidManifest("truncated zmlib declaration count".into())
+            })? as usize;
             type_declarations.reserve(declaration_count);
             for _ in 0..declaration_count {
                 let name = read_name(bytes, &mut cursor)?;
-                let len = read_u32(bytes, &mut cursor)
-                    .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib declaration length".into()))? as usize;
+                let len = read_u32(bytes, &mut cursor).ok_or_else(|| {
+                    LoadError::InvalidManifest("truncated zmlib declaration length".into())
+                })? as usize;
                 let payload = take(bytes, &mut cursor, len)
-                    .ok_or_else(|| LoadError::InvalidManifest("truncated zmlib declaration".into()))?
+                    .ok_or_else(|| {
+                        LoadError::InvalidManifest("truncated zmlib declaration".into())
+                    })?
                     .to_vec();
                 type_declarations.push((name, payload));
             }
         }
-        if cursor != bytes.len() { return Err(LoadError::InvalidManifest("trailing zmlib bytes".into())); }
+        if cursor != bytes.len() {
+            return Err(LoadError::InvalidManifest("trailing zmlib bytes".into()));
+        }
         Self::new(lock, modules)?.with_type_declarations(type_declarations)
     }
 
@@ -971,7 +1172,11 @@ impl ModuleManifest {
             match take(bytes, &mut cursor, 1) {
                 Some([0]) => None,
                 Some([1]) => Some(read_name(bytes, &mut cursor)?),
-                _ => return Err(LoadError::InvalidManifest("invalid native object flag".into())),
+                _ => {
+                    return Err(LoadError::InvalidManifest(
+                        "invalid native object flag".into(),
+                    ))
+                }
             }
         };
         let metadata_object = if version < 3 {
@@ -980,7 +1185,11 @@ impl ModuleManifest {
             match take(bytes, &mut cursor, 1) {
                 Some([0]) => None,
                 Some([1]) => Some(read_name(bytes, &mut cursor)?),
-                _ => return Err(LoadError::InvalidManifest("invalid metadata object flag".into())),
+                _ => {
+                    return Err(LoadError::InvalidManifest(
+                        "invalid metadata object flag".into(),
+                    ))
+                }
             }
         };
         let runtime_library = if version < 4 {
@@ -989,7 +1198,11 @@ impl ModuleManifest {
             match take(bytes, &mut cursor, 1) {
                 Some([0]) => None,
                 Some([1]) => Some(read_name(bytes, &mut cursor)?),
-                _ => return Err(LoadError::InvalidManifest("invalid runtime library flag".into())),
+                _ => {
+                    return Err(LoadError::InvalidManifest(
+                        "invalid runtime library flag".into(),
+                    ))
+                }
             }
         };
         let prelude_fingerprint = if version < 2 {
@@ -1000,7 +1213,11 @@ impl ModuleManifest {
                 Some([1]) => Some(read_u64(bytes, &mut cursor).ok_or_else(|| {
                     LoadError::InvalidManifest("truncated prelude fingerprint".into())
                 })?),
-                _ => return Err(LoadError::InvalidManifest("invalid prelude fingerprint flag".into())),
+                _ => {
+                    return Err(LoadError::InvalidManifest(
+                        "invalid prelude fingerprint flag".into(),
+                    ))
+                }
             }
         };
         if cursor != bytes.len() {
@@ -1512,7 +1729,10 @@ mod tests {
         let id = cache.store(&root, b"module bytes").unwrap();
         assert_eq!(ModuleCache::load(&root, id).unwrap(), b"module bytes");
         std::fs::write(root.join(format!("{}.zm", id.hex())), b"tampered").unwrap();
-        assert!(matches!(ModuleCache::load(&root, id), Err(CacheError::Integrity { .. })));
+        assert!(matches!(
+            ModuleCache::load(&root, id),
+            Err(CacheError::Integrity { .. })
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1526,16 +1746,22 @@ mod tests {
         let app_id = cache.store(&root, b"app").unwrap();
         lock.push("zun:std", std_id).unwrap();
         lock.push("app", app_id).unwrap();
-        lock.grant_capabilities("app", ["net".to_owned(), "fs".to_owned(), "net".to_owned()]).unwrap();
+        lock.grant_capabilities("app", ["net".to_owned(), "fs".to_owned(), "net".to_owned()])
+            .unwrap();
         assert!(lock.push("app", content_id(b"other")).is_err());
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
         decoded.verify_cache(&root).unwrap();
         let mut metadata_lock = ModuleLock::new();
         metadata_lock.push("app", app_id).unwrap();
-        metadata_lock.push("app.d.ts", content_id(b"declare const x: int;")).unwrap();
+        metadata_lock
+            .push("app.d.ts", content_id(b"declare const x: int;"))
+            .unwrap();
         metadata_lock.verify_cache(&root).unwrap();
-        assert_eq!(decoded.capabilities, vec![("app".to_owned(), vec!["fs".to_owned(), "net".to_owned()])]);
+        assert_eq!(
+            decoded.capabilities,
+            vec![("app".to_owned(), vec!["fs".to_owned(), "net".to_owned()])]
+        );
         assert!(decoded.require_capability("app", "fs").is_ok());
         assert!(decoded.require_capability("app", "camera").is_err());
         let path = std::env::temp_dir().join(format!("zun-lock-{}.zlock", std::process::id()));
@@ -1552,7 +1778,8 @@ mod tests {
         lock.push("app", content_id(b"app")).unwrap();
         let signing = SigningKey::from_bytes(&[7u8; 32]);
         let signature = signing.sign(&lock.write()).to_bytes();
-        let signed = SignedModuleLock::new(lock, signing.verifying_key().to_bytes(), signature).unwrap();
+        let signed =
+            SignedModuleLock::new(lock, signing.verifying_key().to_bytes(), signature).unwrap();
         let bytes = signed.write();
         assert_eq!(SignedModuleLock::read(&bytes).unwrap(), signed);
         let mut tampered = bytes;
@@ -1574,27 +1801,34 @@ mod tests {
             lock,
             signing.verifying_key().to_bytes(),
             signing.sign(&lock_bytes).to_bytes(),
-        ).unwrap();
+        )
+        .unwrap();
         let package = Zmlib::new(signed, vec![("app".into(), payload.clone())])
             .unwrap()
             .with_type_declarations(vec![("app".into(), declaration.clone())])
             .unwrap();
         assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
-        assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
-            .unwrap()
-            .with_type_declarations(vec![("missing".into(), b"declare const x: int;".to_vec())])
-            .is_err());
-        assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
-            .unwrap()
-            .with_type_declarations(vec![
-                ("app".into(), b"declare function main(): int;".to_vec()),
-                ("app".into(), b"declare const x: int;".to_vec()),
-            ])
-            .is_err());
-        assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
-            .unwrap()
-            .with_type_declarations(vec![("app".into(), b"tampered declarations".to_vec())])
-            .is_err());
+        assert!(
+            Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
+                .unwrap()
+                .with_type_declarations(vec![("missing".into(), b"declare const x: int;".to_vec())])
+                .is_err()
+        );
+        assert!(
+            Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
+                .unwrap()
+                .with_type_declarations(vec![
+                    ("app".into(), b"declare function main(): int;".to_vec()),
+                    ("app".into(), b"declare const x: int;".to_vec()),
+                ])
+                .is_err()
+        );
+        assert!(
+            Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
+                .unwrap()
+                .with_type_declarations(vec![("app".into(), b"tampered declarations".to_vec())])
+                .is_err()
+        );
         let path = std::env::temp_dir().join(format!("zun-package-{}.zmlib", std::process::id()));
         package.write_file(&path).unwrap();
         let loaded = Zmlib::read_file(&path).unwrap();
@@ -1621,14 +1855,20 @@ mod tests {
     fn loader_verifies_fetched_content_before_registration() {
         struct Registry(Vec<u8>);
         impl ModuleFetcher for Registry {
-            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> { Ok(self.0.clone()) }
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
         }
         let bytes = Module::new().write();
         let registry = Registry(bytes.clone());
         let mut loader = ModuleLoader::new();
-        loader.load_fetched("remote", content_id(&bytes), &registry).unwrap();
+        loader
+            .load_fetched("remote", content_id(&bytes), &registry)
+            .unwrap();
         assert!(loader.get("remote").is_some());
-        assert!(loader.load_fetched("bad", content_id(b"other"), &registry).is_err());
+        assert!(loader
+            .load_fetched("bad", content_id(b"other"), &registry)
+            .is_err());
         let mut lock = ModuleLock::new();
         lock.push("remote-a", content_id(&bytes)).unwrap();
         lock.push("remote-b", content_id(&bytes)).unwrap();
@@ -1653,10 +1893,28 @@ mod tests {
     }
 
     #[test]
+    fn signed_registry_index_roundtrips_and_rejects_tampering() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut index = ModuleIndex::new();
+        index.push("app", content_id(b"app")).unwrap();
+        let signing = SigningKey::from_bytes(&[13u8; 32]);
+        let signature = signing.sign(&index.write()).to_bytes();
+        let signed =
+            SignedModuleIndex::new(index, signing.verifying_key().to_bytes(), signature).unwrap();
+        let bytes = signed.write();
+        assert_eq!(SignedModuleIndex::read(&bytes).unwrap(), signed);
+        let mut tampered = bytes;
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(SignedModuleIndex::read(&tampered).is_err());
+    }
+
+    #[test]
     fn loader_consumes_registry_index_with_content_verification() {
         struct Registry(Vec<u8>);
         impl ModuleFetcher for Registry {
-            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> { Ok(self.0.clone()) }
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
         }
         let bytes = Module::new().write();
         let id = content_id(&bytes);
@@ -1668,7 +1926,9 @@ mod tests {
 
         let mut bad = ModuleIndex::new();
         bad.push("indexed", content_id(b"different")).unwrap();
-        assert!(ModuleLoader::new().load_index(&bad, &Registry(Module::new().write())).is_err());
+        assert!(ModuleLoader::new()
+            .load_index(&bad, &Registry(Module::new().write()))
+            .is_err());
     }
 
     #[test]
@@ -1677,7 +1937,9 @@ mod tests {
         impl ModuleFetcher for Registry {
             fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
                 if name.ends_with(".d.ts") {
-                    return Err(LoadError::InvalidManifest(format!("metadata fetch attempted: {name}")));
+                    return Err(LoadError::InvalidManifest(format!(
+                        "metadata fetch attempted: {name}"
+                    )));
                 }
                 Ok(self.0.clone())
             }
@@ -1685,7 +1947,8 @@ mod tests {
         let bytes = Module::new().write();
         let mut lock = ModuleLock::new();
         lock.push("app", content_id(&bytes)).unwrap();
-        lock.push("app.d.ts", content_id(b"declare const x: int;")).unwrap();
+        lock.push("app.d.ts", content_id(b"declare const x: int;"))
+            .unwrap();
         let mut loader = ModuleLoader::new();
         loader.load_lock(&lock, &Registry(bytes)).unwrap();
         assert!(loader.get("app").is_some());
@@ -1931,13 +2194,14 @@ mod tests {
 
     #[test]
     fn cache_aware_manifest_loading_rejects_a_stale_prelude_before_io() {
-        let manifest = ModuleManifest::new("app", Vec::<String>::new())
-            .with_prelude_fingerprint(7);
+        let manifest = ModuleManifest::new("app", Vec::<String>::new()).with_prelude_fingerprint(7);
         let mut loader = ModuleLoader::new();
         let error = loader
             .load_manifest_with_prelude(&manifest, 8)
             .expect_err("stale prelude must be rejected");
-        assert!(matches!(error, LoadError::InvalidManifest(detail) if detail.contains("fingerprint")));
+        assert!(
+            matches!(error, LoadError::InvalidManifest(detail) if detail.contains("fingerprint"))
+        );
     }
 
     #[test]
