@@ -50,6 +50,13 @@ fn assert_equivalent(src: &str) {
 }
 
 #[test]
+fn static_class_method_uses_direct_call_without_receiver() {
+    assert_equivalent(
+        "class Math { static add(left: number, right: number): number { return left + right; } } function main(): number { return Math.add(19.0, 23.0); }",
+    );
+}
+
+#[test]
 fn array_for_of_preserves_interpreter_fallback_boundary() {
     let module = compile(
         "function main(): number { let values = new Array(2); values[0] = 20.0; values[1] = 22.0; for (let value of values) { print(value); } return 42.0; }",

@@ -378,6 +378,17 @@ pub enum Expr {
     },
     /// A variable reference.
     Ident(Name),
+    /// `Class.method(args)` static member call.
+    StaticMethodCall {
+        /// The class name used as the static namespace.
+        class: Name,
+        /// The static method name.
+        method: Name,
+        /// Arguments in source order.
+        args: Vec<Expr>,
+        /// Source location.
+        span: Span,
+    },
     /// `name = value`
     Assign {
         /// The assigned variable.
@@ -552,6 +563,7 @@ impl Expr {
             | Expr::Call { span, .. }
             | Expr::ComputedCall { span, .. }
             | Expr::MethodCall { span, .. }
+            | Expr::StaticMethodCall { span, .. }
             | Expr::OptionalField { span, .. }
             | Expr::OptionalMethodCall { span, .. }
             | Expr::Spread { span, .. }

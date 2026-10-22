@@ -165,11 +165,12 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            let is_static = self.eat(TokenKind::KwStatic);
             let is_extern = self.eat(TokenKind::KwExtern);
             let member_name = self.name("a field or method name");
             // A `(` after the name starts a method; `:` starts a field.
             if self.at(TokenKind::LParen) {
-                methods.push(self.method(member_name, is_extern));
+                methods.push(self.method(member_name, is_extern, is_static));
             } else {
                 self.expect(TokenKind::Colon, "`:` (fields require a type)");
                 let ty = TypeAnnotation {
@@ -195,7 +196,7 @@ impl Parser<'_> {
 
     /// Parse a method, given its already-consumed name. Shares the parameter,
     /// return-type, and body grammar with top-level functions.
-    fn method(&mut self, name: Name, is_extern: bool) -> Function {
+    fn method(&mut self, name: Name, is_extern: bool, is_static: bool) -> Function {
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
@@ -237,7 +238,7 @@ impl Parser<'_> {
             params,
             return_type,
             is_extern,
-            is_static: false,
+            is_static,
             external_module: None,
             is_async: false,
             is_generator: false,

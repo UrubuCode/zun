@@ -134,7 +134,11 @@ fn check_impl(
     for (class_idx, class) in program.classes.iter().enumerate() {
         for m in &class.methods {
             classes[class_idx].methods.push(next as u32);
-            functions.push(checker.check_function(next, m, Some(class_idx as u32)));
+            functions.push(checker.check_function(
+                next,
+                m,
+                (!m.is_static).then_some(class_idx as u32),
+            ));
             next += 1;
         }
     }
@@ -260,7 +264,8 @@ impl Checker<'_> {
         }
 
         // Method signatures follow the top-level functions, in (class, method)
-        // order, each with an implicit leading `this` parameter.
+        // order. Instance methods have an implicit leading `this`; static
+        // methods intentionally do not.
         self.methods_by_class = vec![HashMap::new(); program.classes.len()];
         for (class_idx, class) in program.classes.iter().enumerate() {
             for m in &class.methods {
@@ -276,7 +281,7 @@ impl Checker<'_> {
                     "FinalizationRegistry" => Ty::FinalizationRegistry,
                     _ => Ty::Instance(class_idx as u32),
                 };
-                let mut params = vec![receiver_ty];
+                let mut params = if m.is_static { Vec::new() } else { vec![receiver_ty] };
                 for p in &m.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
@@ -1689,6 +1694,38 @@ impl Checker<'_> {
                 args,
                 ..
             } => {
+                if let ast::Expr::Ident(class) = receiver.as_ref() {
+                    let class_name = self.text(class).to_string();
+                    if let Some(&class_index) = self.classes_by_name.get(&class_name) {
+                        if let Some(func) = self.method_of(class_index, self.text(method)) {
+                            let (param_tys, return_ty) = {
+                                let sig = &self.signatures[func as usize];
+                                (sig.params.clone(), sig.return_ty)
+                            };
+                            if param_tys.len() == args.len() {
+                                let mut checked = Vec::with_capacity(args.len());
+                                for (arg, &expected) in args.iter().zip(&param_tys) {
+                                    let value = self.check_expr(cx, arg);
+                                    if !expected.is_error()
+                                        && !value.ty.is_error()
+                                        && !self.is_assignable(value.ty, expected)
+                                    {
+                                        self.error(
+                                            value.span,
+                                            format!("argument type {:?} does not match {expected:?}", value.ty),
+                                        );
+                                    }
+                                    checked.push(value);
+                                }
+                                return hir::Expr {
+                                    kind: hir::ExprKind::StaticCall { func, args: checked },
+                                    ty: return_ty,
+                                    span,
+                                };
+                            }
+                        }
+                    }
+                }
                 let receiver = self.check_expr(cx, receiver);
                 let mname = self.text(method).to_string();
                 if receiver.ty == Ty::Array && mname == "pop" {
@@ -2046,6 +2083,38 @@ impl Checker<'_> {
                     } else {
                         hir::ExprKind::MethodCall { func, args: call_args }
                     },
+                    ty: return_ty,
+                    span,
+                }
+            }
+            ast::Expr::StaticMethodCall { class, method, args, .. } => {
+                let class_name = self.text(class).to_string();
+                let Some(&class_index) = self.classes_by_name.get(&class_name) else {
+                    self.error(class.span, format!("unknown class `{class_name}`"));
+                    return self.poison(span);
+                };
+                let Some(func) = self.method_of(class_index, self.text(method)) else {
+                    self.error(method.span, format!("unknown static method `{}`", self.text(method)));
+                    return self.poison(span);
+                };
+                let (param_tys, return_ty) = {
+                    let sig = &self.signatures[func as usize];
+                    (sig.params.clone(), sig.return_ty)
+                };
+                if param_tys.len() != args.len() {
+                    self.error(span, format!("static method `{}` expects {} arguments", self.text(method), param_tys.len()));
+                    return self.poison(span);
+                }
+                let mut checked = Vec::with_capacity(args.len());
+                for (arg, &expected) in args.iter().zip(&param_tys) {
+                    let value = self.check_expr(cx, arg);
+                    if !expected.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                        self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                    }
+                    checked.push(value);
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::StaticCall { func, args: checked },
                     ty: return_ty,
                     span,
                 }
@@ -2790,6 +2859,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
         Template { parts, .. } => parts.iter().map(|p| match p { ast::TemplatePart::Text(_) => 0, ast::TemplatePart::Expr(e) => count_yields_in_expr(e) }).sum(),
         Function(_) | Number { .. } | String { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
+        StaticMethodCall { args, .. } => args.iter().map(count_yields_in_expr).sum(),
     }
 }
 
@@ -2854,6 +2924,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         MethodCall { receiver, args, .. } => {
             count_awaits_in_expr(receiver) + args.iter().map(count_awaits_in_expr).sum::<usize>()
         }
+        StaticMethodCall { args, .. } => args.iter().map(count_awaits_in_expr).sum(),
         OptionalField { object, .. } => count_awaits_in_expr(object),
         OptionalMethodCall { object, args, .. } => {
             count_awaits_in_expr(object) + args.iter().map(count_awaits_in_expr).sum::<usize>()

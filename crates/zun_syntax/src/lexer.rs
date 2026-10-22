@@ -82,6 +82,8 @@ pub enum TokenKind {
     KwFrom,
     /// `extern`
     KwExtern,
+    /// `static`
+    KwStatic,
 
     // Punctuation
     /// `(`
@@ -392,6 +394,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "import" => TokenKind::KwImport,
         "from" => TokenKind::KwFrom,
         "extern" => TokenKind::KwExtern,
+        "static" => TokenKind::KwStatic,
         _ => TokenKind::Ident,
     }
 }

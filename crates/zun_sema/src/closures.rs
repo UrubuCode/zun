@@ -397,6 +397,9 @@ impl Checker<'_> {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
             }
+            ast::Expr::StaticMethodCall { args, .. } => {
+                for arg in args { self.collect_capture_expr(cx, parameters, arg, uses); }
+            }
             ast::Expr::OptionalMethodCall { object, args, .. } => {
                 self.collect_capture_expr(cx, parameters, object, uses);
                 for arg in args {
