@@ -242,6 +242,7 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
         ("zun:std:math", include_str!("../../../std/math.zun")),
         ("zun:std:string", include_str!("../../../std/string.zun")),
         ("zun:std:number", include_str!("../../../std/number.zun")),
+        ("zun:std:bigint", include_str!("../../../std/bigint.zun")),
         ("zun:std:array", include_str!("../../../std/array.zun")),
         ("zun:std:map", include_str!("../../../std/map.zun")),
         ("zun:std:set", include_str!("../../../std/set.zun")),

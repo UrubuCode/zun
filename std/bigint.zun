@@ -1,0 +1,10 @@
+// Thin source wrapper over the GC-owned BigInt runtime floor.
+import { bigIntAdd as add, bigIntSub as sub, bigIntMul as mul, bigIntCompare as compare, bigIntToString as toString } from "zun:collections";
+
+class BigInt {
+    extern add(other: BigInt): BigInt;
+    extern sub(other: BigInt): BigInt;
+    extern mul(other: BigInt): BigInt;
+    extern compare(other: BigInt): i32;
+    extern toString(): string;
+}

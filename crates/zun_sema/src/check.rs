@@ -286,6 +286,7 @@ impl Checker<'_> {
                     "Set" => Ty::Set,
                     "WeakMap" => Ty::WeakMap,
                     "RegExp" => Ty::RegExp,
+                    "BigInt" => Ty::BigInt,
                     "FinalizationRegistry" => Ty::FinalizationRegistry,
                     _ => Ty::Instance(class_idx as u32),
                 };
