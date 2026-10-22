@@ -62,6 +62,20 @@ fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
             Statement::ExpressionStatement(expression_statement) => statements.push(Stmt::Expr(
                 convert_expression(&expression_statement.expression)?,
             )),
+            Statement::IfStatement(if_statement) => {
+                let then_block = convert_block_statement(&if_statement.consequent)?;
+                let else_block = if_statement
+                    .alternate
+                    .as_ref()
+                    .map(convert_block_statement)
+                    .transpose()?;
+                statements.push(Stmt::If {
+                    cond: convert_expression(&if_statement.test)?,
+                    then_block,
+                    else_block,
+                    span: span(if_statement.span),
+                });
+            }
             _ => {
                 return Err(
                     "OXC adapter currently supports return and expression statements in branches"
@@ -292,9 +306,19 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         span: span(if_statement.span),
                     });
                 }
+                Statement::WhileStatement(while_statement) => {
+                    let body = convert_block_statement(&while_statement.body)
+                        .map_err(|error| vec![error])?;
+                    statements.push(Stmt::While {
+                        cond: convert_expression(&while_statement.test)
+                            .map_err(|error| vec![error])?,
+                        body,
+                        span: span(while_statement.span),
+                    });
+                }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, conditionals, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, while loops, return, and expression statements".into(),
                     ])
                 }
             }
@@ -500,6 +524,19 @@ mod tests {
                 else_block: Some(_),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn converts_while_statements_with_block_bodies() {
+        let program = parse_subset(
+            "function count(value) { while (value) { return 1; } return 0; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::While { .. }
         ));
     }
 }
