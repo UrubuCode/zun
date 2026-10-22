@@ -53,7 +53,11 @@ pub unsafe extern "C" fn zun_rt_alloc(
             ActiveNativeFrameScope::enter(registry, pc, caller_sp as *mut u8)
         };
         with_current_heap_mut(|heap| {
-            if heap.native_allocation_due() {
+            // Allocation count is a coarse fallback cadence; the nursery
+            // budget is the actual generational trigger. Large objects can
+            // exhaust that budget in a single call, so do not wait for the
+            // count-based cadence in that case.
+            if heap.native_allocation_due() || heap.nursery_collection_due() {
                 let layouts = heap.reference_slots.clone();
                 let ref_slots = |rid: u32| layouts.get(&rid).cloned().unwrap_or_default();
                 // SAFETY: the active frame and all registered roots remain
