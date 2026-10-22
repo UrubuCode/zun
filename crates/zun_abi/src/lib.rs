@@ -146,6 +146,40 @@ pub struct OwnedFunction {
     pub invoke: ZunInvoke,
 }
 
+impl OwnedFunction {
+    /// Invoke a registered function after checking its stable ABI shape.
+    ///
+    /// The native callback is only entered when every argument has the
+    /// declared type and zero reserved bits. Void functions return `None`;
+    /// non-void functions must write a matching, zero-reserved value.
+    pub fn invoke_checked(&self, args: &[ZunValue]) -> Result<Option<ZunValue>, i32> {
+        if args.len() != self.params.len() {
+            return Err(-20);
+        }
+        if args.iter().zip(&self.params).any(|(value, expected)| {
+            value.reserved != 0 || value.ty != *expected
+        }) {
+            return Err(-21);
+        }
+        let mut out = ZunValue {
+            ty: self.ret,
+            reserved: 0,
+            payload: 0,
+        };
+        let status = unsafe { (self.invoke)(args.as_ptr(), args.len(), &mut out) };
+        if status != 0 {
+            return Err(status);
+        }
+        if self.ret.0 == ZunTy::Void as u32 {
+            return Ok(None);
+        }
+        if out.reserved != 0 || out.ty != self.ret {
+            return Err(-22);
+        }
+        Ok(Some(out))
+    }
+}
+
 /// A namespace-scoped view over registered extension functions.
 #[derive(Debug, Clone)]
 pub struct ZunModule<'a> {
@@ -295,5 +329,33 @@ mod tests {
         assert!(owned.module("zun:other").func("answer").is_none());
         assert!(owned.find("zun:test", "missing").is_none());
         assert_eq!(unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) }, Err(-15));
+    }
+
+    unsafe extern "C" fn add_one(args: *const ZunValue, count: usize, out: *mut ZunValue) -> i32 {
+        if count != 1 {
+            return 19;
+        }
+        let value = unsafe { (*args).payload };
+        unsafe {
+            (*out).payload = value + 1;
+        }
+        0
+    }
+
+    #[test]
+    fn checked_invocation_validates_types_and_return_shape() {
+        let function = OwnedFunction {
+            module: "zun:test".into(),
+            key: "addOne".into(),
+            params: vec![ZunTy::U64.into()],
+            ret: ZunTy::U64.into(),
+            invoke: add_one,
+        };
+        let value = ZunValue { ty: ZunTy::U64.into(), reserved: 0, payload: 41 };
+        let result = function.invoke_checked(&[value]).expect("typed call").expect("value");
+        assert_eq!(result.payload, 42);
+        assert_eq!(function.invoke_checked(&[]), Err(-20));
+        assert_eq!(function.invoke_checked(&[ZunValue { ty: ZunTy::I64.into(), ..value }]), Err(-21));
+        assert_eq!(function.invoke_checked(&[ZunValue { reserved: 1, ..value }]), Err(-21));
     }
 }
