@@ -379,7 +379,8 @@ classes with identifier heritage, fields, simple methods, getter/setter kinds,
 optional members, computed member reads, member assignments, private members,
 spread arguments, await/yield expressions, `this` member access, parentheses,
 TypeScript casts, satisfies/non-null assertions, default parameters, rest parameters,
-and supported statement sequences;
+and supported statement sequences; the compiler now accepts that OXC-adapted
+Program directly through semantic checking and IL lowering;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
