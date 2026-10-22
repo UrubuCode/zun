@@ -722,6 +722,17 @@ mod tests {
     }
 
     #[test]
+    fn compiles_typed_native_oxc_locals_and_loop_bindings() {
+        let module = compile_with_oxc(
+            "function main(): int { let value: int = 0; for (let index: int = 0; index < 1; index = index + 1) { value = value + 7; } return value; }",
+            true,
+        )
+        .expect("typed OXC locals should compile");
+        assert!(module.entry_point.is_some());
+        assert!(!module.code.is_empty());
+    }
+
+    #[test]
     fn compiles_an_independent_module_without_the_implicit_prelude() {
         let module = compile_without_prelude("function main(): int { return 42; }", &[])
             .expect("standalone module should compile");
