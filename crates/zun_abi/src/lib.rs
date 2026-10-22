@@ -7,6 +7,7 @@
 //! retain those pointers unless a future ABI version explicitly permits it.
 
 use core::ffi::{c_char, c_void};
+use std::ffi::CStr;
 
 /// ABI contract version encoded in the exported registration symbol.
 pub const ZUN_ABI_V1: u32 = 1;
@@ -131,6 +132,62 @@ impl ZunRegistry {
 /// Signature every version-1 extension registration function must expose.
 pub type ZunRegisterV1 = unsafe extern "C" fn(registry: *mut ZunRegistry) -> i32;
 
+/// Owned copy of a descriptor published by a native extension.
+#[derive(Debug)]
+pub struct OwnedFunction {
+    pub module: String,
+    pub key: String,
+    pub params: Vec<ZunTyRepr>,
+    pub ret: ZunTyRepr,
+    pub invoke: ZunInvoke,
+}
+
+/// Registration storage that copies descriptor data before the callback ends.
+///
+/// The callback API is intended for a loader that owns the backing strings and
+/// parameter vectors for the lifetime of the loaded library. `OwnedRegistry`
+/// itself owns every copied string and parameter vector.
+#[derive(Default, Debug)]
+pub struct OwnedRegistry {
+    pub functions: Vec<OwnedFunction>,
+}
+
+impl OwnedRegistry {
+    pub fn new() -> Self { Self::default() }
+
+    pub fn as_registry(&mut self) -> ZunRegistry {
+        ZunRegistry {
+            abi_version: ZUN_ABI_V1,
+            context: self as *mut Self as *mut c_void,
+            register_function: Some(Self::capture),
+        }
+    }
+
+    unsafe extern "C" fn capture(
+        context: *mut c_void,
+        module: *const c_char,
+        function: *const ZunFunction,
+    ) -> i32 {
+        let Some(registry) = (unsafe { context.cast::<Self>().as_mut() }) else { return -10 };
+        if module.is_null() || function.is_null() { return -11; }
+        let function = unsafe { &*function };
+        if unsafe { function.validate() }.is_err() { return -12; }
+        let Ok(module) = (unsafe { CStr::from_ptr(module) }).to_str() else { return -13 };
+        let Ok(key) = (unsafe { CStr::from_ptr(function.key) }).to_str() else { return -14 };
+        let params = if function.param_count == 0 { Vec::new() } else {
+            unsafe { std::slice::from_raw_parts(function.params, function.param_count) }.to_vec()
+        };
+        registry.functions.push(OwnedFunction {
+            module: module.to_owned(),
+            key: key.to_owned(),
+            params,
+            ret: function.ret,
+            invoke: function.invoke.expect("validated invoke"),
+        });
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +222,19 @@ mod tests {
     fn registry_rejects_wrong_abi_version() {
         let registry = ZunRegistry { abi_version: 99, context: core::ptr::null_mut(), register_function: None };
         assert_eq!(registry.validate(), Err(-1));
+    }
+
+    #[test]
+    fn owned_registry_copies_descriptor_storage() {
+        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 { 0 }
+        static MODULE: &[u8] = b"zun:test\0";
+        static KEY: &[u8] = b"answer\0";
+        let function = ZunFunction { key: KEY.as_ptr() as *const c_char, params: core::ptr::null(), param_count: 0, ret: ZunTy::I32.into(), invoke: Some(invoke) };
+        let mut owned = OwnedRegistry::new();
+        let mut registry = owned.as_registry();
+        assert_eq!(unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) }, Ok(()));
+        assert_eq!(owned.functions[0].module, "zun:test");
+        assert_eq!(owned.functions[0].key, "answer");
+        assert_eq!(owned.functions[0].params, Vec::<ZunTyRepr>::new());
     }
 }
