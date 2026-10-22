@@ -17,11 +17,35 @@ use zun_module::{read_body, Module};
 /// calls remain conservative and retain the complete local method set until
 /// cross-module resolution supplies a narrower graph.
 pub fn reachable_methods(module: &Module) -> Result<HashSet<u32>, String> {
+    reachable_methods_with_roots(module, &[])
+}
+
+/// Compute reachability from the entry point plus explicitly preserved method
+/// RIDs supplied by a dynamic-import/reflection root manifest.
+pub fn reachable_methods_with_roots(
+    module: &Module,
+    roots: &[u32],
+) -> Result<HashSet<u32>, String> {
     let Some(entry) = module.entry_point else {
-        return Ok(HashSet::new());
+        if roots.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let mut worklist = roots.to_vec();
+        let mut reachable = HashSet::new();
+        return walk_reachable_methods(module, &mut worklist, &mut reachable);
     };
     let mut reachable = HashSet::new();
-    let mut worklist = vec![entry.rid()];
+    let mut worklist = Vec::with_capacity(roots.len() + 1);
+    worklist.push(entry.rid());
+    worklist.extend_from_slice(roots);
+    walk_reachable_methods(module, &mut worklist, &mut reachable)
+}
+
+fn walk_reachable_methods(
+    module: &Module,
+    worklist: &mut Vec<u32>,
+    reachable: &mut HashSet<u32>,
+) -> Result<HashSet<u32>, String> {
     while let Some(rid) = worklist.pop() {
         if !reachable.insert(rid) {
             continue;
@@ -60,7 +84,7 @@ pub fn reachable_methods(module: &Module) -> Result<HashSet<u32>, String> {
             }
         }
     }
-    Ok(reachable)
+    Ok(reachable.clone())
 }
 
 /// Deterministic reachability information produced by the trimmer.
@@ -74,7 +98,12 @@ pub struct TrimReport {
 
 /// Analyze a module without changing it, returning the trimmer's decisions.
 pub fn trim_report(module: &Module) -> Result<TrimReport, String> {
-    let reachable = reachable_methods(module)?;
+    trim_report_with_roots(module, &[])
+}
+
+/// Analyze reachability while preserving explicit dynamic roots.
+pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimReport, String> {
+    let reachable = reachable_methods_with_roots(module, roots)?;
     let mut reachable_methods: Vec<_> = reachable.iter().copied().collect();
     reachable_methods.sort_unstable();
     let removed_methods: Vec<_> = (1..=module.tables.method_defs.len() as u32)
@@ -92,7 +121,12 @@ pub fn trim_report(module: &Module) -> Result<TrimReport, String> {
 /// references remain valid. An unreachable row becomes an abstract/no-body
 /// row, while reachable bodies are copied into a compact code section.
 pub fn trim_module(module: &Module) -> Result<Module, String> {
-    let reachable: HashSet<u32> = trim_report(module)?.reachable_methods.into_iter().collect();
+    trim_module_with_roots(module, &[])
+}
+
+/// Remove unreachable bodies while retaining methods named by a root manifest.
+pub fn trim_module_with_roots(module: &Module, roots: &[u32]) -> Result<Module, String> {
+    let reachable: HashSet<u32> = trim_report_with_roots(module, roots)?.reachable_methods.into_iter().collect();
     let mut tables = module.tables.clone();
     let mut code = Vec::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
@@ -689,6 +723,21 @@ mod tests {
         assert!(report.removed_methods.contains(&2));
         assert!(!report.removed_methods.contains(&1));
         assert!(!report.removed_methods.contains(&3));
+    }
+
+    #[test]
+    fn preserve_roots_keep_dynamic_methods_during_trimming() {
+        let module = compile(
+            "function dynamic(): int { return 9; }\n\
+             function main(): int { return 7; }",
+        )
+        .expect("compile");
+        let report = trim_report_with_roots(&module, &[1]).expect("rooted trim report");
+        assert!(report.reachable_methods.contains(&1));
+        assert!(report.reachable_methods.contains(&2));
+        assert!(report.removed_methods.is_empty());
+        let trimmed = trim_module_with_roots(&module, &[1]).expect("rooted trim");
+        assert_ne!(trimmed.tables.method_defs[0].body_offset, u32::MAX);
     }
 
     #[test]
