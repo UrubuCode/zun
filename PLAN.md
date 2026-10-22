@@ -1388,12 +1388,13 @@ O(n^2 / 256) in GC over the run. For large live sets this dominates everything.
 The adaptive GC interval is implemented: it scales the next safepoint with the
 live-set and increases the interval when a collection reclaims nothing. This
 now also increases the nursery budget when the observed young survival rate is
-high. This removes the fixed-256 policy, but does not eliminate the underlying whole-heap
-  scan. The current collector already has a young/old policy, remembered-set barriers,
-  and an opt-in moving compaction path with relocation of interpreter values and
-  registered native/JIT roots. A fully incremental/generational collector remains the
-  long-term fix for avoiding repeated whole-heap scans. This remains the real performance
-ceiling for large programs today, independent of any individual data structure.
+high. The collector now has the planned young/old policy, remembered-set
+barriers, bump allocation, evacuating minor collections, and relocation of
+interpreter, native, and JIT roots; minor collections avoid rescanning the
+entire old generation. This removes the fixed-256 policy and the original
+whole-heap scan from the young-allocation path. Card-table scaling and a fully
+incremental major collector remain later optimizations for very large old
+generations; they are not missing pieces of the current generational policy.
 
 ### 7.3 Benchmarked opportunity sizing (2026-10-20)
 
