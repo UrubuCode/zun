@@ -476,8 +476,10 @@ The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable 
 link step when available.
 The codegen layer also exposes target-specific Cranelift object emission via
 `compile_object_for_target`; the existing host-target wrapper remains unchanged,
-the workspace enables Cranelift AArch64 object support, and cross-target
-runtime-library and linker provisioning remain outstanding.
+the workspace enables Cranelift AArch64 object support. Cross-target runtime
+artifacts are selected by target-qualified environment/package names; producing
+those artifacts and provisioning platform-specific linker inputs remain
+outstanding.
 Metadata objects now have the same target selection path, emitting target-matched
 ELF/COFF/Mach-O format and x86-64/AArch64 architecture where supported.
 `ZUN_TARGET` now selects that target from the CLI through object emission,
