@@ -332,8 +332,14 @@ fn link_aot_executable(
     let (return_type, print_value) = match zun_il::JitKind::from_byte(kind) {
         zun_il::JitKind::Num(zun_il::NumKind::F32) => ("f32", "value"),
         zun_il::JitKind::Num(zun_il::NumKind::F64) => ("f64", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::I8) => ("i8", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::U8) => ("u8", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::I16) => ("i16", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::U16) => ("u16", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::I32) => ("i32", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::U32) => ("u32", "value"),
+        zun_il::JitKind::Num(zun_il::NumKind::I64) => ("i64", "value"),
         zun_il::JitKind::Num(zun_il::NumKind::U64) => ("u64", "value"),
-        zun_il::JitKind::Num(_) => ("i64", "value"),
         zun_il::JitKind::Bool => ("i32", "value != 0"),
         zun_il::JitKind::Object
         | zun_il::JitKind::Array
