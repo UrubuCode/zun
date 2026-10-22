@@ -678,8 +678,8 @@ impl Interp<'_> {
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let args = pop_n(&mut stack, callee_body.param_count as usize)?;
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
@@ -742,8 +742,8 @@ impl Interp<'_> {
                     let mut args = values[..rest_index as usize].to_vec();
                     args.push(Value::Object(rest_array));
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
@@ -790,8 +790,8 @@ impl Interp<'_> {
                     let array = pop(&mut stack)?.as_object();
                     let args = vec![Value::Object(array)];
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
@@ -840,8 +840,8 @@ impl Interp<'_> {
                     let array = args.pop().ok_or(RunError::BadToken)?.as_object();
                     args.push(Value::Object(array));
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
@@ -932,8 +932,8 @@ impl Interp<'_> {
                         args
                     };
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
@@ -1009,8 +1009,8 @@ impl Interp<'_> {
                     call_args.extend(values[..rest_index].iter().cloned());
                     call_args.push(Value::Object(rest_array));
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
@@ -1125,8 +1125,8 @@ impl Interp<'_> {
                             .ok_or(RunError::BadToken)?
                     };
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(target, args, Some(&link)) {
@@ -1208,8 +1208,8 @@ impl Interp<'_> {
                     let mut args = values[..rest_index].to_vec();
                     args.push(Value::Object(rest_array));
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(target, args, Some(&link)) {
@@ -1275,8 +1275,8 @@ impl Interp<'_> {
                     };
                     values.push(Value::Object(rest_array));
                     let link = RootLink {
-                        stack: &stack,
-                        locals: &locals,
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
                     let result = match self.dispatch_outcome(target, values, Some(&link)) {

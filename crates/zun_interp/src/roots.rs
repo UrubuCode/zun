@@ -64,10 +64,8 @@ fn collect_with_policy(
     let mut roots: Vec<zun_gc::Obj> = Vec::new();
     roots.extend_from_slice(extra_roots);
     collect_frame_roots(stack, locals, &mut roots);
-    let mut link = parent;
-    while let Some(l) = link {
-        collect_frame_roots(l.stack, l.locals, &mut roots);
-        link = l.parent;
+    if let Some(link) = parent {
+        unsafe { link.append_roots(&mut roots) };
     }
     zun_gc::append_native_roots(&mut roots);
     let ref_fn = |type_rid: u32| types.reference_slots(type_rid);

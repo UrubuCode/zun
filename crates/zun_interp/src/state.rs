@@ -73,9 +73,37 @@ impl<'a> Interp<'a> {
 /// A link in the chain of suspended caller frames, used to find precise GC
 /// roots.
 pub(super) struct RootLink<'a> {
-    pub(super) stack: &'a [Value],
-    pub(super) locals: &'a [Value],
+    pub(super) stack: *mut [Value],
+    pub(super) locals: *mut [Value],
     pub(super) parent: Option<&'a RootLink<'a>>,
+}
+
+impl<'a> RootLink<'a> {
+    /// Read the frame roots while the linked activation remains live.
+    pub(super) unsafe fn append_roots(&self, roots: &mut Vec<Obj>) {
+        unsafe {
+            super::roots::collect_frame_roots(&*self.stack, &*self.locals, roots);
+        }
+        if let Some(parent) = self.parent {
+            unsafe { parent.append_roots(roots) };
+        }
+    }
+
+    /// Rewrite every linked activation after a moving collection.
+    pub(super) unsafe fn rewrite_managed_references(
+        &self,
+        relocation: &zun_gc::RelocationMap,
+    ) -> usize {
+        let mut rewritten = 0;
+        unsafe {
+            rewritten += Value::rewrite_managed_references(&mut *self.stack, relocation);
+            rewritten += Value::rewrite_managed_references(&mut *self.locals, relocation);
+        }
+        if let Some(parent) = self.parent {
+            rewritten += unsafe { parent.rewrite_managed_references(relocation) };
+        }
+        rewritten
+    }
 }
 
 /// Explicit interpreter activation record. Keeping the resumable pieces
