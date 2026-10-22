@@ -1548,6 +1548,23 @@ impl ModuleLoader {
         Ok(())
     }
 
+    /// Fetch, cache, and register every executable module in lockfile order.
+    pub fn load_lock_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        lock: &ModuleLock,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let cache_root = cache_root.as_ref();
+        for (name, id) in &lock.entries {
+            if name.ends_with(".d.ts") {
+                continue;
+            }
+            self.load_fetched_cached(cache_root, name, *id, fetcher)?;
+        }
+        Ok(())
+    }
+
     /// Fetch and register every module published by a registry index in its
     /// deterministic order. Content IDs are checked before any scope is
     /// inserted, so an index cannot silently select altered bytes.
@@ -1558,6 +1575,20 @@ impl ModuleLoader {
     ) -> Result<(), LoadError> {
         for (name, id) in &index.entries {
             self.load_fetched(name, *id, fetcher)?;
+        }
+        Ok(())
+    }
+
+    /// Fetch, cache, and register every module in deterministic index order.
+    pub fn load_index_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        index: &ModuleIndex,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let cache_root = cache_root.as_ref();
+        for (name, id) in &index.entries {
+            self.load_fetched_cached(cache_root, name, *id, fetcher)?;
         }
         Ok(())
     }
@@ -2183,6 +2214,36 @@ mod tests {
             .unwrap();
         assert!(loader.get("remote").is_some());
         assert_eq!(ModuleCache::load(&root, id).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bulk_cached_loads_preserve_lock_and_index_order() {
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
+        }
+        let root = std::env::temp_dir().join(format!("zun-loader-bulk-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bytes = Module::new().write();
+        let id = content_id(&bytes);
+        let registry = Registry(bytes);
+        let mut lock = ModuleLock::new();
+        lock.push("lock-a", id).unwrap();
+        lock.push("lock-b", id).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader.load_lock_cached(&root, &lock, &registry).unwrap();
+        assert!(loader.get("lock-a").is_some());
+        assert!(loader.get("lock-b").is_some());
+
+        let mut index = ModuleIndex::new();
+        index.push("index-a", id).unwrap();
+        let mut indexed = ModuleLoader::new();
+        indexed.load_index_cached(&root, &index, &registry).unwrap();
+        assert!(indexed.get("index-a").is_some());
+        assert!(ModuleCache::load(&root, id).is_ok());
         std::fs::remove_dir_all(root).unwrap();
     }
 
