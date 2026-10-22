@@ -519,6 +519,12 @@ impl ModuleLock {
     /// Verify every lock entry is present and intact in a content cache.
     pub fn verify_cache(&self, cache_root: impl AsRef<Path>) -> Result<(), LoadError> {
         for (name, id) in &self.entries {
+            if name.ends_with(".d.ts") {
+                // Declaration identities are authenticated by the signed lock
+                // and carried inside `.zmlib`; they are not executable cache
+                // modules and therefore have no `.zm` cache entry.
+                continue;
+            }
             ModuleCache::load(&cache_root, *id).map_err(|error| {
                 LoadError::InvalidManifest(format!("locked module `{name}` failed verification: {error}"))
             })?;
@@ -1422,6 +1428,10 @@ mod tests {
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
         decoded.verify_cache(&root).unwrap();
+        let mut metadata_lock = ModuleLock::new();
+        metadata_lock.push("app", app_id).unwrap();
+        metadata_lock.push("app.d.ts", content_id(b"declare const x: int;")).unwrap();
+        metadata_lock.verify_cache(&root).unwrap();
         assert_eq!(decoded.capabilities, vec![("app".to_owned(), vec!["fs".to_owned(), "net".to_owned()])]);
         assert!(decoded.require_capability("app", "fs").is_ok());
         assert!(decoded.require_capability("app", "camera").is_err());
