@@ -212,6 +212,8 @@ remains the final trust-anchor integration gate.
 `ModuleLoader::new_with_trusted_keys` retains the provisioned set for package loads.
 `SignedModuleLock::verify` now requires that external set; embedded-key-only
 verification is limited to signature parsing during envelope construction.
+`load_zmlib` rejects loaders without a provisioned key set, so package loading has
+no insecure self-declared-key fallback.
 `TrustedKeySet::rotate`/`revoke` provide the key-set transition hooks selected by
 the signed-index `VERSION` policy.
 
