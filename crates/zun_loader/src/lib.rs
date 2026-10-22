@@ -6,13 +6,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
 use zun_metadata::{TableKind, Token};
 use zun_module::{Module, ReadError};
 use zun_types::{CoreTypes, TypeError, TypeSystem};
 
 /// A deterministic content identifier for a serialized module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ContentId(pub u64);
+pub struct ContentId(pub [u8; 32]);
 
 /// Compute the loader's stable content identifier.
 ///
@@ -20,12 +21,7 @@ pub struct ContentId(pub u64);
 /// is a cache key only; signature verification remains a separate registry
 /// concern.
 pub fn content_id(bytes: &[u8]) -> ContentId {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    ContentId(hash)
+    ContentId(Sha256::digest(bytes).into())
 }
 
 /// A content-addressed cache of serialized module bytes.
