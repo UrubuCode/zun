@@ -80,6 +80,15 @@ fn requires_exception_bridge(op: Opcode) -> bool {
     matches!(op, Opcode::CastClass)
 }
 
+/// The current CFG lowering does not carry evaluation-stack values through
+/// branch edges. Keep virtual calls in such methods on Tier 0 until block
+/// parameters (or an equivalent stack-state merge) are implemented.
+fn branching_virtual_call(instrs: &[zun_il::Instruction]) -> bool {
+    instrs.iter().any(|i| {
+        matches!(i.opcode, Opcode::BranchTrue | Opcode::BranchFalse)
+    }) && instrs.iter().any(|i| i.opcode == Opcode::CallVirt)
+}
+
 fn string_builtin(instr: &zun_il::Instruction) -> bool {
     let Operand::Imm32(id) = instr.operand else { return false; };
     matches!(
@@ -694,6 +703,9 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             }
         }
         if instrs.iter().any(|instruction| requires_exception_bridge(instruction.opcode)) {
+            continue;
+        }
+        if branching_virtual_call(&instrs) {
             continue;
         }
         if instrs.iter().any(allocation_builtin)

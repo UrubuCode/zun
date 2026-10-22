@@ -2506,6 +2506,26 @@ fn string_suffix_helper_with_managed_parameters_is_jit_equivalent() {
 }
 
 #[test]
+fn string_helpers_with_short_circuit_remain_on_interpreter_fallback() {
+    let module = zun_compiler::compile(
+        "import { startsWith, endsWith } from \"zun:string\";\n\
+         class String { extern startsWith(needle: string): boolean; extern endsWith(needle: string): boolean; }\n\
+         function check(value: string, prefix: string, suffix: string): boolean { return value.startsWith(prefix) && value.endsWith(suffix); }\n\
+         function main(): boolean { return true; }",
+    )
+    .expect("compile short-circuit String helpers");
+    let check = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "check")
+        .map(|index| index as u32 + 1)
+        .expect("check method");
+    let jit = zun_codegen::Jit::compile(&module).expect("JIT keeps fallback methods valid");
+    assert!(!jit.is_compiled(check));
+}
+
+#[test]
 fn string_count_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
         "import { count } from \"zun:string\";\n\
