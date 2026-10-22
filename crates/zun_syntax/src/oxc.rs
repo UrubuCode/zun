@@ -611,7 +611,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     span: Span::new(identifier.span.start, identifier.span.end),
                                 },
                                 ty: None,
-                                default_value: None,
+                                default_value: parameter
+                                    .initializer
+                                    .as_ref()
+                                    .map(|initializer| convert_expression(initializer))
+                                    .transpose()
+                                    .map_err(|error| vec![error])?
+                                    .map(Box::new),
                                 is_rest: false,
                             });
                         }
@@ -877,17 +883,18 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     "OXC adapter currently supports identifier parameters".into(),
                 ]);
             };
-            if parameter.initializer.is_some() {
-                return Err(vec![
-                    "OXC adapter does not support default parameters yet".into(),
-                ]);
-            }
             params.push(crate::ast::Param {
                 name: Name {
                     span: span(identifier.span),
                 },
                 ty: None,
-                default_value: None,
+                default_value: parameter
+                    .initializer
+                    .as_ref()
+                    .map(|initializer| convert_expression(initializer))
+                    .transpose()
+                    .map_err(|error| vec![error])?
+                    .map(Box::new),
                 is_rest: false,
             });
         }
@@ -1386,5 +1393,11 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn converts_default_parameters() {
+        let program = parse_subset("function greet(name = 'zun') { return name; }", false).unwrap();
+        assert!(program.functions[0].params[0].default_value.is_some());
     }
 }
