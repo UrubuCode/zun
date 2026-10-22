@@ -18,6 +18,16 @@ use std::process::{Command, ExitCode};
 use zun_common::Diagnostic;
 use zun_module::{read_body, Module};
 
+fn aot_target() -> Result<target_lexicon::Triple, String> {
+    match std::env::var("ZUN_TARGET") {
+        Ok(value) => value
+            .parse()
+            .map_err(|error| format!("invalid ZUN_TARGET `{value}`: {error}")),
+        Err(std::env::VarError::NotPresent) => Ok(target_lexicon::Triple::host()),
+        Err(error) => Err(format!("cannot read ZUN_TARGET: {error}")),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
@@ -52,7 +62,7 @@ fn main() -> ExitCode {
                     preserve_roots: None,
                 },
             )
-        },
+        }
         [cmd, aot, cache_flag, cache, file]
             if cmd == "build" && aot == "--aot" && cache_flag == "--prelude-cache" =>
         {
@@ -65,7 +75,7 @@ fn main() -> ExitCode {
                     preserve_roots: None,
                 },
             )
-        },
+        }
         [cmd, flag, file] if cmd == "build" && flag == "--trim" => dispatch(
             file,
             Action::Build {
@@ -188,10 +198,11 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         path.extension().and_then(|extension| extension.to_str()),
         Some("mts") | Some("tsx")
     );
-    let use_oxc = oxc_typescript || matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some("js") | Some("mjs") | Some("cjs") | Some("jsx")
-    );
+    let use_oxc = oxc_typescript
+        || matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("js") | Some("mjs") | Some("cjs") | Some("jsx")
+        );
     let module_result = if use_oxc {
         if cached_prelude.is_some() {
             Err(vec![Diagnostic::error(
@@ -202,17 +213,18 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
     } else {
         match cached_prelude.as_ref() {
-        Some(prelude) => zun_compiler::compile_with_cached_std(&source, prelude)
-            .and_then(|loader| {
-                let scope = loader.get("app").ok_or_else(|| {
-                    vec![Diagnostic::error(
-                        "cached prelude compilation did not produce app module",
-                    )]
-                })?;
-                zun_module::Module::read(&scope.module().write())
-                    .map_err(|error| vec![Diagnostic::error(error.to_string())])
-            }),
-        None => zun_compiler::compile_with_default_std(&source),
+            Some(prelude) => {
+                zun_compiler::compile_with_cached_std(&source, prelude).and_then(|loader| {
+                    let scope = loader.get("app").ok_or_else(|| {
+                        vec![Diagnostic::error(
+                            "cached prelude compilation did not produce app module",
+                        )]
+                    })?;
+                    zun_module::Module::read(&scope.module().write())
+                        .map_err(|error| vec![Diagnostic::error(error.to_string())])
+                })
+            }
+            None => zun_compiler::compile_with_default_std(&source),
         }
     };
     let module = match module_result {
@@ -224,10 +236,16 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
     };
 
     let preserve_roots = match &action {
-        Action::Build { preserve_roots: Some(path), .. } => match read_preserve_roots(path) {
+        Action::Build {
+            preserve_roots: Some(path),
+            ..
+        } => match read_preserve_roots(path) {
             Ok(roots) => roots,
             Err(error) => {
-                eprintln!("zun: cannot read preserve roots {}: {error}", path.display());
+                eprintln!(
+                    "zun: cannot read preserve roots {}: {error}",
+                    path.display()
+                );
                 return ExitCode::FAILURE;
             }
         },
@@ -286,7 +304,9 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Action::Build { aot, prelude_cache, .. } => {
+        Action::Build {
+            aot, prelude_cache, ..
+        } => {
             let out = out_path(path);
             let manifest_out = out.with_extension("zman");
             if let Some(cache) = prelude_cache.as_ref() {
@@ -299,47 +319,66 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                         .map(|_| vec!["zun:std".to_owned()])
                         .unwrap_or_default();
                     let manifest = zun_loader::ModuleManifest::new(file, dependencies)
-                    .with_prelude_fingerprint(zun_prelude::fingerprint());
+                        .with_prelude_fingerprint(zun_prelude::fingerprint());
                     match manifest.write_file(&manifest_out) {
                         Ok(()) => {
                             println!("wrote {}", out.display());
                             println!("wrote {}", manifest_out.display());
                             if aot {
+                                let target = match aot_target() {
+                                    Ok(target) => target,
+                                    Err(error) => {
+                                        eprintln!("zun: {error}");
+                                        return ExitCode::FAILURE;
+                                    }
+                                };
                                 let object_out = out.with_extension("o");
-                                match zun_codegen::compile_object(&module) {
+                                match zun_codegen::compile_object_for_target(
+                                    &module,
+                                    target.clone(),
+                                ) {
                                     Ok(object) => match std::fs::write(&object_out, object) {
                                         Ok(()) => {
                                             println!("wrote {}", object_out.display());
                                             let metadata_out = out.with_extension("meta.o");
-                                            let metadata = match zun_codegen::compile_metadata_object(&module.write()) {
+                                            let metadata = match zun_codegen::compile_metadata_object_for_target(&module.write(), target.clone()) {
                                                 Ok(metadata) => metadata,
                                                 Err(error) => {
                                                     eprintln!("zun: cannot emit AOT metadata object: {error}");
                                                     return ExitCode::FAILURE;
                                                 }
                                             };
-                                            if let Err(error) = std::fs::write(&metadata_out, metadata) {
-                                                eprintln!("zun: cannot write {}: {error}", metadata_out.display());
+                                            if let Err(error) =
+                                                std::fs::write(&metadata_out, metadata)
+                                            {
+                                                eprintln!(
+                                                    "zun: cannot write {}: {error}",
+                                                    metadata_out.display()
+                                                );
                                                 return ExitCode::FAILURE;
                                             }
                                             println!("wrote {}", metadata_out.display());
-                                            let native_manifest = manifest.clone().with_native_object(
-                                                object_out
-                                                    .file_name()
-                                                    .expect("object output has a file name")
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                            ).with_metadata_object(
-                                                metadata_out
-                                                    .file_name()
-                                                    .expect("metadata output has a file name")
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                            );
+                                            let native_manifest = manifest
+                                                .clone()
+                                                .with_native_object(
+                                                    object_out
+                                                        .file_name()
+                                                        .expect("object output has a file name")
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                )
+                                                .with_metadata_object(
+                                                    metadata_out
+                                                        .file_name()
+                                                        .expect("metadata output has a file name")
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                );
                                             let native_manifest = match resolve_runtime_library() {
-                                                Some(runtime) => native_manifest.with_runtime_library(
-                                                    runtime_manifest_path(&runtime),
-                                                ),
+                                                Some(runtime) => native_manifest
+                                                    .with_runtime_library(runtime_manifest_path(
+                                                        &runtime,
+                                                    )),
                                                 None => native_manifest,
                                             };
                                             if let Err(error) =
@@ -357,6 +396,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                 Some(&metadata_out),
                                                 resolve_runtime_library().as_deref(),
                                                 &executable_out,
+                                                target.clone(),
                                                 module.entry_point.map(|token| token.rid()),
                                                 module.entry_point.and_then(|token| {
                                                     zun_module::read_body(
@@ -400,6 +440,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                                 &metadata_out,
                                                                 &runtime,
                                                                 &executable_out,
+                                                                target.clone(),
                                                                 return_kind,
                                                             ) {
                                                                 Ok(()) => {
@@ -441,8 +482,8 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                         let has_entrypoint = module.entry_point.is_some();
                                         if has_entrypoint {
                                             if let Some(runtime) = resolve_runtime_library() {
-                                            let metadata_out = out.with_extension("meta.o");
-                                            match zun_codegen::compile_metadata_object(&module.write()) {
+                                                let metadata_out = out.with_extension("meta.o");
+                                                match zun_codegen::compile_metadata_object_for_target(&module.write(), target.clone()) {
                                                 Ok(metadata) => {
                                                     if let Err(error) = std::fs::write(&metadata_out, metadata) {
                                                         eprintln!("zun: warning: cannot write fallback metadata object: {error}");
@@ -469,6 +510,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                             &metadata_out,
                                                             &runtime,
                                                             &executable_out,
+                                                            target.clone(),
                                                             return_kind,
                                                         ) {
                                                             Ok(()) => println!("wrote {}", executable_out.display()),
@@ -516,9 +558,10 @@ fn read_preserve_roots(path: &Path) -> Result<Vec<u32>, String> {
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
         .map(|(line, value)| {
-            value.trim().parse::<u32>().map_err(|error| {
-                format!("invalid method RID on line {}: {error}", line + 1)
-            })
+            value
+                .trim()
+                .parse::<u32>()
+                .map_err(|error| format!("invalid method RID on line {}: {error}", line + 1))
         })
         .collect()
 }
@@ -547,7 +590,7 @@ fn out_path(source: &Path) -> PathBuf {
 /// Resolve an external LLD linker without making it a mandatory host
 /// dependency. `ZUN_LLD` is an explicit override; otherwise use the copy
 /// shipped with the active Rust toolchain when available.
-fn resolve_lld() -> Option<PathBuf> {
+fn resolve_lld(target: target_lexicon::Triple) -> Option<PathBuf> {
     if let Some(path) = explicit_lld_override(std::env::var_os("ZUN_LLD").as_deref()) {
         return Some(path);
     }
@@ -567,7 +610,8 @@ fn resolve_lld() -> Option<PathBuf> {
         return Some(path);
     }
     let target_libdir = Command::new("rustc")
-        .args(["--print", "target-libdir"])
+        .args(["--print", "target-libdir", "--target"])
+        .arg(target.to_string())
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -628,6 +672,7 @@ fn link_aot_executable(
     metadata: Option<&Path>,
     runtime: Option<&Path>,
     executable: &Path,
+    target: target_lexicon::Triple,
     entry: Option<u32>,
     return_kind: Option<u8>,
 ) -> Result<(), String> {
@@ -675,6 +720,8 @@ fn link_aot_executable(
     let mut command = Command::new("rustc");
     command
         .arg(&launcher)
+        .arg("--target")
+        .arg(target.to_string())
         .arg("--crate-name")
         .arg("zun_aot")
         .arg("-C")
@@ -684,10 +731,14 @@ fn link_aot_executable(
         .arg("-o")
         .arg(executable);
     if let Some(metadata) = metadata {
-        command.arg("-C").arg(format!("link-arg={}", metadata.display()));
+        command
+            .arg("-C")
+            .arg(format!("link-arg={}", metadata.display()));
     }
     if let Some(runtime) = runtime {
-        command.arg("-C").arg(format!("link-arg={}", runtime.display()));
+        command
+            .arg("-C")
+            .arg(format!("link-arg={}", runtime.display()));
         if cfg!(windows) {
             command
                 .arg("-C")
@@ -696,12 +747,10 @@ fn link_aot_executable(
                 .arg("link-arg=advapi32.lib");
         }
     }
-    if let Some(lld) = resolve_lld() {
+    if let Some(lld) = resolve_lld(target) {
         command.arg("-C").arg(format!("linker={}", lld.display()));
     }
-    let result = command
-        .output()
-        .map_err(|error| error.to_string());
+    let result = command.output().map_err(|error| error.to_string());
     let _ = std::fs::remove_file(&launcher);
     let output = result?;
     if output.status.success() {
@@ -718,6 +767,7 @@ fn link_aot_fallback(
     metadata: &Path,
     runtime: &Path,
     executable: &Path,
+    target: target_lexicon::Triple,
     return_kind: Option<u8>,
 ) -> Result<(), String> {
     let launcher = executable.with_extension("aot.rs");
@@ -730,10 +780,15 @@ fn link_aot_fallback(
                 | zun_il::NumKind::U64
         ))
     );
-    let boolean = matches!(return_kind.map(zun_il::JitKind::from_byte), Some(zun_il::JitKind::Bool));
+    let boolean = matches!(
+        return_kind.map(zun_il::JitKind::from_byte),
+        Some(zun_il::JitKind::Bool)
+    );
     let floating = matches!(
         return_kind.map(zun_il::JitKind::from_byte),
-        Some(zun_il::JitKind::Num(zun_il::NumKind::F32 | zun_il::NumKind::F64))
+        Some(zun_il::JitKind::Num(
+            zun_il::NumKind::F32 | zun_il::NumKind::F64
+        ))
     );
     let source = if unsigned {
         "extern \"C\" { fn zun_rt_init(); fn zun_rt_shutdown(); fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u64; static zun_embedded_module: u8; static zun_embedded_module_len: u64; }\nfn main() { unsafe { zun_rt_init(); let value = zun_rt_run_embedded_u64(&zun_embedded_module, zun_embedded_module_len); zun_rt_shutdown(); if value == u64::MAX { std::process::exit(1); } println!(\"{}\", value); } }\n"
@@ -748,6 +803,8 @@ fn link_aot_fallback(
     let mut command = Command::new("rustc");
     command
         .arg(&launcher)
+        .arg("--target")
+        .arg(target.to_string())
         .arg("--crate-name")
         .arg("zun_aot_fallback")
         .arg("-C")
@@ -765,7 +822,7 @@ fn link_aot_fallback(
             .arg("-C")
             .arg("link-arg=advapi32.lib");
     }
-    if let Some(lld) = resolve_lld() {
+    if let Some(lld) = resolve_lld(target) {
         command.arg("-C").arg(format!("linker={}", lld.display()));
     }
     let result = command.output().map_err(|error| error.to_string());

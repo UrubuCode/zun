@@ -22,6 +22,7 @@ zun_module = { path = "../zun_module" }
 zun_il = { path = "../zun_il" }
 zun_prelude = { path = "../zun_prelude" }
 zun_codegen = { path = "../zun_codegen" }
+target-lexicon = { workspace = true }
 
 [lints]
 workspace = true
