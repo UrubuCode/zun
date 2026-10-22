@@ -430,6 +430,16 @@ impl HttpFetcher {
         signed.verify_against(trusted_key)?;
         Ok(signed.index)
     }
+
+    /// Fetch the registry index and verify it against a rotated trusted set.
+    pub fn fetch_verified_index_with_keys(
+        &self,
+        trusted: &TrustedKeySet,
+    ) -> Result<ModuleIndex, LoadError> {
+        let signed = self.fetch_signed_index()?;
+        signed.verify_with_keys(trusted)?;
+        Ok(signed.index)
+    }
 }
 
 impl ModuleFetcher for HttpFetcher {
