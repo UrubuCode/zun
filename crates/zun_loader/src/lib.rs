@@ -269,6 +269,73 @@ pub trait ModuleFetcher {
     fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError>;
 }
 
+/// A deterministic registry index mapping module identities to immutable
+/// content IDs. The index is metadata only; bytes remain in the cache or are
+/// supplied by a [`ModuleFetcher`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleIndex {
+    pub entries: Vec<(String, ContentId)>,
+}
+
+impl ModuleIndex {
+    const MAGIC: &'static [u8; 5] = b"ZINDX";
+    const VERSION: u16 = 1;
+
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn push(&mut self, name: impl Into<String>, id: ContentId) -> Result<(), LoadError> {
+        let name = name.into();
+        if name.is_empty() || self.entries.iter().any(|(existing, _)| existing == &name) {
+            return Err(LoadError::InvalidManifest(format!("duplicate or empty index entry `{name}`")));
+        }
+        self.entries.push((name, id));
+        Ok(())
+    }
+
+    pub fn resolve(&self, name: &str) -> Option<ContentId> {
+        self.entries.iter().find(|(entry, _)| entry == name).map(|(_, id)| *id)
+    }
+
+    pub fn write(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(Self::MAGIC);
+        bytes.extend_from_slice(&Self::VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for (name, id) in &self.entries {
+            write_name(&mut bytes, name);
+            bytes.extend_from_slice(&id.0);
+        }
+        bytes
+    }
+
+    pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        let mut cursor = 0;
+        if take(bytes, &mut cursor, 5) != Some(Self::MAGIC.as_slice()) {
+            return Err(LoadError::InvalidManifest("bad registry index magic".into()));
+        }
+        if read_u16(bytes, &mut cursor) != Some(Self::VERSION) {
+            return Err(LoadError::InvalidManifest("unsupported registry index version".into()));
+        }
+        let count = read_u32(bytes, &mut cursor)
+            .ok_or_else(|| LoadError::InvalidManifest("truncated registry index".into()))?;
+        let mut index = Self::new();
+        for _ in 0..count {
+            let name = read_name(bytes, &mut cursor)?;
+            let raw = take(bytes, &mut cursor, 32)
+                .ok_or_else(|| LoadError::InvalidManifest("truncated content ID".into()))?;
+            let mut id = [0u8; 32];
+            id.copy_from_slice(raw);
+            index.push(name, ContentId(id))?;
+        }
+        if cursor != bytes.len() {
+            return Err(LoadError::InvalidManifest("trailing registry index data".into()));
+        }
+        Ok(index)
+    }
+}
+
 /// The flattened dependency manifest consumed by the loader.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleManifest {
@@ -1290,6 +1357,20 @@ mod tests {
         all.load_lock(&lock, &registry).unwrap();
         assert!(all.get("remote-a").is_some());
         assert!(all.get("remote-b").is_some());
+    }
+
+    #[test]
+    fn registry_index_roundtrips_and_rejects_duplicate_names() {
+        let mut index = ModuleIndex::new();
+        let id = content_id(b"module");
+        index.push("@scope/module", id).unwrap();
+        assert_eq!(index.resolve("@scope/module"), Some(id));
+        assert_eq!(index.resolve("missing"), None);
+        assert!(index.push("@scope/module", id).is_err());
+        assert_eq!(ModuleIndex::read(&index.write()).unwrap(), index);
+        let mut trailing = index.write();
+        trailing.push(0);
+        assert!(ModuleIndex::read(&trailing).is_err());
     }
 
     #[test]
