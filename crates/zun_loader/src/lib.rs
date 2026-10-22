@@ -1565,6 +1565,58 @@ impl ModuleLoader {
         Ok(())
     }
 
+    /// Verify a signed lock against a release-pinned key set before fetching
+    /// any of its selected modules.
+    pub fn load_signed_lock_with_keys(
+        &mut self,
+        signed: &SignedModuleLock,
+        trusted: &TrustedKeySet,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        signed.verify_with_keys(trusted)?;
+        self.load_lock(&signed.lock, fetcher)
+    }
+
+    /// Verify a signed lock against a release-pinned key set, then cache and
+    /// register its modules only after the envelope has been authenticated.
+    pub fn load_signed_lock_with_keys_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        signed: &SignedModuleLock,
+        trusted: &TrustedKeySet,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        signed.verify_with_keys(trusted)?;
+        self.load_lock_cached(cache_root, &signed.lock, fetcher)
+    }
+
+    /// Verify a signed lock using this loader's retained key set before
+    /// fetching and registering its selected modules.
+    pub fn load_signed_lock_trusted(
+        &mut self,
+        signed: &SignedModuleLock,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.clone().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        self.load_signed_lock_with_keys(signed, &trusted, fetcher)
+    }
+
+    /// Verify a signed lock using this loader's retained key set, then cache
+    /// and register its selected modules.
+    pub fn load_signed_lock_trusted_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        signed: &SignedModuleLock,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let trusted = self.trusted_keys.clone().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        self.load_signed_lock_with_keys_cached(cache_root, signed, &trusted, fetcher)
+    }
+
     /// Fetch and register every module published by a registry index in its
     /// deterministic order. Content IDs are checked before any scope is
     /// inserted, so an index cannot silently select altered bytes.
@@ -2092,6 +2144,39 @@ mod tests {
         .unwrap();
         let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
         assert!(signed.verify_with_keys(&trusted).is_ok());
+    }
+
+    #[test]
+    fn trusted_signed_lock_caches_only_after_anchor_verification() {
+        use ed25519_dalek::{Signer, SigningKey};
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
+        }
+        let root = std::env::temp_dir().join(format!("zun-loader-signed-lock-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bytes = Module::new().write();
+        let id = content_id(&bytes);
+        let mut lock = ModuleLock::new();
+        lock.push("signed-lock", id).unwrap();
+        let signing = SigningKey::from_bytes(&[71u8; 32]);
+        let payload = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&payload).to_bytes(),
+        )
+        .unwrap();
+        let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader
+            .load_signed_lock_with_keys_cached(&root, &signed, &trusted, &Registry(bytes.clone()))
+            .unwrap();
+        assert!(loader.get("signed-lock").is_some());
+        assert_eq!(ModuleCache::load(&root, id).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
