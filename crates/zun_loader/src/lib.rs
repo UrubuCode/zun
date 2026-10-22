@@ -1510,6 +1510,29 @@ impl ModuleLoader {
         self.load_bytes(name.to_owned(), &bytes)
     }
 
+    /// Fetch, verify, persist, and register one module selected by a lockfile
+    /// entry. The cache write happens only after the fetched bytes match the
+    /// immutable content identity.
+    pub fn load_fetched_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        name: &str,
+        expected: ContentId,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        let bytes = fetcher.fetch(name)?;
+        if content_id(&bytes) != expected {
+            return Err(LoadError::InvalidManifest(format!(
+                "fetched module `{name}` has content identity mismatch"
+            )));
+        }
+        let mut cache = ModuleCache::default();
+        cache.store(cache_root, &bytes).map_err(|error| {
+            LoadError::InvalidManifest(format!("could not cache module `{name}`: {error}"))
+        })?;
+        self.load_bytes(name.to_owned(), &bytes)
+    }
+
     /// Fetch and register every module in lockfile order.
     pub fn load_lock(
         &mut self,
@@ -2140,6 +2163,27 @@ mod tests {
         all.load_lock(&lock, &registry).unwrap();
         assert!(all.get("remote-a").is_some());
         assert!(all.get("remote-b").is_some());
+    }
+
+    #[test]
+    fn loader_caches_verified_fetched_content_before_registration() {
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
+        }
+        let root = std::env::temp_dir().join(format!("zun-loader-fetch-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bytes = Module::new().write();
+        let id = content_id(&bytes);
+        let mut loader = ModuleLoader::new();
+        loader
+            .load_fetched_cached(&root, "remote", id, &Registry(bytes.clone()))
+            .unwrap();
+        assert!(loader.get("remote").is_some());
+        assert_eq!(ModuleCache::load(&root, id).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
