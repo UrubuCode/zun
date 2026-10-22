@@ -313,7 +313,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                             );
                                             let native_manifest = match resolve_runtime_library() {
                                                 Some(runtime) => native_manifest.with_runtime_library(
-                                                    runtime.to_string_lossy().into_owned(),
+                                                    runtime_manifest_path(&runtime),
                                                 ),
                                                 None => native_manifest,
                                             };
@@ -460,6 +460,20 @@ fn resolve_runtime_library() -> Option<PathBuf> {
         .into_iter()
         .map(|name| directory.join(name))
         .find(|path| path.is_file())
+}
+
+fn runtime_manifest_path(path: &Path) -> String {
+    if let Some(parent) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    {
+        if path.parent() == Some(parent.as_path()) {
+            if let Some(name) = path.file_name() {
+                return name.to_string_lossy().into_owned();
+            }
+        }
+    }
+    path.to_string_lossy().into_owned()
 }
 
 fn link_aot_executable(
