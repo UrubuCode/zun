@@ -4485,5 +4485,15 @@ mod method_tests {
         let result = run(&module, &mut output).expect("run static field read");
         assert!(matches!(result, Value::Void));
     }
+
+    #[test]
+    fn source_writes_and_reads_a_static_field() {
+        let module = zun_compiler::compile(
+            "class Math { static answer: number; } function main(): number { Math.answer = 42.0; return Math.answer; }",
+        ).expect("compile static field assignment");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run static field assignment");
+        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+    }
 }
 

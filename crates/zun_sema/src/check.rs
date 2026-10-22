@@ -2569,9 +2569,21 @@ impl Checker<'_> {
                 value,
                 ..
             } => {
+                let fname = self.text(field).to_string();
+                if let ast::Expr::Ident(class_name) = object.as_ref() {
+                    if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
+                        if let Some((field_slot, ty)) = self.static_field_of(class_index, &fname) {
+                            let mut value = self.check_expr(cx, value);
+                            coerce_numeric_literal(&mut value, ty);
+                            if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
+                                self.error(value.span, format!("cannot assign {:?} to static field of type {ty:?}", value.ty));
+                            }
+                            return hir::Expr { kind: hir::ExprKind::StaticFieldSet { class: class_index, field_slot, value: Box::new(value) }, ty, span };
+                        }
+                    }
+                }
                 let object = self.check_expr(cx, object);
                 let mut value = self.check_expr(cx, value);
-                let fname = self.text(field).to_string();
                 match object.ty {
                     Ty::Instance(class) => match self.field_of(class, &fname) {
                         Some((slot, ty)) => {
