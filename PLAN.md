@@ -377,9 +377,7 @@ Structured method-name/source-span frame resolution is also available to
 diagnostic consumers; interpreter operational faults now carry the nearest
 source frame through the public runner boundary, including recursive failures.
 Remaining gates:
-full AOT binary (linker + runtime bundle), native TS/JS front-end, full
-remote module transport/index integration (with a safe local directory
-fetcher, HTTP(S) module fetcher, and HTTP registry-index fetcher now implemented), dynamic-import warnings/fallback (conservative
+full AOT binary (linker + runtime bundle), native TS/JS front-end, dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented, with affected method names emitted in
 CLI warnings and dynamic instruction PCs retained by the IL decoder, with
 sequence-point source spans attached when available, reflective property access
