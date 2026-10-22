@@ -331,6 +331,25 @@ impl ModuleLock {
         Ok(())
     }
 
+    /// Return the capabilities granted to a module, in canonical order.
+    pub fn capabilities_for(&self, name: &str) -> &[String] {
+        self.capabilities
+            .iter()
+            .find(|(entry, _)| entry == name)
+            .map_or(&[], |(_, capabilities)| capabilities.as_slice())
+    }
+
+    /// Require one capability for a module before performing a host operation.
+    pub fn require_capability(&self, name: &str, capability: &str) -> Result<(), LoadError> {
+        if self.capabilities_for(name).iter().any(|granted| granted == capability) {
+            Ok(())
+        } else {
+            Err(LoadError::InvalidManifest(format!(
+                "module `{name}` lacks capability `{capability}`"
+            )))
+        }
+    }
+
     /// Serialize the lockfile deterministically.
     pub fn write(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -1192,6 +1211,8 @@ mod tests {
         assert_eq!(decoded, lock);
         decoded.verify_cache(&root).unwrap();
         assert_eq!(decoded.capabilities, vec![("app".to_owned(), vec!["fs".to_owned(), "net".to_owned()])]);
+        assert!(decoded.require_capability("app", "fs").is_ok());
+        assert!(decoded.require_capability("app", "camera").is_err());
         let path = std::env::temp_dir().join(format!("zun-lock-{}.zlock", std::process::id()));
         lock.write_file(&path).unwrap();
         assert_eq!(ModuleLock::read_file(&path).unwrap(), lock);
