@@ -76,7 +76,10 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
     let root = std::env::temp_dir().join(format!("zun-aot-fallback-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): string { return \"managed\"; }\n")
+    std::fs::write(
+        &source,
+        "function main(): string { if (true) { return \"managed\"; } return \"fallback\"; }\n",
+    )
         .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
