@@ -63,6 +63,20 @@ fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
             Statement::ExpressionStatement(expression_statement) => statements.push(Stmt::Expr(
                 convert_expression(&expression_statement.expression)?,
             )),
+            Statement::BreakStatement(break_statement) => statements.push(Stmt::Break {
+                label: break_statement.label.as_ref().map(|label| Name {
+                    span: span(label.span),
+                }),
+                span: span(break_statement.span),
+            }),
+            Statement::ContinueStatement(continue_statement) => {
+                statements.push(Stmt::Continue {
+                    label: continue_statement.label.as_ref().map(|label| Name {
+                        span: span(label.span),
+                    }),
+                    span: span(continue_statement.span),
+                })
+            }
             Statement::IfStatement(if_statement) => {
                 let then_block = convert_block_statement(&if_statement.consequent)?;
                 let else_block = if_statement
@@ -290,6 +304,22 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             .map_err(|error| vec![error])?,
                     ));
                 }
+                Statement::BreakStatement(break_statement) => {
+                    statements.push(Stmt::Break {
+                        label: break_statement.label.as_ref().map(|label| Name {
+                            span: span(label.span),
+                        }),
+                        span: span(break_statement.span),
+                    });
+                }
+                Statement::ContinueStatement(continue_statement) => {
+                    statements.push(Stmt::Continue {
+                        label: continue_statement.label.as_ref().map(|label| Name {
+                            span: span(label.span),
+                        }),
+                        span: span(continue_statement.span),
+                    });
+                }
                 Statement::IfStatement(if_statement) => {
                     let then_block = convert_block_statement(&if_statement.consequent)
                         .map_err(|error| vec![error])?;
@@ -426,7 +456,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, conditionals, while loops, for loops, for-of loops, do-while loops, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, loops, break, continue, return, and expression statements".into(),
                     ])
                 }
             }
@@ -690,5 +720,20 @@ mod tests {
             program.functions[0].body.statements[0],
             crate::ast::Stmt::DoWhile { .. }
         ));
+    }
+
+    #[test]
+    fn converts_loop_control_statements() {
+        let program = parse_subset(
+            "function scan(items) { for (const item of items) { if (item) { continue; } break; } }",
+            false,
+        )
+        .unwrap();
+        let crate::ast::Stmt::ForOf { ref body, .. } = program.functions[0].body.statements[0]
+        else {
+            panic!("expected for-of loop");
+        };
+        assert!(matches!(body.statements[0], crate::ast::Stmt::If { .. }));
+        assert!(matches!(body.statements[1], crate::ast::Stmt::Break { .. }));
     }
 }
