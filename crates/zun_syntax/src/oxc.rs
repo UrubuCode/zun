@@ -77,6 +77,10 @@ fn convert_block_statement(statement: &Statement<'_>) -> Result<Block, String> {
                     span: span(continue_statement.span),
                 })
             }
+            Statement::ThrowStatement(throw_statement) => statements.push(Stmt::Throw {
+                value: convert_expression(&throw_statement.argument)?,
+                span: span(throw_statement.span),
+            }),
             Statement::IfStatement(if_statement) => {
                 let then_block = convert_block_statement(&if_statement.consequent)?;
                 let else_block = if_statement
@@ -320,6 +324,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         span: span(continue_statement.span),
                     });
                 }
+                Statement::ThrowStatement(throw_statement) => {
+                    statements.push(Stmt::Throw {
+                        value: convert_expression(&throw_statement.argument)
+                            .map_err(|error| vec![error])?,
+                        span: span(throw_statement.span),
+                    });
+                }
                 Statement::IfStatement(if_statement) => {
                     let then_block = convert_block_statement(&if_statement.consequent)
                         .map_err(|error| vec![error])?;
@@ -456,7 +467,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, conditionals, loops, break, continue, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, loops, break, continue, throw, return, and expression statements".into(),
                     ])
                 }
             }
@@ -735,5 +746,14 @@ mod tests {
         };
         assert!(matches!(body.statements[0], crate::ast::Stmt::If { .. }));
         assert!(matches!(body.statements[1], crate::ast::Stmt::Break { .. }));
+    }
+
+    #[test]
+    fn converts_throw_statements() {
+        let program = parse_subset("function fail(error) { throw error; }", false).unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Throw { .. }
+        ));
     }
 }
