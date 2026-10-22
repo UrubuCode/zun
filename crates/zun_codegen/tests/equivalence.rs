@@ -17,6 +17,32 @@ fn compile(src: &str) -> zun_module::Module {
     zun_ilgen::lower(&hir)
 }
 
+#[test]
+fn typed_string_receiver_call_is_jit_equivalent() {
+    let module = zun_compiler::compile(
+        r#"import { length } from "zun:string";
+        class String {
+            extern length(): u64;
+            isShort(): boolean { return this.length() < 4; }
+        }
+        function measure(value: string): boolean { return value.isShort(); }
+        function main(): boolean { return true; }"#,
+    )
+    .expect("compile typed string receiver call");
+    let measure = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .map(|index| index as u32 + 1)
+        .expect("measure method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(jit.is_compiled(measure));
+    let mut heap = zun_gc::Heap::new();
+    let value = heap.intern_string(std::rc::Rc::from("zun"));
+    assert_eq!(jit.call_packed_with_heap(measure, &[value as u64], &mut heap).unwrap(), 1);
+}
+
 /// Run the entry point through the interpreter, returning its value.
 fn interp_entry(module: &zun_module::Module) -> Value {
     let mut out = CaptureOutput::default();

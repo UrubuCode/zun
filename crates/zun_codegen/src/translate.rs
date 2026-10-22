@@ -724,7 +724,11 @@ impl Translator<'_> {
                             (v, kind)
                         })
                         .collect();
-                    let inst = if instr.opcode == Opcode::CallVirt {
+                    let direct_string_call = instr.opcode == Opcode::CallVirt
+                        && arg_values
+                            .first()
+                            .is_some_and(|(_, kind)| *kind == JitKind::String);
+                    let inst = if instr.opcode == Opcode::CallVirt && !direct_string_call {
                         let receiver = arg_values.first().map(|(value, _)| *value).ok_or("virtual call receiver")?;
                         let slot = self.types.virtual_slot(rid).ok_or("virtual method slot")?;
                         let type_rid =
