@@ -348,6 +348,28 @@ pub trait ModuleFetcher {
     fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError>;
 }
 
+fn validate_registry_name(name: &str) -> Result<(), LoadError> {
+    if name.is_empty()
+        || name.contains(['\\', '?', '#', '%', ':'])
+        || name.chars().any(char::is_control)
+    {
+        return Err(LoadError::InvalidManifest(format!(
+            "unsafe registry module path `{name}`"
+        )));
+    }
+    let path = Path::new(name);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(LoadError::InvalidManifest(format!(
+            "unsafe registry module path `{name}`"
+        )));
+    }
+    Ok(())
+}
+
 /// Fetcher for a trusted local registry mirror. Module names are resolved
 /// beneath `root` and may not escape it through absolute or parent paths.
 #[derive(Debug, Clone)]
@@ -363,16 +385,8 @@ impl DirectoryFetcher {
 
 impl ModuleFetcher for DirectoryFetcher {
     fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
+        validate_registry_name(name)?;
         let relative = Path::new(name);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(LoadError::InvalidManifest(format!(
-                "unsafe registry module path `{name}`"
-            )));
-        }
         let path = self.root.join(relative).with_extension("zm");
         std::fs::read(path).map_err(LoadError::Io)
     }
@@ -449,17 +463,7 @@ impl HttpFetcher {
 
 impl ModuleFetcher for HttpFetcher {
     fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
-        let relative = Path::new(name);
-        if name.is_empty()
-            || relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(LoadError::InvalidManifest(format!(
-                "unsafe registry module path `{name}`"
-            )));
-        }
+        validate_registry_name(name)?;
         let url = format!("{}/{}.zm", self.base_url, name);
         use std::io::Read;
         let response = ureq::get(&url).call().map_err(|error| {
@@ -2597,6 +2601,9 @@ mod tests {
         assert!(HttpFetcher::new("file:///tmp/registry").is_err());
         let fetcher = HttpFetcher::new("https://registry.example.test/root").unwrap();
         assert!(fetcher.fetch("../escape").is_err());
+        assert!(fetcher.fetch("scope\\escape").is_err());
+        assert!(fetcher.fetch("scope/module?redirect=evil").is_err());
+        assert!(fetcher.fetch("scope/module#fragment").is_err());
         assert!(fetcher.fetch("").is_err());
     }
 
