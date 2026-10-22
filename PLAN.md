@@ -362,7 +362,8 @@ remote module transport/index integration (with a safe local directory
 fetcher, HTTP(S) module fetcher, and HTTP registry-index fetcher now implemented), dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented, with affected method names emitted in
 CLI warnings and dynamic instruction PCs retained by the IL decoder, with
-sequence-point source spans attached when available, and regression coverage),
+sequence-point source spans attached when available, reflective property access
+included, and regression coverage),
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
 `.zmlib` package envelope is now implemented, including optional per-module type
