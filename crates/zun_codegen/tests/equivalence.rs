@@ -5012,6 +5012,28 @@ fn managed_map_entries_uses_nested_managed_arrays() {
 }
 
 #[test]
+fn managed_set_values_and_entries_use_managed_arrays() {
+    let src = "import { setValues, setEntries } from \"zun:collections\"; function values(value: Set): Array { return setValues(value); } function entries(value: Set): Array { return setEntries(value); } function main(): boolean { return true; }";
+    let module = compile(src);
+    let values_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "values").map(|index| index as u32 + 1).expect("set values method");
+    let entries_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "entries").map(|index| index as u32 + 1).expect("set entries method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles set values and entries");
+    assert!(jit.is_compiled(values_rid));
+    assert!(jit.is_compiled(entries_rid));
+    let mut heap = zun_gc::Heap::new();
+    let set = heap.alloc_set();
+    heap.set_add(set, zun_core::Any::int(7));
+    let values_addr = jit.call_packed_with_heap(values_rid, &[set.addr() as u64], &mut heap).unwrap();
+    let entries_addr = jit.call_packed_with_heap(entries_rid, &[set.addr() as u64], &mut heap).unwrap();
+    let values = unsafe { zun_gc::Obj::from_addr(values_addr as *mut u64) };
+    let entries = unsafe { zun_gc::Obj::from_addr(entries_addr as *mut u64) };
+    let pair = heap.array_get(entries, 0).and_then(|value| value.as_object()).map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }).expect("set entry pair");
+    assert_eq!(heap.array_get(values, 0).and_then(|value| value.as_int()), Some(7));
+    assert_eq!(heap.array_get(pair, 0).and_then(|value| value.as_int()), Some(7));
+    assert_eq!(heap.array_get(pair, 1).and_then(|value| value.as_int()), Some(7));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\

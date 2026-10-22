@@ -108,6 +108,8 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "mapValues"
                 | "mapKeys"
                 | "mapEntries"
+                | "setValues"
+                | "setEntries"
                 | "mapGet"
                 | "mapHasI64"
                 | "mapHasI32"
