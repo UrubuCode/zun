@@ -1171,3 +1171,8 @@ equivalence. View construction remains a Tier 0 fallback until precise
 native-frame safepoints are connected.
 The same boundary now distinguishes element `length` from byte `byteLength`
 for `DataView` and all four typed-array view kinds.
+
+The prelude now exposes a deterministic content fingerprint for the future
+R2R-lite cache. Cache reuse remains deferred until the prelude is emitted as a
+separate module with stable metadata/RID boundaries; the current concatenated
+source path must not be cached as if it were independent.
