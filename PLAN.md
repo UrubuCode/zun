@@ -359,7 +359,7 @@ full AOT binary (linker + runtime bundle), native TS/JS front-end, full
 remote module transport/index integration (with a safe local directory
 fetcher, HTTP(S) module fetcher, and HTTP registry-index fetcher now implemented), dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented, with affected method names emitted in
-CLI warnings),
+CLI warnings and dynamic instruction PCs retained by the IL decoder),
 and true OSR. Explicit preserve-root reachability, trimming APIs, and the CLI
 preserve-root manifest path—including AOT builds—are now implemented. The signed
 `.zmlib` package envelope is now implemented, including optional per-module type
