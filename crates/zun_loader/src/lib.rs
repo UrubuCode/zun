@@ -1101,6 +1101,9 @@ impl ModuleLoader {
         fetcher: &impl ModuleFetcher,
     ) -> Result<(), LoadError> {
         for (name, id) in &lock.entries {
+            if name.ends_with(".d.ts") {
+                continue;
+            }
             self.load_fetched(name, *id, fetcher)?;
         }
         Ok(())
@@ -1605,6 +1608,27 @@ mod tests {
         let mut bad = ModuleIndex::new();
         bad.push("indexed", content_id(b"different")).unwrap();
         assert!(ModuleLoader::new().load_index(&bad, &Registry(Module::new().write())).is_err());
+    }
+
+    #[test]
+    fn loader_skips_metadata_entries_in_signed_lock_fetches() {
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
+                if name.ends_with(".d.ts") {
+                    return Err(LoadError::InvalidManifest(format!("metadata fetch attempted: {name}")));
+                }
+                Ok(self.0.clone())
+            }
+        }
+        let bytes = Module::new().write();
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(&bytes)).unwrap();
+        lock.push("app.d.ts", content_id(b"declare const x: int;")).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader.load_lock(&lock, &Registry(bytes)).unwrap();
+        assert!(loader.get("app").is_some());
+        assert!(loader.get("app.d.ts").is_none());
     }
 
     #[test]
