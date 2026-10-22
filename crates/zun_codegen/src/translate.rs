@@ -473,6 +473,8 @@ impl Translator<'_> {
                                 {
                                     return Err("string prefix/suffix expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(needle);
                                 let helper = if method_name == Some("startsWith") {
                                     self.string_starts_with_fref()
                                 } else {
@@ -489,6 +491,8 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String || needle_kind != JitKind::String {
                                     return Err("string indexOf expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(needle);
                                 let helper = self.string_index_of_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, needle]);
                                 let result = self.builder.inst_results(call)[0];
@@ -501,6 +505,8 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String || needle_kind != JitKind::String {
                                     return Err("string lastIndexOf expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(needle);
                                 let helper = self.string_last_index_of_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, needle]);
                                 let result = self.builder.inst_results(call)[0];
@@ -513,6 +519,8 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String || needle_kind != JitKind::String {
                                     return Err("string count expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(needle);
                                 let helper = self.string_count_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, needle]);
                                 let result = self.builder.inst_results(call)[0];
@@ -525,6 +533,8 @@ impl Translator<'_> {
                                 if left_kind != JitKind::String || right_kind != JitKind::String {
                                     return Err("string compare expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(left);
+                                self.builder.declare_value_needs_stack_map(right);
                                 let helper = self.string_compare_fref();
                                 let call = self.builder.ins().call(helper, &[left, right]);
                                 let result = self.builder.inst_results(call)[0];
