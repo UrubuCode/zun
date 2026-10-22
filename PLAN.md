@@ -1012,9 +1012,10 @@ the managed-array ABI where listed below; generic carrier operations remain
 Tier 0.
 The managed-array ABI is now available for `mapValues`, `mapKeys`,
 `mapEntries`, `setValues`, and `setEntries`, including nested entry pairs.
-`mapNew` and `setNew` remain explicitly deferred: their promotion must first
-be integrated with the global allocation/safepoint eligibility gate rather
-than being admitted as isolated builtins.
+`mapNew` and `setNew` now use the managed object-return ABI and participate in
+the allocation/safepoint gate, with equivalence coverage for the compiled
+constructor methods. Methods that combine construction with collection
+mutation or dynamic carriers remain on the Tier 0 boundary.
 
 The dynamic array ABI now has validated load and store helpers for the explicit
 two-word `Any` carrier. Proven scalar `UnboxAny` reads use a temporary
