@@ -315,8 +315,9 @@ heap/object/array/string
 + Map/Set lowering, eager-JIT-for-loops); closures; exceptions (unwind + rethrow
 routing); iteration; async/await; generators; BigInt; Group 2 syntax; DataView/typed
 arrays; static/private/accessors; Map/Set/WeakMap (ordered O(1) + ephemeron tracing);
-`Any`/`DynamicObject`; cached prelude; scalar + string FFI with declared ownership
-contracts; multi-module loader/manifest; minimal `std/` surfaces. Remaining gates:
+`Any`/`DynamicObject`; cached prelude plus the `zun:std` cached-module boundary;
+scalar + string FFI with declared ownership contracts; multi-module loader/manifest;
+minimal `std/` surfaces. Remaining gates:
 full AOT binary (linker + runtime bundle), native TS/JS front-end,
 module registry, sequence-point debug info, true OSR. The former `zun_napi` Node
 embedding crate has been removed (out of scope).
