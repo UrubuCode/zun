@@ -130,6 +130,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             value: boolean.value,
             span: span(boolean.span),
         }),
+        Expression::NullLiteral(null) => Ok(Expr::Null {
+            span: span(null.span),
+        }),
         Expression::TemplateLiteral(template) => {
             let mut parts = Vec::with_capacity(template.quasis.len() + template.expressions.len());
             for (index, quasi) in template.quasis.iter().enumerate() {
@@ -197,6 +200,12 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 span: span(logical.span),
             })
         }
+        Expression::ConditionalExpression(conditional) => Ok(Expr::Conditional {
+            condition: Box::new(convert_expression(&conditional.test)?),
+            when_true: Box::new(convert_expression(&conditional.consequent)?),
+            when_false: Box::new(convert_expression(&conditional.alternate)?),
+            span: span(conditional.span),
+        }),
         Expression::UnaryExpression(unary) => {
             let op = match unary.operator {
                 UnaryOperator::UnaryNegation => crate::ast::UnaryOp::Neg,
@@ -973,6 +982,22 @@ mod tests {
                 value: Some(crate::ast::Expr::Template { ref parts, .. }),
                 ..
             } if parts.len() == 3
+        ));
+    }
+
+    #[test]
+    fn converts_null_and_conditional_expressions() {
+        let program = parse_subset(
+            "function choose(value) { return value ? null : 0; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Conditional { .. }),
+                ..
+            }
         ));
     }
 }
