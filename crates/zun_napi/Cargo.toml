@@ -16,6 +16,7 @@ node-api = []
 
 [dependencies]
 zun_interp = { path = "../zun_interp" }
+zun_il = { path = "../zun_il" }
 zun_vm = { path = "../zun_vm" }
 
 [dev-dependencies]

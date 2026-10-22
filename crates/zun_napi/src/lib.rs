@@ -162,7 +162,7 @@ mod node_api {
         }
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
-        let Ok(zun_interp::value::Value::Int(value, _)) = zun_vm::execute(bytes) else {
+        let Ok(zun_interp::value::Value::Int(value, zun_il::NumKind::U64)) = zun_vm::execute(bytes) else {
             return invalid_call(env);
         };
         let mut result = core::ptr::null_mut();
@@ -419,7 +419,7 @@ pub unsafe extern "C" fn zun_host_execute_u64(
         Ok(value) => value,
         Err(_) => return ZUN_HOST_VM_ERROR,
     };
-    let zun_interp::value::Value::Int(value, _) = value else {
+    let zun_interp::value::Value::Int(value, zun_il::NumKind::U64) = value else {
         return ZUN_HOST_VM_ERROR;
     };
     // SAFETY: caller supplies writable storage for one u64.
