@@ -376,6 +376,8 @@ remains embedded in each `.zm` module. Declaration lock entries are excluded fro
 executable `.zm` cache verification. The former
 Metadata-only lock entries are also excluded from module fetch/loading.
 `zun_napi` Node embedding crate has been removed (out of scope).
+The loader now offers a cache-backed fetch path that verifies a module's content
+identity before persisting and registering it, enabling verified offline reuse.
 The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable on
 `PATH`, or the active toolchain's `rust-lld`, and passes it to the external final
 link step when available.
