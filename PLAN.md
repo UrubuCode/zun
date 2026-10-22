@@ -1084,6 +1084,15 @@ covered by the plan, or completion of the whole backlog.
 
 ## 7. Performance backlog (measured 2026-10-20)
 
+### 7.0 OXC front-end prototype (measured 2026-10-21)
+
+An isolated prototype using `oxc_parser` 0.155.0 successfully parsed a
+TypeScript function with the existing Zun-style type annotation. The prototype
+pulled 77 crates; the first release build/run took 4.181 s on the development
+machine. No dependency was added to the workspace: the adapter to Zun HIR is a
+separate front-end track and must be introduced behind an explicit integration
+boundary after its AST-to-HIR coverage and cold-start cost are measured.
+
 Optimizations found by benchmarking. These are **not** correctness or complexity
 defects — they are constant-factor / engine costs to improve after the section 6
 backlog. Both measured on this date.
