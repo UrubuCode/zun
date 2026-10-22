@@ -6,7 +6,7 @@
 //! arena-owned AST types.
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{Expression, Statement};
+use oxc_ast::ast::{BindingPattern, Expression, Statement};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use zun_common::Span;
@@ -91,15 +91,39 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 value: boolean.value,
                 span: span(boolean.span),
             },
+            Some(Expression::Identifier(identifier)) => Expr::Ident(Name {
+                span: span(identifier.span),
+            }),
             _ => {
                 return Err(vec![
-                    "OXC adapter currently supports literal return expressions".into(),
+            "OXC adapter currently supports literal or identifier return expressions".into(),
                 ])
             }
         };
+        let mut params = Vec::with_capacity(function.params.items.len());
+        for parameter in &function.params.items {
+            let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
+                return Err(vec![
+                    "OXC adapter currently supports identifier parameters".into(),
+                ]);
+            };
+            if parameter.initializer.is_some() {
+                return Err(vec![
+                    "OXC adapter does not support default parameters yet".into(),
+                ]);
+            }
+            params.push(crate::ast::Param {
+                name: Name {
+                    span: span(identifier.span),
+                },
+                ty: None,
+                default_value: None,
+                is_rest: false,
+            });
+        }
         functions.push(Function {
             name: Name { span: span(id.span) },
-            params: Vec::new(),
+            params,
             return_type: None,
             is_extern: false,
             is_static: false,
@@ -170,5 +194,18 @@ mod tests {
                 _ => panic!("unexpected converted literal"),
             }
         }
+    }
+
+    #[test]
+    fn converts_identifier_parameters_and_returns() {
+        let program = parse_subset("function identity(value) { return value; }", false).unwrap();
+        assert_eq!(program.functions[0].params.len(), 1);
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Ident(_)),
+                ..
+            }
+        ));
     }
 }
