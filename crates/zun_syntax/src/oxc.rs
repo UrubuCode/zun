@@ -269,6 +269,24 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 span: span(unary.span),
             })
         }
+        Expression::AwaitExpression(await_expression) => Ok(Expr::Await {
+            operand: Box::new(convert_expression(&await_expression.argument)?),
+            span: span(await_expression.span),
+        }),
+        Expression::YieldExpression(yield_expression) => {
+            if yield_expression.delegate {
+                return Err("OXC adapter does not support delegated yield yet".into());
+            }
+            Ok(Expr::Yield {
+                value: Box::new(match yield_expression.argument.as_ref() {
+                    Some(argument) => convert_expression(argument)?,
+                    None => Expr::Null {
+                        span: span(yield_expression.span),
+                    },
+                }),
+                span: span(yield_expression.span),
+            })
+        }
         Expression::AssignmentExpression(assignment) => {
             if assignment.operator != AssignmentOperator::Assign {
                 return Err("OXC adapter currently supports only simple assignments".into());
@@ -1244,6 +1262,24 @@ mod tests {
                 value: Some(crate::ast::Expr::Call { ref args, .. }),
                 ..
             } if matches!(args.first(), Some(crate::ast::Expr::Spread { .. }))
+        ));
+    }
+
+    #[test]
+    fn converts_await_and_yield_expressions() {
+        let async_program = parse_subset("async function wait(value) { return await value; }", false)
+            .unwrap();
+        assert!(matches!(
+            async_program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Await { .. }),
+                ..
+            }
+        ));
+        let generator = parse_subset("function* values() { yield 1; }", false).unwrap();
+        assert!(matches!(
+            generator.functions[0].body.statements[0],
+            crate::ast::Stmt::Expr(crate::ast::Expr::Yield { .. })
         ));
     }
 }
