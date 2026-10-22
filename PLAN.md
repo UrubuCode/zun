@@ -353,7 +353,8 @@ payload is retained by the final link.
 the AOT runtime-library input. The CLI accepts `ZUN_RUNTIME_LIB` and supplies
 that matching static library to the external AOT link when provisioned.
 Packaged CLIs also discover `zun_vm.lib` or `libzun_vm.a` beside the executable
-when no override is set.
+when no override is set, and record adjacent libraries by portable filename in
+the manifest.
 The runtime static library exports `zun_rt_init`/`zun_rt_shutdown`, and the
 generated launcher calls those hooks around the native entry point when the
 library is linked.
