@@ -159,6 +159,29 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
             span: Span::new(if_statement.span.start, if_statement.span.end),
             statements: vec![convert_if_statement(source, if_statement)?],
         }),
+        Statement::VariableDeclaration(declaration) => {
+            let mut statements = Vec::with_capacity(declaration.declarations.len());
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                    return Err("OXC adapter currently supports identifier local bindings".into());
+                };
+                let Some(initializer) = declarator.init.as_ref() else {
+                    return Err("OXC adapter requires an initializer for local bindings".into());
+                };
+                statements.push(Stmt::Let {
+                    name: Name {
+                        span: Span::new(identifier.span.start, identifier.span.end),
+                    },
+                    ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                    init: convert_expression(initializer)?,
+                    span: Span::new(declarator.span.start, declarator.span.end),
+                });
+            }
+            Ok(Block {
+                span: Span::new(declaration.span.start, declaration.span.end),
+                statements,
+            })
+        }
         Statement::ReturnStatement(return_statement) => Ok(Block {
             span: Span::new(return_statement.span.start, return_statement.span.end),
             statements: vec![Stmt::Return {
@@ -1391,6 +1414,23 @@ mod tests {
                 .as_ref()
                 .and_then(|block| block.statements.first()),
             Some(crate::ast::Stmt::Return { .. })
+        ));
+    }
+
+    #[test]
+    fn converts_single_statement_local_branch() {
+        let program = parse_subset(
+            "function main(value) { if (value) var result: int = 42; }",
+            true,
+        )
+        .unwrap();
+        let crate::ast::Stmt::If { ref then_block, .. } = program.functions[0].body.statements[0]
+        else {
+            panic!("expected an if statement");
+        };
+        assert!(matches!(
+            then_block.statements.first(),
+            Some(crate::ast::Stmt::Let { ty: Some(_), .. })
         ));
     }
 

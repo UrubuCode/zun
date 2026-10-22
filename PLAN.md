@@ -425,6 +425,7 @@ same typed annotation and source-span preservation rules;
 `else if` chains are lowered into nested typed `Stmt::If` blocks;
 single-statement return, expression, and throw branches are wrapped in typed
 blocks using the same source spans;
+single-statement initialized `var` branches are lowered to typed local blocks;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
