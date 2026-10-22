@@ -1017,6 +1017,8 @@ fields. The relocatable/AOT backend now emits `ConstStr` literals into
 relocatable Cranelift data objects rather than embedding process-local pointers.
 The AOT launcher still requires the managed runtime/helper bridge for
 string-returning entrypoints and remains restricted to scalar returns.
+Its scalar launcher now preserves `u64` as an unsigned C ABI result, including
+values above `i64::MAX`, with an end-to-end `u64::MAX` test.
 Parameter/field string handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
 are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
