@@ -169,7 +169,25 @@ impl ModuleCache {
             Err(error) => return Err(CacheError::Io(error)),
         };
         if needs_write {
-            std::fs::write(path, bytes)?;
+            let temporary = root.join(format!(".{}.zm.tmp", id.hex()));
+            if let Err(error) = std::fs::write(&temporary, bytes) {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(CacheError::Io(error));
+            }
+            match std::fs::rename(&temporary, &path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    std::fs::remove_file(&path)?;
+                    if let Err(error) = std::fs::rename(&temporary, &path) {
+                        let _ = std::fs::remove_file(&temporary);
+                        return Err(CacheError::Io(error));
+                    }
+                }
+                Err(error) => {
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(CacheError::Io(error));
+                }
+            }
         }
         Ok(id)
     }
