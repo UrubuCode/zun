@@ -718,7 +718,7 @@ impl Translator<'_> {
                         .split_off(stack.len() - nargs)
                         .into_iter()
                         .map(|(v, kind)| {
-                            if kind == JitKind::Object {
+                            if matches!(kind, JitKind::Object | JitKind::String) {
                                 self.builder.declare_value_needs_stack_map(v);
                             }
                             (v, kind)
@@ -840,7 +840,7 @@ impl Translator<'_> {
                             stack.push((carrier, kind));
                         } else {
                             let r = results[0];
-                            if kind == JitKind::Object {
+                            if matches!(kind, JitKind::Object | JitKind::String) {
                                 self.builder.declare_value_needs_stack_map(r);
                             }
                             stack.push((r, kind));
