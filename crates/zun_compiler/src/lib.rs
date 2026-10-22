@@ -419,6 +419,15 @@ fn compile_source_with_externals(
 ) -> Result<Module, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let ast = zun_syntax::parse(source, &mut diagnostics);
+    compile_program_with_externals(source, ast, diagnostics, external_functions)
+}
+
+fn compile_program_with_externals(
+    source: &str,
+    ast: zun_syntax::ast::Program,
+    mut diagnostics: Vec<Diagnostic>,
+    external_functions: &[zun_sema::check::ExternalFunction],
+) -> Result<Module, Vec<Diagnostic>> {
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
     }
@@ -427,6 +436,35 @@ fn compile_source_with_externals(
         return Err(diagnostics);
     }
     Ok(zun_ilgen::lower(&hir))
+}
+
+/// Compile the subset accepted by the native OXC frontend.
+///
+/// OXC owns JavaScript/TypeScript parsing for this entry point; the resulting
+/// Zun AST still goes through the same semantic checker and IL lowering as the
+/// established parser path.
+pub fn compile_with_oxc(
+    source: &str,
+    typescript: bool,
+) -> Result<Module, Vec<Diagnostic>> {
+    compile_with_oxc_and_externals(source, typescript, &[])
+}
+
+/// Compile OXC-adapted source while supplying the normal external-function
+/// declarations used by linked modules.
+pub fn compile_with_oxc_and_externals(
+    source: &str,
+    typescript: bool,
+    external_functions: &[zun_sema::check::ExternalFunction],
+) -> Result<Module, Vec<Diagnostic>> {
+    let ast = zun_syntax::oxc::parse_subset(source, typescript)
+        .map_err(|errors| {
+            errors
+                .into_iter()
+                .map(Diagnostic::error)
+                .collect::<Vec<_>>()
+        })?;
+    compile_program_with_externals(source, ast, Vec::new(), external_functions)
 }
 
 /// Compile one named source into a loadable module scope.
@@ -663,6 +701,14 @@ mod tests {
     #[test]
     fn compiles_a_minimal_entry_point() {
         let module = compile("function main(): int { return 7; }").expect("compile");
+        assert!(module.entry_point.is_some());
+        assert!(!module.code.is_empty());
+    }
+
+    #[test]
+    fn compiles_a_native_oxc_frontend_module() {
+        let module = compile_with_oxc("function main() {}", false)
+            .expect("OXC-adapted source should compile");
         assert!(module.entry_point.is_some());
         assert!(!module.code.is_empty());
     }
