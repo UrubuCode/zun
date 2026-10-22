@@ -2656,6 +2656,30 @@ fn string_to_boolean_uses_interpreter_fallback() {
 }
 
 #[test]
+fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
+    let module = zun_compiler::compile(
+        "import { toInt, toFloat, toBoolean } from \"zun:string\";\n\
+         class String { extern toInt(): int; extern toFloat(): number; extern toBoolean(): boolean; }\n\
+         function convertInt(value: string): int { return value.toInt(); }\n\
+         function convertFloat(value: string): number { return value.toFloat(); }\n\
+         function convertBoolean(value: string): boolean { return value.toBoolean(); }\n\
+         function main(): int { return 0; }",
+    )
+    .expect("compile typed String conversions");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds String conversions");
+    for name in ["convertInt", "convertFloat", "convertBoolean"] {
+        let rid = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .map(|index| index as u32 + 1)
+            .expect("conversion method");
+        assert!(jit.is_compiled(rid), "{name} should use native lowering");
+    }
+}
+
+#[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
         "import { toFixed } from \"zun:number\";\n\

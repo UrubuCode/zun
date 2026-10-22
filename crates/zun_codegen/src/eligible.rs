@@ -286,10 +286,19 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
         .method_defs
         .get(token.rid() as usize - 1)
         .is_some_and(|method| {
-            matches!(
-                module.strings.get(method.name),
-                "length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf" | "lastIndexOf" | "count" | "compare" | "concat" | "substring" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "repeat" | "reverse" | "padStart" | "padEnd" | "replace"
-            )
+            module
+                .tables
+                .type_defs
+                .iter()
+                .any(|ty| {
+                    token.rid() >= ty.method_start
+                        && token.rid() < ty.method_end
+                        && module.strings.get(ty.name) == "String"
+                        && matches!(
+                            module.strings.get(method.name),
+                            "length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf" | "lastIndexOf" | "count" | "compare" | "concat" | "substring" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "repeat" | "reverse" | "padStart" | "padEnd" | "replace" | "toInt" | "toFloat" | "toBoolean"
+                        )
+                })
         })
     {
         // Primitive-backed String.length is lowered directly by the JIT and
