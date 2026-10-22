@@ -1,7 +1,7 @@
 //! Loading and registration of trusted Zun native extensions.
 
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
 
 use zun_abi::{OwnedFunction, OwnedRegistry, ZunRegisterV1, ZunRegistry};
 
@@ -49,7 +49,10 @@ impl ExtensionResolver {
             let extension = unsafe { LoadedExtension::load_named(name) }?;
             self.extensions.insert(name.to_owned(), extension);
         }
-        Ok(self.extensions.get(name).expect("extension inserted or cached"))
+        Ok(self
+            .extensions
+            .get(name)
+            .expect("extension inserted or cached"))
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -111,7 +114,9 @@ impl LoadedExtension {
         // this call returns; the extension contract requires a valid v1 table.
         let status = unsafe { register(&mut host_registry) };
         if status != 0 {
-            return Err(FfiError::new(format!("extension registration failed with status {status}")));
+            return Err(FfiError::new(format!(
+                "extension registration failed with status {status}"
+            )));
         }
         drop(register);
         Ok(Self { library, registry })
