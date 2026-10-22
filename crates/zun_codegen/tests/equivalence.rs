@@ -4764,6 +4764,21 @@ fn proven_i32_array_pop_and_push_are_jit_equivalent() {
 }
 
 #[test]
+fn proven_i64_array_access_uses_the_signed_i64_abi() {
+    let src = "function write(values: Array, value: i64): i64 { values[0] = value; return values[0] as i64; }\n\
+               function main(): i64 { let values = new Array(1); return write(values, -9); }";
+    let module = compile(src);
+    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "write").map(|index| index as u32 + 1).expect("write method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i64 array access");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let array = heap.alloc_array(1);
+    let value = jit.call_packed_with_heap(rid, &[array.addr() as u64, (-9i64) as u64], &mut heap).unwrap();
+    assert_eq!(value as i64, -9);
+    assert_eq!(heap.array_get(array, 0).and_then(|item| item.as_int()), Some(-9));
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\

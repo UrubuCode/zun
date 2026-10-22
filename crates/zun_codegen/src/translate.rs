@@ -1764,6 +1764,7 @@ impl Translator<'_> {
                     let carrier_load = self.method_return_kind == JitKind::Other
                         || instrs.get(i + 1).is_some_and(|next| next.opcode == Opcode::UnboxAny);
                     let load_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
+                    let load_i64 = self.method_return_kind == JitKind::Num(NumKind::I64);
                     let load_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);
                     let load_bool = self.method_return_kind == JitKind::Bool;
                     let load_object = self.method_return_kind == JitKind::Object;
@@ -1785,7 +1786,7 @@ impl Translator<'_> {
                         self.array_load_bool_fref()
                     } else if load_i32 {
                         self.array_load_i32_fref()
-                    } else if load_u64 {
+                    } else if load_u64 || load_i64 {
                         self.array_load_u64_fref()
                     } else {
                         self.array_load_f64_fref()
@@ -1795,6 +1796,8 @@ impl Translator<'_> {
                         JitKind::Object
                     } else if load_u64 {
                         JitKind::Num(NumKind::U64)
+                    } else if load_i64 {
+                        JitKind::Num(NumKind::I64)
                     } else if load_bool {
                         JitKind::Bool
                     } else if load_i32 {
@@ -1810,10 +1813,11 @@ impl Translator<'_> {
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
                     let store_object = matches!(value_kind, JitKind::Object | JitKind::Array);
                     let store_u64 = value_kind == JitKind::Num(NumKind::U64);
+                    let store_i64 = value_kind == JitKind::Num(NumKind::I64);
                     let store_i32 = value_kind == JitKind::Num(NumKind::I32);
                     let store_bool = value_kind == JitKind::Bool;
                     if !matches!(array_kind, JitKind::Object | JitKind::Array)
-                        || (!store_object && !store_u64 && !store_i32 && !store_bool && value_kind != JitKind::Num(NumKind::F64))
+                        || (!store_object && !store_u64 && !store_i64 && !store_i32 && !store_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array store requires object and f64/u64 value".into());
                     }
@@ -1825,7 +1829,7 @@ impl Translator<'_> {
                     };
                     let store = if store_object {
                         self.array_store_object_fref()
-                    } else if store_u64 {
+                    } else if store_u64 || store_i64 {
                         self.array_store_u64_fref()
                     } else if store_bool {
                         self.array_store_bool_fref()
@@ -1844,6 +1848,7 @@ impl Translator<'_> {
                     }
                     self.builder.declare_value_needs_stack_map(array);
                     let pop_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
+                    let pop_i64 = self.method_return_kind == JitKind::Num(NumKind::I64);
                     let pop_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);
                     let pop_bool = self.method_return_kind == JitKind::Bool;
                     let pop_object = self.method_return_kind == JitKind::Object;
@@ -1851,7 +1856,7 @@ impl Translator<'_> {
                         self.array_pop_object_fref()
                     } else if pop_bool {
                         self.array_pop_bool_fref()
-                    } else if pop_u64 {
+                    } else if pop_u64 || pop_i64 {
                         self.array_pop_u64_fref()
                     } else if pop_i32 {
                         self.array_pop_i32_fref()
@@ -1864,7 +1869,7 @@ impl Translator<'_> {
                     }
                     stack.push((
                         self.builder.inst_results(inst)[0],
-                        if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else if pop_i32 { JitKind::Num(NumKind::I32) } else { JitKind::Num(NumKind::F64) },
+                        if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else if pop_i64 { JitKind::Num(NumKind::I64) } else if pop_i32 { JitKind::Num(NumKind::I32) } else { JitKind::Num(NumKind::F64) },
                     ));
                 }
                 Opcode::ArrayPush => {
@@ -1872,10 +1877,11 @@ impl Translator<'_> {
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
                     let push_object = value_kind == JitKind::Object;
                     let push_u64 = value_kind == JitKind::Num(NumKind::U64);
+                    let push_i64 = value_kind == JitKind::Num(NumKind::I64);
                     let push_i32 = value_kind == JitKind::Num(NumKind::I32);
                     let push_bool = value_kind == JitKind::Bool;
                     if !matches!(array_kind, JitKind::Object | JitKind::Array)
-                        || (!push_object && !push_u64 && !push_i32 && !push_bool && value_kind != JitKind::Num(NumKind::F64))
+                        || (!push_object && !push_u64 && !push_i64 && !push_i32 && !push_bool && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array push requires object and f64/u64 value".into());
                     }
@@ -1887,7 +1893,7 @@ impl Translator<'_> {
                         self.array_push_object_fref()
                     } else if push_bool {
                         self.array_push_bool_fref()
-                    } else if push_u64 {
+                    } else if push_u64 || push_i64 {
                         self.array_push_u64_fref()
                     } else if push_i32 {
                         self.array_push_i32_fref()

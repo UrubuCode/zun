@@ -358,6 +358,25 @@ fn scalar_u64_array_access_only(
         })
 }
 
+fn scalar_i64_array_access_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
+    body.returns_value
+        && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::I64)
+        && instrs.iter().any(|instruction| matches!(
+            instruction.opcode,
+            Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush
+        ))
+        && instrs.iter().all(|instruction| matches!(
+            instruction.opcode,
+            Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::Conv
+                | Opcode::UnboxAny | Opcode::BoxAny | Opcode::Pop | Opcode::LoadLocal
+                | Opcode::StoreLocal | Opcode::NewArray | Opcode::LoadArray
+                | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret
+        ))
+}
+
 fn scalar_i32_array_access_only(
     instrs: &[zun_il::Instruction],
     body: &zun_module::MethodBody<'_>,
@@ -639,6 +658,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                     && !object_array_stack_only(&instrs, &body)
                     && !scalar_bool_array_access_only(&instrs, &body)
                     && !scalar_u64_array_access_only(&instrs, &body)
+                    && !scalar_i64_array_access_only(&instrs, &body)
                     && !scalar_i32_array_access_only(&instrs, &body)
                     && !any_array_return_only(&instrs, &body)))
         {
@@ -651,6 +671,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                     && !object_array_stack_only(&instrs, &body)
                     && !scalar_bool_array_access_only(&instrs, &body)
                     && !scalar_u64_array_access_only(&instrs, &body)
+                    && !scalar_i64_array_access_only(&instrs, &body)
                     && !scalar_i32_array_access_only(&instrs, &body)))
         {
             continue;
@@ -673,6 +694,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
             )
             && !scalar_bool_array_access_only(&instrs, &body)
             && !scalar_u64_array_access_only(&instrs, &body)
+            && !scalar_i64_array_access_only(&instrs, &body)
             && !scalar_f64_array_access_only(&instrs, &body)
             && !scalar_array_length_only(&instrs, &body)
         {
