@@ -325,7 +325,13 @@ fn scalar_u64_array_access_only(
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::U64)
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop)
+            matches!(
+                instruction.opcode,
+                Opcode::LoadArray
+                    | Opcode::StoreArray
+                    | Opcode::ArrayPop
+                    | Opcode::ArrayPush
+            )
         })
         && instrs.iter().all(|instruction| {
             matches!(
@@ -344,6 +350,7 @@ fn scalar_u64_array_access_only(
                     | Opcode::LoadArray
                     | Opcode::StoreArray
                     | Opcode::ArrayPop
+                    | Opcode::ArrayPush
                     | Opcode::Ret
             )
         })
