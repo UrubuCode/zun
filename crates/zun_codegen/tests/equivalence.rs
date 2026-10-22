@@ -2691,6 +2691,33 @@ fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
             .unwrap(),
         (-42i64) as u64
     );
+    let convert_float = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "convertFloat")
+        .map(|index| index as u32 + 1)
+        .expect("float conversion method");
+    assert_eq!(
+        f64::from_bits(
+            jit.call_packed_with_heap(convert_float, &[value as u64], &mut heap)
+                .unwrap()
+        ),
+        -42.0
+    );
+    let truth = heap.intern_string(std::rc::Rc::from(" true "));
+    let convert_boolean = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "convertBoolean")
+        .map(|index| index as u32 + 1)
+        .expect("boolean conversion method");
+    assert_eq!(
+        jit.call_packed_with_heap(convert_boolean, &[truth as u64], &mut heap)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
