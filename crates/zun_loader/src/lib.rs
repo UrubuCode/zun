@@ -1436,6 +1436,18 @@ impl ModuleLoader {
         Ok(())
     }
 
+    /// Verify a signed registry index against the release trust anchor before
+    /// fetching any of its modules.
+    pub fn load_signed_index(
+        &mut self,
+        signed: &SignedModuleIndex,
+        trusted_key: &[u8; 32],
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        signed.verify_against(trusted_key)?;
+        self.load_index(&signed.index, fetcher)
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         package.lock.verify()?;
@@ -1976,6 +1988,36 @@ mod tests {
         assert!(ModuleLoader::new()
             .load_index(&bad, &Registry(Module::new().write()))
             .is_err());
+    }
+
+    #[test]
+    fn loader_requires_the_pinned_key_before_signed_index_fetches() {
+        use ed25519_dalek::{Signer, SigningKey};
+        struct Registry(Vec<u8>);
+        impl ModuleFetcher for Registry {
+            fn fetch(&self, _name: &str) -> Result<Vec<u8>, LoadError> {
+                Ok(self.0.clone())
+            }
+        }
+        let bytes = Module::new().write();
+        let mut index = ModuleIndex::new();
+        index.push("indexed", content_id(&bytes)).unwrap();
+        let signing = SigningKey::from_bytes(&[17u8; 32]);
+        let index_bytes = index.write();
+        let signed = SignedModuleIndex::new(
+            index,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&index_bytes).to_bytes(),
+        )
+        .unwrap();
+        let mut loader = ModuleLoader::new();
+        assert!(loader
+            .load_signed_index(&signed, &[99u8; 32], &Registry(bytes.clone()))
+            .is_err());
+        loader
+            .load_signed_index(&signed, &signing.verifying_key().to_bytes(), &Registry(bytes))
+            .unwrap();
+        assert!(loader.get("indexed").is_some());
     }
 
     #[test]
