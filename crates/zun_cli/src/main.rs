@@ -393,6 +393,10 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                                                 }
                                                             }
                                                         } else {
+                                                            let fallback_manifest = manifest.clone().without_native_object();
+                                                            if let Err(error) = fallback_manifest.write_file(&manifest_out) {
+                                                                eprintln!("zun: warning: cannot update fallback manifest: {error}");
+                                                            }
                                                             eprintln!("zun: warning: {e}; retaining embedded IL fallback");
                                                             ExitCode::SUCCESS
                                                         }

@@ -316,6 +316,7 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
         .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
+        .env("ZUN_RUNTIME_LIB", root.join("missing-runtime.lib"))
         .args(["build", "--aot"])
         .arg(&source)
         .output()
@@ -327,13 +328,7 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
     let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
         .expect("read fallback manifest");
     assert!(manifest.native_object.is_none());
-    if source.with_extension("exe").is_file() {
-        let output = Command::new(source.with_extension("exe"))
-            .output()
-            .expect("run interpreter fallback executable");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "managed");
-    }
+    assert!(!source.with_extension("exe").exists());
 
     for extension in ["ts", "zm", "zman", "o", "meta.o", "exe"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
