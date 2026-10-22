@@ -417,6 +417,7 @@ impl Translator<'_> {
                             Some("length") => {
                                 let (receiver, _) =
                                     stack.pop().ok_or("string length receiver")?;
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let length = self.string_length_fref();
                                 let call = self.builder.ins().call(length, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
@@ -433,6 +434,8 @@ impl Translator<'_> {
                                 {
                                     return Err("string contains expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(needle);
                                 let contains = self.string_contains_fref();
                                 let call = self.builder.ins().call(contains, &[receiver, needle]);
                                 let result = self.builder.inst_results(call)[0];
