@@ -16,6 +16,10 @@ a compiled `.zm` module and executes its entry point.
 Use `runI64BigInt` when a signed integer may exceed JavaScript Number's exact
 range; `runI64` is retained as the Number-returning compatibility API.
 
+Invalid arguments or malformed module buffers raise JavaScript `TypeError`.
+Execution failures and entry-point result-type mismatches raise JavaScript
+`Error`.
+
 The C ABI also exposes `zun_host_execute_u64` for raw unsigned integer results,
 and `zun_host_execute_string`, which copies a UTF-8 result
 into caller-owned storage and reports the required size when the buffer is too

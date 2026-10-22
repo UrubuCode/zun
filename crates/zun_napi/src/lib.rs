@@ -85,6 +85,12 @@ mod node_api {
         undefined(env)
     }
 
+    fn execution_failed(env: NapiEnv) -> NapiValue {
+        let message = b"Zun module execution failed or returned an unexpected type\0";
+        let _ = unsafe { napi_throw_error(env, core::ptr::null(), message.as_ptr()) };
+        undefined(env)
+    }
+
     fn registration_failed(env: NapiEnv) -> NapiValue {
         let message = b"failed to register Zun N-API exports\0";
         let _ = unsafe { napi_throw_error(env, core::ptr::null(), message.as_ptr()) };
@@ -123,10 +129,10 @@ mod node_api {
         // callback and reports its exact byte length.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Int(value, kind)) = zun_vm::execute(bytes) else {
-            return invalid_call(env);
+            return execution_failed(env);
         };
         if !matches!(kind, zun_il::NumKind::I8 | zun_il::NumKind::I16 | zun_il::NumKind::I32 | zun_il::NumKind::I64) {
-            return invalid_call(env);
+            return execution_failed(env);
         }
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_int64(env, value, &mut result) } != NAPI_OK {
@@ -167,7 +173,7 @@ mod node_api {
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Int(value, zun_il::NumKind::U64)) = zun_vm::execute(bytes) else {
-            return invalid_call(env);
+            return execution_failed(env);
         };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_bigint_uint64(env, value as u64, &mut result) } != NAPI_OK {
@@ -207,10 +213,10 @@ mod node_api {
         }
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Int(value, kind)) = zun_vm::execute(bytes) else {
-            return invalid_call(env);
+            return execution_failed(env);
         };
         if !matches!(kind, zun_il::NumKind::I8 | zun_il::NumKind::I16 | zun_il::NumKind::I32 | zun_il::NumKind::I64) {
-            return invalid_call(env);
+            return execution_failed(env);
         }
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_bigint_int64(env, value, &mut result) } != NAPI_OK {
@@ -251,7 +257,7 @@ mod node_api {
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Float(value, _)) = zun_vm::execute(bytes) else {
-            return invalid_call(env);
+            return execution_failed(env);
         };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_create_double(env, value, &mut result) } != NAPI_OK {
@@ -292,7 +298,7 @@ mod node_api {
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Bool(value)) = zun_vm::execute(bytes) else {
-            return invalid_call(env);
+            return execution_failed(env);
         };
         let mut result = core::ptr::null_mut();
         if unsafe { napi_get_boolean(env, value, &mut result) } != NAPI_OK {
@@ -333,7 +339,7 @@ mod node_api {
         // SAFETY: N-API owns the ArrayBuffer for the callback duration.
         let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
         let Ok(zun_interp::value::Value::Str(value)) = zun_vm::execute(bytes) else {
-            return invalid_call(env);
+            return execution_failed(env);
         };
         let value = value.as_bytes();
         let mut result = core::ptr::null_mut();
