@@ -126,14 +126,16 @@ impl FfiStringReturn {
         if !matches!(self, Self::Owned { .. }) {
             return Err("owned copy requires an owned string return declaration".into());
         }
-        self.validate()?;
-        let length = reported_len.ok_or("owned string returns require a reported length")?;
-        if length > payload.len() {
-            return Err("owned string length exceeds the native payload".into());
-        }
-        let result = payload[..length].to_vec();
+        let result = (|| {
+            self.validate()?;
+            let length = reported_len.ok_or("owned string returns require a reported length")?;
+            if length > payload.len() {
+                return Err("owned string length exceeds the native payload".into());
+            }
+            Ok(payload[..length].to_vec())
+        })();
         free();
-        Ok(result)
+        result
     }
 }
 
@@ -919,7 +921,11 @@ mod tests {
             .unwrap();
         assert_eq!(result, b"owned");
         assert!(freed);
-        assert!(owned.copy_owned_with(b"owned", Some(6), || {}).is_err());
+        let mut freed_on_error = false;
+        assert!(owned
+            .copy_owned_with(b"owned", Some(6), || freed_on_error = true)
+            .is_err());
+        assert!(freed_on_error);
     }
 
     #[test]
