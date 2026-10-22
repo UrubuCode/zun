@@ -815,6 +815,34 @@ fn fixture_valid_handler_region_accepts_error_type() {
 }
 
 #[test]
+fn fixture_valid_handler_region_accepts_catch_all() {
+    let mut section = Vec::new();
+    let body_offset = zun_module::write_body_with_handlers(
+        &mut section,
+        0,
+        0,
+        false,
+        0,
+        &[],
+        &asm(&[
+            Instruction::simple(Opcode::NewDynamic),
+            Instruction::simple(Opcode::Throw),
+            Instruction::simple(Opcode::Ret),
+        ]),
+        &[zun_module::ExceptionHandler {
+            try_start: 0,
+            try_end: 1,
+            handler_start: 1,
+            handler_end: 2,
+            kind: zun_module::HandlerKind::Catch,
+            catch_type: None,
+        }],
+    );
+    let body = zun_module::read_body(&section, body_offset).unwrap();
+    assert_eq!(verify_body(&body, VOID, &resolver, &|_| true), Ok(()));
+}
+
+#[test]
 fn fixture_invalid_handler_crossing_is_rejected() {
     let mut section = Vec::new();
     let body_offset = zun_module::write_body_with_handlers(
