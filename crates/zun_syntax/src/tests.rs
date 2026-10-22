@@ -376,6 +376,15 @@
         assert_eq!(c.fields.len(), 2);
         assert_eq!(ident_text(src, &c.fields[0].name), "x");
     }
+
+    #[test]
+    fn preserves_static_field_modifier_for_sema() {
+        let src = "class Config { static answer: number; value: number; }";
+        let p = parse_ok(src);
+        let fields = &p.classes[0].fields;
+        assert!(fields[0].is_static);
+        assert!(!fields[1].is_static);
+    }
     #[test]
     fn parses_new_and_field_access() {
         let src = "function f() { let p = new Point(1, 2); print(p.x); }";
