@@ -144,6 +144,33 @@ Zun **declares its own base types** there, not by name-magic. Consequences:
   bindings like `process`/`window` attach from modules); *using* it is the dynamic
   (costly, opt-in) path, consistent with §2.
 
+**JS `prototype` & legacy callers — dynamic-only, over shape+IC (never dict-walk).**
+Runtime prototype semantics (`String.prototype.toVs = fn`, constructor functions +
+`.prototype` + `new`, `__proto__`) are supported **only in the dynamic (`any`/JS-compat)
+subsystem**, modeled as a **shaped object behind inline caches** (§4.5) — never as a
+per-call object/dictionary walk. This is the exact mistake to avoid: modeling the
+prototype as a near-plain object walked on every call is why that path was slow in rts;
+Zun already has the IC + shape machinery that fixes it (first lookup walks the chain,
+monomorphic calls hit the IC behind a `shape == S` guard). Rules:
+- **The typed floor is static and immune to runtime prototype mutation.** A typed
+  `string` method binds to the frozen vtable/direct native call; it does **not** consult
+  a prototype and does **not** observe a later `String.prototype.x = …`. The recommended,
+  fast way to extend a base type is the **static rebind / extension method of §3.1**, not
+  runtime prototype mutation.
+- **Dynamic view sees the patch.** Access through `any` resolves via the prototype's
+  shape + IC, so monkey-patches are visible there — at the dynamic (opt-in, costly) cost,
+  consistent with §2. Built-in prototypes (`String.prototype`, `Array.prototype`) are the
+  **lazily-materialized dynamic mirror** of the frozen floor: their entries point at the
+  same native methods, so typed and dynamic calls share one implementation.
+- **Mutation = de-opt, not dict-walk.** `X.prototype.m = …` bumps the prototype shape
+  version and **invalidates dependent ICs** (the redirectable-entry / de-opt machinery
+  that is already an invariant), which then re-resolve. No per-call lookup penalty.
+- **Scope the legacy surface.** `Function.prototype.call/apply/bind` are cheap reflective
+  invokers (no chain cost) — implement directly. Constructor-functions + `.prototype` +
+  `new`, and `__proto__` get/set, live in the `DynamicObject` model and are a **gated
+  JS-compat concern** (for running legacy JS/npm, e.g. polyfills), not part of the
+  TS-first typed path.
+
 ### 3.2 Catalog (first pass; refine against ECMAScript + Web/Node)
 
 - **A — nucleus:** String, Number, Boolean, BigInt, Symbol, Object, Array, Function,
