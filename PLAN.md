@@ -346,7 +346,7 @@ toolchain's `rust-lld` and passes it to the external final link step when availa
 The AOT build also emits a relocatable metadata object containing the serialized
 `.zm` payload under the `zun_embedded_module` symbol and supplies it to the link.
 It also exports `zun_embedded_module_len` for runtime initialization.
-Manifest v3 records that metadata object's path while retaining reads of older
+Manifest v4 records the metadata object's and runtime-library paths while retaining reads of older
 manifest versions; the generated launcher references the symbol so the embedded
 payload is retained by the final link.
 `zun_vm` now emits both its normal `rlib` and a Cargo `staticlib` suitable for
