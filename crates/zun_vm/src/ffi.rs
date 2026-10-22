@@ -565,6 +565,20 @@ mod tests {
     }
 
     #[test]
+    fn bool_abi_rejects_mixed_types_and_more_than_three_parameters() {
+        assert!(
+            FfiSignature::new(vec![FfiScalar::Bool, FfiScalar::I64], FfiScalar::Bool,)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            FfiSignature::new(vec![FfiScalar::Bool; 4], FfiScalar::Bool,)
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
     fn typed_i64_call_rejects_an_incompatible_signature_before_lookup() {
         let path = std::env::current_exe().expect("test executable path");
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
