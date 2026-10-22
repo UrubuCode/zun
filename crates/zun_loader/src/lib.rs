@@ -1568,11 +1568,10 @@ impl ModuleLoader {
 
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
-        if let Some(trusted) = &self.trusted_keys {
-            package.lock.verify_with_keys(trusted)?;
-        } else {
-            package.lock.verify_signature()?;
-        }
+        let trusted = self.trusted_keys.as_ref().ok_or_else(|| {
+            LoadError::InvalidManifest("loader has no trusted registry key set".into())
+        })?;
+        package.lock.verify_with_keys(trusted)?;
         for (name, bytes) in &package.modules {
             self.load_bytes(name.clone(), bytes)?;
         }
