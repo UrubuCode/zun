@@ -299,6 +299,52 @@ impl ModuleFetcher for DirectoryFetcher {
     }
 }
 
+/// Fetcher for a registry served over HTTP(S). Content identity and signature
+/// checks remain in the loader; this type is transport-only.
+#[derive(Debug, Clone)]
+pub struct HttpFetcher {
+    base_url: String,
+}
+
+impl HttpFetcher {
+    pub fn new(base_url: impl Into<String>) -> Result<Self, LoadError> {
+        let base_url = base_url.into().trim_end_matches('/').to_owned();
+        if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+            return Err(LoadError::InvalidManifest(
+                "HTTP registry base URL must use http:// or https://".into(),
+            ));
+        }
+        Ok(Self { base_url })
+    }
+}
+
+impl ModuleFetcher for HttpFetcher {
+    fn fetch(&self, name: &str) -> Result<Vec<u8>, LoadError> {
+        let relative = Path::new(name);
+        if name.is_empty()
+            || relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(component, std::path::Component::ParentDir)
+            })
+        {
+            return Err(LoadError::InvalidManifest(format!(
+                "unsafe registry module path `{name}`"
+            )));
+        }
+        let url = format!("{}/{}.zm", self.base_url, name);
+        use std::io::Read;
+        let response = ureq::get(&url)
+            .call()
+            .map_err(|error| LoadError::InvalidManifest(format!("HTTP module fetch failed: {error}")))?;
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(LoadError::Io)?;
+        Ok(bytes)
+    }
+}
+
 /// A deterministic registry index mapping module identities to immutable
 /// content IDs. The index is metadata only; bytes remain in the cache or are
 /// supplied by a [`ModuleFetcher`].
@@ -1646,6 +1692,14 @@ mod tests {
         assert!(loader.get("scope/module").is_some());
         assert!(fetcher.fetch("../outside").is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn http_fetcher_validates_registry_urls_and_module_paths() {
+        assert!(HttpFetcher::new("file:///tmp/registry").is_err());
+        let fetcher = HttpFetcher::new("https://registry.example.test/root").unwrap();
+        assert!(fetcher.fetch("../escape").is_err());
+        assert!(fetcher.fetch("").is_err());
     }
 
     #[test]

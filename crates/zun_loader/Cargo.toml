@@ -9,6 +9,7 @@ description = "Loadable module scopes for Zun .zm binaries."
 [dependencies]
 ed25519-dalek.workspace = true
 sha2.workspace = true
+ureq.workspace = true
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
 zun_types = { path = "../zun_types" }
