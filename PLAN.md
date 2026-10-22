@@ -326,7 +326,8 @@ fully default-installed `zun:std` without implicit source concatenation, static
 base-type rebinding and extension methods over the frozen floor, typed native
 extension bindings beyond registry lookup, Error-stack consumption of sequence
 points, full AOT binary (linker + runtime bundle), native TS/JS front-end, full
-module registry/fetcher and `.zmlib` distribution, true OSR. The former
+module registry/fetcher and remote index integration, true OSR. The signed
+`.zmlib` package envelope is now implemented. The former
 `zun_napi` Node embedding crate has been removed (out of scope).
 
 ## 8. Risks & attention points
