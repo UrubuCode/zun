@@ -53,6 +53,9 @@ impl OrderedMap {
         let removed = self.entries[index].take()?;
         self.live_len -= 1;
         self.dead_len += 1;
+        if self.dead_len >= 8 && self.dead_len > self.live_len {
+            self.compact();
+        }
         Some((removed.0, removed.1))
     }
 
@@ -83,7 +86,11 @@ impl OrderedMap {
     }
 
     fn rehash(&mut self) {
-        let mut buckets = vec![None; self.buckets.len() * 2];
+        self.rebuild_buckets(self.buckets.len() * 2);
+    }
+
+    fn rebuild_buckets(&mut self, capacity: usize) {
+        let mut buckets = vec![None; capacity.max(8).next_power_of_two()];
         let mask = buckets.len() - 1;
         for (index, entry) in self.entries.iter().enumerate() {
             if let Some((_, _, hash)) = entry {
@@ -100,7 +107,9 @@ impl OrderedMap {
     fn compact(&mut self) {
         self.entries = self.entries.iter().filter_map(|entry| *entry).map(Some).collect();
         self.dead_len = 0;
-        self.rehash();
+        let mut capacity = 8;
+        while self.live_len * 4 > capacity * 3 { capacity *= 2; }
+        self.rebuild_buckets(capacity);
     }
 
     fn find_index(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<usize> {
@@ -138,5 +147,26 @@ impl OrderedMap {
                 Some(_) => slot = (slot + 1) & mask,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OrderedMap;
+    use crate::Any;
+
+    #[test]
+    fn compaction_shrinks_empty_tables_back_to_the_floor() {
+        let mut map = OrderedMap::new();
+        for key in 0..128i64 {
+            map.insert(Any::int(key), Any::int(key), key as u64, |candidate| {
+                candidate.as_int() == Some(key)
+            });
+        }
+        for key in 0..128i64 {
+            assert!(map.remove(key as u64, |candidate| candidate.as_int() == Some(key)).is_some());
+        }
+        assert!(map.is_empty());
+        assert_eq!(map.buckets.len(), 8);
     }
 }
