@@ -1470,3 +1470,9 @@ links scalar-return executables through a generated Rust launcher. The
 remaining full-AOT gate is a self-contained runtime/startup link for managed
 heap values, including GC, intrinsics, and the interpreter fallback; the
 current launcher is intentionally limited to scalar numeric/boolean returns.
+
+Extension ABI status (2026-10-22): the standalone `zun_abi` crate now defines
+the versioned `ZunRegistry`, scalar/opaque `ZunValue` carrier, function
+descriptor, and `zun_register_v1` callback contract. Native module loading,
+capability enforcement, and registry-backed source bindings remain later
+distribution work; this ABI is independent of Node/N-API.

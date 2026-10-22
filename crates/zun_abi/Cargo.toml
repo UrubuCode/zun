@@ -1,0 +1,10 @@
+[package]
+name = "zun_abi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Stable C ABI for native Zun extension modules"
+
+[lints]
+workspace = true

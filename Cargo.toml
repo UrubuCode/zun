@@ -17,6 +17,7 @@ members = [
     "crates/zun_prelude",
     "crates/zun_gc",
     "crates/zun_natives",
+    "crates/zun_abi",
     "crates/zun_compiler",
     "crates/zun_loader",
     "crates/zun_types",
