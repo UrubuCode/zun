@@ -1252,6 +1252,15 @@ ceiling for large programs today, independent of any individual data structure.
 
 ### 7.3 Benchmarked opportunity sizing (2026-10-20)
 
+An isolated release run on 2026-10-22 measured the current benchmark example
+at **256.423 ns/iter** Tier 0 versus **2.231 ns/iter** Tier 1 for the integer
+loop (**114.93x**), **1459.490** versus **24.924 ns/iter** for the typed Map
+mutation loop (**58.56x**), and **314.241** versus **35.113 ns/iter** for the
+typed array increment loop (**8.95x**). The metadata-only Tier 0 probes measured
+**246.286 ns/iter** for field load/store and **416.615 ns/iter** for virtual
+dispatch. All workloads reported interpreter/JIT-equivalent results; field and
+virtual probes remain Tier 0 by design.
+
 Five further ideas, each measured in an isolated worktree before being recorded
 (`#2`/`#4` on the real pipeline; `#1`/`#3`/`#5` on optimizer-resistant models).
 Ranked by payoff:
