@@ -172,11 +172,14 @@ pub struct ModuleManifest {
     /// Optional relocatable native object associated with the canonical module.
     /// The loader may ignore it and use the `.zm` fallback.
     pub native_object: Option<String>,
+    /// Fingerprint of the prelude embedded or linked by the compiled modules.
+    /// A missing value denotes a legacy or manually assembled manifest.
+    pub prelude_fingerprint: Option<u64>,
 }
 
 impl ModuleManifest {
     const MAGIC: &'static [u8; 4] = b"ZMAN";
-    const VERSION: u16 = 1;
+    const VERSION: u16 = 2;
 
     /// Construct a manifest for an entry module and its dependencies.
     pub fn new(entry: impl Into<String>, dependencies: impl IntoIterator<Item = String>) -> Self {
@@ -184,12 +187,19 @@ impl ModuleManifest {
             entry: entry.into(),
             dependencies: dependencies.into_iter().collect(),
             native_object: None,
+            prelude_fingerprint: None,
         }
     }
 
     /// Associate an optional R2R/AOT object path with this manifest.
     pub fn with_native_object(mut self, path: impl Into<String>) -> Self {
         self.native_object = Some(path.into());
+        self
+    }
+
+    /// Record the prelude fingerprint required by this manifest.
+    pub fn with_prelude_fingerprint(mut self, fingerprint: u64) -> Self {
+        self.prelude_fingerprint = Some(fingerprint);
         self
     }
 
@@ -224,6 +234,10 @@ impl ModuleManifest {
         bytes.push(u8::from(self.native_object.is_some()));
         if let Some(native_object) = &self.native_object {
             write_name(&mut bytes, native_object);
+        }
+        bytes.push(u8::from(self.prelude_fingerprint.is_some()));
+        if let Some(fingerprint) = self.prelude_fingerprint {
+            bytes.extend_from_slice(&fingerprint.to_le_bytes());
         }
         bytes
     }
@@ -262,6 +276,17 @@ impl ModuleManifest {
                 _ => return Err(LoadError::InvalidManifest("invalid native object flag".into())),
             }
         };
+        let prelude_fingerprint = if version < 2 {
+            None
+        } else {
+            match take(bytes, &mut cursor, 1) {
+                Some([0]) => None,
+                Some([1]) => Some(read_u64(bytes, &mut cursor).ok_or_else(|| {
+                    LoadError::InvalidManifest("truncated prelude fingerprint".into())
+                })?),
+                _ => return Err(LoadError::InvalidManifest("invalid prelude fingerprint flag".into())),
+            }
+        };
         if cursor != bytes.len() {
             return Err(LoadError::InvalidManifest("trailing manifest bytes".into()));
         }
@@ -269,6 +294,7 @@ impl ModuleManifest {
             entry,
             dependencies,
             native_object,
+            prelude_fingerprint,
         })
     }
 
@@ -330,6 +356,10 @@ fn read_u16(bytes: &[u8], cursor: &mut usize) -> Option<u16> {
 
 fn read_u32(bytes: &[u8], cursor: &mut usize) -> Option<u32> {
     Some(u32::from_le_bytes(take(bytes, cursor, 4)?.try_into().ok()?))
+}
+
+fn read_u64(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
+    Some(u64::from_le_bytes(take(bytes, cursor, 8)?.try_into().ok()?))
 }
 
 fn read_name(bytes: &[u8], cursor: &mut usize) -> Result<String, LoadError> {
@@ -815,9 +845,11 @@ mod tests {
     #[test]
     fn manifest_roundtrips_optional_native_object() {
         let manifest = ModuleManifest::new("app", vec!["core".into()])
-            .with_native_object("app.o");
+            .with_native_object("app.o")
+            .with_prelude_fingerprint(0x1234_5678_9abc_def0);
         let decoded = ModuleManifest::read(&manifest.write()).expect("roundtrip");
         assert_eq!(decoded, manifest);
+        assert_eq!(decoded.prelude_fingerprint, Some(0x1234_5678_9abc_def0));
         assert_eq!(
             decoded.native_object_path("dist/app.zman"),
             Some(PathBuf::from("dist/app.o"))

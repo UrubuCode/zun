@@ -305,7 +305,8 @@ where
     let names: Vec<String> = sources.iter().map(|(name, _)| (*name).to_owned()).collect();
     let loader = compile_modules(sources.iter().copied())?;
     let dependencies = names.into_iter().filter(|name| name != entry);
-    let manifest = zun_loader::ModuleManifest::new(entry, dependencies);
+    let manifest = zun_loader::ModuleManifest::new(entry, dependencies)
+        .with_prelude_fingerprint(zun_prelude::fingerprint());
     manifest
         .validate(&loader)
         .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
