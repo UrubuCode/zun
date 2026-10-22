@@ -224,6 +224,8 @@ the signed-index `VERSION` policy.
 Signed registry indexes now carry an authenticated version-2 rotation payload;
 the loader derives the successor trusted set only after verifying the current
 trusted signer, while version-1 indexes remain readable.
+The canonical rotation signing bytes are public so registry publishers cannot
+produce an envelope without following the loader's exact serialization.
 
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
