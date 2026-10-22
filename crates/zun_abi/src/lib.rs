@@ -7,6 +7,7 @@
 //! retain those pointers unless a future ABI version explicitly permits it.
 
 use core::ffi::{c_char, c_void};
+use std::collections::HashMap;
 use std::ffi::CStr;
 
 /// ABI contract version encoded in the exported registration symbol.
@@ -150,6 +151,7 @@ pub struct OwnedFunction {
 #[derive(Default, Debug)]
 pub struct OwnedRegistry {
     pub functions: Vec<OwnedFunction>,
+    index: HashMap<(String, String), usize>,
 }
 
 impl OwnedRegistry {
@@ -165,9 +167,8 @@ impl OwnedRegistry {
 
     /// Resolve a copied function descriptor by its stable module/key pair.
     pub fn find(&self, module: &str, key: &str) -> Option<&OwnedFunction> {
-        self.functions
-            .iter()
-            .find(|function| function.module == module && function.key == key)
+        let index = self.index.get(&(module.to_owned(), key.to_owned()))?;
+        self.functions.get(*index)
     }
 
     unsafe extern "C" fn capture(
@@ -184,13 +185,20 @@ impl OwnedRegistry {
         let params = if function.param_count == 0 { Vec::new() } else {
             unsafe { std::slice::from_raw_parts(function.params, function.param_count) }.to_vec()
         };
+        let module = module.to_owned();
+        let key = key.to_owned();
+        if registry.index.contains_key(&(module.clone(), key.clone())) {
+            return -15;
+        }
+        let index = registry.functions.len();
         registry.functions.push(OwnedFunction {
-            module: module.to_owned(),
-            key: key.to_owned(),
+            module: module.clone(),
+            key: key.clone(),
             params,
             ret: function.ret,
             invoke: function.invoke.expect("validated invoke"),
         });
+        registry.index.insert((module, key), index);
         0
     }
 }
@@ -245,5 +253,6 @@ mod tests {
         assert_eq!(owned.functions[0].params, Vec::<ZunTyRepr>::new());
         assert!(owned.find("zun:test", "answer").is_some());
         assert!(owned.find("zun:test", "missing").is_none());
+        assert_eq!(unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) }, Err(-15));
     }
 }
