@@ -983,7 +983,7 @@ VM has multiple mutator threads.
 The runtime floor now also contains a normalized sign-magnitude `BigInt`
 implementation with decimal parsing and exact add/subtract/multiply/compare
 operations. The language now binds `BigInt` construction, arithmetic,
-comparison, formatting, and typed `+`/`-`/`*` operators through managed
+comparison, formatting, and typed `+`/`-`/`*`/comparison operators through managed
 `CallBuiltin` intrinsics. The
 managed payload is GC-owned and the vertical slice is covered by interpreter
 tests plus an interpreter/JIT equivalence test. BigInt literals, operators,
