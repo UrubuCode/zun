@@ -32,7 +32,7 @@ fn build_uses_native_oxc_for_mts_inputs() {
     let source = root.join("main.mts");
     std::fs::write(
         &source,
-        "export default function main(): int { return 7; } export { main };\n",
+        "export default function main(): int { let value: int = 0; for (let index: int = 0; index < 1; index = index + 1) { value = value + 7; } return value; } export { main };\n",
     )
         .expect("write source");
 
