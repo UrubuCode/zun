@@ -2479,9 +2479,9 @@ fn string_prefix_helpers_with_managed_parameters_are_jit_equivalent() {
 #[test]
 fn string_suffix_helper_with_managed_parameters_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { endsWith } from \"zun:string\";\n\\
-         class String { extern endsWith(needle: string): boolean; }\n\\
-         function check(value: string, suffix: string): boolean { return value.endsWith(suffix); }\n\\
+        "import { endsWith } from \"zun:string\";\n\
+         class String { extern endsWith(needle: string): boolean; }\n\
+         function check(value: string, suffix: string): boolean { return value.endsWith(suffix); }\n\
          function main(): boolean { return true; }",
     )
     .expect("compile parameterized String suffix helper");
