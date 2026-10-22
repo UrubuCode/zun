@@ -371,8 +371,8 @@ anchored and self-declared signed-index fixtures are covered;
 HTTP index fetching accepts the rotated `TrustedKeySet` path;
 sequence-point PC-to-source metadata in `.zm`;
 native OXC JavaScript/TypeScript parse boundary with isolated diagnostics and a
-source-span-preserving literal/identifier-return AST adapter with identifier
-parameters;
+source-span-preserving literal/identifier/binary-expression AST adapter with
+identifier parameters;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
