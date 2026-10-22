@@ -474,6 +474,9 @@ The AOT launcher now resolves an explicit `ZUN_LLD` override, an LLD executable 
 `PATH`, or the active toolchain's target-specific `rustlib` linker directory
 (`rust-lld`/`lld-link`), and passes it to the external final
 link step when available.
+The codegen layer also exposes target-specific Cranelift object emission via
+`compile_object_for_target`; the existing host-target wrapper remains unchanged,
+while cross-target runtime-library and linker provisioning remain outstanding.
 The AOT build also emits a relocatable metadata object containing the serialized
 `.zm` payload under the `zun_embedded_module` symbol and supplies it to the link.
 It also exports `zun_embedded_module_len` for runtime initialization.
