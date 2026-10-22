@@ -1349,6 +1349,28 @@ mod tests {
     }
 
     #[test]
+    fn encodes_i32_and_u32_external_call_types_in_member_metadata() {
+        let src = "extern function signed(value: i32): i32 from \"host\"; extern function unsigned(value: u32): u32 from \"host\"; function main(): i32 { return signed(1); }";
+        let mut diagnostics = Vec::new();
+        let ast = zun_syntax::parse(src, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "parse: {diagnostics:?}");
+        let hir = zun_sema::check_with_externals(
+            src,
+            &ast,
+            &mut diagnostics,
+            &[
+                zun_sema::ExternalFunction { module: "host".into(), name: "signed".into(), params: vec![Ty::Int(IntKind { bits: 32, signed: true })], return_ty: Ty::Int(IntKind { bits: 32, signed: true }) },
+                zun_sema::ExternalFunction { module: "host".into(), name: "unsigned".into(), params: vec![Ty::Int(IntKind { bits: 32, signed: false })], return_ty: Ty::Int(IntKind { bits: 32, signed: false }) },
+            ],
+        );
+        assert!(diagnostics.is_empty(), "sema: {diagnostics:?}");
+        let module = lower(&hir);
+        let signatures: Vec<_> = module.tables.member_refs.iter().map(|member| module.blobs.get(member.signature).to_vec()).collect();
+        assert!(signatures.contains(&vec![1, 5, 5]));
+        assert!(signatures.contains(&vec![1, 6, 6]));
+    }
+
+    #[test]
     fn simple_function_disassembles_as_expected() {
         let module = lower_src("function main() { let x = 1; print(x); }");
         let body = read_body(&module.code, module.tables.method_defs[0].body_offset).unwrap();
