@@ -16,6 +16,38 @@ use zun_types::{CoreTypes, TypeError, TypeSystem};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContentId(pub [u8; 32]);
 
+/// Release-provisioned Ed25519 keys trusted to authenticate registry metadata.
+/// Keys are deliberately supplied outside signed envelopes so an attacker cannot
+/// make an arbitrary self-generated key authoritative.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedKeySet {
+    keys: Vec<[u8; 32]>,
+}
+
+impl TrustedKeySet {
+    pub fn new(keys: impl IntoIterator<Item = [u8; 32]>) -> Result<Self, LoadError> {
+        let mut trusted = Self { keys: Vec::new() };
+        for key in keys {
+            if trusted.keys.contains(&key) {
+                return Err(LoadError::InvalidManifest(
+                    "duplicate trusted registry key".into(),
+                ));
+            }
+            trusted.keys.push(key);
+        }
+        if trusted.keys.is_empty() {
+            return Err(LoadError::InvalidManifest(
+                "trusted registry key set is empty".into(),
+            ));
+        }
+        Ok(trusted)
+    }
+
+    fn contains(&self, key: &[u8; 32]) -> bool {
+        self.keys.iter().any(|trusted| trusted == key)
+    }
+}
+
 impl ContentId {
     /// Return the lowercase hexadecimal cache path component.
     pub fn hex(self) -> String {
@@ -525,6 +557,15 @@ impl SignedModuleIndex {
         self.verify()
     }
 
+    pub fn verify_with_keys(&self, trusted: &TrustedKeySet) -> Result<(), LoadError> {
+        if !trusted.contains(&self.public_key) {
+            return Err(LoadError::InvalidManifest(
+                "registry index key is not in the trusted key set".into(),
+            ));
+        }
+        self.verify()
+    }
+
     pub fn write(&self) -> Vec<u8> {
         let payload = self.index.write();
         let mut bytes = Vec::with_capacity(106 + payload.len());
@@ -811,6 +852,15 @@ impl SignedModuleLock {
         if &self.public_key != trusted_key {
             return Err(LoadError::InvalidManifest(
                 "lockfile key is not trusted by the release".into(),
+            ));
+        }
+        self.verify()
+    }
+
+    pub fn verify_with_keys(&self, trusted: &TrustedKeySet) -> Result<(), LoadError> {
+        if !trusted.contains(&self.public_key) {
+            return Err(LoadError::InvalidManifest(
+                "lockfile key is not in the trusted key set".into(),
             ));
         }
         self.verify()
@@ -1448,9 +1498,34 @@ impl ModuleLoader {
         self.load_index(&signed.index, fetcher)
     }
 
+    /// Verify a signed index against a release-provisioned key set before
+    /// fetching any selected module.
+    pub fn load_signed_index_with_keys(
+        &mut self,
+        signed: &SignedModuleIndex,
+        trusted: &TrustedKeySet,
+        fetcher: &impl ModuleFetcher,
+    ) -> Result<(), LoadError> {
+        signed.verify_with_keys(trusted)?;
+        self.load_index(&signed.index, fetcher)
+    }
+
     /// Verify and register every module carried by a `.zmlib` package.
     pub fn load_zmlib(&mut self, package: &Zmlib) -> Result<(), LoadError> {
         package.lock.verify()?;
+        for (name, bytes) in &package.modules {
+            self.load_bytes(name.clone(), bytes)?;
+        }
+        Ok(())
+    }
+
+    /// Load a package only after its lock key is anchored in the release key set.
+    pub fn load_zmlib_with_keys(
+        &mut self,
+        package: &Zmlib,
+        trusted: &TrustedKeySet,
+    ) -> Result<(), LoadError> {
+        package.lock.verify_with_keys(trusted)?;
         for (name, bytes) in &package.modules {
             self.load_bytes(name.clone(), bytes)?;
         }
@@ -1836,6 +1911,40 @@ mod tests {
         let mut tampered = bytes;
         *tampered.last_mut().unwrap() ^= 1;
         assert!(SignedModuleLock::read(&tampered).is_err());
+    }
+
+    #[test]
+    fn signed_lockfile_valid_anchored_key_passes() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(b"app")).unwrap();
+        let signing = SigningKey::from_bytes(&[21u8; 32]);
+        let lock_bytes = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&lock_bytes).to_bytes(),
+        )
+        .unwrap();
+        let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
+        assert!(signed.verify_with_keys(&trusted).is_ok());
+    }
+
+    #[test]
+    fn signed_lockfile_invalid_self_declared_key_is_rejected() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(b"app")).unwrap();
+        let attacker = SigningKey::from_bytes(&[22u8; 32]);
+        let lock_bytes = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            attacker.verifying_key().to_bytes(),
+            attacker.sign(&lock_bytes).to_bytes(),
+        )
+        .unwrap();
+        let trusted = TrustedKeySet::new([[23u8; 32]]).unwrap();
+        assert!(signed.verify_with_keys(&trusted).is_err());
     }
 
     #[test]
