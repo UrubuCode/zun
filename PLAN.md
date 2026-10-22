@@ -425,6 +425,9 @@ while leaving `native_object` unset.
 The runtime also exposes a generic display-result fallback for managed, dynamic,
 and other non-scalar entrypoints, allowing a provisioned runtime library to link
 an interpreter-backed executable for every entry return shape.
+The CLI also routes modules whose object emission succeeds but whose entry return
+shape is not native-launcher-compatible through that fallback, clears the native
+object manifest field, and covers string execution end to end.
 
 ## 8. Risks & attention points
 
