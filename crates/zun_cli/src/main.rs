@@ -4,6 +4,8 @@
 //!
 //! - `zun run <file.ts>`   — compile and execute.
 //! - `zun build <file.ts>` — compile to a `<file>.zm` on disk.
+//! - `zun build --prelude-cache <cache> <file.ts>` — also persist the
+//!   fingerprinted standalone prelude cache; combine with `--trim` or `--aot`.
 //! - `zun disasm <file.ts>` — compile and print the ZIL disassembly.
 //!
 //! The front-end pipeline (parse → check → lower) is shared by all three; only
