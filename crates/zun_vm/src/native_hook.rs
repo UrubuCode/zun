@@ -132,27 +132,39 @@ impl NativeCallHook {
             };
             return Ok(Value::Bool(result));
         }
-        if signature.params() == [FfiScalar::String]
-            && signature.result() == FfiScalar::String
+        if signature.result() == FfiScalar::String
+            && signature.params().iter().all(|param| *param == FfiScalar::String)
+            && (signature.params().len() == 1 || signature.params().len() == 2)
         {
             let declaration = signature.string_return().ok_or_else(|| {
                 RunError::Native("string native calls require an explicit return declaration".into())
             })?;
-            let [Value::Str(value)] = args else {
-                return Err(RunError::Native("native string argument type mismatch".into()));
-            };
-            let argument = FfiStringArgument::from_utf8(value, false)
-                .map_err(RunError::Native)?;
-            let bytes = match declaration {
-                crate::FfiStringReturn::Borrowed { .. } => unsafe {
-                    library.call_utf8_borrowed(export.as_bytes(), &argument, declaration)
-                },
-                crate::FfiStringReturn::Owned { .. } => unsafe {
-                    library.call_utf8_owned(export.as_bytes(), &argument, declaration)
-                },
-                crate::FfiStringReturn::OutBuffer { .. } => unsafe {
-                    library.call_utf8_out_buffer(export.as_bytes(), &argument, declaration)
-                },
+            let bytes = if signature.params().len() == 1 {
+                let [Value::Str(value)] = args else {
+                    return Err(RunError::Native("native string argument type mismatch".into()));
+                };
+                let argument = FfiStringArgument::from_utf8(value, false)
+                    .map_err(RunError::Native)?;
+                match declaration {
+                    crate::FfiStringReturn::Borrowed { .. } => unsafe {
+                        library.call_utf8_borrowed(export.as_bytes(), &argument, declaration)
+                    },
+                    crate::FfiStringReturn::Owned { .. } => unsafe {
+                        library.call_utf8_owned(export.as_bytes(), &argument, declaration)
+                    },
+                    crate::FfiStringReturn::OutBuffer { .. } => unsafe {
+                        library.call_utf8_out_buffer(export.as_bytes(), &argument, declaration)
+                    },
+                }
+            } else {
+                let [Value::Str(first), Value::Str(second)] = args else {
+                    return Err(RunError::Native("native string argument type mismatch".into()));
+                };
+                let first = FfiStringArgument::from_utf8(first, false)
+                    .map_err(RunError::Native)?;
+                let second = FfiStringArgument::from_utf8(second, false)
+                    .map_err(RunError::Native)?;
+                unsafe { library.call_utf8_out_buffer2(export.as_bytes(), &first, &second, declaration) }
             }
             .map_err(|error| RunError::Native(error.to_string()))?;
             let string = String::from_utf8(bytes)

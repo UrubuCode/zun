@@ -239,10 +239,14 @@ impl FfiSignature {
         if self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
             Ok(())
         } else if self.matches_string_call() {
-            self.string_return
+            let declaration = self
+                .string_return
                 .as_ref()
-                .ok_or_else(|| String::from("string FFI signatures require an explicit return declaration"))?
-                .validate()
+                .ok_or_else(|| String::from("string FFI signatures require an explicit return declaration"))?;
+            if self.params.len() == 2 && !matches!(declaration, FfiStringReturn::OutBuffer { .. }) {
+                return Err("two-string FFI signatures require an out-buffer declaration".into());
+            }
+            declaration.validate()
         } else {
             Err(format!(
                 "unsupported direct FFI signature: {} parameter(s) returning {:?}",
@@ -272,8 +276,8 @@ impl FfiSignature {
 
     fn matches_string_call(&self) -> bool {
         self.result == FfiScalar::String
-            && self.params.len() == 1
-            && self.params[0] == FfiScalar::String
+            && (self.params.len() == 1 || self.params.len() == 2)
+            && self.params.iter().all(|param| *param == FfiScalar::String)
     }
 }
 
@@ -512,6 +516,40 @@ impl NativeLibrary {
         let mut buffer = vec![0u8; capacity];
         let length = unsafe {
             symbol(argument.as_ptr(), argument.len_bytes(), buffer.as_mut_ptr(), capacity)
+        };
+        declaration
+            .copy_payload(&buffer, Some(length))
+            .map_err(|message| FfiError { message })
+    }
+
+    /// Call the explicitly declared two-string out-buffer ABI. The native
+    /// export receives `(ptr1, len1, ptr2, len2, out, capacity)` and returns
+    /// the initialized byte count.
+    pub unsafe fn call_utf8_out_buffer2(
+        &self,
+        name: &[u8],
+        first: &FfiStringArgument,
+        second: &FfiStringArgument,
+        declaration: &FfiStringReturn,
+    ) -> Result<Vec<u8>, FfiError> {
+        let capacity = match declaration {
+            FfiStringReturn::OutBuffer { capacity } => *capacity,
+            _ => return Err(FfiError { message: "two-string calls require an out-buffer declaration".into() }),
+        };
+        declaration.validate().map_err(|message| FfiError { message })?;
+        let symbol = unsafe {
+            self.symbol::<unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize>(name)
+        }?;
+        let mut buffer = vec![0u8; capacity];
+        let length = unsafe {
+            symbol(
+                first.as_ptr(),
+                first.len_bytes(),
+                second.as_ptr(),
+                second.len_bytes(),
+                buffer.as_mut_ptr(),
+                capacity,
+            )
         };
         declaration
             .copy_payload(&buffer, Some(length))
@@ -991,6 +1029,16 @@ mod tests {
             .with_string_return(FfiStringReturn::OutBuffer { capacity: 32 })
             .validate()
             .is_err());
+        assert!(FfiSignature::new([FfiScalar::String, FfiScalar::String], FfiScalar::String)
+            .with_string_return(FfiStringReturn::Borrowed {
+                length: FfiStringLength::NullTerminated,
+            })
+            .validate()
+            .is_err());
+        assert!(FfiSignature::new([FfiScalar::String, FfiScalar::String], FfiScalar::String)
+            .with_string_return(FfiStringReturn::OutBuffer { capacity: 32 })
+            .validate()
+            .is_ok());
     }
 
     #[test]
