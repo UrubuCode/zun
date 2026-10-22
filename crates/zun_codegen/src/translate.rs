@@ -547,6 +547,8 @@ impl Translator<'_> {
                                 if left_kind != JitKind::String || right_kind != JitKind::String {
                                     return Err("string concat expects string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(left);
+                                self.builder.declare_value_needs_stack_map(right);
                                 let helper = self.string_concat_fref();
                                 let call = self.builder.ins().call(helper, &[left, right]);
                                 let result = self.builder.inst_results(call)[0];
@@ -564,6 +566,7 @@ impl Translator<'_> {
                                 {
                                     return Err("substring expects string and integer arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let start = match clif_ty(start_kind) {
                                     types::I64 => start,
                                     ty if ty.is_int() => self.builder.ins().uextend(types::I64, start),
@@ -586,6 +589,7 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String {
                                     return Err("trim expects a string receiver".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let helper = self.string_trim_fref("trim");
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
@@ -598,6 +602,7 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String {
                                     return Err("trim expects a string receiver".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let helper = self.string_trim_fref(method_name.unwrap_or("trim"));
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
@@ -610,6 +615,7 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String {
                                     return Err("case conversion expects a string receiver".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let helper = self.string_transform_fref(method_name.unwrap_or("toLowerCase"));
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
@@ -625,6 +631,7 @@ impl Translator<'_> {
                                 {
                                     return Err("repeat expects a string and integer count".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let count = match clif_ty(count_kind) {
                                     types::I64 => count,
                                     ty if ty.is_int() => self.builder.ins().uextend(types::I64, count),
@@ -642,6 +649,7 @@ impl Translator<'_> {
                                 if receiver_kind != JitKind::String {
                                     return Err("reverse expects a string receiver".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let helper = self.string_reverse_fref();
                                 let call = self.builder.ins().call(helper, &[receiver]);
                                 let result = self.builder.inst_results(call)[0];
@@ -659,6 +667,8 @@ impl Translator<'_> {
                                 {
                                     return Err("pad expects string, integer, and string arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(fill);
                                 let target = match clif_ty(target_kind) {
                                     types::I64 => target,
                                     ty if ty.is_int() => self.builder.ins().uextend(types::I64, target),
@@ -681,6 +691,9 @@ impl Translator<'_> {
                                 {
                                     return Err("replace expects three strings".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
+                                self.builder.declare_value_needs_stack_map(needle);
+                                self.builder.declare_value_needs_stack_map(replacement);
                                 let helper = self.string_replace_fref();
                                 let call = self.builder.ins().call(helper, &[receiver, needle, replacement]);
                                 let result = self.builder.inst_results(call)[0];
