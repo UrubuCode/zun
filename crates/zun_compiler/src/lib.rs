@@ -94,6 +94,9 @@ pub struct TrimReport {
     pub reachable_methods: Vec<u32>,
     /// Method definition RIDs whose bodies are removed.
     pub removed_methods: Vec<u32>,
+    /// Whether the module contains unresolved member calls that require the
+    /// embedded interpreter fallback for dynamic/reflection behavior.
+    pub dynamic_fallback: bool,
 }
 
 /// Analyze a module without changing it, returning the trimmer's decisions.
@@ -109,9 +112,22 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
     let removed_methods: Vec<_> = (1..=module.tables.method_defs.len() as u32)
         .filter(|rid| !reachable.contains(rid))
         .collect();
+    let dynamic_fallback = module
+        .tables
+        .method_defs
+        .iter()
+        .filter(|method| method.body_offset != u32::MAX)
+        .filter_map(|method| read_body(&module.code, method.body_offset).ok())
+        .filter_map(|body| decode_all(body.code).ok())
+        .flatten()
+        .any(|instruction| {
+            matches!(instruction.opcode, Opcode::Call | Opcode::CallVirt)
+                && matches!(instruction.operand, Operand::Token(token) if token.table() == Some(zun_metadata::TableKind::MemberRef))
+        });
     Ok(TrimReport {
         reachable_methods,
         removed_methods,
+        dynamic_fallback,
     })
 }
 
@@ -744,6 +760,7 @@ mod tests {
         assert!(report.removed_methods.contains(&2));
         assert!(!report.removed_methods.contains(&1));
         assert!(!report.removed_methods.contains(&3));
+        assert!(!report.dynamic_fallback);
     }
 
     #[test]

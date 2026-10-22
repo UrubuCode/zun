@@ -229,6 +229,11 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 report.reachable_methods.len(),
                 report.removed_methods.len()
             );
+            if report.dynamic_fallback {
+                eprintln!(
+                    "zun: warning: unresolved member calls require embedded-IL interpreter fallback"
+                );
+            }
             for rid in &report.removed_methods {
                 if let Some(method) = module.tables.method_defs.get(*rid as usize - 1) {
                     println!(
