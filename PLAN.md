@@ -382,6 +382,7 @@ TypeScript casts, satisfies/non-null assertions, default parameters, rest parame
 and supported statement sequences; the compiler now accepts that OXC-adapted
 Program directly through semantic checking and IL lowering, with named
 TypeScript parameter and return annotations preserved with source spans;
+typed rest-parameter annotations are preserved as well;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
