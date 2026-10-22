@@ -412,6 +412,7 @@ and supported statement sequences; the compiler now accepts that OXC-adapted
 Program directly through semantic checking and IL lowering, with named
 TypeScript parameter and return annotations preserved with source spans;
 typed rest-parameter annotations are preserved as well;
+`.js` and `.mjs` CLI inputs select the native OXC frontend automatically;
 typed OXC entrypoints are covered through full compiler semantic checking and
 IL generation; named TypeScript class-field annotations are preserved with
 source spans;
