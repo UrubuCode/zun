@@ -1241,6 +1241,11 @@ equivalence coverage for `includes`, UTF-16 `indexOf`, `startsWith`, and
 remains Tier 0 because the current Cranelift CFG builder requires empty
 evaluation stacks at block boundaries. This is an explicit lowering boundary,
 not a reason to weaken verification or promote an ineligible method.
+The planned fix is explicit CFG stack state: compute the live evaluation-stack
+shape at each leader, append typed Cranelift block parameters for that shape,
+and pass matching values on every predecessor edge. The verifier's existing
+stack-height/type join rules remain authoritative; no opcode or dynamic carrier
+is needed for this change.
 Parameter/field string handles use the existing typed ABI. RegExp, FinalizationRegistry, and the Proxy/Reflect dynamic path
 are implemented with Tier 0 fallback. Each gate requires a runtime test
 and an interpreter/JIT equivalence test where JIT execution is applicable.
