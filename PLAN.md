@@ -207,6 +207,9 @@ The loader now exposes `verify_against` on signed lock and index envelopes so ca
 can enforce a release-pinned root key; wiring that key into the registry/fetch path
 remains the final trust-anchor integration gate.
 
+`TrustedKeySet` now provides the release-provisioned key set, and signed-index and
+`.zmlib` loading reject envelope keys outside that set before module registration.
+
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
 precompiled module still point at source.
