@@ -411,7 +411,7 @@ by the runtime static library, and leaves non-scalar managed returns on `.zm` on
 The CLI has an integration fixture that provisions `zun_vm.lib` when available,
 builds an ineligible scalar entrypoint, and executes the resulting fallback binary.
 Signed and unsigned scalar fallback ABIs are both covered, including the generated
-launcher’s `u64` path.
+launcher’s `u64` path; boolean fallback output preserves native `true`/`false` text.
 
 ## 8. Risks & attention points
 
