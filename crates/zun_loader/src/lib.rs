@@ -2167,6 +2167,40 @@ mod tests {
     }
 
     #[test]
+    fn signed_registry_index_valid_anchored_key_passes() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut index = ModuleIndex::new();
+        index.push("app", content_id(b"app")).unwrap();
+        let signing = SigningKey::from_bytes(&[51u8; 32]);
+        let payload = index.write();
+        let signed = SignedModuleIndex::new(
+            index,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&payload).to_bytes(),
+        )
+        .unwrap();
+        let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
+        assert!(signed.verify_with_keys(&trusted).is_ok());
+    }
+
+    #[test]
+    fn signed_registry_index_invalid_self_declared_key_is_rejected() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut index = ModuleIndex::new();
+        index.push("app", content_id(b"app")).unwrap();
+        let attacker = SigningKey::from_bytes(&[52u8; 32]);
+        let payload = index.write();
+        let signed = SignedModuleIndex::new(
+            index,
+            attacker.verifying_key().to_bytes(),
+            attacker.sign(&payload).to_bytes(),
+        )
+        .unwrap();
+        let trusted = TrustedKeySet::new([[53u8; 32]]).unwrap();
+        assert!(signed.verify_with_keys(&trusted).is_err());
+    }
+
+    #[test]
     fn loader_consumes_registry_index_with_content_verification() {
         struct Registry(Vec<u8>);
         impl ModuleFetcher for Registry {
