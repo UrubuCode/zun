@@ -401,6 +401,8 @@ the manifest.
 The runtime static library exports `zun_rt_init`/`zun_rt_shutdown`, and the
 generated launcher calls those hooks around the native entry point when the
 library is linked.
+The runtime static library also exports a scalar embedded-IL interpreter hook for
+the forthcoming ineligible-entry AOT launcher fallback.
 
 ## 8. Risks & attention points
 
