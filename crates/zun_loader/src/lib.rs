@@ -1403,6 +1403,10 @@ mod tests {
             .with_type_declarations(vec![("app".into(), b"declare function main(): int;".to_vec())])
             .unwrap();
         assert_eq!(Zmlib::read(&package.write()).unwrap(), package);
+        assert!(Zmlib::new(package.lock.clone(), vec![("app".into(), payload.clone())])
+            .unwrap()
+            .with_type_declarations(vec![("missing".into(), b"declare const x: int;".to_vec())])
+            .is_err());
         let path = std::env::temp_dir().join(format!("zun-package-{}.zmlib", std::process::id()));
         package.write_file(&path).unwrap();
         let loaded = Zmlib::read_file(&path).unwrap();
