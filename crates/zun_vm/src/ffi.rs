@@ -1201,6 +1201,19 @@ mod tests {
         assert!(process_id > 0);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn typed_u32_signature_calls_a_real_system_symbol() {
+        let library = unsafe { NativeLibrary::open("kernel32") }.expect("kernel32");
+        let signature = FfiSignature::new([], FfiScalar::U32);
+        let value = unsafe {
+            library
+                .call_u32_signature(b"GetTickCount", &signature, &[])
+                .expect("GetTickCount")
+        };
+        assert!(value <= u32::MAX);
+    }
+
     #[test]
     fn missing_typed_symbol_returns_a_typed_error() {
         let path = std::env::current_exe().expect("test executable path");
