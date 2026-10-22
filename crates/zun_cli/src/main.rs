@@ -451,8 +451,15 @@ fn resolve_lld() -> Option<PathBuf> {
 /// The build remains usable without it while the embedded-IL launcher path is
 /// used; packaged distributions set this to the matching `zun_vm.lib`.
 fn resolve_runtime_library() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("ZUN_RUNTIME_LIB").ok()?);
-    path.is_file().then_some(path)
+    if let Ok(path) = std::env::var("ZUN_RUNTIME_LIB") {
+        let path = PathBuf::from(path);
+        return path.is_file().then_some(path);
+    }
+    let directory = std::env::current_exe().ok()?.parent()?.to_owned();
+    ["zun_vm.lib", "libzun_vm.a"]
+        .into_iter()
+        .map(|name| directory.join(name))
+        .find(|path| path.is_file())
 }
 
 fn link_aot_executable(
