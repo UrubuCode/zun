@@ -1073,8 +1073,10 @@ relocatable Cranelift data objects rather than embedding process-local pointers.
 Managed string literals, helper receivers/arguments, and helper results now
 also participate in Cranelift precise stack-map declarations at JIT
 safepoints. This completes the root-publication side of the current string
-helper ABI; broad string-method eligibility remains gated until its allocation
-and exception contracts are complete.
+helper ABI. Sealed primitive-backed string instance methods that use the typed
+non-throwing helper ABI (including loop bodies over `length()` and
+`charCodeAt()`) are now eligible through direct calls; methods with allocation,
+checked exceptions, or dynamic carriers remain on the Tier 0 boundary.
 The equivalence suite also exercises a managed string result flowing directly
 into a following helper (`concat(...).contains(...)`), preserving the
 intermediate handle across the JIT call boundary.
