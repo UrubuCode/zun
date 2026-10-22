@@ -316,6 +316,21 @@ impl HttpFetcher {
         }
         Ok(Self { base_url })
     }
+
+    /// Fetch and decode the registry's deterministic `index.zidx` document.
+    pub fn fetch_index(&self) -> Result<ModuleIndex, LoadError> {
+        let url = format!("{}/index.zidx", self.base_url);
+        use std::io::Read;
+        let response = ureq::get(&url)
+            .call()
+            .map_err(|error| LoadError::InvalidManifest(format!("HTTP registry index fetch failed: {error}")))?;
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(LoadError::Io)?;
+        ModuleIndex::read(&bytes)
+    }
 }
 
 impl ModuleFetcher for HttpFetcher {
