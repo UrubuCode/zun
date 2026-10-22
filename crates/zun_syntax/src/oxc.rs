@@ -7,7 +7,8 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, BinaryOperator, BindingPattern, Expression, LogicalOperator, Statement,
+    Argument, BinaryOperator, BindingPattern, Expression, ForStatementInit, LogicalOperator,
+    Statement,
     UnaryOperator,
 };
 use oxc_parser::Parser;
@@ -316,9 +317,71 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         span: span(while_statement.span),
                     });
                 }
+                Statement::ForStatement(for_statement) => {
+                    let init = match &for_statement.init {
+                        None => None,
+                        Some(ForStatementInit::VariableDeclaration(declaration)) => {
+                            if declaration.declarations.len() != 1 {
+                                return Err(vec![
+                                    "OXC adapter supports one for-loop initializer binding".into(),
+                                ]);
+                            }
+                            let declarator = &declaration.declarations[0];
+                            let BindingPattern::BindingIdentifier(identifier) = &declarator.id
+                            else {
+                                return Err(vec![
+                                    "OXC adapter supports identifier for-loop bindings".into(),
+                                ]);
+                            };
+                            let Some(initializer) = declarator.init.as_ref() else {
+                                return Err(vec![
+                                    "OXC adapter requires an initializer for for-loop bindings".into(),
+                                ]);
+                            };
+                            Some(Box::new(Stmt::Let {
+                                name: Name {
+                                    span: span(identifier.span),
+                                },
+                                ty: None,
+                                init: convert_expression(initializer)
+                                    .map_err(|error| vec![error])?,
+                                span: span(declarator.span),
+                            }))
+                        }
+                        Some(init) => {
+                            let Some(expression) = init.as_expression() else {
+                                return Err(vec![
+                                    "OXC adapter does not support this for-loop initializer yet".into(),
+                                ]);
+                            };
+                            Some(Box::new(Stmt::Expr(
+                                convert_expression(expression).map_err(|error| vec![error])?,
+                            )))
+                        }
+                    };
+                    let body = convert_block_statement(&for_statement.body)
+                        .map_err(|error| vec![error])?;
+                    statements.push(Stmt::For {
+                        init,
+                        cond: for_statement
+                            .test
+                            .as_ref()
+                            .map(convert_expression)
+                            .transpose()
+                            .map_err(|error| vec![error])?,
+                        update: for_statement
+                            .update
+                            .as_ref()
+                            .map(convert_expression)
+                            .transpose()
+                            .map_err(|error| vec![error])?,
+                        body,
+                        span: span(for_statement.span),
+                    });
+                }
                 _ => {
                     return Err(vec![
-                        "OXC adapter currently supports local declarations, conditionals, while loops, return, and expression statements".into(),
+                        "OXC adapter currently supports local declarations, conditionals, while loops, for loops, return, and expression statements".into(),
                     ])
                 }
             }
@@ -537,6 +600,24 @@ mod tests {
         assert!(matches!(
             program.functions[0].body.statements[0],
             crate::ast::Stmt::While { .. }
+        ));
+    }
+
+    #[test]
+    fn converts_for_statements_with_initializer_and_update() {
+        let program = parse_subset(
+            "function count() { for (let value = 0; value < 2; value + 1) { return value; } }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::For {
+                init: Some(_),
+                cond: Some(_),
+                update: Some(_),
+                ..
+            }
         ));
     }
 }
