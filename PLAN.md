@@ -230,6 +230,8 @@ produce an envelope without following the loader's exact serialization.
 authenticating the transition, completing the retained-loader rotation path.
 Combined loader entry points now authenticate, load modules, and install the
 successor set in that order for both direct and cached index loads.
+Rotation payloads reject duplicate keys and additions that simultaneously revoke
+the same key before signature acceptance or successor-set derivation.
 
 **`.zmlib` carries type declarations + debug info** (metadata-as-interface, like a
 .NET assembly / `.d.ts`): imports are typed and inspectable, and errors from a
