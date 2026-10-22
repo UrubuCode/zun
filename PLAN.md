@@ -378,7 +378,8 @@ heap allocation / the GC is).
 On `main`, implemented and test-covered: format/metadata/verifier; interpreter with
 precise roots; mark-sweep GC + moving compaction + forwarding map + remembered-set
 start; generational GC (nursery bump allocation, budget-triggered evacuating minor
-collections, old-to-young barriers, weak/ephemeron stress coverage, and native
+collections, old-to-young barriers, cyclic WeakMap/ephemeron stress coverage across
+major and evacuating minor collections, and native
 stack-map root rewriting); Cranelift Tier 1 (typed stack, virtual-slot dispatch,
 heap/object/array/string
 + Map/Set lowering, type-aware String conversion lowering, eager-JIT-for-loops); closures; exceptions (unwind + rethrow
