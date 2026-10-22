@@ -222,6 +222,19 @@ pub fn compile_with_cached_std(
     compile_with_cached_module(source, standard, "zun:std")
 }
 
+/// Compile against the built-in default `zun:std` artifact without
+/// concatenating standard-library source into the user's module. Hosts that
+/// persist the artifact should use [`compile_with_cached_std`] instead.
+pub fn compile_with_default_std(source: &str) -> Result<Module, Vec<Diagnostic>> {
+    let (_, standard) = compile_prelude()?;
+    let loader = compile_with_cached_std(source, &standard)?;
+    let scope = loader
+        .get("app")
+        .ok_or_else(|| vec![Diagnostic::error("default std compilation did not produce app module")])?;
+    Module::read(&scope.module().write())
+        .map_err(|error| vec![Diagnostic::error(error.to_string())])
+}
+
 fn compile_with_cached_module(
     source: &str,
     prelude: &Module,
@@ -648,6 +661,14 @@ mod tests {
         .expect("zun:std should link");
         assert!(loader.get("zun:std").is_some());
         assert_eq!(loader.get("app").unwrap().module().tables.member_refs.len(), 1);
+    }
+
+    #[test]
+    fn default_std_entry_point_does_not_concatenate_prelude_source() {
+        let module = compile_with_default_std("function main(): int { return abs(-7); }")
+            .expect("default std should compile");
+        assert_eq!(module.tables.member_refs.len(), 1);
+        assert!(module.sequence_points.iter().all(|point| point.source_start < 50));
     }
 
     #[test]

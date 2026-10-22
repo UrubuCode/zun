@@ -145,7 +145,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 zun_module::Module::read(&scope.module().write())
                     .map_err(|error| vec![Diagnostic::error(error.to_string())])
             }),
-        None => zun_compiler::compile(&source),
+        None => zun_compiler::compile_with_default_std(&source),
     };
     let module = match module_result {
         Ok(m) => m,
