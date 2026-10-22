@@ -8,8 +8,8 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, Expression,
-    ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
-    ModuleExportName, Statement,
+    ClassElement, ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
+    ModuleExportName, PropertyKey, Statement,
     UnaryOperator,
 };
 use oxc_parser::Parser;
@@ -286,6 +286,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
 
     let mut functions = Vec::new();
     let mut imports = Vec::new();
+    let mut classes = Vec::new();
     for statement in parsed.program.body {
         if let Statement::ImportDeclaration(import_declaration) = statement {
             let Some(module) = import_declaration.source.value.as_str() else {
@@ -334,6 +335,59 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 names,
                 module: module.to_owned(),
                 span: Span::new(import_declaration.span.start, import_declaration.span.end),
+            });
+            continue;
+        }
+        if let Statement::ClassDeclaration(class_declaration) = statement {
+            let Some(id) = class_declaration.id.as_ref() else {
+                return Err(vec!["OXC adapter requires named classes".into()]);
+            };
+            let base = class_declaration.heritage.as_ref().map(|heritage| {
+                let Expression::Identifier(identifier) = &heritage.expression else {
+                    return Err("OXC adapter supports identifier class bases only".into());
+                };
+                Ok(Name {
+                    span: Span::new(identifier.span.start, identifier.span.end),
+                })
+            }).transpose().map_err(|error| vec![error])?;
+            let mut fields = Vec::new();
+            for element in &class_declaration.body.body {
+                let ClassElement::PropertyDefinition(property) = element else {
+                    return Err(vec!["OXC adapter does not support class methods yet".into()]);
+                };
+                if property.value.is_some() {
+                    return Err(vec![
+                        "OXC adapter does not support initialized class fields yet".into(),
+                    ]);
+                }
+                let (field_span, is_private) = match &property.key {
+                    PropertyKey::StaticIdentifier(identifier) => {
+                        (Span::new(identifier.span.start, identifier.span.end), false)
+                    }
+                    PropertyKey::PrivateIdentifier(identifier) => {
+                        (Span::new(identifier.span.start, identifier.span.end), true)
+                    }
+                    _ => return Err(vec![
+                        "OXC adapter supports identifier class fields only".into(),
+                    ]),
+                };
+                fields.push(crate::ast::ClassField {
+                    name: Name { span: field_span },
+                    ty: crate::ast::TypeAnnotation {
+                        name: Name { span: field_span },
+                    },
+                    is_static: property.r#static,
+                    is_private,
+                });
+            }
+            classes.push(crate::ast::Class {
+                name: Name {
+                    span: Span::new(id.span.start, id.span.end),
+                },
+                base,
+                fields,
+                methods: Vec::new(),
+                span: Span::new(class_declaration.span.start, class_declaration.span.end),
             });
             continue;
         }
@@ -595,7 +649,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     }
     Ok(Program {
         functions,
-        classes: Vec::new(),
+        classes,
         imports,
     })
 }
@@ -873,5 +927,18 @@ mod tests {
                 ..
             } if args.len() == 2
         ));
+    }
+
+    #[test]
+    fn converts_uninitialized_class_fields_and_heritage() {
+        let program = parse_subset(
+            "class Child extends Base { value: number; #secret: string; } function main() {}",
+            true,
+        )
+        .unwrap();
+        assert_eq!(program.classes.len(), 1);
+        assert!(program.classes[0].base.is_some());
+        assert_eq!(program.classes[0].fields.len(), 2);
+        assert!(program.classes[0].fields[1].is_private);
     }
 }
