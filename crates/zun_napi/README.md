@@ -5,6 +5,7 @@ dependency. The optional `node-api` feature builds a Node addon entry point
 that exports:
 
 - `runI64(arrayBuffer)`
+- `runI64BigInt(arrayBuffer)` (returns a JavaScript `BigInt`)
 - `runU64(arrayBuffer)` (returns a JavaScript `BigInt`)
 - `runF64(arrayBuffer)`
 - `runBool(arrayBuffer)`
@@ -12,6 +13,8 @@ that exports:
 
 Each function accepts an `ArrayBuffer` or Node `Buffer` containing the bytes of
 a compiled `.zm` module and executes its entry point.
+Use `runI64BigInt` when a signed integer may exceed JavaScript Number's exact
+range; `runI64` is retained as the Number-returning compatibility API.
 
 The C ABI also exposes `zun_host_execute_u64` for raw unsigned integer results,
 and `zun_host_execute_string`, which copies a UTF-8 result
