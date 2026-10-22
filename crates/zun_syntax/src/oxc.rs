@@ -8,7 +8,7 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, ChainElement,
-    Declaration,
+    Declaration, ExportDefaultDeclarationKind,
     Expression,
     ClassElement, ForStatementInit, ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator,
     MethodDefinitionKind, ModuleExportName, PropertyKey, Statement,
@@ -574,6 +574,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 Declaration::ClassDeclaration(class_declaration) => Some(class_declaration),
                 _ => None,
             },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::ClassDeclaration(class_declaration) => {
+                    Some(class_declaration)
+                }
+                _ => None,
+            },
             _ => None,
         };
         if let Some(class_declaration) = class_declaration {
@@ -754,6 +760,10 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             Statement::FunctionDeclaration(function) => Some(function),
             Statement::ExportDeclaration(export) => match &export.declaration {
                 Declaration::FunctionDeclaration(function) => Some(function),
+                _ => None,
+            },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::FunctionDeclaration(function) => Some(function),
                 _ => None,
             },
             _ => None,
@@ -1570,5 +1580,14 @@ mod tests {
         .unwrap();
         assert_eq!(program.functions.len(), 1);
         assert_eq!(program.classes.len(), 1);
+    }
+
+    #[test]
+    fn converts_named_default_declarations() {
+        let function = parse_subset("export default function main(): int { return 7; }", true)
+            .unwrap();
+        let class = parse_subset("export default class Box {}", true).unwrap();
+        assert_eq!(function.functions.len(), 1);
+        assert_eq!(class.classes.len(), 1);
     }
 }
