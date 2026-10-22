@@ -135,7 +135,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         _ => None,
     };
     let module_result = match cached_prelude.as_ref() {
-        Some(prelude) => zun_compiler::compile_with_cached_prelude(&source, prelude)
+        Some(prelude) => zun_compiler::compile_with_cached_std(&source, prelude)
             .and_then(|loader| {
                 let scope = loader.get("app").ok_or_else(|| {
                     vec![Diagnostic::error(
@@ -206,7 +206,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                 Ok(()) => {
                     let dependencies = cached_prelude
                         .as_ref()
-                        .map(|_| vec!["zun:prelude".to_owned()])
+                        .map(|_| vec!["zun:std".to_owned()])
                         .unwrap_or_default();
                     let manifest = zun_loader::ModuleManifest::new(file, dependencies)
                     .with_prelude_fingerprint(zun_prelude::fingerprint());

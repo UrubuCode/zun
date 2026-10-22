@@ -29,7 +29,7 @@ fn build_can_persist_a_valid_prelude_cache() {
     assert_eq!(module.tables.member_refs.len(), 1);
     let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
         .expect("read linked manifest");
-    assert_eq!(manifest.dependencies, vec!["zun:prelude"]);
+    assert_eq!(manifest.dependencies, vec!["zun:std"]);
 
     for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman"), cache] {
         let _ = std::fs::remove_file(path);
