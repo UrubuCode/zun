@@ -370,6 +370,7 @@ release-pinned key checks now gate signed-index loading and `.zmlib` verificatio
 anchored and self-declared signed-index fixtures are covered;
 HTTP index fetching accepts the rotated `TrustedKeySet` path;
 sequence-point PC-to-source metadata in `.zm`;
+native OXC JavaScript/TypeScript parse boundary with isolated diagnostics;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
@@ -377,7 +378,7 @@ Structured method-name/source-span frame resolution is also available to
 diagnostic consumers; interpreter operational faults now carry the nearest
 source frame through the public runner boundary, including recursive failures.
 Remaining gates:
-full AOT binary (linker + runtime bundle), native TS/JS front-end, dynamic-import warnings/fallback (conservative
+full AOT binary (linker + runtime bundle), OXC AST-to-HIR adapter and native TS/JS front-end integration, dynamic-import warnings/fallback (conservative
 member-call reporting is now implemented, with affected method names emitted in
 CLI warnings and dynamic instruction PCs retained by the IL decoder, with
 sequence-point source spans attached when available, reflective property access
