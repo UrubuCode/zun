@@ -1967,6 +1967,16 @@ impl Checker<'_> {
                     self.error(method.span, format!("no method `{mname}` on this type"));
                     return self.poison(span);
                 };
+                // Static signatures omit the implicit receiver. Reaching this
+                // instance-call path with that arity means `value.method()`
+                // attempted to invoke a static member through an object.
+                if self.signatures[func as usize].params.len() == args.len() {
+                    self.error(
+                        method.span,
+                        format!("static method `{mname}` must be called through its class"),
+                    );
+                    return self.poison(span);
+                }
                 if let Some(ast::Expr::Spread { expr, .. }) = args.last() {
                     let rest_index = self.signatures[func as usize].rest_param;
                     let fixed_count = args.len().saturating_sub(1);

@@ -38,6 +38,14 @@
     }
 
     #[test]
+    fn rejects_static_method_calls_through_instances() {
+        let message = first_error(
+            "class Math { static add(left: number, right: number): number { return left + right; } } function main(): number { let value = new Math(); return value.add(1.0, 2.0); }",
+        );
+        assert!(message.contains("must be called through its class"), "{message}");
+    }
+
+    #[test]
     fn async_source_with_await_builds_a_state_machine_plan() {
         let (hir, diagnostics) = check_src(
             "async function main(): Promise { let p = new Promise(); await p; return p; }",
