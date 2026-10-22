@@ -61,6 +61,32 @@ impl Heap {
         unsafe { self.collect_generation(roots, ref_slots, true, true, Some(on_relocation)) }
     }
 
+    /// Evacuate young survivors while also rewriting references in stopped
+    /// native frames described by their precise stack maps.
+    pub unsafe fn collect_young_evacuating_with_native_frames(
+        &mut self,
+        roots: &mut [Obj],
+        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        frames: &[StoppedNativeFrame<'_>],
+        on_relocation: &mut dyn FnMut(&RelocationMap),
+    ) -> usize {
+        let root_count = roots.len();
+        let mut all_roots = roots.to_vec();
+        for frame in frames {
+            all_roots.extend(unsafe { frame.registry.roots_at(frame.pc, frame.sp) });
+        }
+        let freed = unsafe {
+            self.collect_young_evacuating(&mut all_roots, ref_slots, &mut |relocation| {
+                for frame in frames {
+                    frame.registry.rewrite_slots_at(frame.pc, frame.sp, relocation);
+                }
+                on_relocation(relocation);
+            })
+        };
+        roots.copy_from_slice(&all_roots[..root_count]);
+        freed
+    }
+
     /// Collect only young objects using roots from an explicit stopped-frame
     /// list in addition to interpreter roots.
     ///

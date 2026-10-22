@@ -2057,6 +2057,35 @@ mod tests {
     }
 
     #[test]
+    fn evacuating_minor_collection_rewrites_stopped_native_frame_roots() {
+        let mut heap = Heap::new();
+        let old = heap.alloc(7, 0);
+        unsafe { heap.collect(&[old], &|_| Vec::new()) };
+        let young = heap.alloc(8, 0);
+        let old_address = young.addr();
+        let mut frame = [0u8; 8];
+        unsafe { (frame.as_mut_ptr() as *mut u64).write_unaligned(old_address as u64); }
+        let mut registry = StackMapRegistry::new();
+        registry.replace([NativeStackMap { pc: 91, span: 1, reference_slots: vec![0] }]);
+        let frames = [StoppedNativeFrame { registry: &registry, pc: 91, sp: frame.as_mut_ptr() }];
+        let mut roots = vec![old];
+
+        let freed = unsafe {
+            heap.collect_young_evacuating_with_native_frames(
+                &mut roots,
+                &|_| Vec::new(),
+                &frames,
+                &mut |_| {},
+            )
+        };
+
+        assert_eq!(freed, 0);
+        let moved = unsafe { (frame.as_ptr() as *const u64).read_unaligned() } as *mut u64;
+        assert_ne!(moved, old_address);
+        assert!(heap.by_addr.contains_key(&(moved as usize)));
+    }
+
+    #[test]
     fn minor_collection_clears_dead_young_weak_references() {
         let mut heap = Heap::new();
         let old = heap.alloc(7, 0);
