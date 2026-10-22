@@ -345,6 +345,12 @@ mod tests {
     }
 
     #[test]
+    fn embedded_runtime_lifecycle_hooks_are_callable() {
+        zun_rt_init();
+        zun_rt_shutdown();
+    }
+
+    #[test]
     fn embedded_runtime_hook_accepts_non_scalar_results_for_aot_fallback() {
         let module = zun_compiler::compile("function main(): string { return \"managed\"; }").unwrap();
         let bytes = module.write();
