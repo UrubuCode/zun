@@ -176,6 +176,7 @@ struct ClassInfo {
     base: Option<u32>,
     base_name: Option<String>,
     own_fields: Vec<(String, Ty, bool, bool)>,
+    own_initializers: Vec<Option<Box<ast::Expr>>>,
 }
 
 struct Checker<'a> {
@@ -2542,6 +2543,15 @@ impl Checker<'_> {
                     .collect();
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
+                let initializers = self.full_initializers(class_idx);
+                if args.len() < field_tys.len() {
+                    for initializer in initializers.iter().skip(args.len()).take(field_tys.len() - args.len()) {
+                        let Some(initializer) = initializer else {
+                            break;
+                        };
+                        args.push(self.check_expr(cx, initializer));
+                    }
+                }
                 if args.len() != field_tys.len() {
                     self.error(
                         span,

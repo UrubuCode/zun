@@ -15,6 +15,17 @@ impl<'a> Checker<'a> {
         fields
     }
 
+    /// Field initializers in the same inherited-first slot order as the layout.
+    pub(super) fn full_initializers(&self, class: u32) -> Vec<Option<Box<zun_syntax::ast::Expr>>> {
+        let info = &self.classes[class as usize];
+        let mut initializers = match info.base {
+            Some(b) => self.full_initializers(b),
+            None => Vec::new(),
+        };
+        initializers.extend(info.own_initializers.iter().cloned());
+        initializers
+    }
+
     /// Find a field's slot and type, searching inherited fields too.
     pub(super) fn field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
         self.full_fields(class)

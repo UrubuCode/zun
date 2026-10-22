@@ -17,6 +17,7 @@ impl<'a> Checker<'a> {
                 base: None,
                 base_name,
                 own_fields: Vec::new(),
+                own_initializers: Vec::new(),
             });
         }
         // Resolve base names to indices now that all classes are known.
@@ -54,6 +55,11 @@ impl<'a> Checker<'a> {
                 own.push((fname, ty, f.is_static, f.is_private));
             }
             self.classes[index].own_fields = own;
+            self.classes[index].own_initializers = c
+                .fields
+                .iter()
+                .map(|field| field.initializer.clone())
+                .collect();
         }
 
         let mut out = Vec::with_capacity(program.classes.len());

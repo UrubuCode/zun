@@ -588,6 +588,22 @@
     }
 
     #[test]
+    fn initialized_class_field_fills_an_omitted_constructor_slot() {
+        let source = "class Point { x: number = 5; } function main(): number { return new Point().x; }";
+        let mut diagnostics = Vec::new();
+        let ast = parse_subset(source, true).unwrap();
+        let hir = check_with_externals(source, &ast, &mut diagnostics, &[]);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let hir::Stmt::Return(Some(expr)) = &hir.functions[0].body[0] else {
+            panic!("expected return statement")
+        };
+        let hir::ExprKind::FieldGet { object, .. } = &expr.kind else {
+            panic!("expected field access")
+        };
+        assert!(matches!(object.kind, hir::ExprKind::New { ref args, .. } if args.len() == 1));
+    }
+
+    #[test]
     fn error_does_not_cascade() {
         // `y` is unknown; the addition and the assignment must not pile on
         // extra diagnostics.
