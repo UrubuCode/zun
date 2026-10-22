@@ -479,6 +479,39 @@ impl NativeLibrary {
             .map_err(|message| FfiError { message })
     }
 
+    /// Call an owned UTF-8 function with `(ptr, len, out_len)`, copy its
+    /// result, and invoke the explicitly declared `(ptr, len)` deallocator.
+    pub unsafe fn call_utf8_owned(
+        &self,
+        name: &[u8],
+        argument: &FfiStringArgument,
+        declaration: &FfiStringReturn,
+    ) -> Result<Vec<u8>, FfiError> {
+        let (free_symbol, _) = match declaration {
+            FfiStringReturn::Owned { free_symbol, length } => (free_symbol, length),
+            _ => return Err(FfiError { message: "owned UTF-8 call requires an owned return declaration".into() }),
+        };
+        declaration.validate().map_err(|message| FfiError { message })?;
+        let free = unsafe {
+            self.symbol::<unsafe extern "C" fn(*mut u8, usize)>(free_symbol.as_bytes())
+        }?;
+        let symbol = unsafe {
+            self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *mut u8>(name)
+        }?;
+        let mut length = 0usize;
+        let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
+        if pointer.is_null() && length != 0 {
+            return Err(FfiError { message: "owned UTF-8 call returned a null pointer with non-zero length".into() });
+        }
+        let payload = if length == 0 {
+            Vec::new()
+        } else {
+            unsafe { core::slice::from_raw_parts(pointer, length) }.to_vec()
+        };
+        unsafe { free(pointer, length) };
+        Ok(payload)
+    }
+
     /// Call a C symbol with no arguments and an `i64` result.
     ///
     /// # Safety
