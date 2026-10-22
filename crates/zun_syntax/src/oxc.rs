@@ -583,11 +583,19 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 "OXC adapter supports identifier class fields only".into(),
                             ]),
                         };
+                        let Some(type_annotation) = convert_type_annotation(
+                            source,
+                            property.type_annotation.as_deref(),
+                        )
+                        .map_err(|error| vec![error])?
+                        else {
+                            return Err(vec![
+                                "OXC adapter requires class fields to have named types".into(),
+                            ]);
+                        };
                         fields.push(crate::ast::ClassField {
                             name: Name { span: field_span },
-                            ty: crate::ast::TypeAnnotation {
-                                name: Name { span: field_span },
-                            },
+                            ty: type_annotation,
                             is_static: property.r#static,
                             is_private,
                         });
@@ -1497,5 +1505,12 @@ mod tests {
         let function = &program.functions[0];
         assert_eq!(function.params[0].ty.as_ref().unwrap().name.span, Span::new(20, 23));
         assert_eq!(function.return_type.as_ref().unwrap().name.span, Span::new(26, 29));
+    }
+
+    #[test]
+    fn preserves_typescript_class_field_types() {
+        let program = parse_subset("class Box { value: number; } function main() {}", true)
+            .unwrap();
+        assert_eq!(program.classes[0].fields[0].ty.name.span, Span::new(19, 25));
     }
 }
