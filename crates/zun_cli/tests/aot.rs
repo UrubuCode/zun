@@ -21,6 +21,9 @@ fn build_aot_writes_fallback_module_manifest_and_object() {
     assert!(source.with_extension("zman").is_file());
     assert!(source.with_extension("o").is_file());
     assert!(source.with_extension("exe").is_file());
+    let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
+        .expect("read AOT manifest");
+    assert!(manifest.native_object.is_some());
     let executable = Command::new(source.with_extension("exe"))
         .output()
         .expect("run AOT executable");
@@ -85,6 +88,9 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("method #1 is not JIT-eligible"));
     assert!(source.with_extension("zm").is_file());
     assert!(source.with_extension("zman").is_file());
+    let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
+        .expect("read fallback manifest");
+    assert!(manifest.native_object.is_none());
     assert!(!source.with_extension("exe").exists());
 
     for extension in ["ts", "zm", "zman", "o", "exe"] {

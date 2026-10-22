@@ -129,11 +129,6 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                         file,
                         std::iter::empty::<String>(),
                     );
-                    let manifest = if aot {
-                        manifest.with_native_object(out.with_extension("o").display().to_string())
-                    } else {
-                        manifest
-                    };
                     match manifest.write_file(&manifest_out) {
                         Ok(()) => {
                             println!("wrote {}", out.display());
@@ -144,6 +139,18 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
                                     Ok(object) => match std::fs::write(&object_out, object) {
                                         Ok(()) => {
                                             println!("wrote {}", object_out.display());
+                                            let native_manifest = manifest.clone().with_native_object(
+                                                object_out.display().to_string(),
+                                            );
+                                            if let Err(error) =
+                                                native_manifest.write_file(&manifest_out)
+                                            {
+                                                eprintln!(
+                                                    "zun: cannot update {}: {error}",
+                                                    manifest_out.display()
+                                                );
+                                                return ExitCode::FAILURE;
+                                            }
                                             let executable_out = out.with_extension("exe");
                                             match link_aot_executable(
                                                 &object_out,
