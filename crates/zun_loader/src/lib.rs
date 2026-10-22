@@ -584,6 +584,20 @@ impl ModuleLoader {
         self.insert(scope)
     }
 
+    /// Load a lockfile-selected artifact from the content-addressed cache.
+    pub fn load_cached(
+        &mut self,
+        cache_root: impl AsRef<Path>,
+        name: impl Into<String>,
+        id: ContentId,
+    ) -> Result<(), LoadError> {
+        let name = name.into();
+        let bytes = ModuleCache::load(cache_root, id).map_err(|error| {
+            LoadError::InvalidManifest(format!("cached module `{name}` unavailable: {error}"))
+        })?;
+        self.load_bytes(name, &bytes)
+    }
+
     /// Load and register a module using its path as identity.
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<(), LoadError> {
         let scope = ModuleScope::from_file(path)?;
@@ -915,6 +929,19 @@ mod tests {
         assert!(lock.push("app", content_id(b"other")).is_err());
         let decoded = ModuleLock::read(&lock.write()).unwrap();
         assert_eq!(decoded, lock);
+    }
+
+    #[test]
+    fn loader_registers_a_verified_cached_module() {
+        let root = std::env::temp_dir().join(format!("zun-loader-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bytes = Module::new().write();
+        let mut cache = ModuleCache::default();
+        let id = cache.store(&root, &bytes).unwrap();
+        let mut loader = ModuleLoader::new();
+        loader.load_cached(&root, "cached", id).unwrap();
+        assert!(loader.get("cached").is_some());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
