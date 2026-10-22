@@ -33,9 +33,9 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::StaticMethodCall { class, method, args, .. } => { shift(&mut class.span); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
         Expr::StaticField { class, field, .. } => { shift(&mut class.span); shift(&mut field.span); }
         Expr::Spread { expr, .. } => rebase_expression_names(expr, base),
-        Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } => { rebase_expression_names(object, base); shift(&mut field.span); }
+        Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } | Expr::PrivateField { object, field, .. } => { rebase_expression_names(object, base); shift(&mut field.span); }
         Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::FieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
+        Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
         Expr::Function(_) | Expr::Number { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
@@ -283,8 +283,23 @@ impl Parser<'_> {
                         },
                     };
                 }
+                TokenKind::Hash => {
+                    self.bump();
+                    let field = self.name("a private field name");
+                    if self.at(TokenKind::LParen) {
+                        self.error_at(field.span, "private methods are not supported");
+                    }
+                    let span = expr.span().to(field.span);
+                    expr = Expr::PrivateField { object: Box::new(expr), field, span };
+                }
                 TokenKind::Dot => {
                     self.bump();
+                    if self.eat(TokenKind::Hash) {
+                        let field = self.name("a private field name");
+                        let span = expr.span().to(field.span);
+                        expr = Expr::PrivateField { object: Box::new(expr), field, span };
+                        continue;
+                    }
                     let member = self.name("a field or method name");
                     if self.at(TokenKind::LParen) {
                         self.bump();
@@ -459,12 +474,11 @@ impl Parser<'_> {
                 }
                 Expr::Field { object, field, .. } => {
                     let span = object.span().to(value.span());
-                    return Expr::FieldAssign {
-                        object,
-                        field,
-                        value: Box::new(value),
-                        span,
-                    };
+                    return Expr::FieldAssign { object, field, value: Box::new(value), span };
+                }
+                Expr::PrivateField { object, field, .. } => {
+                    let span = object.span().to(value.span());
+                    return Expr::PrivateFieldAssign { object, field, value: Box::new(value), span };
                 }
                 Expr::Index { object, index, .. } => {
                     let span = object.span().to(value.span());

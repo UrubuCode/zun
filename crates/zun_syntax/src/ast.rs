@@ -56,6 +56,8 @@ pub struct ClassField {
     /// Whether the field was declared with the `static` modifier. Static
     /// field storage is not lowered yet, so sema reports it explicitly.
     pub is_static: bool,
+    /// Whether the field uses the `#private` spelling.
+    pub is_private: bool,
 }
 
 /// `function name(params): ret { body }`
@@ -527,6 +529,8 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `object.#field` private field read.
+    PrivateField { object: Box<Expr>, field: Name, span: Span },
     /// `object.field = value` — write a field; the value is the result.
     FieldAssign {
         /// The object expression.
@@ -538,6 +542,8 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `object.#field = value` private field write.
+    PrivateFieldAssign { object: Box<Expr>, field: Name, value: Box<Expr>, span: Span },
     /// `object[index]` — read an array element.
     Index {
         /// The array expression.
@@ -584,7 +590,9 @@ impl Expr {
             | Expr::Cast { span, .. }
             | Expr::New { span, .. }
             | Expr::Field { span, .. }
+            | Expr::PrivateField { span, .. }
             | Expr::FieldAssign { span, .. }
+            | Expr::PrivateFieldAssign { span, .. }
             | Expr::Index { span, .. } => *span,
             Expr::IndexAssign { span, .. } => *span,
             Expr::Await { span, .. } => *span,

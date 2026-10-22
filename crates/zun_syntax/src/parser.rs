@@ -165,6 +165,7 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            let is_private = self.eat(TokenKind::Hash);
             let is_static = self.eat(TokenKind::KwStatic);
             let is_extern = self.eat(TokenKind::KwExtern);
             let member_name = self.name("a field or method name");
@@ -188,6 +189,7 @@ impl Parser<'_> {
                     name: member_name,
                     ty,
                     is_static,
+                    is_private,
                 });
             }
         }

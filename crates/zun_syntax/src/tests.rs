@@ -476,3 +476,16 @@
         };
         assert!(matches!(**object, Expr::Field { .. }));
     }
+
+    #[test]
+    fn parses_private_field_marker_and_access() {
+        let p = parse_ok("class Box { #value: number; } function f() { let b = new Box(1); print(b.#value); }");
+        assert!(p.classes[0].fields[0].is_private);
+        let Stmt::Let { init: Expr::New { .. }, .. } = &p.functions[0].body.statements[0] else {
+            panic!("expected private-field test setup");
+        };
+        assert!(matches!(
+            &p.functions[0].body.statements[1],
+            Stmt::Expr(Expr::Call { args, .. }) if matches!(&args[0], Expr::PrivateField { .. })
+        ));
+    }
