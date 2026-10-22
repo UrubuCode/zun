@@ -1221,7 +1221,7 @@ for `DataView` and all four typed-array view kinds.
 The prelude now exposes a deterministic content fingerprint and can be emitted
 as an independent `.zm` artifact. Compiled manifests carry that fingerprint,
 and the loader/VM expose cache-safe validation entry points that reject stale
-artifacts before loading or execution. Cache reuse remains deferred until the
-CLI persists and retrieves the independent artifact through a documented cache
-location; the current concatenated source path must not be cached as if it were
-independent.
+artifacts before loading or execution. `compile_with_cached_prelude` and
+`zun build --prelude-cache` now link the user module against the independent
+artifact; the ordinary source-concatenation path remains available for
+backward-compatible builds.
