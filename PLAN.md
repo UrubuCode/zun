@@ -384,7 +384,8 @@ Program directly through semantic checking and IL lowering, with named
 TypeScript parameter and return annotations preserved with source spans;
 typed rest-parameter annotations are preserved as well;
 typed OXC entrypoints are covered through full compiler semantic checking and
-IL generation;
+IL generation; named TypeScript class-field annotations are preserved with
+source spans;
 minimal `std` surfaces; static `String` rebinding with frozen-floor extension
 methods; checked typed invocation for registered native extension descriptors;
 VM extension loading now exposes that checked invocation boundary.
