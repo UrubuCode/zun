@@ -120,6 +120,9 @@ impl ZunRegistry {
         function: *const ZunFunction,
     ) -> Result<(), i32> {
         self.validate()?;
+        if module.is_null() {
+            return Err(-5);
+        }
         if function.is_null() {
             return Err(-4);
         }
@@ -229,8 +232,25 @@ mod tests {
             invoke: Some(invoke),
         };
         let mut registry = ZunRegistry { abi_version: ZUN_ABI_V1, context: core::ptr::null_mut(), register_function: Some(reject) };
-        let result = unsafe { registry.register_function(core::ptr::null(), &function) };
+        static MODULE: &[u8] = b"zun:test\0";
+        let result = unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) };
         assert_eq!(result, Err(17));
+    }
+
+    #[test]
+    fn registration_rejects_null_module_name() {
+        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 { 0 }
+        static KEY: &[u8] = b"answer\0";
+        let function = ZunFunction {
+            key: KEY.as_ptr() as *const c_char,
+            params: core::ptr::null(),
+            param_count: 0,
+            ret: ZunTy::I32.into(),
+            invoke: Some(invoke),
+        };
+        let mut owned = OwnedRegistry::new();
+        let mut registry = owned.as_registry();
+        assert_eq!(unsafe { registry.register_function(core::ptr::null(), &function) }, Err(-5));
     }
 
     #[test]
