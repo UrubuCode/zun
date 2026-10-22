@@ -320,9 +320,12 @@ relocatable per-realm global singleton with `globalThis`/`global` bindings;
 versioned native extension ABI with owned `namespace`/`module().func` lookup;
 scalar + string FFI with declared ownership contracts; multi-module loader/manifest;
 minimal `std/` surfaces. Remaining gates:
-full AOT binary (linker + runtime bundle), native TS/JS front-end,
-module registry, sequence-point debug info, true OSR. The former `zun_napi` Node
-embedding crate has been removed (out of scope).
+fully default-installed `zun:std` without implicit source concatenation, static
+base-type rebinding and extension methods over the frozen floor, typed native
+extension bindings beyond registry lookup, full AOT binary (linker + runtime
+bundle), native TS/JS front-end, module registry, sequence-point debug info,
+true OSR. The former `zun_napi` Node embedding crate has been removed (out of
+scope).
 
 ## 8. Risks & attention points
 
