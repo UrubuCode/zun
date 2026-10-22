@@ -31,9 +31,9 @@ extern function GetCurrentProcessId(): i64 from "kernel32";
 
 The compiler checks the declaration against the host-provided linker signature
 and the VM validates the encoded scalar signature before dispatch. The current
-direct ABI supports homogeneous `i64` and `f64` calls plus zero-argument
-boolean results; strings, buffers, aggregates, and callbacks remain separate
-generated-marshalling work.
+direct ABI supports homogeneous `i64` and `f64` calls plus explicit
+integer-style C boolean calls with up to three boolean parameters; strings,
+buffers, aggregates, and callbacks remain separate generated-marshalling work.
 
 On platforms that require an import library, provide the Node N-API library at
 build time:
