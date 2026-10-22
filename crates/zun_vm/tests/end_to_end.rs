@@ -34,6 +34,19 @@ fn hello_world() {
 }
 
 #[test]
+fn realm_global_aliases_share_the_same_dynamic_object() {
+    assert_eq!(
+        run_source(
+            r#"function main() {
+                dynamic_set(globalThis, "answer", box_any(41));
+                print(dynamic_get(global, "answer") as number);
+            }"#,
+        ),
+        ["41"],
+    );
+}
+
+#[test]
 fn bigint_constructor_arithmetic_and_formatting_use_the_managed_floor() {
     let out = run_source(
         r#"function main(): int {
