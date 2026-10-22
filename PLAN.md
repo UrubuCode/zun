@@ -194,7 +194,12 @@ version** (`.zm` format + intrinsic ids + core-type layouts + host ABI), declare
 release. Each module declares **capabilities** (`fs/net/screen/native`). Pure-Zun
 modules ship one portable `.zm`; native/FFI ship per-arch.
 
-**Trust anchor (open gate, Phase 7).** `SignedModuleLock` today verifies the signature
+**Trust anchor (closed gate, Phase 7).** `SignedModuleLock` and signed registry indexes
+verify their signatures against a trusted key set supplied outside the envelope;
+the embedded public key is never authoritative by itself. The release provisions
+the root/key set, and the loader checks it before fetching or registering content.
+The embedded key is parsed only to verify the cryptographic signature; it is not
+trusted until the external key-set check succeeds.
 against the public key *carried inside the envelope* — it proves "signed by whoever
 holds this key", not "signed by the official `@urubucode/*` key". The root of trust
 **must come from outside the envelope**: a release-embedded root key (or a signed
