@@ -452,6 +452,7 @@ impl Translator<'_> {
                                 {
                                     return Err("string charCodeAt expects string and integer arguments".into());
                                 }
+                                self.builder.declare_value_needs_stack_map(receiver);
                                 let index = match clif_ty(index_kind) {
                                     types::I64 => index,
                                     ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
