@@ -689,6 +689,8 @@ The following runtime contracts are implemented and covered by tests:
   can publish the coordinator's `(PC, SP)` pair, with packed calls also
   supporting a host that already installed the current heap scope.
 - Promise/microtask scheduling and scalar external-library symbol calls;
+- managed BigInt construction, add/subtract/multiply/compare, and
+  `toString`, with GC-owned payloads and an explicit Tier 0 boundary;
 - `throw`/`try`/`catch`/`finally` handler regions, verifier validation, nested
   Tier 0 unwinding, cross-frame propagation, and explicit JIT fallback for
   exception-bearing methods;
@@ -979,16 +981,19 @@ VM has multiple mutator threads.
 
 The runtime floor now also contains a normalized sign-magnitude `BigInt`
 implementation with decimal parsing and exact add/subtract/multiply/compare
-operations. It is intentionally not exposed through the language yet: the
-managed carrier, GC tracing contract, literals, verifier, and interpreter/JIT
-lowering must land as one later vertical slice.
+operations. The language now binds `BigInt` construction, arithmetic,
+comparison, and formatting through managed `CallBuiltin` intrinsics. The
+managed payload is GC-owned and the vertical slice is covered by interpreter
+tests plus an interpreter/JIT equivalence test. BigInt literals, operators,
+and Cranelift lowering remain deferred; these operations intentionally stay
+on the Tier 0 fallback until the managed-value JIT representation is designed.
 
 The remaining completion gates are broader JIT lowering for managed heap values,
 additional platform coverage for the automatic collection policy at the
 now-published precise JIT-frame safepoint, true OSR frame replacement, and
  non-blittable FFI marshalling (deferred; its ownership ABI is specified in
  section 4.4), production Node N-API bindings, AOT/R2R support
- for the full runtime surface, BigInt, and the remaining Group 3 type-level
+ for the full runtime surface and the remaining Group 3 type-level
 features. Runtime JIT string literals now use an explicit literal-handle ABI:
 the JIT owns stable UTF-8 bytes and interns them through the active heap scope;
 the interpreter/JIT equivalence path covers literal `String` methods. The
