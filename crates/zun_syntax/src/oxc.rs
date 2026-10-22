@@ -156,10 +156,9 @@ pub fn parses(source: &str, typescript: bool) -> bool {
 
 /// Convert the first OXC-supported subset into the existing Zun AST.
 ///
-/// This deliberately starts with function declarations whose body is a single
-/// numeric return. Unsupported constructs return a diagnostic instead of being
-/// silently approximated; additional statement and expression adapters can be
-/// added without changing the public frontend boundary.
+/// Unsupported constructs return a diagnostic instead of being silently
+/// approximated; additional statement and expression adapters can be added
+/// without changing the public frontend boundary.
 pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<String>> {
     let allocator = Allocator::default();
     let source_type = SourceType::mjs().with_typescript(typescript);
@@ -183,18 +182,35 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         let Some(body) = function.body.as_ref() else {
             return Err(vec!["OXC adapter requires function bodies".into()]);
         };
-        let [Statement::ReturnStatement(return_statement)] = body.statements.as_slice() else {
-            return Err(vec![
-                "OXC adapter currently supports one return statement per function".into(),
-            ]);
-        };
         let span = |span: oxc_span::Span| Span::new(span.start, span.end);
         let function_span = span(function.span);
-        let return_span = span(return_statement.span);
-        let Some(argument) = return_statement.argument.as_ref() else {
-            return Err(vec!["OXC adapter requires a return expression".into()]);
-        };
-        let value = convert_expression(argument).map_err(|error| vec![error])?;
+        let mut statements = Vec::with_capacity(body.statements.len());
+        for statement in &body.statements {
+            let converted = match statement {
+                Statement::ReturnStatement(return_statement) => {
+                    let value = return_statement
+                        .argument
+                        .as_ref()
+                        .map(convert_expression)
+                        .transpose()
+                        .map_err(|error| vec![error])?;
+                    Stmt::Return {
+                        value,
+                        span: span(return_statement.span),
+                    }
+                }
+                Statement::ExpressionStatement(expression_statement) => Stmt::Expr(
+                    convert_expression(&expression_statement.expression)
+                        .map_err(|error| vec![error])?,
+                ),
+                _ => {
+                    return Err(vec![
+                        "OXC adapter currently supports return and expression statements".into(),
+                    ])
+                }
+            };
+            statements.push(converted);
+        }
         let mut params = Vec::with_capacity(function.params.items.len());
         for parameter in &function.params.items {
             let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
@@ -227,10 +243,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             is_async: function.r#async,
             is_generator: function.generator,
             body: Block {
-                statements: vec![Stmt::Return {
-                    value: Some(value),
-                    span: return_span,
-                }],
+                statements,
                 span: span(body.span),
             },
             span: function_span,
@@ -344,6 +357,16 @@ mod tests {
                 value: Some(crate::ast::Expr::Call { ref callee, ref args, .. }),
                 ..
             } if callee.span.start < callee.span.end && args.len() == 2
+        ));
+    }
+
+    #[test]
+    fn converts_multiple_supported_body_statements() {
+        let program = parse_subset("function main() { add(20, 22); return 42; }", false).unwrap();
+        assert_eq!(program.functions[0].body.statements.len(), 2);
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Expr(crate::ast::Expr::Call { .. })
         ));
     }
 }
