@@ -622,11 +622,21 @@ pub extern "C" fn zun_jit_map_size(address: i64) -> i64 {
     zun_gc::with_current_heap(|heap| heap.map_len(object).map(|len| len as i64).unwrap_or(-1))
 }
 
+pub extern "C" fn zun_jit_map_clear(address: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.map_clear(object).is_some() as i32)
+}
+
 /// Read a managed Set length without allocating or collecting.
 #[inline]
 pub extern "C" fn zun_jit_set_size(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| heap.set_len(object).map(|len| len as i64).unwrap_or(-1))
+}
+
+pub extern "C" fn zun_jit_set_clear(address: i64) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| heap.set_clear(object).is_some() as i32)
 }
 
 /// Test a numeric key in a managed Map without materializing an `Any` carrier.
@@ -1490,7 +1500,9 @@ impl Jit {
     builder.symbol("zun_jit_f64_array_get", zun_jit_f64_array_get as *const u8);
     builder.symbol("zun_jit_f64_array_set", zun_jit_f64_array_set as *const u8);
     builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
+        builder.symbol("zun_jit_map_clear", zun_jit_map_clear as *const u8);
     builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
+        builder.symbol("zun_jit_set_clear", zun_jit_set_clear as *const u8);
     builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
     builder.symbol("zun_jit_set_has_f64", zun_jit_set_has_f64 as *const u8);
     builder.symbol("zun_jit_set_add_f64", zun_jit_set_add_f64 as *const u8);

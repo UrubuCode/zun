@@ -103,6 +103,8 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "setDeleteF64"
                 | "mapSetF64"
                 | "mapGetF64Or"
+                | "mapClear"
+                | "setClear"
                 | "mapGet"
                 | "mapHasI64"
                 | "mapHasI32"

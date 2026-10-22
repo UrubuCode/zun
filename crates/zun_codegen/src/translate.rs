@@ -812,6 +812,32 @@ impl Translator<'_> {
                         Operand::Imm32(id) => id as u32,
                         _ => return Err("builtin operand".into()),
                     };
+                    if let Some(helper_name) = match zun_natives::by_id(id).map(|f| f.name) {
+                        Some("mapClear") => Some("zun_jit_map_clear"),
+                        Some("setClear") => Some("zun_jit_set_clear"),
+                        _ => None,
+                    } {
+                        let (receiver, kind) = stack.pop().ok_or("clear receiver")?;
+                        if kind != JitKind::Object {
+                            return Err("clear requires a managed object".into());
+                        }
+                        self.builder.declare_value_needs_stack_map(receiver);
+                        let fid = if let Some(&fid) = builtin_ids.get(helper_name) {
+                            fid
+                        } else {
+                            let mut sig = Signature::new(self.builder.func.signature.call_conv);
+                            sig.params.push(AbiParam::new(types::I64));
+                            sig.returns.push(AbiParam::new(types::I32));
+                            let fid = self.module.declare_function(helper_name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
+                            builtin_ids.insert(helper_name, fid);
+                            fid
+                        };
+                        let fref = self.module.declare_func_in_func(fid, self.builder.func);
+                        self.builder.ins().call(fref, &[receiver]);
+                        let void = self.builder.ins().iconst(types::I64, 0);
+                        stack.push((void, JitKind::Other));
+                        continue;
+                    }
                     if zun_natives::by_id(id).map(|f| f.name) == Some("mapGet") {
                         if self.method_return_kind != JitKind::Other || stack.len() < 2 {
                             return Err("mapGet requires an Any return and two arguments".into());

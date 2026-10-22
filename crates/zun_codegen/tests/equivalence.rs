@@ -4938,6 +4938,26 @@ fn numeric_f64_collection_intrinsics_are_tier0_jit_equivalent() {
 }
 
 #[test]
+fn managed_collection_clear_is_jit_equivalent() {
+    let src = "import { mapClear, mapSize, setClear, setSize } from \"zun:collections\"; function clearMap(value: Map): u64 { mapClear(value); return mapSize(value); } function clearSet(value: Set): u64 { setClear(value); return setSize(value); } function main(): boolean { return true; }";
+    let interp_module = compile("import { mapSetI32, mapClear, mapSize, setAddI32, setClear, setSize } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 1, 2); setAddI32(set, 1); mapClear(map); setClear(set); if (mapSize(map) == 0) { return setSize(set) == 0; } return false; }");
+    let module = compile(src);
+    let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "clearMap").map(|index| index as u32 + 1).expect("map clear method");
+    let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "clearSet").map(|index| index as u32 + 1).expect("set clear method");
+    assert!(matches!(interp_entry(&interp_module), Value::Bool(true)));
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles collection clear");
+    assert!(jit.is_compiled(map_rid));
+    assert!(jit.is_compiled(set_rid));
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    let set = heap.alloc_set();
+    heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::int(2));
+    heap.set_add(set, zun_core::Any::int(1));
+    assert_eq!(jit.call_packed_with_heap(map_rid, &[map.addr() as u64], &mut heap).unwrap(), 0);
+    assert_eq!(jit.call_packed_with_heap(set_rid, &[set.addr() as u64], &mut heap).unwrap(), 0);
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
