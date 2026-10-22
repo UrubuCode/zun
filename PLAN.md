@@ -20,7 +20,7 @@ calls, interpreted backedge observation, and conservative reachability-based
 trimming are also implemented. Scalar typed FFI/ABI integration now covers
 source declarations, typed MemberRef metadata, host resolution, and direct
 blittable dispatch. The remaining gates are non-blittable marshalling,
-production N-API hosting, AOT/R2R object emission, true OSR frame replacement,
+production N-API hosting, full-runtime AOT/R2R object emission, true OSR frame replacement,
 and production-grade
 trimming diagnostics and metadata removal.
 
@@ -756,12 +756,15 @@ The following runtime contracts are implemented and covered by tests:
   instance-method form is also explicitly bound to `zun:string` in semantic
   analysis, so primitive-backed String calls do not collide with homonymous
   Number methods.
-- A minimal `zun_napi` C ABI host boundary that executes compiled integer
-  modules without exposing compiler or AST types.
+- A minimal `zun_napi` C ABI host boundary that executes compiled `.zm` modules
+  without exposing compiler or AST types, with typed integer, floating-point,
+  boolean, and UTF-8 string result APIs plus size-query string copying.
 - An optional `node-api` feature exporting `napi_register_module_v1` with
-  `runI64`, `runF64`, and `runBool` ArrayBuffer-backed JavaScript functions.
-  Linking the shared library requires the host's N-API import library through
-  `ZUN_NODE_LIB` on platforms that require explicit symbol imports.
+  `runI64`, `runF64`, `runBool`, and `runString` ArrayBuffer/Buffer-backed
+  JavaScript functions. Invalid input and VM/type failures become JavaScript
+  TypeErrors. Linking the shared library requires the host's N-API import
+  library through `ZUN_NODE_LIB` on platforms that require explicit symbol
+  imports.
 - Typed scalar FFI calls are exercised against a real Windows system library;
   logical-library candidate resolution, aggregated load errors, and an
   absolute-path policy are implemented. `FfiSignature` now describes the
