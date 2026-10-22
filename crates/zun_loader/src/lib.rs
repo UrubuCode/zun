@@ -2390,7 +2390,7 @@ mod tests {
         )
         .unwrap();
         let trusted = TrustedKeySet::new([signing.verifying_key().to_bytes()]).unwrap();
-        assert!(signed.verify_with_keys(&trusted).is_ok());
+        assert!(signed.verify(&trusted).is_ok());
     }
 
     #[test]
@@ -2440,7 +2440,8 @@ mod tests {
         )
         .unwrap();
         let trusted = TrustedKeySet::new([[23u8; 32]]).unwrap();
-        assert!(signed.verify_with_keys(&trusted).is_err());
+        let decoded = SignedModuleLock::read(&signed.write()).unwrap();
+        assert!(decoded.verify(&trusted).is_err());
     }
 
     #[test]
