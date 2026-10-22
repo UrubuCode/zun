@@ -4836,6 +4836,20 @@ fn numeric_i32_map_and_set_has_use_typed_jit_abis() {
 }
 
 #[test]
+fn numeric_i32_map_get_uses_typed_jit_abi() {
+    let src = "import { mapGetI32Or } from \"zun:collections\"; function read(value: Map, key: i32, fallback: i32): i32 { return mapGetI32Or(value, key, fallback); } function main(): i32 { return 0; }";
+    let module = compile(src);
+    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "read").map(|index| index as u32 + 1).expect("read method");
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 map get");
+    assert!(jit.is_compiled(rid));
+    let mut heap = zun_gc::Heap::new();
+    let map = heap.alloc_map();
+    heap.map_insert(map, zun_core::Any::int(7), zun_core::Any::int(42));
+    assert_eq!(jit.call_packed_with_heap(rid, &[map.addr() as u64, 7, 0], &mut heap).unwrap() as i32, 42);
+    assert_eq!(jit.call_packed_with_heap(rid, &[map.addr() as u64, 8, -3i32 as u64], &mut heap).unwrap() as i32, -3);
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\

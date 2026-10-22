@@ -106,6 +106,7 @@ fn collection_builtin(instr: &zun_il::Instruction) -> bool {
                 | "mapGet"
                 | "mapHasI64"
                 | "mapHasI32"
+                | "mapGetI32Or"
                 | "mapDeleteI64"
                 | "setAddI64"
                 | "setHasI64"

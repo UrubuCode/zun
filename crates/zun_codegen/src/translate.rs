@@ -1381,6 +1381,7 @@ impl Translator<'_> {
                             Some("setDeleteI64") => ("zun_jit_set_delete_i64", 2, types::I64, JitKind::Bool, types::I32),
                             Some("mapSetI64") => ("zun_jit_map_set_i64", 3, types::I64, JitKind::Bool, types::I32),
                             Some("mapGetI64Or") => ("zun_jit_map_get_i64_or", 3, types::I64, JitKind::Num(NumKind::I64), types::I64),
+                            Some("mapGetI32Or") => ("zun_jit_map_get_i32_or", 3, types::I64, JitKind::Num(NumKind::I32), types::I32),
                             Some("bufferLength") => (
                                 "zun_jit_buffer_length",
                                 1,
@@ -1602,6 +1603,7 @@ impl Translator<'_> {
                         "zun_jit_map_set_i64" | "zun_jit_map_get_i64_or" => {
                             vec![types::I64, types::I64, types::I64]
                         }
+                        "zun_jit_map_get_i32_or" => vec![types::I64, types::I32, types::I32],
                         _ => vec![arg_type; arg_count],
                     };
                     let fid = if let Some(&fid) = builtin_ids.get(name) {

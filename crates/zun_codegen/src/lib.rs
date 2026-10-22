@@ -770,6 +770,16 @@ pub extern "C" fn zun_jit_map_get_i64_or(address: i64, key: i64, fallback: i64) 
     zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::int(key)).and_then(|value| value.as_int()).unwrap_or(fallback))
 }
 
+pub extern "C" fn zun_jit_map_get_i32_or(address: i64, key: i32, fallback: i32) -> i32 {
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.map_get(object, zun_core::Any::int(key as i64))
+            .and_then(|value| value.as_int())
+            .map(|value| value as i32)
+            .unwrap_or(fallback)
+    })
+}
+
 /// Allocate an empty managed array without triggering collection.
 #[inline]
 pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
@@ -1478,6 +1488,7 @@ impl Jit {
     builder.symbol("zun_jit_set_delete_i64", zun_jit_set_delete_i64 as *const u8);
     builder.symbol("zun_jit_map_set_i64", zun_jit_map_set_i64 as *const u8);
     builder.symbol("zun_jit_map_get_i64_or", zun_jit_map_get_i64_or as *const u8);
+        builder.symbol("zun_jit_map_get_i32_or", zun_jit_map_get_i32_or as *const u8);
     builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
     builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
     builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
