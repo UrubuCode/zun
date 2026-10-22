@@ -4928,6 +4928,16 @@ fn numeric_i64_collection_intrinsics_are_tier0_jit_equivalent() {
 }
 
 #[test]
+fn numeric_f64_collection_intrinsics_are_tier0_jit_equivalent() {
+    let src = "import { mapSetF64, mapGetF64Or, setAddF64, mapDeleteF64, setDeleteF64 } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetF64(map, 7.5, 42.5); setAddF64(set, 7.5); return mapGetF64Or(map, 7.5, -1.0) == 42.5 && mapDeleteF64(map, 7.5) && setDeleteF64(set, 7.5); }";
+    let module = compile(src);
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles f64 collection intrinsics");
+    let entry = module.entry_point.expect("entry point").rid();
+    assert!(!jit.is_compiled(entry), "constructor-bearing entry keeps the Tier 0 fallback");
+}
+
+#[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
     let src = "function pop_value(values: Array): boolean { return values.pop() as boolean; }\n\
                function push_value(values: Array, value: boolean): u64 { return values.push(value) as u64; }\n\
