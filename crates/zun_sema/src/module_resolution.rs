@@ -11,21 +11,23 @@ impl<'a> Checker<'a> {
     ) {
         for import in &program.imports {
             let Some(module) = zun_natives::module(&import.module) else {
-                if allow_external_modules && import.module == "zun:prelude" {
+                if allow_external_modules
+                    && matches!(import.module.as_str(), "zun:prelude" | "zun:std")
+                {
                     for binding in &import.names {
                         let imported = self.text(&binding.imported).to_string();
                         match self.external_functions.get(&imported) {
-                            Some(external) if external.module == "zun:prelude" => {}
+                            Some(external) if external.module == import.module => {}
                             Some(external) => self.error(
                                 binding.imported.span,
                                 format!(
-                                    "`{imported}` is linked from `{}`, not `zun:prelude`",
-                                    external.module
+                                    "`{imported}` is linked from `{}`, not `{}`",
+                                    external.module, import.module
                                 ),
                             ),
                             None => self.error(
                                 binding.imported.span,
-                                format!("`zun:prelude` has no export named `{imported}`"),
+                                    format!("`{}` has no export named `{imported}`", import.module),
                             ),
                         }
                     }

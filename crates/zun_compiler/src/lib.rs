@@ -173,11 +173,30 @@ pub fn compile_with_cached_prelude(
     source: &str,
     prelude: &Module,
 ) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
-    let prelude_scope = zun_loader::ModuleScope::from_bytes("zun:prelude", &prelude.write())
+    compile_with_cached_module(source, prelude, "zun:prelude")
+}
+
+/// Compile a standalone source module against the default-installed standard
+/// library artifact. The `zun:std` identity is the module-boundary form of the
+/// legacy cached-prelude API; the prelude remains available above for callers
+/// that still target the compatibility identity.
+pub fn compile_with_cached_std(
+    source: &str,
+    standard: &Module,
+) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
+    compile_with_cached_module(source, standard, "zun:std")
+}
+
+fn compile_with_cached_module(
+    source: &str,
+    prelude: &Module,
+    module_name: &str,
+) -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
+    let prelude_scope = zun_loader::ModuleScope::from_bytes(module_name, &prelude.write())
         .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
     let mut externals = collect_function_signatures(zun_prelude::PRELUDE);
     for function in &mut externals {
-        function.module = "zun:prelude".to_owned();
+        function.module = module_name.to_owned();
     }
     for function in &externals {
         if prelude_scope.export(&function.name).is_none() {
@@ -192,7 +211,7 @@ pub fn compile_with_cached_prelude(
         .map(|function| function.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let linked_source = format!("{source}\nimport {{ {imports} }} from \"zun:prelude\";\n");
+    let linked_source = format!("{source}\nimport {{ {imports} }} from \"{module_name}\";\n");
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();
     let app_scope = zun_loader::ModuleScope::from_bytes("app", &module.write())
@@ -582,6 +601,18 @@ mod tests {
         let app = loader.get("app").expect("app scope");
         assert_eq!(app.module().tables.member_refs.len(), 1);
         assert!(loader.get("zun:prelude").is_some());
+    }
+
+    #[test]
+    fn compiles_against_the_default_installed_std_module() {
+        let (_, standard) = compile_prelude().expect("standard library should compile");
+        let loader = compile_with_cached_std(
+            "function main(): int { return abs(-7); }",
+            &standard,
+        )
+        .expect("zun:std should link");
+        assert!(loader.get("zun:std").is_some());
+        assert_eq!(loader.get("app").unwrap().module().tables.member_refs.len(), 1);
     }
 
     #[test]
