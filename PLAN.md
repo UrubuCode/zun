@@ -413,6 +413,8 @@ builds an ineligible scalar entrypoint, and executes the resulting fallback bina
 Signed and unsigned scalar fallback ABIs are both covered, including the generated
 launcher’s `u64` path; boolean fallback output preserves native `true`/`false` text.
 Floating fallback now uses an out-parameter ABI and is covered for `f64` output.
+Fallback AOT manifests now record the emitted metadata object and runtime library,
+while leaving `native_object` unset.
 
 ## 8. Risks & attention points
 
