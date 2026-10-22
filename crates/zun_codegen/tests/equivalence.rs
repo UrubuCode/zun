@@ -5033,6 +5033,16 @@ fn managed_set_values_and_entries_use_managed_arrays() {
     assert_eq!(heap.array_get(pair, 1).and_then(|value| value.as_int()), Some(7));
 }
 
+#[test]
+fn managed_collection_constructors_keep_the_tier0_fallback() {
+    let src = "import { mapSetI32, setAddI32 } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 1, 2); setAddI32(set, 1); return true; }";
+    let module = compile(src);
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit preserves constructor fallback");
+    assert!(!jit.is_compiled(entry));
+}
+
 
 #[test]
 fn proven_bool_array_pop_and_push_are_jit_equivalent() {
