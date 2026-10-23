@@ -1005,9 +1005,30 @@ impl<'a> Interp<'a> {
                     Value::Str(source) => source.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
-                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_regex(source))
-                    .map_err(|error| RunError::Native(error.to_string()))?;
+                let flags = match args.get(1) {
+                    Some(Value::Str(flags)) => flags.to_string(),
+                    None => String::new(),
+                    Some(_) => return Err(RunError::BadToken),
+                };
+                let object = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_regex_with_flags(source, flags)
+                })
+                .map_err(|error| RunError::Native(error.to_string()))?;
                 Ok(Value::Object(object))
+            }
+            "regexpExec" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let input = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(input) => input.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                match zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
+                    .ok_or(RunError::BadToken)?
+                {
+                    Some(array) => Ok(Value::Object(array)),
+                    None => Ok(Value::Null),
+                }
             }
             "bigIntNew" => {
                 let text = match args.first().ok_or(RunError::BadToken)? {

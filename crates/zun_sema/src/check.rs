@@ -1865,7 +1865,8 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
-                    (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "isMatch" | "test") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "exec") => Some(("regexpExec", Ty::Array, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
                     (Ty::BigInt, "add") => Some(("bigIntAdd", Ty::BigInt, vec![Ty::BigInt])),
                     (Ty::BigInt, "sub") => Some(("bigIntSub", Ty::BigInt, vec![Ty::BigInt])),
@@ -2388,7 +2389,7 @@ impl Checker<'_> {
                     _ => None,
                 };
                 if let Some((native_name, ty)) = managed_collection {
-                    let valid_args = (name == "RegExp" && args.len() == 1)
+                    let valid_args = (name == "RegExp" && (args.len() == 1 || args.len() == 2))
                         || (name == "BigInt" && args.len() == 1)
                         || (name == "Proxy" && args.len() == 2);
                     if !args.is_empty() && !valid_args {
@@ -2411,7 +2412,17 @@ impl Checker<'_> {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
                             args: if name == "RegExp" || name == "BigInt" || name == "Proxy" {
-                                args.iter().map(|arg| self.check_expr(cx, arg)).collect()
+                                let mut checked: Vec<hir::Expr> =
+                                    args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                                if name == "RegExp" && checked.len() == 1 {
+                                    // `regexpNew(pattern, flags)`: default to no flags.
+                                    checked.push(hir::Expr {
+                                        kind: hir::ExprKind::String(String::new()),
+                                        ty: Ty::String,
+                                        span,
+                                    });
+                                }
+                                checked
                             } else {
                                 Vec::new()
                             },
@@ -2588,7 +2599,8 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
-                    (Ty::RegExp, "isMatch") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "isMatch" | "test") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "exec") => ("regexpExec", Ty::Array, vec![Ty::String]),
                     (Ty::RegExp, "source") => ("regexpSource", Ty::String, vec![]),
                     (Ty::Promise, "state") => ("promiseState", Ty::Int(IntKind::U8), vec![]),
                     (Ty::Promise, "result") => ("promiseResult", Ty::Any, vec![]),

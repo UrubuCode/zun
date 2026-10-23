@@ -4384,6 +4384,59 @@ mod method_tests {
         assert!(matches!(result, Value::Bool(true)));
     }
 
+    fn run_regexp_bool(source: &str) -> bool {
+        let module = zun_compiler::compile(source).expect("compile RegExp program");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run RegExp program") {
+            Value::Bool(value) => value,
+            other => panic!("expected bool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn regexp_flags_change_matching() {
+        assert!(run_regexp_bool(
+            "function main(): boolean { return !new RegExp(\"abc\").test(\"ABC\") && new RegExp(\"abc\", \"i\").test(\"ABC\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { return !new RegExp(\"^b$\").test(\"a\\nb\") && new RegExp(\"^b$\", \"m\").test(\"a\\nb\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { return !new RegExp(\"a.b\").test(\"a\\nb\") && new RegExp(\"a.b\", \"s\").test(\"a\\nb\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { return new RegExp(\"a\", \"g\").test(\"a\"); }"
+        ));
+    }
+
+    #[test]
+    fn regexp_rejects_unsupported_flags() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { return new RegExp(\"a\", \"y\").test(\"a\"); }",
+        )
+        .expect("compile RegExp");
+        let mut output = CaptureOutput::default();
+        assert!(run(&module, &mut output).is_err());
+    }
+
+    #[test]
+    fn regexp_exec_returns_groups_or_null() {
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m = new RegExp(\"(a)(x)?(b)\").exec(\"zab\"); let a: string = m[0] as string; let b: string = m[1] as string; let c: string = m[3] as string; if (a != \"ab\") { return false; } if (b != \"a\") { return false; } return c == \"b\"; }"
+        ));
+        // A non-participating optional group is `undefined` (Any::void).
+        let module = zun_compiler::compile(
+            "function main(): any { let m = new RegExp(\"(a)(x)?(b)\").exec(\"zab\"); return m[2]; }",
+        )
+        .expect("compile optional group");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run optional group");
+        assert!(matches!(value, Value::Void), "got {value:?}");
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m: any = new RegExp(\"q\").exec(\"zab\"); return m == null; }"
+        ));
+    }
+
     #[test]
     fn casts_any_to_a_class_with_runtime_type_check() {
         let module = zun_compiler::compile(
