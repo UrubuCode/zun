@@ -13,11 +13,16 @@
 //!      4     2  format major version (reader rejects a higher major)
 //!      6     2  format minor version (reader accepts any minor)
 //!      8     4  entry-point token (raw; 0 = no entry point)
-//!     12     4  code offset        16  4  code length
-//!     20     4  strings offset     24  4  strings length
-//!     28     4  blobs offset       32  4  blobs length
-//!     36     4  tables offset      40  4  tables length
-//!     44     …  section bytes
+//!     12     4  module-initializer token (raw; 0 = none) — the method run once
+//!               before the entry point, analogous to .NET's `<Module>` `.cctor`
+//!               (doc 02, area 10). A reader on an older minor treats its slot as
+//!               absent, so the field is a backward-compatible addition.
+//!     16     4  code offset        20  4  code length
+//!     24     4  strings offset     28  4  strings length
+//!     32     4  blobs offset       36  4  blobs length
+//!     40     4  tables offset      44  4  tables length
+//!     48     4  debug offset       52  4  debug length
+//!     56     …  section bytes
 //! ```
 //!
 //! The writer lays sections out contiguously in that order, so writing then
@@ -38,9 +43,9 @@ pub const MAGIC: [u8; 4] = *b"ZUNM";
 /// Current format major version. Bump only on breaking layout changes.
 pub const FORMAT_MAJOR: u16 = 1;
 /// Current format minor version. Bump on backward-compatible additions.
-pub const FORMAT_MINOR: u16 = 1;
+pub const FORMAT_MINOR: u16 = 2;
 
-const HEADER_LEN: usize = 52;
+const HEADER_LEN: usize = 56;
 
 /// A source mapping for one instruction boundary in one method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +69,13 @@ pub struct DebugFrame<'a> {
 pub struct Module {
     /// Entry-point method token, if the module is executable.
     pub entry_point: Option<Token>,
+    /// Module-initializer method token, if the module declares one. This single,
+    /// eager, no-arg, void method is run exactly once before the entry point —
+    /// the Zun analogue of the CLR's `<Module>` type initializer (doc 02, area
+    /// 10). Its first (and currently only) client is the declarative realm seed
+    /// (PLAN §3.1): it registers the base-type globals so `globalThis.Map` holds
+    /// its class descriptor at startup without the program calling `global.set`.
+    pub module_initializer: Option<Token>,
     /// The ZIL code section; method bodies live at offsets recorded in
     /// `MethodDef::body_offset`.
     pub code: Vec<u8>,
@@ -88,6 +100,7 @@ impl Module {
     pub fn new() -> Self {
         Self {
             entry_point: None,
+            module_initializer: None,
             code: Vec::new(),
             strings: StringHeap::new(),
             blobs: BlobHeap::new(),
@@ -138,6 +151,12 @@ impl Module {
         out.extend_from_slice(&FORMAT_MAJOR.to_le_bytes());
         out.extend_from_slice(&FORMAT_MINOR.to_le_bytes());
         out.extend_from_slice(&self.entry_point.map_or(0, Token::to_raw).to_le_bytes());
+        out.extend_from_slice(
+            &self
+                .module_initializer
+                .map_or(0, Token::to_raw)
+                .to_le_bytes(),
+        );
         for (off, len) in [
             (code_off, self.code.len() as u32),
             (strings_off, self.strings.as_bytes().len() as u32),
@@ -175,9 +194,10 @@ impl Module {
             return Err(ReadError::UnsupportedVersion { major });
         }
         let entry_raw = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let module_init_raw = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
 
         let section = |i: usize| -> Result<&[u8], ReadError> {
-            let base = 12 + i * 8;
+            let base = 16 + i * 8;
             let off = u32::from_le_bytes(bytes[base..base + 4].try_into().unwrap()) as usize;
             let len = u32::from_le_bytes(bytes[base + 4..base + 8].try_into().unwrap()) as usize;
             bytes.get(off..off + len).ok_or(ReadError::Truncated)
@@ -205,6 +225,11 @@ impl Module {
                 None
             } else {
                 Some(Token::from_raw(entry_raw))
+            },
+            module_initializer: if module_init_raw == 0 {
+                None
+            } else {
+                Some(Token::from_raw(module_init_raw))
             },
             code,
             strings,

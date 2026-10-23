@@ -166,6 +166,11 @@ pub fn lower(program: &hir::Program) -> Module {
     module.entry_point = program
         .main
         .map(|index| Token::new(TableKind::MethodDef, index + 1));
+    // Record the module initializer's MethodDef token so the runtime can run it
+    // once before the entry point (PLAN §3.1, doc 02 area 10).
+    module.module_initializer = program
+        .module_init
+        .map(|index| Token::new(TableKind::MethodDef, index + 1));
     module
 }
 
@@ -1337,8 +1342,10 @@ mod tests {
     #[test]
     fn lowers_a_non_capturing_arrow_to_a_synthetic_method() {
         let module = lower_src("function main() { let f = x => x * 2; }");
-        assert_eq!(module.tables.method_defs.len(), 2);
-        let closure = read_body(&module.code, module.tables.method_defs[1].body_offset)
+        // main, the synthetic module initializer (PLAN §3.1), then the closure
+        // method (closures are appended after all functions).
+        assert_eq!(module.tables.method_defs.len(), 3);
+        let closure = read_body(&module.code, module.tables.method_defs[2].body_offset)
             .expect("synthetic closure body");
         assert_eq!(closure.param_count, 2);
         assert_eq!(closure.local_count, 2);
@@ -1483,11 +1490,11 @@ mod tests {
             text,
             "0000: const.true\n\
              0001: br.false +16\n\
-             0006: const.str str:6\n\
+             0006: const.str str:20\n\
              000B: call.builtin 0\n\
              0010: pop\n\
              0011: br +11\n\
-             0016: const.str str:8\n\
+             0016: const.str str:22\n\
              001B: call.builtin 0\n\
              0020: pop\n\
              0021: ret\n"

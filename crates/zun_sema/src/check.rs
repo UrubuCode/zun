@@ -154,10 +154,21 @@ fn check_impl(
     }
 
     let main = checker.by_name.get("main").copied();
+    // Generate the module initializer only for an executable module (one with a
+    // `main`). It is appended last so every existing function, method, and
+    // class-method index is unchanged — `main`'s IL in particular is untouched.
+    let module_init = main.and_then(|_| {
+        checker.build_module_initializer().map(|function| {
+            let index = functions.len() as u32;
+            functions.push(function);
+            index
+        })
+    });
     hir::Program {
         functions,
         classes,
         main,
+        module_init,
         closures: checker.closures,
     }
 }
@@ -255,6 +266,68 @@ impl Checker<'_> {
             ty: Ty::Any,
             span,
         }
+    }
+
+    /// Build the module initializer (PLAN §3.1, doc 02 area 10): a synthetic
+    /// static no-arg void function whose body is the declarative realm seed.
+    ///
+    /// For each base type registered in `builtin/realm.zun` it emits
+    /// `globalSet("<Name>", realmDescriptor(<token>), true)`, so the realm
+    /// global holds every base-type class descriptor before the entry point runs
+    /// — without the program calling `global.set` itself. The compiler keeps
+    /// this out of `main`, so `main`'s IL and JIT/AOT eligibility are unchanged.
+    ///
+    /// Returns `None` when the realm registry is empty (nothing to seed). A
+    /// future user-facing `@module_init` attribute would extend this same seam
+    /// by appending user statements to the initializer body.
+    fn build_module_initializer(&self) -> Option<hir::Function> {
+        let registry = crate::realm::registry();
+        if registry.is_empty() {
+            return None;
+        }
+        let span = Span::new(0, 0);
+        let (set_id, _) = zun_natives::resolve("zun:collections", "globalSet")
+            .expect("globalSet intrinsic must exist");
+        let body = registry
+            .into_iter()
+            .map(|(name, binding)| {
+                let descriptor = self.realm_descriptor_expr(binding.token, span);
+                hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: set_id,
+                        args: vec![
+                            hir::Expr {
+                                kind: hir::ExprKind::String(name),
+                                ty: Ty::String,
+                                span,
+                            },
+                            descriptor,
+                            hir::Expr {
+                                kind: hir::ExprKind::Boolean(true),
+                                ty: Ty::Boolean,
+                                span,
+                            },
+                        ],
+                    },
+                    ty: Ty::Void,
+                    span,
+                })
+            })
+            .collect();
+        Some(hir::Function {
+            name: "<module-init>".to_string(),
+            param_count: 0,
+            rest_param: None,
+            defaults: Vec::new(),
+            locals: Vec::new(),
+            return_ty: Ty::Void,
+            is_async: false,
+            is_static: true,
+            is_generator: false,
+            async_plan: None,
+            generator_plan: None,
+            body,
+        })
     }
 
     fn rewrite_boxed_lets(&self, statements: &mut [hir::Stmt], boxed: &HashSet<hir::LocalSlot>) {

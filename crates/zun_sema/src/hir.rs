@@ -185,6 +185,12 @@ pub struct Program {
     pub classes: Vec<Class>,
     /// Index of `main`, if the program declares one.
     pub main: Option<FuncIndex>,
+    /// Index of the synthetic module initializer, if one was generated. This
+    /// single, eager, no-arg, void function (the Zun `<Module>`-initializer
+    /// analogue, doc 02 area 10) is run once before the entry point. Its first
+    /// client is the declarative realm seed (PLAN §3.1). It lives in `functions`
+    /// like any other function but is never named or called from user IL.
+    pub module_init: Option<FuncIndex>,
     /// Synthetic closure functions kept separate until closure lowering is enabled.
     pub closures: Vec<ClosureFunction>,
 }

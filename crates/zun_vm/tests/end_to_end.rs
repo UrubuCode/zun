@@ -297,6 +297,22 @@ fn realm_map_descriptor_registers_as_readonly_and_reads_back() {
 }
 
 #[test]
+fn realm_map_is_auto_seeded_by_the_module_initializer() {
+    // The module initializer (PLAN §3.1, doc 02 area 10) seeds the realm global
+    // before `main` runs, so a program that never calls `global.set` still reads
+    // `globalThis.Map` and observes the Map class descriptor (token 0).
+    assert_eq!(
+        run_source(
+            r#"import { classDescriptorToken } from "zun:collections";
+            function main() {
+                print(classDescriptorToken(dynamic_get(globalThis, "Map")));
+            }"#,
+        ),
+        ["0"],
+    );
+}
+
+#[test]
 fn realm_map_new_and_annotation_resolve_through_the_registry() {
     // `new Map()` and the `: Map` annotation resolve via the realm registry yet
     // lower to the same frozen managed-collection representation as before.

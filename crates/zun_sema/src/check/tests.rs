@@ -31,8 +31,11 @@
             "function add(a: number, b: number): number { return a + b; }\n\
              function main() { print(add(2, 3)); }",
         );
-        assert_eq!(hir.functions.len(), 2);
+        // `add` and `main`, plus the synthetic module initializer appended last
+        // for any executable module (PLAN §3.1).
+        assert_eq!(hir.functions.len(), 3);
         assert_eq!(hir.main, Some(1));
+        assert_eq!(hir.module_init, Some(2));
         let add = &hir.functions[0];
         assert_eq!(add.param_count, 2);
         assert_eq!(add.return_ty, Ty::F64);
@@ -337,8 +340,10 @@
                 print(c.get());\n\
              }",
         );
-        // 1 top-level function + 2 methods.
-        assert_eq!(hir.functions.len(), 3);
+        // 1 top-level function + 2 methods + the synthetic module initializer
+        // appended last for any executable module (PLAN §3.1).
+        assert_eq!(hir.functions.len(), 4);
+        assert_eq!(hir.module_init, Some(3));
     }
 
     #[test]

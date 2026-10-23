@@ -26,17 +26,23 @@ pub fn reachable_methods_with_roots(
     module: &Module,
     roots: &[u32],
 ) -> Result<HashSet<u32>, String> {
+    // The module initializer is never called from IL (the runtime invokes it
+    // before the entry point), so it is an implicit reachability root; without
+    // this its body would be trimmed away.
+    let init_root = module.module_initializer.map(|token| token.rid());
     let Some(entry) = module.entry_point else {
-        if roots.is_empty() {
+        if roots.is_empty() && init_root.is_none() {
             return Ok(HashSet::new());
         }
         let mut worklist = roots.to_vec();
+        worklist.extend(init_root);
         let mut reachable = HashSet::new();
         return walk_reachable_methods(module, &mut worklist, &mut reachable);
     };
     let mut reachable = HashSet::new();
-    let mut worklist = Vec::with_capacity(roots.len() + 1);
+    let mut worklist = Vec::with_capacity(roots.len() + 2);
     worklist.push(entry.rid());
+    worklist.extend(init_root);
     worklist.extend_from_slice(roots);
     walk_reachable_methods(module, &mut worklist, &mut reachable)
 }
@@ -208,6 +214,7 @@ pub fn trim_module_with_roots(module: &Module, roots: &[u32]) -> Result<Module, 
     }
     Ok(Module {
         entry_point: module.entry_point,
+        module_initializer: module.module_initializer,
         code,
         strings: module.strings.clone(),
         blobs: module.blobs.clone(),
@@ -917,8 +924,15 @@ mod tests {
         assert_eq!(trimmed.tables.method_defs[1].body_offset, u32::MAX);
         assert_ne!(trimmed.tables.method_defs[2].body_offset, u32::MAX);
         assert_eq!(trimmed.entry_point, module.entry_point);
-        for method in &trimmed.tables.method_defs {
+        let init_rid = trimmed.module_initializer.map(|token| token.rid());
+        for (index, method) in trimmed.tables.method_defs.iter().enumerate() {
             if method.body_offset == u32::MAX {
+                continue;
+            }
+            // The synthetic module initializer legitimately uses `call.builtin`
+            // intrinsics the minimal shim below does not model; its verification
+            // is covered by the dedicated verifier fixtures, so skip it here.
+            if init_rid == Some(index as u32 + 1) {
                 continue;
             }
             let body = read_body(&trimmed.code, method.body_offset).expect("trimmed body");

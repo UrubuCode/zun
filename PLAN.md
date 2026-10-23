@@ -143,6 +143,20 @@ Zun **declares its own base types** there, not by name-magic. Consequences:
   fast. `globalThis` itself is a per-realm/isolate singleton `DynamicObject` (host
   bindings like `process`/`window` attach from modules); *using* it is the dynamic
   (costly, opt-in) path, consistent with §2.
+- **Semeadura declarativa via inicializador de módulo (feito).** As diretivas
+  `global.set("<BaseType>", <BaseType>, true)` de `builtin/realm.zun` são emitidas
+  pelo compilador num **inicializador de módulo** sintético — o análogo Zun ao
+  `.cctor` do tipo `<Module>` do CLR (doc 02, área 10): um único método estático,
+  sem argumentos e `void`, registado no cabeçalho do `.zm` (slot do token logo a
+  seguir ao *entry point*) e executado **uma vez antes do *entry point***. O
+  interpretador corre-o na mesma *heap* antes de `main`; no AOT, o arranque que
+  corre antes de `main` (o *launcher* interpretado / *fallback*) corre-o primeiro,
+  enquanto o *launcher* nativo rápido só serve *entry points* comprovadamente
+  independentes do *realm* (escalares, elegíveis para AOT). O `main` **não** é
+  tocado, por isso mantém a sua elegibilidade JIT/AOT. **Extensão futura:** um
+  atributo `@module_init` visível ao utilizador reutilizaria este mesmo *seam*,
+  acrescentando instruções do utilizador ao corpo do inicializador (ordenação
+  multi-módulo continua fora de âmbito; um inicializador por módulo, *eager*).
 
 **JS `prototype` & legacy callers — dynamic-only, over shape+IC (never dict-walk).**
 Runtime prototype semantics (`String.prototype.toVs = fn`, constructor functions +

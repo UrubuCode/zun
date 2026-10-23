@@ -481,6 +481,18 @@ pub(super) fn run_method_with(
         static_fields: std::collections::HashMap::new(),
         active_frame: None,
     };
+    // Run the module initializer once before the entry point (PLAN §3.1, doc 02
+    // area 10): it seeds the realm global on this same heap so `globalThis.Map`
+    // holds its class descriptor before `main` runs. It runs only when invoking
+    // the entry point itself, not for arbitrary host method calls, and an error
+    // it raises is surfaced like any other startup error.
+    if let (Some(init), Some(entry)) = (module.module_initializer, module.entry_point) {
+        if entry.rid() == method_rid && init.rid() != method_rid {
+            if let Err(error) = interp.call(init.rid(), Vec::new(), None) {
+                return Err(interp.annotate_error(error));
+            }
+        }
+    }
     let result = match interp.call(method_rid, args, None) {
         Ok(value) => value,
         Err(error) => return Err(interp.annotate_error(error)),
