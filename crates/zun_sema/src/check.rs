@@ -39,6 +39,8 @@ mod boxed_locals;
 mod capture_analysis;
 #[path = "poison.rs"]
 mod poison;
+#[path = "function_reflect.rs"]
+mod function_reflect;
 #[path = "type_expect.rs"]
 mod type_expect;
 
@@ -2456,6 +2458,11 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if let Ty::Function(func) = receiver.ty {
+                    return self.lower_function_reflective_call(
+                        cx, receiver, &mname, func, args, span, method.span,
+                    );
+                }
                 let class = match receiver.ty {
                     Ty::String => match self.classes_by_name.get("String") {
                         Some(&class) => class,
@@ -3116,6 +3123,43 @@ impl Checker<'_> {
                         ty: Ty::Int(IntKind::U64),
                         span,
                     };
+                }
+                // `Function.prototype.name`/`length` resolve from the compile-time
+                // signature of a function value; a dynamic function value (a
+                // closure) has no statically known name or declared arity.
+                if let Ty::Function(func) = object.ty {
+                    if fname == "name" {
+                        let name = if matches!(
+                            func,
+                            hir::DYNAMIC_FUNCTION | hir::DYNAMIC_PREDICATE | hir::DYNAMIC_REDUCER
+                        ) {
+                            String::new()
+                        } else {
+                            self.signatures[func as usize].name.clone()
+                        };
+                        return hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span };
+                    }
+                    if fname == "length" {
+                        let length = if matches!(
+                            func,
+                            hir::DYNAMIC_FUNCTION | hir::DYNAMIC_PREDICATE | hir::DYNAMIC_REDUCER
+                        ) {
+                            0
+                        } else {
+                            let signature = &self.signatures[func as usize];
+                            let rest = usize::from(signature.rest_param.is_some());
+                            signature
+                                .params
+                                .len()
+                                .saturating_sub(signature.optional_count)
+                                .saturating_sub(rest)
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Number(length as f64),
+                            ty: Ty::F64,
+                            span,
+                        };
+                    }
                 }
                 match object.ty {
                     Ty::Instance(class) => match self.field_of(class, &fname) {

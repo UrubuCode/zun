@@ -172,6 +172,71 @@ fn object_create_sets_the_prototype_chain_for_is_prototype_of() {
 }
 
 #[test]
+fn function_call_threads_this_as_the_leading_argument() {
+    // `f.call(thisArg, x)` invokes `f` with `thisArg` bound to its first
+    // parameter and `x` to the second.
+    let out = run_source(
+        "function greet(base: number, x: number): number { return base + x; }\n\
+         function main() { print(greet.call(10.0, 5.0)); }",
+    );
+    assert_eq!(out, ["15"]);
+}
+
+#[test]
+fn function_apply_spreads_an_array_and_equals_call() {
+    let out = run_source(
+        "function greet(base: number, x: number): number { return base + x; }\n\
+         function main() {\n\
+            let a = new Array(1);\n\
+            a[0] = 5.0;\n\
+            print((greet.apply(10.0, a)) as number);\n\
+            print(greet.call(10.0, 5.0));\n\
+         }",
+    );
+    assert_eq!(out, ["15", "15"]);
+}
+
+#[test]
+fn function_bind_fixes_this_and_partial_arguments() {
+    // `const g = f.bind(1, 2); g(3)` equals `f.call(1, 2, 3)`.
+    let out = run_source(
+        "function add3(a: number, b: number, c: number): number { return a + b + c; }\n\
+         function main() {\n\
+            let g = add3.bind(1.0, 2.0);\n\
+            print((g(3.0)) as number);\n\
+            print(add3.call(1.0, 2.0, 3.0));\n\
+         }",
+    );
+    assert_eq!(out, ["6", "6"]);
+}
+
+#[test]
+fn bound_function_is_a_first_class_value() {
+    // A bound function can be stored and passed, then called elsewhere.
+    let out = run_source(
+        "function add3(a: number, b: number, c: number): number { return a + b + c; }\n\
+         function invokeWith(fn: Function, x: number): number { return (fn(x)) as number; }\n\
+         function main() {\n\
+            let g = add3.bind(1.0, 2.0);\n\
+            print(invokeWith(g, 3.0));\n\
+         }",
+    );
+    assert_eq!(out, ["6"]);
+}
+
+#[test]
+fn function_name_and_length_resolve_from_the_signature() {
+    let out = run_source(
+        "function add3(a: number, b: number, c: number): number { return a + b + c; }\n\
+         function main() {\n\
+            print(add3.name);\n\
+            print(add3.length as number);\n\
+         }",
+    );
+    assert_eq!(out, ["add3", "3"]);
+}
+
+#[test]
 fn hello_world() {
     assert_eq!(
         run_source(r#"function main() { print("hello, zun"); }"#),

@@ -32,7 +32,7 @@ read.
 | 5 | Symbol | partial | Only `Symbol.iterator` wired as a dispatch point; `SymbolRegistry` in core unused. No `Symbol()`, `Symbol.for/keyFor`, other well-known symbols, user symbol-keyed members |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Rich custom surface; missing standard `forEach/find/some/every/findLast/flatMap/join/splice/shift/unshift/keys/values/entries`, statics `Array.from/of/isArray`, callback `sort`, iterator-returning methods |
-| 8 | Function | missing | **No `call/apply/bind`**; no `.name/.length` object surface, no `Function` constructor |
+| 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject`; no `then/catch/finally`, no statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode |
 | 10 | Proxy / Reflect | partial | `proxyNew` + `reflect_get/reflect_set` exist; no full trap set, no `Reflect` global object surface |
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, `size` as property (is a method), constructor-from-iterable |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | partial | Only generic `add/sub/mul/div/rem.f64` + `conv`. **No dedicated `fsqrt/fabs/fmin/fmax/fneg` opcodes** — Math routes through `call.builtin` to native libm (`math.rs`), not ZIL ops lowering to Cranelift as §3 specifies |
 
-**Counts:** done 3 · partial 16 · missing 4 (of 26 nucleus items, JSON excluded).
+**Counts:** done 3 · partial 17 · missing 3 (of 26 nucleus items, JSON excluded).
 
 ### Declarative realm-global registration (PLAN §3.1)
 
@@ -195,13 +195,44 @@ objects and `DynamicObject`s.
 - **Notes:** `findIndex(value)` takes a *value*, not a predicate (non-standard);
   `indexOf` returns `int`. `fill` takes no range args.
 
-## 8. Function — missing  *(HIGH priority)*
-No `call/apply/bind`. PLAN §3.1 explicitly calls these "cheap reflective invokers —
-implement directly". `FunctionHandle`/`ModuleBoundFunction`
-(`zun_core/function_handle.rs`, `module_bound_function.rs`) and `CallIndirect` opcodes
-exist, so first-class function values work, but the `.call(thisArg,...args)/.apply(
-thisArg,argsArray)/.bind(thisArg,...args)` surface and `.name/.length` object properties
-are absent.
+## 8. Function — partial  *(HIGH priority — core surface landed)*
+`call/apply/bind` + `.name/.length` are implemented. Recognition is in sema's
+member-call path when the receiver is `Ty::Function` (`zun_sema/src/function_reflect.rs`,
+dispatched from `check.rs` `MethodCall`); `.name/.length` resolve from the compile-time
+signature in `check.rs` `Field`.
+
+- **`this` model:** Zun threads a method's receiver as the **leading positional
+  parameter slot**, so these invokers reduce to positional-argument manipulation.
+  `f.call(thisArg, ...args)` lowers to the ordinary indirect call `f(thisArg, ...args)`
+  (reuses `CallIndirect`; no new runtime helper). A plain function with no declared
+  parameters ignores `thisArg` (the arity check rejects passing one). There is no
+  separate `this` slot: "bound this" and "bound/partial args" are uniformly prepended
+  positional arguments.
+- **`apply(thisArg, argsArray)`** → `functionApply` native (`zun:collections`,
+  `zun_interp/src/collections.rs`): prepends `thisArg`, spreads the managed array, and
+  re-enters the interpreter via `self.call`.
+- **`bind(thisArg, ...partial)`** → `functionBind` native: allocates a **bound-function
+  record** (a GC `DynamicObject` storing the target function via `dynamic_set_function`
+  and a managed array of the prepended args `[thisArg, ...partial]`), returned as a
+  first-class `Value::Function` whose `FunctionHandle` is tagged bound (`reserved`
+  discriminant; `environment` points at the record). Calling it flows through
+  `CallIndirect`, which intercepts bound handles, peels the `bind` chain (supports
+  bind-of-bound) via `resolve_call_target`, and dispatches the target. The record and
+  its contents are GC-traced through the handle's `environment` root
+  (`relocate_environment` preserves the bound tag across compaction). Bound functions
+  are typed `Function` (dynamic), so they are callable with exactly one trailing
+  argument per the dynamic-function-value arity model.
+- **`.name`** → the signature name (`""` for a dynamic/closure value);
+  **`.length`** → declared required-parameter count (params minus optionals minus rest;
+  `0` for a dynamic/closure value). Both are compile-time constants — no runtime
+  function metadata was invented.
+- **Tiering:** reflective/variadic invokers; `functionApply`/`functionBind` are **not**
+  in the JIT allowlist and `CallIndirect` is not JIT-lowered, so every caller stays on
+  the always-correct Tier 0 interpreter. No separate JIT path to keep in sync.
+- **Still missing:** the `Function` constructor; binding a **function-typed** partial
+  argument (prepended args are `Any`-boxed, and functions are deliberately kept out of
+  `Any`) — rejected at runtime; multi-argument calls to a bound function beyond the
+  dynamic-value single-arg model.
 
 ## 9. Promise — partial
 `std/` (none) — dispatched in `check.rs`; native `promise.rs`; `await` opcode `0x8D`.
@@ -342,8 +373,9 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
    (`defineProperty defineProperties getOwnPropertyDescriptor(s) seal isSealed
    preventExtensions isExtensible getOwnPropertyNames getOwnPropertySymbols`) + instance
    `propertyIsEnumerable` — blocked on introducing a property-descriptor model (see §6).
-2. **`Function.call/apply/bind`** (#8) — reflective invokers (PLAN §3.1 says implement
-   directly); add `.name/.length`. `CallIndirect` + function-handle base exists.
+2. **`Function.call/apply/bind`** (#8) — ✅ landed (receiver-as-leading-param model,
+   Tier 0) with `.name/.length`. **Remaining:** `Function` constructor; function-typed
+   bound args.
 3. **Symbol — complete** (#5) — `Symbol()` unique primitives; `Symbol.for/keyFor` (wire
    the existing `SymbolRegistry` global map); well-known symbols as dispatch points
    (`iterator asyncIterator hasInstance toPrimitive toStringTag`); user symbol-keyed
@@ -377,8 +409,8 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
 
 ## Surprising findings
 - **Object and Function started with zero surface** — not even a recognized global
-  namespace. `Object` now has its enumeration/reflection surface (§6); `Function.call/
-  apply/bind` remains the top-tier gap.
+  namespace. `Object` now has its enumeration/reflection surface (§6) and `Function`
+  now has `call/apply/bind` + `.name/.length` (§8), both over the frozen floor.
 - **Number predicates are instance-only** (`x.isNaN()`), the opposite of idiomatic JS;
   the `Number.*` statics are entirely absent.
 - **Array carries a large non-standard "collection algebra" surface** (`chunk windowed

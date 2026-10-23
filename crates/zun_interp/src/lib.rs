@@ -908,6 +908,41 @@ impl Interp<'_> {
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
+                    if handle.is_bound() {
+                        // A `bind`-produced bound function: resolve its target and
+                        // prepended arguments, then dispatch through the shared
+                        // interpreter path (routing exceptions like a direct call).
+                        let (target_rid, call_args) = self.resolve_call_target(handle, args)?;
+                        let link = RootLink {
+                            stack: std::ptr::from_mut(stack.as_mut_slice()),
+                            locals: std::ptr::from_mut(locals.as_mut_slice()),
+                            parent,
+                        };
+                        let result = match self.dispatch_outcome(target_rid, call_args, Some(&link)) {
+                            ExecutionOutcome::Complete(value) => value,
+                            ExecutionOutcome::Thrown(exception) => {
+                                if self.route_exception(
+                                    &body,
+                                    &mut stack,
+                                    &mut pc,
+                                    next - size,
+                                    &exception,
+                                ) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            ExecutionOutcome::Fault(error) => return Err(error),
+                            ExecutionOutcome::Suspended(frame) => {
+                                return Err(self.propagate_suspended(
+                                    frame,
+                                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                ));
+                            }
+                        };
+                        stack.push(result);
+                        continue;
+                    }
                     if !dynamic
                         && (handle.environment().is_some() || handle.method_rid() != token.rid())
                     {

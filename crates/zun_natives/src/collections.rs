@@ -291,6 +291,15 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "objectIs", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "objectHasOwn", params: &[Opaque, Str], ret: Bool, imp: unavailable },
         NativeFn { name: "objectIsPrototypeOf", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        // `Function.prototype.apply`/`bind` reflective invokers. They re-enter
+        // the interpreter (variadic over a managed Array of arguments), so the
+        // interpreter intercepts them by name; the signatures here fix only the
+        // argument count the verifier pops. `apply(function, thisArg, argsArray)`
+        // invokes with `thisArg` as the leading positional argument spread with
+        // the array; `bind(function, prependedArray)` allocates a bound function
+        // value whose prepended arguments are `[thisArg, ...partialArgs]`.
+        NativeFn { name: "functionApply", params: &[Function, Opaque, Array], ret: Opaque, imp: unavailable },
+        NativeFn { name: "functionBind", params: &[Function, Array], ret: Function, imp: unavailable },
         // Realm-global registration (PLAN §3.1). Lean positional signature:
         // `global.set(name, value, readonly)`; registers `name -> value` on the
         // realm global singleton, non-writable when `readonly`.

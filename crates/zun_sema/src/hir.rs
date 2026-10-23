@@ -587,6 +587,18 @@ pub enum ExprKind {
         args: Vec<Expr>,
         native_id: u32,
     },
+    /// `Function.prototype.bind`: allocate a bound function value that fixes the
+    /// `[thisArg, ...partialArgs]` prefix of `callee`. Lowered by building a
+    /// managed array of the prepended arguments and invoking `native_id`
+    /// (`functionBind`), which returns a first-class callable bound function.
+    FunctionBind {
+        /// The target function value being bound.
+        callee: Box<Expr>,
+        /// The prepended arguments `[thisArg, ...partialArgs]`.
+        args: Vec<Expr>,
+        /// Resolved `functionBind` native builtin id.
+        native_id: u32,
+    },
     /// Invoke a function-valued expression indirectly.
     IndirectCall {
         /// Function value expression.

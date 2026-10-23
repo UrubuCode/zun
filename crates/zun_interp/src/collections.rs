@@ -1351,6 +1351,46 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Void)
             }
+            "functionApply" => {
+                // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
+                // the leading positional argument, spread with the array.
+                let target = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();
+                let array = object(args.get(2).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let spread = self.read_array_values(array)?;
+                let mut call_args = Vec::with_capacity(1 + spread.len());
+                call_args.push(this_arg);
+                call_args.extend(spread);
+                self.invoke_function_value(target, call_args)
+            }
+            "functionBind" => {
+                // `f.bind(thisArg, ...partial)`: allocate a bound function whose
+                // prepended arguments are `[thisArg, ...partial]` (the array
+                // argument), carrying the target function in a GC-traced record.
+                let target = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let record = zun_gc::with_current_heap_mut(|heap| {
+                    let record = heap.alloc_dynamic();
+                    heap.dynamic_set_function(record, "__target", target);
+                    heap.dynamic_set(
+                        record,
+                        "__args",
+                        zun_core::Any::object(array.addr() as usize),
+                    );
+                    record
+                });
+                Ok(Value::Function(zun_core::FunctionHandle::new_bound(
+                    record.addr() as usize,
+                )))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))
@@ -1670,6 +1710,77 @@ impl<'a> Interp<'a> {
         Ok(out)
     }
 
+    /// Read every element of a managed array, unboxing each `Any` slot to its
+    /// concrete interpreter value.
+    fn read_array_values(&self, array: zun_gc::Obj) -> Result<Vec<Value>, RunError> {
+        zun_gc::with_current_heap(|heap| {
+            let length = heap.array_len(array).ok_or(RunError::BadToken)?;
+            let mut values = Vec::with_capacity(length);
+            for index in 0..length {
+                let any = heap.array_get(array, index).ok_or(RunError::BadToken)?;
+                values.push(Value::unbox_any(any, heap).ok_or(RunError::BadToken)?);
+            }
+            Ok(values)
+        })
+    }
+
+    /// Resolve a function value and positional arguments to the concrete target
+    /// method RID and the final argument vector, peeling a `bind` chain (each
+    /// bound record prepends its recorded `[thisArg, ...partial]`) and threading
+    /// the target closure environment (if any) as the leading slot. Shared by
+    /// `apply`, `bind`-chain calls, and the bound-function path of `CallIndirect`.
+    pub(crate) fn resolve_call_target(
+        &self,
+        mut handle: zun_core::FunctionHandle,
+        mut call_args: Vec<Value>,
+    ) -> Result<(u32, Vec<Value>), RunError> {
+        while handle.is_bound() {
+            let record = unsafe {
+                zun_gc::Obj::from_addr(handle.environment().ok_or(RunError::BadToken)? as *mut u64)
+            };
+            let (target, prepended) = zun_gc::with_current_heap(|heap| {
+                let target = heap
+                    .dynamic_get_function(record, "__target")
+                    .ok_or(RunError::BadToken)?;
+                let args_any = heap.dynamic_get(record, "__args").ok_or(RunError::BadToken)?;
+                let array = args_any.as_object().ok_or(RunError::BadToken)?;
+                let array = unsafe { zun_gc::Obj::from_addr(array as *mut u64) };
+                let length = heap.array_len(array).ok_or(RunError::BadToken)?;
+                let mut prepended = Vec::with_capacity(length);
+                for index in 0..length {
+                    let any = heap.array_get(array, index).ok_or(RunError::BadToken)?;
+                    prepended.push(Value::unbox_any(any, heap).ok_or(RunError::BadToken)?);
+                }
+                Ok::<_, RunError>((target, prepended))
+            })?;
+            let mut combined = prepended;
+            combined.append(&mut call_args);
+            call_args = combined;
+            handle = target;
+        }
+        let final_args = if let Some(address) = handle.environment() {
+            let environment = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            let mut args = Vec::with_capacity(call_args.len() + 1);
+            args.push(Value::Object(environment));
+            args.extend(call_args);
+            args
+        } else {
+            call_args
+        };
+        Ok((handle.method_rid(), final_args))
+    }
+
+    /// Invoke a function value with the given positional arguments. The engine
+    /// behind `apply`; exceptions propagate as `RunError::Thrown` (matching the
+    /// proxy-trap invocation path).
+    pub(crate) fn invoke_function_value(
+        &mut self,
+        handle: zun_core::FunctionHandle,
+        call_args: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let (method_rid, final_args) = self.resolve_call_target(handle, call_args)?;
+        self.call(method_rid, final_args, None)
+    }
 }
 
 /// Interpret an argument as a `[[Prototype]]` link: `null`/`undefined` clears

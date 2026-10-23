@@ -1009,6 +1009,22 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
                 self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(*native_id as i32)));
             }
+            ExprKind::FunctionBind { callee, args, native_id } => {
+                // Push the target function, then build the managed array of
+                // prepended arguments, then invoke the `functionBind` builtin
+                // (params `[Function, Array]`).
+                self.expr(callee);
+                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(args.len() as i32)));
+                self.emit(Instruction::simple(Opcode::NewArray));
+                for (index, arg) in args.iter().enumerate() {
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index as i32)));
+                    self.expr(arg);
+                    self.emit(Instruction::simple(Opcode::StoreArray));
+                    self.emit(Instruction::simple(Opcode::Pop));
+                }
+                self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(*native_id as i32)));
+            }
             ExprKind::IndirectCall { callee, args, func } => {
                 self.expr(callee);
                 for a in args {

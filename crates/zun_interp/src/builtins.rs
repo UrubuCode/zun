@@ -127,6 +127,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectIs",
         "objectHasOwn",
         "objectIsPrototypeOf",
+        "functionApply",
+        "functionBind",
         "globalSet",
         "realmDescriptor",
         "classDescriptorToken",
