@@ -178,6 +178,26 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            // Neither `expect` nor `name` consumes the token it rejects, so a
+            // member the grammar cannot start leaves the cursor where it was
+            // and the loop spins on it, reporting the same error and growing
+            // the member lists until the process dies — `class P { y: i64 = 5; }`
+            // used to abort on an 8 GiB allocation rather than report a
+            // syntax error.
+            //
+            // Skip what cannot begin a member instead of parsing it into a
+            // field made entirely of error nodes, so the well-formed members
+            // around it still come through.
+            if !matches!(
+                self.peek().kind,
+                TokenKind::Ident | TokenKind::Hash | TokenKind::KwStatic | TokenKind::KwExtern
+            ) {
+                let span = self.peek().span;
+                self.error_at(span, "expected a field or method name".to_string());
+                self.bump();
+                continue;
+            }
+            let entry = self.pos;
             let is_private = self.eat(TokenKind::Hash);
             let is_static = self.eat(TokenKind::KwStatic);
             let is_extern = self.eat(TokenKind::KwExtern);
@@ -197,14 +217,28 @@ impl Parser<'_> {
                 let ty = TypeAnnotation {
                     name: self.name("a type name"),
                 };
+                // `field: T = expr;` gives the field a default, which makes
+                // its constructor argument optional.
+                let initializer = if self.eat(TokenKind::Eq) {
+                    Some(Box::new(self.expression()))
+                } else {
+                    None
+                };
                 self.expect(TokenKind::Semi, "`;`");
                 fields.push(ClassField {
                     name: member_name,
                     ty,
                     is_static,
                     is_private,
-                    initializer: None,
+                    initializer,
                 });
+            }
+
+            if self.pos == entry {
+                // No rule consumed anything: the errors are already reported,
+                // so skip the offending token and carry on with the next
+                // member rather than hanging.
+                self.bump();
             }
         }
         let close = self.peek().span;
