@@ -189,6 +189,34 @@ monomorphic calls hit the IC behind a `shape == S` guard). Rules:
   (`DOM/fetch/Canvas/WebGL`, which also aliases `window`/`self` onto `globalThis`),
   `@urubucode/common` (console, JSON surface…), Intl, timers.
 
+### 3.3 RegExp engine (grounded in .NET's two-engine model)
+
+.NET runs **two regex engines** and picks per pattern: a **backtracking** engine
+(default) with the full feature set (backreferences, lookahead/lookbehind, atomic
+groups, conditionals, named/balancing groups) but catastrophic-backtracking DoS risk,
+and a **NonBacktracking** engine (.NET 7+, derivative-based symbolic matcher — lazy DFA
+with NFA fallback, like RE2 / Rust's `regex` crate) that is linear-time and DoS-safe but
+cannot do lookarounds or backrefs. Its modern **`[GeneratedRegex]`** source generator
+*compiles the pattern to code at build time* (AOT-friendly, no runtime codegen) — the
+old `RegexOptions.Compiled` emitted IL. Zun mirrors this:
+
+- **Engine A — linear-time (default, safe):** the current RE2/`regex`-crate path. The
+  NonBacktracking analogue; the default for untrusted input. No backrefs/lookaround.
+- **Engine B — backtracking (full JS semantics):** JS regex *requires* backreferences
+  and lookahead/lookbehind, which Engine A cannot do, so Zun owns a backtracking matcher
+  (parser → `RegexNode` tree → matcher) **with a mandatory step-limit** (the .NET lesson:
+  always bound backtracking on untrusted input).
+- **ZIL is the leverage:** Engine B compiles to **ZIL bytecode** → JITs via Cranelift —
+  the `[GeneratedRegex]`/`Compiled` analogue, but through Zun's one IL (Tier 0 interprets
+  the matcher, Tier 1 JITs it), so the same compilation mechanism serves regex and all
+  other code. Start interpreted-and-correct, then JIT.
+- **Selection (per pattern, like .NET):** a pattern using backrefs/lookaround → Engine B;
+  otherwise → Engine A. Default to the safe engine whenever possible.
+- **Staging:** (1) `/.../ ` literal syntax over Engine A; (2) Engine B — (a) JS parser →
+  `RegexNode`, (b) interpreted backtracking matcher + step-limit + backrefs/lookaround
+  (the `RegexInterpreter` analogue), (c) A/B auto-selection, (d) ZIL compilation (the
+  `GeneratedRegex` analogue). RE#-style derivative lookarounds stay deferred/research.
+
 **Prerequisite surfaced by Error:** **sequence points / debug info** in the `.zm`
 (PC→source), currently minimal — required for useful stack traces (the rts pain that
 motivated Zun).
