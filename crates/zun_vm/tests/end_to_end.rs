@@ -869,6 +869,47 @@ fn osr_rejects_snapshots_inside_exception_regions() {
 }
 
 #[test]
+fn zun_core_object_namespace_short_member_resolves_from_user_code() {
+    // The JS-idiomatic SHORT member `object.keys` (native `objectKeys`) is
+    // addressed as (namespace, short) and lowers to the same `call.builtin`.
+    let out = run_source(
+        r#"import { object } from "zun:core";
+        function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "x", box_any(1));
+            dynamic_set(o, "y", box_any(2));
+            let keys = object.keys(o);
+            print(keys.length);
+            print(keys[0] as string);
+            print(keys[1] as string);
+        }"#,
+    );
+    assert_eq!(out, ["2", "x", "y"]);
+}
+
+#[test]
+fn weak_map_std_class_round_trips_through_short_members() {
+    // The WeakMap std class now calls `weakMap.set`/`weakMap.get`/… (the short
+    // members of the `weakMap` namespace); a full set/get/has/delete cycle
+    // must behave exactly as before the rename.
+    let out = run_with_std(
+        r#"class Key {}
+        function main() {
+            let m = new WeakMap();
+            let k = new Key();
+            let v = new Key();
+            m.set(k, v);
+            print(m.has(k));
+            let got = m.get(k) as Key;
+            print(got == v);
+            print(m.delete(k));
+            print(m.has(k));
+        }"#,
+    );
+    assert_eq!(out, ["true", "true", "true", "false"]);
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

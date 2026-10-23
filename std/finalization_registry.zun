@@ -3,10 +3,10 @@ import { finalizationRegistry } from "zun:core";
 
 class FinalizationRegistry {
     register(target: any, callback: Function): u64 {
-        return finalizationRegistry.finalizationRegister(this, target, callback);
+        return finalizationRegistry.register(this, target, callback);
     }
 
     unregister(id: u64): boolean {
-        return finalizationRegistry.finalizationUnregister(this, id);
+        return finalizationRegistry.unregister(this, id);
     }
 }

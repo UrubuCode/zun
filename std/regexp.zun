@@ -2,8 +2,8 @@
 import { regexp } from "zun:core";
 
 class RegExp {
-    isMatch(input: string): boolean { return regexp.regexpIsMatch(this, input); }
-    test(input: string): boolean { return regexp.regexpIsMatch(this, input); }
-    exec(input: string): array { return regexp.regexpExec(this, input); }
-    source(): string { return regexp.regexpSource(this); }
+    isMatch(input: string): boolean { return regexp.isMatch(this, input); }
+    test(input: string): boolean { return regexp.isMatch(this, input); }
+    exec(input: string): array { return regexp.exec(this, input); }
+    source(): string { return regexp.source(this); }
 }

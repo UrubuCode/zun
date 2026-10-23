@@ -2,8 +2,8 @@
 import { weakMap } from "zun:core";
 
 class WeakMap {
-    set(key: any, value: any): boolean { return weakMap.weakMapSet(this, key, value); }
-    get(key: any): any { return weakMap.weakMapGet(this, key); }
-    has(key: any): boolean { return weakMap.weakMapHas(this, key); }
-    delete(key: any): boolean { return weakMap.weakMapDelete(this, key); }
+    set(key: any, value: any): boolean { return weakMap.set(this, key, value); }
+    get(key: any): any { return weakMap.get(this, key); }
+    has(key: any): boolean { return weakMap.has(this, key); }
+    delete(key: any): boolean { return weakMap.delete(this, key); }
 }

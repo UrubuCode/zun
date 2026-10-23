@@ -2,13 +2,13 @@
 import { map } from "zun:core";
 
 class Map {
-    set(key: any, value: any): void { map.mapSet(this, key, value); }
-    get(key: any): any { return map.mapGet(this, key); }
-    has(key: any): boolean { return map.mapHas(this, key); }
-    size(): u64 { return map.mapSize(this); }
-    delete(key: any): boolean { return map.mapDelete(this, key); }
-    clear(): void { map.mapClear(this); }
-    values(): Array { return map.mapValues(this); }
-    keys(): Array { return map.mapKeys(this); }
-    entries(): Array { return map.mapEntries(this); }
+    set(key: any, value: any): void { map.set(this, key, value); }
+    get(key: any): any { return map.get(this, key); }
+    has(key: any): boolean { return map.has(this, key); }
+    size(): u64 { return map.size(this); }
+    delete(key: any): boolean { return map.delete(this, key); }
+    clear(): void { map.clear(this); }
+    values(): Array { return map.values(this); }
+    keys(): Array { return map.keys(this); }
+    entries(): Array { return map.entries(this); }
 }

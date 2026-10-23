@@ -2,12 +2,12 @@
 import { set } from "zun:core";
 
 class Set {
-    add(value: any): boolean { return set.setAdd(this, value); }
-    has(value: any): boolean { return set.setHas(this, value); }
-    size(): u64 { return set.setSize(this); }
-    delete(value: any): boolean { return set.setDelete(this, value); }
-    clear(): void { set.setClear(this); }
-    values(): Array { return set.setValues(this); }
-    keys(): Array { return set.setValues(this); }
-    entries(): Array { return set.setEntries(this); }
+    add(value: any): boolean { return set.add(this, value); }
+    has(value: any): boolean { return set.has(this, value); }
+    size(): u64 { return set.size(this); }
+    delete(value: any): boolean { return set.delete(this, value); }
+    clear(): void { set.clear(this); }
+    values(): Array { return set.values(this); }
+    keys(): Array { return set.values(this); }
+    entries(): Array { return set.entries(this); }
 }

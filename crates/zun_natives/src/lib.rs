@@ -385,11 +385,91 @@ fn namespace_set() -> &'static HashMap<&'static str, ()> {
     })
 }
 
-/// Resolve a `zun:core` namespaced export `namespace.name` to its id and
-/// signature. Ids are identical to those returned by [`resolve`] for the
-/// historical module that owned the function.
+/// The redundant type-prefix carried by every native name inside a given
+/// `zun:core` namespace, or `None` for namespaces whose natives are already
+/// bare (`string`, `number`, `math`, `date`, `buffer`, …). A member's
+/// JS-idiomatic SHORT name is the native name with this prefix stripped and its
+/// first remaining character lowercased (`weakMapSet` → `set`, `objectKeys` →
+/// `keys`, `finalizationRegister` → `register`).
+///
+/// Namespaces that are already idiomatic (no shared prefix) return `None`, so
+/// `math.sqrt`, `date.year`, `number.isNaN` resolve directly through the
+/// existing full-name surface — no alias is synthesized and no collision with
+/// the typed `*Number` scaffolding (`sqrtNumber`, …) can arise.
+fn namespace_prefix(namespace: &str) -> Option<&'static str> {
+    Some(match namespace {
+        "weakMap" => "weakMap",
+        "map" => "map",
+        "set" => "set",
+        "regexp" => "regexp",
+        "finalizationRegistry" => "finalization",
+        "reflect" => "reflect",
+        "proxy" => "proxy",
+        "dynamic" => "dynamic",
+        "bigint" => "bigInt",
+        "object" => "object",
+        "promise" => "promise",
+        _ => return None,
+    })
+}
+
+/// The JS-idiomatic short member name for `name` within a namespace whose
+/// redundant `prefix` is given, or `None` if `name` does not carry the prefix
+/// (nothing to strip) or is exactly the prefix.
+fn short_member(prefix: &str, name: &str) -> Option<String> {
+    let rest = name.strip_prefix(prefix)?;
+    let mut chars = rest.chars();
+    let first = chars.next()?;
+    Some(core::iter::once(first.to_ascii_lowercase()).chain(chars).collect())
+}
+
+/// `namespace -> (short member name -> id)` index. The public member surface of
+/// each namespace is the JS-idiomatic short name (`weakMap.set`, `map.get`,
+/// `object.keys`), addressed as (namespace, short) because short names are only
+/// unique *within* a namespace (`map.get` and `weakMap.get` both exist). The
+/// underlying native's unique name/id is unchanged; this is purely the public
+/// alias layer. Built from the positional tables, so ids never drift.
+fn core_short_index() -> &'static HashMap<&'static str, HashMap<String, u32>> {
+    static INDEX: OnceLock<HashMap<&'static str, HashMap<String, u32>>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index: HashMap<&'static str, HashMap<String, u32>> = HashMap::new();
+        for (module_index, module) in MODULES.iter().enumerate() {
+            for (function_index, function) in module.functions.iter().enumerate() {
+                let namespace = module_namespace(module.name, function.name);
+                let Some(prefix) = namespace_prefix(namespace) else {
+                    continue;
+                };
+                let Some(short) = short_member(prefix, function.name) else {
+                    continue;
+                };
+                let id = global_id(module_index, function_index);
+                if let Some(previous) = index.entry(namespace).or_default().insert(short.clone(), id)
+                {
+                    // Two distinct natives collapsing onto one (namespace, short)
+                    // name would silently shadow one another; refuse to build.
+                    assert_eq!(
+                        previous, id,
+                        "short-member collision in `{namespace}`: `{short}` maps to both id \
+                         {previous} and id {id}",
+                    );
+                }
+            }
+        }
+        index
+    })
+}
+
+/// Resolve a `zun:core` namespaced export `namespace.member` to its id and
+/// signature. `member` is matched first against the native's full unique name
+/// (the historical surface) and then against the JS-idiomatic SHORT member
+/// alias (`weakMap.set` → `weakMapSet`), so both spellings resolve to the same
+/// id. Ids are identical to those returned by [`resolve`] for the historical
+/// module that owned the function.
 pub fn resolve_core(namespace: &str, name: &str) -> Option<(u32, &'static NativeFn)> {
-    let id = *core_namespace_index().get(&(namespace, name))?;
+    let id = core_namespace_index()
+        .get(&(namespace, name))
+        .copied()
+        .or_else(|| core_short_index().get(namespace)?.get(name).copied())?;
     Some((id, by_id(id)?))
 }
 
@@ -489,6 +569,53 @@ mod tests {
         assert!(is_core_export("string"));
         assert!(is_core_export("length"));
         assert!(!is_core_export("definitely-not-a-thing"));
+    }
+
+    #[test]
+    fn short_members_alias_to_the_same_native_ids() {
+        // The JS-idiomatic short member resolves to exactly the same id as the
+        // native's historical full name, per namespace. Building the index also
+        // asserts no (namespace, short) collision, so this exercises that too.
+        let cases = [
+            ("weakMap", "set", "weakMapSet"),
+            ("weakMap", "get", "weakMapGet"),
+            ("weakMap", "has", "weakMapHas"),
+            ("weakMap", "delete", "weakMapDelete"),
+            ("map", "set", "mapSet"),
+            ("map", "get", "mapGet"),
+            ("map", "entries", "mapEntries"),
+            ("set", "add", "setAdd"),
+            ("set", "values", "setValues"),
+            ("object", "keys", "objectKeys"),
+            ("object", "fromEntries", "objectFromEntries"),
+            ("object", "is", "objectIs"),
+            ("regexp", "isMatch", "regexpIsMatch"),
+            ("regexp", "source", "regexpSource"),
+            ("finalizationRegistry", "register", "finalizationRegister"),
+            ("finalizationRegistry", "unregister", "finalizationUnregister"),
+            ("bigint", "add", "bigIntAdd"),
+            ("promise", "resolve", "promiseResolve"),
+            ("reflect", "has", "reflectHas"),
+            ("proxy", "get", "proxyGet"),
+        ];
+        for (namespace, short, full) in cases {
+            let short_id = resolve_core(namespace, short).expect("short member").0;
+            let full_id = resolve_core(namespace, full).expect("full member").0;
+            assert_eq!(short_id, full_id, "{namespace}.{short} != {namespace}.{full}");
+        }
+        // Short names are namespace-relative, never global: `get` is ambiguous
+        // across namespaces and resolves differently per namespace.
+        assert_ne!(
+            resolve_core("map", "get").unwrap().0,
+            resolve_core("weakMap", "get").unwrap().0
+        );
+        // Already-idiomatic namespaces keep resolving by their bare names and
+        // synthesize no colliding alias for the typed `*Number` scaffolding.
+        assert!(resolve_core("math", "sqrt").is_some());
+        assert_eq!(
+            resolve_core("math", "sqrt").unwrap().0,
+            resolve("zun:math", "sqrt").unwrap().0
+        );
     }
 
     #[test]
