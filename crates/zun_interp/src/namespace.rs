@@ -29,6 +29,39 @@ pub fn materialize_namespace(scope: &ModuleScope) -> Result<Value, RunError> {
     }))
 }
 
+/// Runtime helper behind `import.dynamic`: resolve `specifier` through the
+/// module loader, materialize the namespace, and settle a fresh Promise.
+///
+/// Resolution is by exact loader identity, falling back to the specifier with a
+/// leading `./` removed. Modules must already be registered with the loader
+/// (the interpreter only holds a shared reference); anything else rejects the
+/// Promise rather than throwing, matching `import()` semantics.
+pub fn zun_dynamic_import(
+    loader: Option<&ModuleLoader>,
+    specifier: &str,
+) -> Result<Value, RunError> {
+    let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+    let scope = loader.and_then(|loader| {
+        loader
+            .get(specifier)
+            .or_else(|| specifier.strip_prefix("./").and_then(|name| loader.get(name)))
+    });
+    match scope {
+        Some(scope) => {
+            let Value::Object(namespace) = materialize_namespace(scope)? else {
+                return Err(RunError::BadToken);
+            };
+            let any = zun_core::Any::object(namespace.addr() as usize);
+            zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(promise, any));
+        }
+        None => {
+            let message = format!("cannot find module `{specifier}`");
+            zun_gc::with_current_heap_mut(|heap| heap.promise_reject(promise, message));
+        }
+    }
+    Ok(Value::Object(promise))
+}
+
 /// Call a function export of a materialized namespace by name.
 ///
 /// The bound function is resolved through `loader` against its named module,
@@ -53,6 +86,108 @@ pub fn call_namespace_member(
 mod tests {
     use super::*;
     use crate::CaptureOutput;
+
+    fn app_module(specifier: &str, await_result: bool) -> zun_module::Module {
+        use zun_il::{encode, Instruction, Operand};
+        use zun_metadata::{MethodDef, TableKind, Token};
+        let mut module = zun_module::Module::new();
+        let name = module.strings.intern(specifier);
+        let mut code = Vec::new();
+        let mut body = vec![
+            Instruction::new(zun_il::Opcode::ConstStr, Operand::StringRef(name.0)),
+            Instruction::simple(zun_il::Opcode::ImportDynamic),
+        ];
+        if await_result {
+            body.push(Instruction::simple(zun_il::Opcode::Await));
+        }
+        body.extend([
+            Instruction::simple(zun_il::Opcode::Pop),
+            Instruction::new(zun_il::Opcode::ConstI32, Operand::Imm32(7)),
+            Instruction::simple(zun_il::Opcode::Ret),
+        ]);
+        for instruction in &body {
+            encode(instruction, &mut code);
+        }
+        let offset = zun_module::write_body(
+            &mut module.code,
+            0,
+            0,
+            true,
+            zun_il::JitKind::Num(zun_il::NumKind::I32).to_byte(),
+            &[],
+            &code,
+        );
+        module.tables.add_method_def(MethodDef {
+            name: module.strings.intern("main"),
+            signature: zun_metadata::BlobIndex(0),
+            body_offset: offset,
+            is_static: false,
+        });
+        module.entry_point = Some(Token::new(TableKind::MethodDef, 1));
+        module
+    }
+
+    fn loader_with_lib() -> ModuleLoader {
+        let lib = zun_compiler::compile(
+            "function answer(value: int): int { return value + 1; } function main(): int { return 0; }",
+        )
+        .expect("compile module");
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("lib", &lib.write()).unwrap();
+        loader
+    }
+
+    #[test]
+    fn import_dynamic_il_awaits_a_resolved_namespace() {
+        let mut loader = loader_with_lib();
+        loader.load_bytes("app", &app_module("lib", true).write()).unwrap();
+        let app = loader.get("app").unwrap();
+        let mut output = CaptureOutput::default();
+        let result = run_method_loaded(app, &loader, 1, vec![], &mut output).unwrap();
+        assert!(matches!(result, Value::Int(7, zun_il::NumKind::I32)));
+    }
+
+    #[test]
+    fn import_dynamic_il_rejects_unknown_modules() {
+        let mut loader = loader_with_lib();
+        loader.load_bytes("app", &app_module("missing", true).write()).unwrap();
+        let app = loader.get("app").unwrap();
+        let mut output = CaptureOutput::default();
+        let error = run_method_loaded(app, &loader, 1, vec![], &mut output).unwrap_err();
+        assert!(matches!(error, RunError::Thrown(Value::Str(message)) if message.contains("missing")));
+        // Without an await the rejected Promise is simply discarded.
+        let mut loader = loader_with_lib();
+        loader.load_bytes("app", &app_module("missing", false).write()).unwrap();
+        let app = loader.get("app").unwrap();
+        let result = run_method_loaded(app, &loader, 1, vec![], &mut output).unwrap();
+        assert!(matches!(result, Value::Int(7, _)));
+    }
+
+    #[test]
+    fn dynamic_import_promise_resolves_to_a_callable_namespace() {
+        let loader = loader_with_lib();
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        for specifier in ["lib", "./lib"] {
+            let Value::Object(promise) = zun_dynamic_import(Some(&loader), specifier).unwrap() else {
+                panic!("import.dynamic must produce a Promise object");
+            };
+            let address = zun_gc::with_current_heap(|heap| heap.promise_result(promise))
+                .and_then(|any| any.as_object())
+                .expect("promise resolved with the namespace object");
+            let namespace = Value::Object(unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+            let mut output = CaptureOutput::default();
+            let result = call_namespace_member(
+                &loader,
+                &namespace,
+                "answer",
+                vec![Value::Int(41, zun_il::NumKind::I32)],
+                &mut output,
+            )
+            .unwrap();
+            assert!(matches!(result, Value::Int(42, zun_il::NumKind::I32)));
+        }
+    }
 
     #[test]
     fn namespace_exposes_function_exports_bound_to_their_module() {

@@ -911,3 +911,26 @@ fn fixture_invalid_catch_type_is_rejected() {
         })
     ));
 }
+
+#[test]
+fn fixture_valid_import_dynamic_stack_effect() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),
+        Instruction::simple(Opcode::ImportDynamic),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_import_dynamic_underflow() {
+    let code = asm(&[Instruction::simple(Opcode::ImportDynamic), Instruction::simple(Opcode::Ret)]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
+    ));
+}
