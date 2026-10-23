@@ -319,6 +319,11 @@ impl ModuleScope {
         self.exports.get(name).copied()
     }
 
+    /// Iterate every exported definition by its source-level name.
+    pub fn exports(&self) -> impl Iterator<Item = (&str, Export)> + '_ {
+        self.exports.iter().map(|(name, export)| (name.as_str(), *export))
+    }
+
     /// Consume the scope and return its decoded module.
     pub fn into_module(self) -> Module {
         self.module

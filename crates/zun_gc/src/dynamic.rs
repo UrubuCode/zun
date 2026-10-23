@@ -57,6 +57,18 @@ impl Heap {
         result
     }
 
+    pub fn dynamic_get_module_function(&self, object: Obj, name: &str) -> Option<zun_core::ModuleBoundFunction> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_module_function(name).cloned())
+    }
+
+    pub fn dynamic_set_module_function(&mut self, object: Obj, name: impl Into<String>, function: zun_core::ModuleBoundFunction) -> Option<zun_core::ModuleBoundFunction> {
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .and_then(|properties| properties.set_module_function(name, function))
+    }
+
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects.get_mut(&(object.addr() as usize))?.remove(name)
     }
