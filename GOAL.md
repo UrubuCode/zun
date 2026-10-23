@@ -96,8 +96,20 @@ FFI). The current focus is **Phase 5** (PLAN §6).
    envelope (release-embedded root key / signed official-index key set); never trust a
    self-declared envelope key. Add key rotation/revocation over `VERSION` + signed index.
 
-Deferred: true OSR (mid-frame transfer), SharedArrayBuffer/Atomics + multi-thread STW
-GC, RegExp engine, full trimming/R2R, LLVM second backend.
+Deferred: **dynamic `import()` runtime** (runtime module load + Promise completion +
+namespace materialization — a self-contained slice tying ModuleLoader + scheduler +
+the DynamicObject namespace mirror via a new `import.dynamic` opcode; a dynamic/lazy
+path, computed-specifier case already warns + falls back under §4, so it is not core to
+the typed base); cross-target AOT toolchain provisioning (iOS/arm64 cross LLD + target
+libs, rts-style downloader — host-target AOT is delivered); true OSR (mid-frame
+transfer), SharedArrayBuffer/Atomics + multi-thread STW GC, RegExp engine, full
+trimming/R2R, LLVM second backend.
 
-When everything is done: `cargo test --workspace`, confirm `main` is green and
-PLAN.md's §7 ledger is current, and write a summary. Start with item 1.
+**Status (2026-10-22): base consolidated.** Backlog items 1–6 are implemented and
+`cargo test --workspace` is green; Phases 0–7 have landed (generational GC, expanded JIT
+eligibility, nucleus/realm refactor, `zun_abi`, host-target AOT with external LLD +
+runtime.lib + embedded-IL fallback, registry/cache/signatures/trust-anchor with key
+rotation). The only remaining gap is the deferred dynamic `import()` runtime above. When
+resuming, pick it up as a dedicated slice using the design in this file; otherwise the
+goal for this pass is complete — do not re-enter a blocked-audit loop over the deferred
+items.
