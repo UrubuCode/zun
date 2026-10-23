@@ -216,6 +216,17 @@ old `RegexOptions.Compiled` emitted IL. Zun mirrors this:
   `RegexNode`, (b) interpreted backtracking matcher + step-limit + backrefs/lookaround
   (the `RegexInterpreter` analogue), (c) A/B auto-selection, (d) ZIL compilation (the
   `GeneratedRegex` analogue). RE#-style derivative lookarounds stay deferred/research.
+- **Stage 2d — regex → ZIL (the hard one).** Lower `zun_regex`'s flat backtracking
+  `Program` (Char/Class/Split/Jmp/Save/Loop*/BackRef/Look/Match) to a **synthesized ZIL
+  function** via `zun_il::encode` (as `zun_ilgen` emits front-end code), using **ordinary
+  ZIL control flow + managed arrays for the backtrack stack and capture/counter
+  registers — no new regex opcodes** (GeneratedRegex emits ordinary code, not a regex
+  opcode set). Tier 0 interprets it, Tier 1 JITs it; the compiled matcher must be
+  equivalence-tested against the interpreted `zun_regex` matcher. De-risked in proven
+  slices: (1) pipeline proof — synthesize + register + call a ZIL function for a trivial
+  literal regex, Tier 0 + Tier 1; (2) Split + backtrack stack (alternation); (3)
+  quantifiers/loops; (4) backrefs + lookaround. Patterns not yet ZIL-compilable fall
+  back to the interpreter (Engine B), so capability never regresses.
 
 **Prerequisite surfaced by Error:** **sequence points / debug info** in the `.zm`
 (PC→source), currently minimal — required for useful stack traces (the rts pain that
