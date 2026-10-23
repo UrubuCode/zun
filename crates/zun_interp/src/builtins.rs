@@ -158,6 +158,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "symbolKeyFor",
         "symbolWellKnown",
         "symbolDescription",
+        "stringSplit",
     ] {
         if zun_natives::resolve("zun:collections", name)
             .or_else(|| zun_natives::resolve("zun:promise", name))
@@ -222,6 +223,7 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "generatorIteratorNewArgs",
         "generatorIteratorNext",
         "generatorIteratorDone",
+        "stringIteratorNew",
     ] {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);

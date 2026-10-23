@@ -25,7 +25,7 @@ read.
 
 | # | Item | Status | One-line gap |
 |---|------|--------|--------------|
-| 1 | String | partial | Core slicing/case/search present; missing `split/match/matchAll/replaceAll/slice/at/concat/codePointAt/normalize/localeCompare`, statics `fromCharCode/fromCodePoint/raw`, iterator |
+| 1 | String | partial | Standard surface largely landed (`at/slice/concat/codePointAt/split/replaceAll`, string-vs-RegExp dispatch on `split`/`replace`, `[Symbol.iterator]`, statics `fromCharCode/fromCodePoint`); deferred `matchAll/normalize/localeCompare/toLocale*/String.raw` |
 | 2 | Number | partial | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants) and `toString(radix)`; remaining `toPrecision/toExponential/toLocaleString/valueOf` |
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
@@ -82,23 +82,48 @@ frozen runtime representation is unchanged — the registry only rebinds the nam
 
 ---
 
-## 1. String — partial
-Primitive-backed class, statically bound (`std/string.zun`, dispatch in
-`check.rs` `managed_method` + `check.rs:2831+`; native impls `zun_natives/src/string.rs`).
+## 1. String — partial  *(standard surface largely landed)*
+Primitive-backed class, statically bound (`builtin/string.zun`, dispatch in
+`check.rs` `managed_method` + class fallback at `check.rs:2800+`; native impls
+`zun_natives/src/string.rs`, with array/iterator-building members in
+`zun_interp/src/collections.rs`).
 
-- **Present (extern, native):** `length() contains(needle) count(needle) compare(other)
-  toInt() toFloat() toBoolean() includes(needle) indexOf(needle) lastIndexOf(needle)
-  replace(needle,repl) substring(start,end) padStart(len,fill) padEnd(len,fill)
-  toLowerCase() toUpperCase() trimStart() trimEnd() trim() charCodeAt(index)
-  startsWith(prefix) endsWith(suffix) repeat(count) reverse()`. Plus a large
-  non-standard validator surface (`isAlpha/isDigit/isHex/isSnakeCase/…` — Zun extras, not
-  ECMAScript).
-- **Missing (standard):** `charAt at(i) codePointAt slice(start,end) split(sep)
-  concat(...) match(re) matchAll(re) search(re) replaceAll normalize localeCompare
-  valueOf toString(radix n/a) [Symbol.iterator] padStart/padEnd` take only one fill.
-  Statics: `String.fromCharCode String.fromCodePoint String.raw`.
-- **Notes:** `replace` takes plain strings only (no regex/function replacer). No template
-  cooking helper. `substring` uses `u64` start/end, no negative-index `slice`.
+**Index/encoding unit: UTF-16 code units** for `at/slice/codePointAt/charCodeAt/
+substring/length/padStart/padEnd/reverse` (what `charCodeAt`/`substring` already use).
+Code-point iteration is the exception: `for...of`, the string `[Symbol.iterator]`, and
+the `fromCodePoint` static operate on Unicode code points (surrogate pairs kept whole).
+
+- **Present (extern/native):** `length() contains count compare toInt toFloat toBoolean
+  includes indexOf lastIndexOf substring padStart padEnd toLowerCase toUpperCase
+  trimStart trimEnd trim charCodeAt startsWith endsWith repeat reverse`, plus a large
+  non-standard validator surface (`isAlpha/isDigit/isHex/isSnakeCase/…` — Zun extras).
+- **Present (new, native/intercept — do not need the `String` class in scope):**
+  - `at(i)` — negative index from end; out-of-range → `undefined`.
+  - `codePointAt(i)` — combines a surrogate pair into its astral code point.
+  - `slice(start?, end?)` — negative indices from the end (distinct from `substring`);
+    absent `end` → length (lowered as a past-the-end default that clamps natively).
+  - `concat(...strs)` — variadic; folded in sema into a chain of the two-arg `concat`
+    native (zero args → the receiver).
+  - `split(separator, limit?)` and `replace(search, replacement)` — **dispatch by the
+    first argument's type**: a `RegExp` keeps the existing regex-engine path
+    (`regexpSplit`/`regexpReplace`, unchanged), a `string` uses the string path
+    (`stringSplit` builds the array in the interpreter floor; `replace` → the `zun:string`
+    `replace` native, first occurrence). `split("")` → one piece per UTF-16 unit; `split`'s
+    optional `limit` truncates the result (a RegExp separator takes no limit).
+  - `replaceAll(search, replacement)` — all occurrences (string search only).
+  - `[Symbol.iterator]` / `for...of` — iterate by code point via `stringIteratorNew`
+    (builds a code-point array and reuses the array iterator's `next`/`done`).
+  - Statics `String.fromCharCode(...codes)` / `String.fromCodePoint(...codes)` —
+    recognized on the `String` receiver (`check_string_static`), variadic, folded via
+    single-code natives `fromCharCode1`/`fromCodePoint1` + `concat`.
+- **Deferred (documented, not faked):** `matchAll` (needs global-regex iteration),
+  `normalize` (Unicode normalization), `localeCompare`/`toLocaleLowerCase`/
+  `toLocaleUpperCase` (needs a locale/ICU model), `String.raw` (template-tag mechanism),
+  `charAt` (superseded by `at`), `valueOf`. Replace-with-a-function replacer is also not
+  supported (replacement must be a string).
+- **Notes:** the string-dispatched `split`/`replace`/`replaceAll`/`concat`/`slice`/`at`/
+  `codePointAt` and the statics all allocate/branch only (Tier-0 floor), so they are not
+  in the JIT allowlist — no second path to keep in sync.
 
 ## 2. Number — partial  *(statics + radix landed)*
 `std/number.zun`; native `number.rs`. Statics and constants are recognized in sema
@@ -594,8 +619,10 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      statics `from/of/isArray`, variadic `splice` inserts, no-initial `reduce`.
      (Done: `forEach find findIndex(cb) some every map filter reduce reduceRight join
      splice shift unshift`, comparator `sort(cmp?)` — all spec `(value,index,array)`.)
-   - String (#1): `split slice at concat match/matchAll/search replaceAll charAt
-     codePointAt [Symbol.iterator]`, statics `fromCharCode/fromCodePoint`.
+   - String (#1): ✅ `at slice concat codePointAt split replaceAll`, string-vs-RegExp
+     dispatch on `split`/`replace`, `[Symbol.iterator]`, statics
+     `fromCharCode/fromCodePoint` — landed. Remaining (deferred):
+     `matchAll normalize localeCompare toLocale* String.raw`.
    - Number (#2): ✅ statics `isNaN/isInteger/isFinite/isSafeInteger/parseInt/parseFloat`
      + constants, and `toString(radix)` — landed. Remaining: `toPrecision toExponential
      toLocaleString valueOf`.

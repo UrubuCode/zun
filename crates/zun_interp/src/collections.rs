@@ -462,6 +462,61 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
+            "stringSplit" => {
+                // String-separator split. Indices/pieces are UTF-16 based for
+                // the empty-separator case (one piece per code unit), matching
+                // the rest of the String surface.
+                let value = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let separator = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(separator) => separator.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let limit = match args.get(2) {
+                    Some(Value::Int(limit, _)) => *limit,
+                    _ => -1,
+                };
+                let mut pieces: Vec<String> = if separator.is_empty() {
+                    value
+                        .encode_utf16()
+                        .map(|unit| String::from_utf16_lossy(&[unit]))
+                        .collect()
+                } else {
+                    value.split(separator.as_ref()).map(str::to_string).collect()
+                };
+                if limit >= 0 {
+                    pieces.truncate(limit as usize);
+                }
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(pieces.len());
+                    for (index, piece) in pieces.iter().enumerate() {
+                        let value = zun_core::Any::string(heap.intern_string(piece.as_str().into()));
+                        heap.array_set(array, index, value);
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
+            "stringIteratorNew" => {
+                // Iterate by Unicode code point (`chars()`), not UTF-16 unit.
+                let value = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let points: Vec<String> = value.chars().map(|point| point.to_string()).collect();
+                let iterator = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(points.len());
+                    for (index, point) in points.iter().enumerate() {
+                        let value = zun_core::Any::string(heap.intern_string(point.as_str().into()));
+                        heap.array_set(array, index, value);
+                    }
+                    heap.alloc_array_iterator(array)
+                })
+                .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(iterator))
+            }
             "arrayIteratorNext" => {
                 let iterator =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

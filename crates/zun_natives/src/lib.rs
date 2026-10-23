@@ -942,6 +942,56 @@ mod tests {
     }
 
     #[test]
+    fn string_at_slice_and_code_point_statics() {
+        let mut sink = TestSink;
+        let (at_id, _) = resolve("zun:string", "at").unwrap();
+        // Negative index counts from the end; out of range is `undefined`.
+        assert!(matches!(
+            dispatch(at_id, &[NativeArg::Str("hello"), NativeArg::Float(-1.0)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "o"
+        ));
+        assert!(matches!(
+            dispatch(at_id, &[NativeArg::Str("hello"), NativeArg::Float(9.0)], &mut sink).unwrap(),
+            NativeValue::Void
+        ));
+        let (slice_id, _) = resolve("zun:string", "slice").unwrap();
+        assert!(matches!(
+            dispatch(slice_id, &[NativeArg::Str("hello"), NativeArg::Float(1.0), NativeArg::Float(3.0)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "el"
+        ));
+        assert!(matches!(
+            dispatch(slice_id, &[NativeArg::Str("hello"), NativeArg::Float(-2.0), NativeArg::Float(9e15)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "lo"
+        ));
+        let (cp_id, _) = resolve("zun:string", "codePointAt").unwrap();
+        // "😀" is a surrogate pair at index 0: the combined astral code point.
+        assert!(matches!(
+            dispatch(cp_id, &[NativeArg::Str("😀"), NativeArg::Int(0)], &mut sink).unwrap(),
+            NativeValue::Int(0x1F600)
+        ));
+        assert!(matches!(
+            dispatch(cp_id, &[NativeArg::Str("héllo"), NativeArg::Int(1)], &mut sink).unwrap(),
+            NativeValue::Int(0xE9)
+        ));
+        let (replace_all_id, _) = resolve("zun:string", "replaceAll").unwrap();
+        assert!(matches!(
+            dispatch(replace_all_id, &[NativeArg::Str("aXbXc"), NativeArg::Str("X"), NativeArg::Str("-")], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "a-b-c"
+        ));
+        let (char_code_id, _) = resolve("zun:string", "fromCharCode1").unwrap();
+        assert!(matches!(
+            dispatch(char_code_id, &[NativeArg::Int(104)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "h"
+        ));
+        let (code_point_id, _) = resolve("zun:string", "fromCodePoint1").unwrap();
+        assert!(matches!(
+            dispatch(code_point_id, &[NativeArg::Int(0x1F600)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "😀"
+        ));
+        assert!(dispatch(code_point_id, &[NativeArg::Int(0x110000)], &mut sink).is_err());
+    }
+
+    #[test]
     fn number_primitives_parse_and_format() {
         let (parse_id, _) = resolve("zun:number", "parseFloat").unwrap();
         let (fixed_id, _) = resolve("zun:number", "toFixed").unwrap();

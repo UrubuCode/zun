@@ -853,6 +853,9 @@ impl Checker<'_> {
                     Ty::Array => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     Ty::Map => ("mapIteratorNew", "mapIteratorDone", "mapIteratorNext"),
                     Ty::Set => ("setIteratorNew", "setIteratorDone", "setIteratorNext"),
+                    // A string iterates by code point; reuses the array
+                    // iterator's `done`/`next` over a code-point array.
+                    Ty::String => ("stringIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     Ty::Any => ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext"),
                     Ty::Error => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     other => {
@@ -1199,6 +1202,63 @@ impl Checker<'_> {
                 self.poison(span)
             }
         }
+    }
+
+    /// Lower a variadic `String.fromCharCode(...)` / `String.fromCodePoint(...)`
+    /// static. Each code is turned into its one-code string by a single-code
+    /// native and the pieces are folded together with the string `concat`
+    /// native, so the compiler needs no variadic native ABI. Zero arguments
+    /// yield `""`.
+    fn check_string_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let single_native = match method {
+            "fromCharCode" => "fromCharCode1",
+            "fromCodePoint" => "fromCodePoint1",
+            other => {
+                self.error(method_span, format!("`String.{other}` is not supported in this runtime"));
+                return self.poison(span);
+            }
+        };
+        let Some((single_id, _)) = zun_natives::resolve("zun:string", single_native) else {
+            self.error(span, format!("missing String intrinsic `{single_native}`"));
+            return self.poison(span);
+        };
+        let Some((concat_id, _)) = zun_natives::resolve("zun:string", "concat") else {
+            self.error(span, "missing String intrinsic `concat`");
+            return self.poison(span);
+        };
+        let mut acc = hir::Expr {
+            kind: hir::ExprKind::String(String::new()),
+            ty: Ty::String,
+            span,
+        };
+        for arg in args {
+            let mut code = self.check_expr(cx, arg);
+            coerce_numeric_literal(&mut code, Ty::Int(IntKind::U32));
+            if !code.ty.is_error() && !self.is_assignable(code.ty, Ty::Int(IntKind::U32)) {
+                self.error(
+                    code.span,
+                    format!("`String.{method}` expects numeric code arguments"),
+                );
+            }
+            let piece = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id: single_id, args: vec![code] },
+                ty: Ty::String,
+                span,
+            };
+            acc = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id: concat_id, args: vec![acc, piece] },
+                ty: Ty::String,
+                span,
+            };
+        }
+        acc
     }
 
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
@@ -2195,6 +2255,20 @@ impl Checker<'_> {
                             span,
                         );
                     }
+                    // `String.fromCharCode(...)` / `String.fromCodePoint(...)`.
+                    // Recognized by receiver name only for the known statics;
+                    // anything else on `String` falls through to class dispatch.
+                    if class_name == "String"
+                        && matches!(self.text(method), "fromCharCode" | "fromCodePoint")
+                    {
+                        return self.check_string_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
                     // `Symbol.for(key)` / `Symbol.keyFor(symbol)` — the global
                     // cross-realm registry.
                     if class_name == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
@@ -2483,16 +2557,165 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                // String methods taking a RegExp: match/search/split/replace.
-                // `replace(string, string)` stays on class String; only a
-                // RegExp first argument is routed to the regex engine.
+                // `String.prototype.concat(...strs)` — variadic. Folded into a
+                // chain of the two-argument string `concat` native; zero
+                // arguments return the receiver (as `"x".concat() === "x"`).
+                if receiver.ty == Ty::String && mname == "concat" {
+                    let Some((id, _)) = zun_natives::resolve("zun:string", "concat") else {
+                        self.error(span, "missing String intrinsic `concat`");
+                        return self.poison(span);
+                    };
+                    let mut acc = receiver;
+                    for arg in args {
+                        let value = self.check_expr(cx, arg);
+                        if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::String) {
+                            self.error(value.span, "`concat` expects string arguments");
+                        }
+                        acc = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
+                            ty: Ty::String,
+                            span,
+                        };
+                    }
+                    return acc;
+                }
+                // `String.prototype.slice(start?, end?)` — negative indices
+                // count from the end (distinct from `substring`). An absent
+                // argument defaults to the whole range; `end` is passed as a
+                // value past any length so it clamps to the length natively.
+                if receiver.ty == Ty::String && mname == "slice" {
+                    if args.len() > 2 {
+                        self.error(span, "`slice` expects at most 2 arguments");
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:string", "slice") else {
+                        self.error(span, "missing String intrinsic `slice`");
+                        return self.poison(span);
+                    };
+                    let mut bound = |checker: &mut Self, arg: Option<&ast::Expr>, default: f64| {
+                        match arg {
+                            Some(arg) => {
+                                let mut value = checker.check_expr(cx, arg);
+                                coerce_numeric_literal(&mut value, Ty::F64);
+                                if !value.ty.is_error() && !checker.is_assignable(value.ty, Ty::F64) {
+                                    checker.error(value.span, "`slice` index must be a number");
+                                }
+                                value
+                            }
+                            None => hir::Expr { kind: hir::ExprKind::Number(default), ty: Ty::F64, span },
+                        }
+                    };
+                    let start = bound(self, args.first(), 0.0);
+                    // 2^53: past any representable string length, so it clamps to
+                    // the length and means "to the end".
+                    let end = bound(self, args.get(1), 9_007_199_254_740_992.0);
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, start, end] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+                // `String.prototype.split(separator, limit?)` — dispatch by the
+                // separator's type: a RegExp stays on the regex engine, a string
+                // uses the string-separator native (with an optional limit).
+                if receiver.ty == Ty::String && mname == "split" {
+                    if args.is_empty() || args.len() > 2 {
+                        self.error(span, "`split` expects 1 or 2 arguments");
+                        return self.poison(span);
+                    }
+                    let first = self.check_expr(cx, &args[0]);
+                    if first.ty == Ty::RegExp {
+                        if args.len() != 1 {
+                            self.error(span, "`split` with a RegExp does not accept a limit");
+                            return self.poison(span);
+                        }
+                        let Some((id, _)) = zun_natives::resolve("zun:collections", "regexpSplit") else {
+                            self.error(span, "missing collection intrinsic `regexpSplit`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver] },
+                            ty: Ty::Array,
+                            span,
+                        };
+                    }
+                    if !first.ty.is_error() && !self.is_assignable(first.ty, Ty::String) {
+                        self.error(first.span, "`split` expects a string or RegExp separator");
+                        return self.poison(span);
+                    }
+                    let limit = match args.get(1) {
+                        Some(arg) => {
+                            let mut value = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut value, Ty::Int(IntKind::I64));
+                            if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::Int(IntKind::I64)) {
+                                self.error(value.span, "`split` limit must be an integer");
+                            }
+                            value
+                        }
+                        // Absent limit → negative sentinel meaning unbounded.
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(-1.0),
+                            ty: Ty::Int(IntKind::I64),
+                            span,
+                        },
+                    };
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", "stringSplit") else {
+                        self.error(span, "missing collection intrinsic `stringSplit`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, limit] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
+                // `String.prototype.replace(search, replacement)` — dispatch by
+                // the search's type: a RegExp uses the regex engine, a string
+                // replaces the first occurrence via the string native (so it no
+                // longer needs the `String` class in scope).
+                if receiver.ty == Ty::String && mname == "replace" && args.len() == 2 {
+                    let first = self.check_expr(cx, &args[0]);
+                    let replacement = self.check_expr(cx, &args[1]);
+                    if replacement.ty != Ty::String && !replacement.ty.is_error() {
+                        self.error(
+                            replacement.span,
+                            "`replace` replacement must be a string (replace-with-function is not supported)",
+                        );
+                        return self.poison(span);
+                    }
+                    if first.ty == Ty::RegExp {
+                        let Some((id, _)) = zun_natives::resolve("zun:collections", "regexpReplace") else {
+                            self.error(span, "missing collection intrinsic `regexpReplace`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver, replacement] },
+                            ty: Ty::String,
+                            span,
+                        };
+                    }
+                    if !first.ty.is_error() && !self.is_assignable(first.ty, Ty::String) {
+                        self.error(first.span, "`replace` expects a string or RegExp search");
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:string", "replace") else {
+                        self.error(span, "missing String intrinsic `replace`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, replacement] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+                // String methods taking a RegExp: match/search.
                 if receiver.ty == Ty::String
-                    && matches!(mname.as_str(), "match" | "search" | "split" | "replace")
+                    && matches!(mname.as_str(), "match" | "search")
                 {
-                    let expected_args = if mname == "replace" { 2 } else { 1 };
+                    let expected_args = 1;
                     if args.len() == expected_args {
                         let first = self.check_expr(cx, &args[0]);
-                        if first.ty == Ty::RegExp || mname != "replace" {
+                        {
                             if first.ty != Ty::RegExp && !first.ty.is_error() {
                                 self.error(
                                     first.span,
@@ -2502,22 +2725,9 @@ impl Checker<'_> {
                             }
                             let (native_name, return_ty) = match mname.as_str() {
                                 "match" => ("regexpExec", Ty::Array),
-                                "search" => ("regexpSearch", Ty::Int(IntKind::I32)),
-                                "split" => ("regexpSplit", Ty::Array),
-                                _ => ("regexpReplace", Ty::String),
+                                _ => ("regexpSearch", Ty::Int(IntKind::I32)),
                             };
-                            let mut call_args = vec![first, receiver];
-                            if mname == "replace" {
-                                let replacement = self.check_expr(cx, &args[1]);
-                                if replacement.ty != Ty::String && !replacement.ty.is_error() {
-                                    self.error(
-                                        replacement.span,
-                                        "RegExp replacement must be a string (replace-with-function is not supported)",
-                                    );
-                                    return self.poison(span);
-                                }
-                                call_args.push(replacement);
-                            }
+                            let call_args = vec![first, receiver];
                             let Some((id, _)) =
                                 zun_natives::resolve("zun:collections", native_name)
                             else {
@@ -2634,6 +2844,15 @@ impl Checker<'_> {
                     (Ty::String, "toLowerCase") => Some(("toLowerCase", Ty::String, vec![])),
                     (Ty::String, "trim") => Some(("trim", Ty::String, vec![])),
                     (Ty::String, "includes") => Some(("includes", Ty::Boolean, vec![Ty::String])),
+                    // Index is a `number` so a negative value (from the end) can
+                    // cross the boundary; out of range yields `undefined`.
+                    (Ty::String, "at") => Some(("at", Ty::String, vec![Ty::F64])),
+                    (Ty::String, "codePointAt") => {
+                        Some(("codePointAt", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64)]))
+                    }
+                    (Ty::String, "replaceAll") => {
+                        Some(("replaceAll", Ty::String, vec![Ty::String, Ty::String]))
+                    }
                     (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
                         "u8ArrayGet",
                         Ty::Int(IntKind::U8),
@@ -3995,6 +4214,7 @@ impl Checker<'_> {
                         Ty::Array => "arrayIteratorNew",
                         Ty::Map => "mapIteratorNew",
                         Ty::Set => "setIteratorNew",
+                        Ty::String => "stringIteratorNew",
                         Ty::Error => "arrayIteratorNew",
                         other => {
                             self.error(

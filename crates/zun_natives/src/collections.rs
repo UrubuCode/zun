@@ -357,5 +357,11 @@ pub const MODULE: crate::Module = crate::Module {
         // floor. `deref` yields the target while live, `undefined` once collected.
         NativeFn { name: "weakRefNew", params: &[Opaque], ret: WeakRef, imp: unavailable },
         NativeFn { name: "weakRefDeref", params: &[WeakRef], ret: Opaque, imp: unavailable },
+        // `String.prototype.split(separator: string, limit?)` — the
+        // string-separator form (the RegExp form stays on `regexpSplit`). A
+        // negative `limit` means unbounded. Builds a managed array, so the
+        // interpreter owns the body; the signature fixes only the argument
+        // count the verifier pops.
+        NativeFn { name: "stringSplit", params: &[Str, Str, I64], ret: Array, imp: unavailable },
     ],
 };

@@ -1386,3 +1386,91 @@ fn booleans_and_not() {
     );
     assert_eq!(out, ["waiting"]);
 }
+
+// ---------------------------------------------------------------------------
+// String method/static surface (NUCLEUS.md item #1). Indices are UTF-16 code
+// units; `for...of` and the statics iterate/operate by code point.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_at_slice_concat_and_code_point_at() {
+    let out = run_source(
+        r#"function main() {
+            print("hello".at(-1));
+            print("hello".at(0));
+            print("héllo".codePointAt(1));
+            print("hello".slice(1, 3));
+            print("hello".slice(-2));
+            print("hello".slice(2));
+            print("a".concat("b", "c"));
+            print("x".concat());
+        }"#,
+    );
+    assert_eq!(out, ["o", "h", "233", "el", "lo", "llo", "abc", "x"]);
+}
+
+#[test]
+fn string_split_by_string_and_regexp() {
+    let out = run_source(
+        r#"function main() {
+            let a = "a,b,c".split(",");
+            print(a.length);
+            print(a[0] as string);
+            print(a[1] as string);
+            print(a[2] as string);
+            let chars = "abc".split("");
+            print(chars.length);
+            print(chars[0] as string);
+            print(chars[2] as string);
+            let limited = "a,b,c,d".split(",", 2);
+            print(limited.length);
+            print(limited[1] as string);
+            let re = "a1b2".split(/\d/);
+            print(re.length);
+            print(re[0] as string);
+            print(re[1] as string);
+            print(re[2] as string);
+        }"#,
+    );
+    assert_eq!(
+        out,
+        ["3", "a", "b", "c", "3", "a", "c", "2", "b", "3", "a", "b", ""]
+    );
+}
+
+#[test]
+fn string_replace_all_and_replace_first_by_string() {
+    let out = run_source(
+        r##"function main() {
+            print("aXbXc".replaceAll("X", "-"));
+            print("aXb".replace("X", "-"));
+            print("aXbXc".replace("X", "-"));
+            print("a1b2".replace(/\d/, "#"));
+        }"##,
+    );
+    assert_eq!(out, ["a-b-c", "a-b", "a-bXc", "a#b2"]);
+}
+
+#[test]
+fn string_from_char_code_and_from_code_point_statics() {
+    let out = run_source(
+        r#"function main() {
+            print(String.fromCharCode(104, 105));
+            print(String.fromCodePoint(128512));
+            print(String.fromCharCode());
+        }"#,
+    );
+    assert_eq!(out, ["hi", "\u{1F600}", ""]);
+}
+
+#[test]
+fn string_is_iterable_by_code_point() {
+    let out = run_source(
+        r#"function main() {
+            for (let ch of "a😀b") {
+                print(ch);
+            }
+        }"#,
+    );
+    assert_eq!(out, ["a", "\u{1F600}", "b"]);
+}
