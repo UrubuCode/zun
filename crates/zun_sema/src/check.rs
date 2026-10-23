@@ -405,6 +405,8 @@ impl Checker<'_> {
                     "Map" => Ty::Map,
                     "Set" => Ty::Set,
                     "WeakMap" => Ty::WeakMap,
+                    "WeakSet" => Ty::WeakSet,
+                    "WeakRef" => Ty::WeakRef,
                     "RegExp" => Ty::RegExp,
                     "BigInt" => Ty::BigInt,
                     "FinalizationRegistry" => Ty::FinalizationRegistry,
@@ -1155,6 +1157,44 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::ObjectLiteral { properties, .. } => {
+                // Build a DynamicObject and populate it in source order. Values
+                // box to Any as the dynamic store expects; a computed key is
+                // kept as an expression so a Symbol routes to the symbol slot.
+                let mut entries = Vec::with_capacity(properties.len());
+                for property in properties {
+                    let value = self.check_expr(cx, &property.value);
+                    let value = if value.ty == Ty::Any {
+                        value
+                    } else {
+                        hir::Expr {
+                            span: value.span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                        }
+                    };
+                    let key = match &property.key {
+                        ast::PropertyKey::Ident(name) => {
+                            hir::ObjectKey::Named(self.text(name).to_string())
+                        }
+                        ast::PropertyKey::String { value, .. } => {
+                            hir::ObjectKey::Named(value.clone())
+                        }
+                        ast::PropertyKey::Number { value, .. } => {
+                            hir::ObjectKey::Named(value.to_string())
+                        }
+                        ast::PropertyKey::Computed(key) => {
+                            hir::ObjectKey::Computed(self.check_expr(cx, key))
+                        }
+                    };
+                    entries.push(hir::ObjectEntry { key, value });
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicObjectLiteral { entries },
+                    ty: Ty::DynamicObject,
+                    span,
+                }
+            }
             ast::Expr::Yield { value, .. } => {
                 if !cx.is_generator {
                     self.error(span, "yield is only valid inside a generator function");
@@ -1740,6 +1780,39 @@ impl Checker<'_> {
                     };
                 }
 
+                // `Symbol(description?)` mints a fresh, unique symbol. The
+                // description is optional; when present it must be a string.
+                if name == "Symbol" && !self.by_name.contains_key("Symbol") {
+                    if args.len() > 1 {
+                        self.error(span, "`Symbol` takes an optional description argument");
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", "symbolNew") else {
+                        self.error(span, "missing `symbolNew` intrinsic");
+                        return self.poison(span);
+                    };
+                    let description = match args.pop() {
+                        Some(mut value) => {
+                            if value.ty != Ty::String && value.ty != Ty::Any && !value.ty.is_error() {
+                                // Box non-string descriptions to `undefined` at
+                                // runtime by passing them through as `Any`.
+                                value = hir::Expr {
+                                    span: value.span,
+                                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                    ty: Ty::Any,
+                                };
+                            }
+                            value
+                        }
+                        None => hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![description] },
+                        ty: Ty::Symbol,
+                        span,
+                    };
+                }
+
                 let dynamic_property = |checker: &mut Checker<'_>,
                                         args: &mut Vec<hir::Expr>,
                                         span: Span| {
@@ -2029,6 +2102,37 @@ impl Checker<'_> {
                             span,
                         );
                     }
+                    // `Symbol.for(key)` / `Symbol.keyFor(symbol)` — the global
+                    // cross-realm registry.
+                    if class_name == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
+                        let member = self.text(method).to_string();
+                        let (native, arg_ty, ret_ty) = match member.as_str() {
+                            "for" => ("symbolFor", Ty::String, Ty::Symbol),
+                            "keyFor" => ("symbolKeyFor", Ty::Symbol, Ty::Any),
+                            other => {
+                                self.error(method.span, format!("`Symbol.{other}` is not a function"));
+                                return self.poison(span);
+                            }
+                        };
+                        if args.len() != 1 {
+                            self.error(span, format!("`Symbol.{member}` expects one argument"));
+                            return self.poison(span);
+                        }
+                        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+                            self.error(span, format!("missing `{native}` intrinsic"));
+                            return self.poison(span);
+                        };
+                        let mut arg = self.check_expr(cx, &args[0]);
+                        if !arg.ty.is_error() && !self.is_assignable(arg.ty, arg_ty) {
+                            self.error(arg.span, format!("`Symbol.{member}` expects a {arg_ty:?} argument"));
+                        }
+                        coerce_numeric_literal(&mut arg, arg_ty);
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                            ty: ret_ty,
+                            span,
+                        };
+                    }
                     if let Some(&namespace) = self.core_namespaces.get(&class_name) {
                         let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
                             self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
@@ -2300,6 +2404,10 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "add") => Some(("weakSetAdd", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "has") => Some(("weakSetHas", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "delete") => Some(("weakSetDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakRef, "deref") => Some(("weakRefDeref", Ty::Any, vec![])),
                     (Ty::RegExp, "isMatch" | "test") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
                     (Ty::RegExp, "exec") => Some(("regexpExec", Ty::Array, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
@@ -2975,6 +3083,7 @@ impl Checker<'_> {
                     "Map" => Some(("mapNew", Ty::Map)),
                     "Set" => Some(("setNew", Ty::Set)),
                     "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
+                    "WeakSet" => Some(("weakSetNew", Ty::WeakSet)),
                     "RegExp" => Some(("regexpNew", Ty::RegExp)),
                     "BigInt" => Some(("bigIntNew", Ty::BigInt)),
                     "FinalizationRegistry" => Some((
@@ -3113,8 +3222,62 @@ impl Checker<'_> {
                             };
                         }
                     }
+                    // Well-known symbols as first-class values (`Symbol.iterator`,
+                    // `Symbol.asyncIterator`, `Symbol.hasInstance`,
+                    // `Symbol.toPrimitive`, `Symbol.toStringTag`). Their identities
+                    // are stable per isolate.
+                    if self.text(class_name) == "Symbol"
+                        && !self.classes_by_name.contains_key("Symbol")
+                    {
+                        // Stable well-known symbol ids. Source of truth:
+                        // `zun_core::WellKnownSymbol` (the runtime registry seeds
+                        // these at the same ids). Kept inline so the compile-time
+                        // crate does not depend on the runtime crate.
+                        let well_known_id = match fname.as_str() {
+                            "iterator" => Some(0.0),
+                            "asyncIterator" => Some(1.0),
+                            "hasInstance" => Some(2.0),
+                            "toPrimitive" => Some(3.0),
+                            "toStringTag" => Some(4.0),
+                            _ => None,
+                        };
+                        if let Some(well_known_id) = well_known_id {
+                            let Some((id, _)) =
+                                zun_natives::resolve("zun:collections", "symbolWellKnown")
+                            else {
+                                self.error(span, "missing `symbolWellKnown` intrinsic");
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![hir::Expr {
+                                        kind: hir::ExprKind::Number(well_known_id),
+                                        ty: Ty::F64,
+                                        span,
+                                    }],
+                                },
+                                ty: Ty::Symbol,
+                                span,
+                            };
+                        }
+                    }
                 }
                 let object = self.check_expr(cx, object);
+                // `symbol.description` — the creation description or `undefined`.
+                if object.ty == Ty::Symbol && fname == "description" {
+                    let Some((id, _)) =
+                        zun_natives::resolve("zun:collections", "symbolDescription")
+                    else {
+                        self.error(span, "missing `symbolDescription` intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 if object.ty == Ty::Array && fname == "length" {
                     return hir::Expr {
                         kind: hir::ExprKind::ArrayLength {
@@ -3287,6 +3450,10 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
+                    (Ty::WeakSet, "add") => ("weakSetAdd", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakSet, "has") => ("weakSetHas", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakSet, "delete") => ("weakSetDelete", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakRef, "deref") => ("weakRefDeref", Ty::Any, vec![]),
                     (Ty::RegExp, "isMatch" | "test") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
                     (Ty::RegExp, "exec") => ("regexpExec", Ty::Array, vec![Ty::String]),
                     (Ty::RegExp, "source") => ("regexpSource", Ty::String, vec![]),
@@ -3390,6 +3557,31 @@ impl Checker<'_> {
                 ..
             } => {
                 let object = self.check_expr(cx, object);
+                // Computed property store on a dynamic receiver: a Symbol key
+                // routes to the symbol-keyed slot, a string/number key to the
+                // ordinary dynamic property. The key and value are boxed to `Any`.
+                if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                    let key = self.check_expr(cx, index);
+                    let value = self.check_expr(cx, value);
+                    let boxed = if value.ty == Ty::Any {
+                        value
+                    } else {
+                        hir::Expr {
+                            span: value.span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicSetValue {
+                            object: Box::new(object),
+                            key: Box::new(key),
+                            value: Box::new(boxed),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 let mut index = self.check_expr(cx, index);
                 let value = self.check_expr(cx, value);
                 let value_ty = value.ty;
@@ -3834,6 +4026,16 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Function(_) | Number { .. } | BigInt { .. } | String { .. } | RegexLiteral { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
         StaticMethodCall { args, .. } => args.iter().map(count_yields_in_expr).sum(),
         StaticField { .. } => 0,
+        ObjectLiteral { properties, .. } => properties
+            .iter()
+            .map(|property| {
+                let key = match &property.key {
+                    ast::PropertyKey::Computed(key) => count_yields_in_expr(key),
+                    _ => 0,
+                };
+                key + count_yields_in_expr(&property.value)
+            })
+            .sum(),
     }
 }
 
@@ -3914,6 +4116,16 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         IndexAssign { object, index, value, .. } => {
             count_awaits_in_expr(object) + count_awaits_in_expr(index) + count_awaits_in_expr(value)
         }
+        ObjectLiteral { properties, .. } => properties
+            .iter()
+            .map(|property| {
+                let key = match &property.key {
+                    ast::PropertyKey::Computed(key) => count_awaits_in_expr(key),
+                    _ => 0,
+                };
+                key + count_awaits_in_expr(&property.value)
+            })
+            .sum(),
     }
 }
 

@@ -8,6 +8,16 @@ impl Heap {
             .map(|&index| Obj(self.records[index].addr))
     }
 
+    /// Dereference a managed WeakRef object, returning its target while the
+    /// target is still live, or `None` once it has been collected.
+    pub fn weak_ref_get_object(&self, object: Obj) -> Option<Obj> {
+        let id = self
+            .weak_ref_objects
+            .get(&(object.addr() as usize))
+            .copied()?;
+        self.weak_ref_get(id)
+    }
+
     pub fn weak_map_set_object(&mut self, object: Obj, key: Obj, value: Obj) -> bool {
         self.weak_map_objects
             .get(&(object.addr() as usize))

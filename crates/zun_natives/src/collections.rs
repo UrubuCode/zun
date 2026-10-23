@@ -311,5 +311,28 @@ pub const MODULE: crate::Module = crate::Module {
         // seeded onto the realm global.
         NativeFn { name: "realmDescriptor", params: &[F64], ret: Opaque, imp: unavailable },
         NativeFn { name: "classDescriptorToken", params: &[Opaque], ret: F64, imp: unavailable },
+        // `Symbol` surface. Symbols are isolate-local, so the interpreter owns
+        // the registry and intercepts these by name; the signatures fix only the
+        // argument count the verifier pops. A symbol is an immediate `Any`
+        // (`AnyTag::Symbol`), hence `Opaque` in/out.
+        // `symbolNew(description)` mints a unique symbol (`Void` description →
+        // `undefined`); `symbolFor(key)`/`symbolKeyFor(symbol)` are the
+        // cross-realm registry; `symbolWellKnown(index)` returns the stable
+        // well-known symbol value; `symbolDescription(symbol)` reads `.description`.
+        NativeFn { name: "symbolNew", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolFor", params: &[Str], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolKeyFor", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolWellKnown", params: &[F64], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolDescription", params: &[Opaque], ret: Opaque, imp: unavailable },
+        // WeakSet: a set of weakly-held object keys over the WeakMap ephemeron
+        // floor (value-less; the interpreter stores each key as its own value).
+        NativeFn { name: "weakSetNew", params: &[], ret: WeakSet, imp: unavailable },
+        NativeFn { name: "weakSetAdd", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "weakSetHas", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "weakSetDelete", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        // WeakRef: a single weakly-held reference over the GC weak-reference
+        // floor. `deref` yields the target while live, `undefined` once collected.
+        NativeFn { name: "weakRefNew", params: &[Opaque], ret: WeakRef, imp: unavailable },
+        NativeFn { name: "weakRefDeref", params: &[WeakRef], ret: Opaque, imp: unavailable },
     ],
 };

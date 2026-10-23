@@ -1112,6 +1112,61 @@ fn weak_map_std_class_round_trips_through_short_members() {
 }
 
 #[test]
+fn weak_set_std_class_add_has_delete_round_trip() {
+    // The WeakSet std class mirrors WeakMap over the ephemeron floor: an
+    // add/has/delete cycle holds object members weakly and `has` is false for
+    // an absent object.
+    let out = run_with_std(
+        r#"class Key {}
+        function main() {
+            let s = new WeakSet();
+            let a = new Key();
+            let b = new Key();
+            print(s.add(a));
+            print(s.has(a));
+            print(s.has(b));
+            print(s.delete(a));
+            print(s.has(a));
+        }"#,
+    );
+    assert_eq!(out, ["true", "true", "false", "true", "false"]);
+}
+
+#[test]
+fn weak_ref_std_class_deref_returns_the_live_target() {
+    // `new WeakRef(obj).deref()` returns the held object while it is reachable.
+    let out = run_with_std(
+        r#"class Cell {}
+        function main() {
+            let target = new Cell();
+            let ref = new WeakRef(target);
+            let got = ref.deref() as Cell;
+            print(got == target);
+        }"#,
+    );
+    assert_eq!(out, ["true"]);
+}
+
+#[test]
+fn weak_set_and_weak_ref_resolve_as_realm_globals() {
+    // `: WeakSet`/`: WeakRef` annotations type-check and the globals resolve
+    // through the declarative realm registry, exactly like Map/WeakMap.
+    let out = run_with_std(
+        r#"class Node {}
+        function main() {
+            let n = new Node();
+            let s: WeakSet = new WeakSet();
+            s.add(n);
+            print(s.has(n));
+            let r: WeakRef = new WeakRef(n);
+            let got = r.deref() as Node;
+            print(got == n);
+        }"#,
+    );
+    assert_eq!(out, ["true", "true"]);
+}
+
+#[test]
 fn booleans_and_not() {
     let out = run_source(
         "function main() {\n\

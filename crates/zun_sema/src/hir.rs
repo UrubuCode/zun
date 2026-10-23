@@ -93,6 +93,10 @@ pub enum Ty {
     Set,
     /// A GC ephemeron-backed weak map.
     WeakMap,
+    /// A GC ephemeron-backed weak set (weakly-held object members).
+    WeakSet,
+    /// A GC-backed single weak reference.
+    WeakRef,
     /// A Rust-engine-backed regular expression.
     RegExp,
     /// An arbitrary-precision integer backed by the managed heap.
@@ -107,6 +111,9 @@ pub enum Ty {
     BufferView(BufferViewKind),
     /// A dictionary-backed dynamic object.
     DynamicObject,
+    /// A unique symbol primitive (a first-class `SymbolId`-backed value). Its
+    /// runtime representation is an immediate `Any` (`AnyTag::Symbol`).
+    Symbol,
     /// A dynamically tagged value.
     Any,
     /// A non-capturing function reference identified by function index.
@@ -448,6 +455,25 @@ pub struct CatchClause {
     pub body: Vec<Stmt>,
 }
 
+/// One populated property of a [`ExprKind::DynamicObjectLiteral`].
+#[derive(Debug)]
+pub struct ObjectEntry {
+    /// How the property key is produced.
+    pub key: ObjectKey,
+    /// The property value, already boxed to `Any`.
+    pub value: Expr,
+}
+
+/// The key of a [`ObjectEntry`].
+#[derive(Debug)]
+pub enum ObjectKey {
+    /// A statically known string key stored via `StoreDynamic`.
+    Named(String),
+    /// A runtime-evaluated key stored via `StoreDynamicValue`; a `Symbol` value
+    /// routes to the symbol-keyed slot, a string to the ordinary property.
+    Computed(Expr),
+}
+
 /// A checked expression: a kind plus its type and origin.
 #[derive(Debug)]
 pub struct Expr {
@@ -660,6 +686,10 @@ pub enum ExprKind {
     },
     /// Write an Any value using a runtime-evaluated property name.
     DynamicSetValue { object: Box<Expr>, key: Box<Expr>, value: Box<Expr> },
+    /// Allocate a `DynamicObject` and populate it from an object literal.
+    ///
+    /// Entries are stored in source order; the object is the result value.
+    DynamicObjectLiteral { entries: Vec<ObjectEntry> },
     /// Explicitly box a statically typed value as Any.
     BoxAny {
         /// The value to box.

@@ -139,6 +139,41 @@ pub enum TemplatePart {
     Expr(Box<Expr>),
 }
 
+/// One property of an object literal: `key: value`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectProperty {
+    /// The property key.
+    pub key: PropertyKey,
+    /// The property value. For shorthand `{ x }` this is the identifier `x`.
+    pub value: Expr,
+}
+
+/// The key of an object-literal property.
+///
+/// Method shorthand (`{ m() {} }`), getters/setters (`{ get x() {} }`), and
+/// spread (`{ ...o }`) are deferred follow-ups and are not represented here.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyKey {
+    /// An identifier or keyword property name, e.g. `a` in `{ a: 1 }`.
+    Ident(Name),
+    /// A string-literal property name, e.g. `"a-b"` in `{ "a-b": 1 }`.
+    String {
+        /// The decoded contents.
+        value: String,
+        /// Source location including quotes.
+        span: Span,
+    },
+    /// A numeric-literal property name, e.g. `1` in `{ 1: "x" }`.
+    Number {
+        /// The parsed value (keys are stringified at lowering time).
+        value: f64,
+        /// Source location.
+        span: Span,
+    },
+    /// A computed key, e.g. `[expr]` in `{ [expr]: 1 }`.
+    Computed(Box<Expr>),
+}
+
 /// A parameter: `name: type`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -371,6 +406,13 @@ pub enum UnaryOp {
 pub enum Expr {
     /// An anonymous `function` or arrow function expression.
     Function(FunctionExpr),
+    /// `{ key: value, ... }` — an object literal producing a `DynamicObject`.
+    ObjectLiteral {
+        /// Properties in source order (insertion order is preserved).
+        properties: Vec<ObjectProperty>,
+        /// Span including the braces.
+        span: Span,
+    },
     /// A numeric literal.
     Number {
         /// The parsed value (JS numbers are f64).
@@ -665,6 +707,7 @@ impl Expr {
             Expr::Await { span, .. } => *span,
             Expr::ImportCall { span, .. } => *span,
             Expr::Yield { span, .. } => *span,
+            Expr::ObjectLiteral { span, .. } => *span,
             Expr::Function(function) => function.span,
             Expr::Ident(name) => name.span,
         }

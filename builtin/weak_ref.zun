@@ -1,0 +1,6 @@
+// Thin class wrapper over the GC weak-reference floor.
+import { weakRef } from "zun:core";
+
+class WeakRef {
+    deref(): any { return weakRef.deref(this); }
+}

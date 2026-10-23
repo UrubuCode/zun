@@ -10,7 +10,7 @@ use oxc_ast::ast::{
     Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, ChainElement,
     ClassElement, Declaration, ExportDefaultDeclarationKind, Expression, ForStatementInit,
     ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind,
-    ModuleExportName, PropertyKey, Statement, UnaryOperator,
+    ModuleExportName, ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
 };
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
@@ -769,6 +769,62 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                         .into(),
                 ),
             }
+        }
+        Expression::ObjectExpression(object) => {
+            let mut properties = Vec::with_capacity(object.properties.len());
+            for property in &object.properties {
+                let ObjectPropertyKind::ObjectProperty(property) = property else {
+                    return Err("OXC adapter does not support object spread yet".into());
+                };
+                if property.method || property.kind != PropertyKind::Init {
+                    return Err(
+                        "OXC adapter does not support object methods or accessors yet".into(),
+                    );
+                }
+                let key = if property.computed {
+                    let Some(key_expression) = property.key.as_expression() else {
+                        return Err("OXC adapter requires an expression computed key".into());
+                    };
+                    crate::ast::PropertyKey::Computed(Box::new(convert_expression(key_expression)?))
+                } else {
+                    match &property.key {
+                        PropertyKey::StaticIdentifier(identifier) => {
+                            crate::ast::PropertyKey::Ident(Name {
+                                span: span(identifier.span),
+                            })
+                        }
+                        PropertyKey::StringLiteral(string) => {
+                            let Some(value) = string.value.as_str() else {
+                                return Err(
+                                    "OXC adapter cannot represent non-UTF-8 string keys".into(),
+                                );
+                            };
+                            crate::ast::PropertyKey::String {
+                                value: value.to_owned(),
+                                span: span(string.span),
+                            }
+                        }
+                        PropertyKey::NumericLiteral(number) => crate::ast::PropertyKey::Number {
+                            value: number.value,
+                            span: span(number.span),
+                        },
+                        _ => {
+                            return Err(
+                                "OXC adapter supports identifier, string, and numeric property keys only"
+                                    .into(),
+                            )
+                        }
+                    }
+                };
+                properties.push(crate::ast::ObjectProperty {
+                    key,
+                    value: convert_expression(&property.value)?,
+                });
+            }
+            Ok(Expr::ObjectLiteral {
+                properties,
+                span: span(object.span),
+            })
         }
         Expression::NewExpression(new_expression) => {
             let Expression::Identifier(identifier) = &new_expression.callee else {
@@ -2451,5 +2507,32 @@ mod tests {
             .iter()
             .any(|message| message.contains("unchanged local export names")));
         assert!(parse_subset("export { main } from \"other\";", false).is_err());
+    }
+
+    #[test]
+    fn converts_object_literals_and_defers_methods_and_spread() {
+        let program = parse_subset(
+            "function main() { let x = 0; let o = { a: 1, x, [\"k\"]: 2 }; }",
+            false,
+        )
+        .unwrap();
+        let crate::ast::Stmt::Let {
+            init: crate::ast::Expr::ObjectLiteral { properties, .. },
+            ..
+        } = &program.functions[0].body.statements[1]
+        else {
+            panic!("expected an object literal");
+        };
+        assert_eq!(properties.len(), 3);
+        assert!(matches!(properties[0].key, crate::ast::PropertyKey::Ident(_)));
+        assert!(matches!(properties[1].value, crate::ast::Expr::Ident(_)));
+        assert!(matches!(
+            properties[2].key,
+            crate::ast::PropertyKey::Computed(_)
+        ));
+
+        assert!(parse_subset("function main() { let o = { ...rest }; }", false).is_err());
+        assert!(parse_subset("function main() { let o = { m() { return 1; } }; }", false).is_err());
+        assert!(parse_subset("function main() { let o = { get a() { return 1; } }; }", false).is_err());
     }
 }

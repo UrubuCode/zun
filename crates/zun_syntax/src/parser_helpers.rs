@@ -41,6 +41,16 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
+        Expr::ObjectLiteral { properties, .. } => {
+            for property in properties {
+                match &mut property.key {
+                    PropertyKey::Ident(name) => shift(&mut name.span),
+                    PropertyKey::String { span, .. } | PropertyKey::Number { span, .. } => shift(span),
+                    PropertyKey::Computed(key) => rebase_expression_names(key, base),
+                }
+                rebase_expression_names(&mut property.value, base);
+            }
+        }
         Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::RegexLiteral { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
     }
 }
@@ -247,6 +257,7 @@ impl Parser<'_> {
                 }
                 Expr::Ident(name)
             }
+            TokenKind::LBrace => self.object_literal(),
             TokenKind::LParen => {
                 if self.parenthesized_arrow_start() {
                     let start = self.bump().span;
@@ -266,6 +277,70 @@ impl Parser<'_> {
                 self.bump();
                 Expr::Null { span: t.span }
             }
+        }
+    }
+
+    /// Parse an object literal `{ key: value, ... }` in expression position.
+    ///
+    /// The leading `{` has not been consumed. Statement-position `{` never
+    /// reaches here: statements with no leading keyword fall through to
+    /// expression parsing, and this grammar has no bare block statement, so the
+    /// block-vs-object ambiguity does not arise in the hand parser.
+    pub(crate) fn object_literal(&mut self) -> Expr {
+        let start = self.bump().span; // `{`
+        let mut properties = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            let key = if self.eat(TokenKind::LBracket) {
+                let key = self.assignment();
+                self.expect(TokenKind::RBracket, "`]` after computed property key");
+                PropertyKey::Computed(Box::new(key))
+            } else {
+                match self.peek().kind {
+                    TokenKind::String => {
+                        let token = self.bump();
+                        PropertyKey::String {
+                            value: decode_string(self.text(token)),
+                            span: token.span,
+                        }
+                    }
+                    TokenKind::Number => {
+                        let token = self.bump();
+                        let value = self.text(token).parse::<f64>().unwrap_or(f64::NAN);
+                        PropertyKey::Number { value, span: token.span }
+                    }
+                    kind if kind == TokenKind::Ident || kind.is_keyword() => {
+                        let token = self.bump();
+                        PropertyKey::Ident(Name { span: token.span })
+                    }
+                    _ => {
+                        self.error_at(self.peek().span, "expected a property name");
+                        self.bump();
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            };
+            let value = if self.eat(TokenKind::Colon) {
+                self.assignment()
+            } else if let PropertyKey::Ident(name) = &key {
+                // Shorthand `{ x }` desugars to `{ x: x }`.
+                Expr::Ident(*name)
+            } else {
+                self.error_at(self.peek().span, "`:` after property name");
+                Expr::Null { span: self.peek().span }
+            };
+            properties.push(ObjectProperty { key, value });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let close = self.peek().span;
+        self.expect(TokenKind::RBrace, "`}` after object literal");
+        Expr::ObjectLiteral {
+            properties,
+            span: start.to(close),
         }
     }
 
@@ -326,7 +401,7 @@ impl Parser<'_> {
                         expr = Expr::PrivateField { object: Box::new(expr), field, span };
                         continue;
                     }
-                    let member = self.name("a field or method name");
+                    let member = self.member_name("a field or method name");
                     if self.at(TokenKind::LParen) {
                         self.bump();
                         let args = self.arguments();
@@ -349,7 +424,7 @@ impl Parser<'_> {
                 }
                 TokenKind::QuestionDot => {
                     self.bump();
-                    let field = self.name("an optional field or method name");
+                    let field = self.member_name("an optional field or method name");
                     if self.at(TokenKind::LParen) {
                         self.bump();
                         let args = self.arguments();
@@ -720,6 +795,19 @@ impl Parser<'_> {
             None => Name {
                 span: Span::empty_at(self.peek().span.start),
             },
+        }
+    }
+
+    /// Parse a member name after `.`/`?.`. Unlike [`name`](Self::name), this
+    /// accepts reserved keywords (`Symbol.for`, `obj.class`, ...), matching the
+    /// ECMAScript rule that keywords are valid property names.
+    pub(crate) fn member_name(&mut self, what: &str) -> Name {
+        let token = self.peek();
+        if token.kind == TokenKind::Ident || token.kind.is_keyword() {
+            self.bump();
+            Name { span: token.span }
+        } else {
+            self.name(what)
         }
     }
 

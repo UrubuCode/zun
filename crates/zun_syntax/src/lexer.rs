@@ -161,6 +161,21 @@ pub enum TokenKind {
     Eof,
 }
 
+impl TokenKind {
+    /// Whether this token is a reserved keyword. Keywords are valid member
+    /// names after `.` (e.g. `Symbol.for`), so member-name parsing accepts them.
+    pub fn is_keyword(self) -> bool {
+        use TokenKind::*;
+        matches!(
+            self,
+            KwFunction | KwAsync | KwAwait | KwYield | KwLet | KwIf | KwElse | KwSwitch
+                | KwCase | KwDefault | KwWhile | KwDo | KwFor | KwOf | KwBreak | KwContinue
+                | KwReturn | KwThrow | KwTry | KwCatch | KwFinally | KwTrue | KwFalse | KwNull
+                | KwClass | KwNew | KwExtends | KwAs | KwImport | KwFrom | KwExtern | KwStatic
+        )
+    }
+}
+
 /// A token: a kind plus where it came from. Text is recovered by slicing the
 /// source with the span, so tokens stay `Copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

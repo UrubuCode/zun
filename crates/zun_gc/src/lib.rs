@@ -198,6 +198,8 @@ pub struct Heap {
     sets: HashMap<usize, zun_core::OrderedMap>,
     /// WeakMap handles owned by managed WeakMap objects.
     weak_map_objects: HashMap<usize, WeakMapId>,
+    /// WeakRef slots owned by managed WeakRef objects.
+    weak_ref_objects: HashMap<usize, WeakRefId>,
     /// Promise state associated with managed Promise objects.
     promises: HashMap<usize, zun_core::ManagedPromise>,
     /// Compiled regular expressions associated with managed RegExp objects.
@@ -697,6 +699,14 @@ impl Heap {
             mapped_owners.insert(mapped, id);
         }
         self.weak_map_objects = mapped_owners;
+        let ref_owners = std::mem::take(&mut self.weak_ref_objects);
+        let mut mapped_ref_owners = HashMap::with_capacity(ref_owners.len());
+        for (owner, id) in ref_owners {
+            let mapped = map(owner);
+            if mapped != owner { rewritten += 1; }
+            mapped_ref_owners.insert(mapped, id);
+        }
+        self.weak_ref_objects = mapped_ref_owners;
         for finalizer in &mut self.finalizers {
             let mapped = map(finalizer.target);
             if mapped != finalizer.target { rewritten += 1; finalizer.target = mapped; }
@@ -1094,14 +1104,20 @@ mod tests {
     fn symbols_are_isolate_local_heap_state() {
         let mut first = Heap::new();
         let mut second = Heap::new();
+        // Each isolate seeds the well-known symbols first; a `Symbol.for` key
+        // then resolves to the same stable id in every isolate.
+        let well_known = first.symbol_count();
+        assert_eq!(second.symbol_count(), well_known);
         let first_symbol = first.symbol_for("iterator");
         let second_symbol = second.symbol_for("iterator");
         assert_eq!(first_symbol, second_symbol);
         assert_eq!(first.symbol_description(first_symbol), Some("iterator"));
-        assert_eq!(first.symbol_count(), 1);
-        assert_eq!(second.symbol_count(), 1);
+        assert_eq!(first.symbol_key_for(first_symbol), Some("iterator"));
+        assert_eq!(first.symbol_count(), well_known + 1);
+        assert_eq!(second.symbol_count(), well_known + 1);
         let unique = first.symbol_create(Some("iterator"));
         assert_ne!(unique, first_symbol);
+        assert_eq!(first.symbol_key_for(unique), None);
     }
 
     #[test]
@@ -1113,6 +1129,20 @@ mod tests {
         let freed = unsafe { heap.collect(&[], &|_| Vec::new()) };
         assert_eq!(freed, 1);
         assert_eq!(heap.weak_ref_get(weak), None);
+    }
+
+    #[test]
+    fn weak_ref_object_clears_once_its_target_is_collected() {
+        // A managed WeakRef object dereferences to its target while the target
+        // is rooted, and to nothing once a collection reclaims it.
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let weak_ref = heap.alloc_weak_ref(target);
+        assert_eq!(unsafe { heap.collect(&[weak_ref, target], &|_| Vec::new()) }, 0);
+        assert_eq!(heap.weak_ref_get_object(weak_ref), Some(target));
+        // Drop the target root; only the WeakRef object stays rooted.
+        unsafe { heap.collect(&[weak_ref], &|_| Vec::new()) };
+        assert_eq!(heap.weak_ref_get_object(weak_ref), None);
     }
 
     #[test]

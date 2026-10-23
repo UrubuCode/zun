@@ -1227,6 +1227,31 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::StoreDynamicValue));
             }
+            ExprKind::DynamicObjectLiteral { entries } => {
+                // Allocate once, then set each property on a duplicated handle,
+                // discarding the value the store leaves behind. The object stays
+                // on the stack as the literal's result.
+                self.emit(Instruction::simple(Opcode::NewDynamic));
+                for entry in entries {
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    match &entry.key {
+                        hir::ObjectKey::Named(name) => {
+                            self.expr(&entry.value);
+                            let property = self.module.strings.intern(name);
+                            self.emit(Instruction::new(
+                                Opcode::StoreDynamic,
+                                Operand::StringRef(property.0),
+                            ));
+                        }
+                        hir::ObjectKey::Computed(key) => {
+                            self.expr(key);
+                            self.expr(&entry.value);
+                            self.emit(Instruction::simple(Opcode::StoreDynamicValue));
+                        }
+                    }
+                    self.emit(Instruction::simple(Opcode::Pop));
+                }
+            }
             ExprKind::BoxAny { value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::BoxAny));

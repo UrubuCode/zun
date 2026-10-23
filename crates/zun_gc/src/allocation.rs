@@ -278,6 +278,16 @@ impl Heap {
         id
     }
 
+    /// Allocate a managed WeakRef object holding a single weak reference to
+    /// `target`. The reference never keeps `target` alive and is cleared on the
+    /// collection that reclaims it (mirrors the WeakMap ephemeron floor).
+    pub fn alloc_weak_ref(&mut self, target: Obj) -> Obj {
+        let object = self.alloc(0, 0);
+        let id = self.weak_ref_new(target);
+        self.weak_ref_objects.insert(object.addr() as usize, id);
+        object
+    }
+
     pub fn weak_map_new(&mut self) -> WeakMapId {
         let id = WeakMapId(self.weak_maps.len() as u32);
         self.weak_maps.push(Ephemeron::default());

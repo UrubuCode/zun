@@ -29,7 +29,7 @@ read.
 | 2 | Number | partial | Instance helpers present; **no statics** (`Number.isNaN/isInteger/isFinite/parseFloat/parseInt`, `MAX_SAFE_INTEGER` …); no `toPrecision/toExponential/toLocaleString`; no radix on `toString` |
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
-| 5 | Symbol | partial | Only `Symbol.iterator` wired as a dispatch point; `SymbolRegistry` in core unused. No `Symbol()`, `Symbol.for/keyFor`, other well-known symbols, user symbol-keyed members |
+| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Rich custom surface; missing standard `forEach/find/some/every/findLast/flatMap/join/splice/shift/unshift/keys/values/entries`, statics `Array.from/of/isArray`, callback `sort`, iterator-returning methods |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
@@ -38,8 +38,8 @@ read.
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, `size` as property (is a method), constructor-from-iterable |
 | 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, constructor-from-iterable |
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
-| 14 | WeakSet | missing | Not implemented (GC base ready via WeakMap) |
-| 15 | WeakRef | missing | Not implemented |
+| 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
+| 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(len)` intrinsic; no `byteLength/slice/isView/resize` |
 | 18 | DataView | partial | Only `getUint32/setUint32/getUint16/setUint16/getFloat64/setFloat64`; missing Int8/16/32, Uint8, Float32, BigInt64/Uint64, `byteLength/byteOffset/buffer` |
@@ -52,10 +52,10 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 3 · partial 19 · missing 4 (of 26 nucleus items, JSON excluded).
+**Counts:** done 5 · partial 19 · missing 2 (of 26 nucleus items, JSON excluded).
 
-(Counted from the table above. Earlier revisions of this line summed to 23 rather
-than 26 and were tracked by hand on both branches; these are derived from the rows.)
+(Derived from the table above, not tracked by hand. Both sides of a merge have
+had this line wrong; recount the rows rather than taking either version.)
 
 ### Declarative realm-global registration (PLAN §3.1)
 
@@ -64,7 +64,8 @@ Base types are seeded onto `globalThis` from the declarative registry
 truth for each name's annotation type, descriptor value, and `new` lowering (the
 frozen runtime representation is unchanged — the registry only rebinds the name).
 
-- **Registered declaratively:** `Map`, `Set`, `WeakMap`, `FinalizationRegistry`,
+- **Registered declaratively:** `Map`, `Set`, `WeakMap`, `WeakSet`, `WeakRef`,
+  `FinalizationRegistry`,
   `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
   `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
   `Number`, `Boolean`, `Object`, `Symbol`. (`Map` keeps token 0.)
@@ -120,20 +121,49 @@ coercion function, no object `.toString()/.valueOf()`. GOAL ranks this lowest.
   `BigInt(value)` coercion, `BigInt.asIntN/asUintN`, `valueOf`, operator-level
   integration (`+ - * / %` on bigint operands), literal `1n` → confirm lowering (verify).
 
-## 5. Symbol — partial  *(HIGH priority)*
-`SymbolRegistry` (`zun_core/src/symbols.rs`) exists with `create/for_key/iterator/
-description` but is **not surfaced to user code**. Only `Symbol.iterator` is recognized,
-and only as a hardcoded dispatch point in `check.rs:3080-3106` (for-of / explicit
-`x[Symbol.iterator]()`), mapping Array/Map/Set/Error to their `*IteratorNew` intrinsics.
+## 5. Symbol — partial  *(HIGH priority — foundation landed)*
+The `SymbolRegistry` (`zun_core/src/symbols.rs`) is now surfaced to user code. A symbol
+is a first-class value: `Ty::Symbol` in sema, carried at runtime as an immediate `Any`
+(`AnyTag::Symbol`, payload = `SymbolId`), so the GC traces straight past it. The
+isolate's `Heap` owns the registry (`symbol_create/for/key_for/description`), seeded with
+the five well-known symbols at fixed ids 0..4 (`zun_core::WellKnownSymbol`) so their
+identities are stable and match the compiler's constants. All Symbol operations are
+allocating/interning managed builtins on the Tier-0 floor (`zun:collections`
+`symbolNew/For/KeyFor/WellKnown/Description`, dispatched in
+`zun_interp/src/collections.rs`) — not JIT-eligible, so there is no second path to keep
+in sync.
 
-- **Present:** `Symbol.iterator` as a VM dispatch point (iteration protocol only).
-- **Missing:** `Symbol(desc)` unique primitives as first-class values; global registry
-  `Symbol.for(key)` / `Symbol.keyFor(sym)`; the other well-known symbols as dispatch
-  points — `asyncIterator hasInstance toPrimitive toStringTag isConcatSpreadable match
-  replace search split species unscopables`; user-defined **symbol-keyed members**
-  (`[Symbol.iterator]() {}`, computed symbol keys). GOAL notes the symbol-keyed slot
-  already exists (measured 16.5x) — the *surface* is unfinished.
-- **Notes:** foundational — iteration and many built-in behaviors ride on this.
+- **Present (value foundation):**
+  - `Symbol(description?)` — a unique symbol every call; `Symbol("x") !== Symbol("x")`.
+  - `Symbol.for(key)` / `Symbol.keyFor(sym)` — the cross-realm registry (reverse map in
+    `SymbolRegistry`); `keyFor` returns `undefined` for unique/well-known symbols.
+  - Well-known symbols as **readable values** — `Symbol.iterator`, `Symbol.asyncIterator`,
+    `Symbol.hasInstance`, `Symbol.toPrimitive`, `Symbol.toStringTag` — stable identities.
+  - `symbol.description`.
+  - User **symbol-keyed members**: `obj[sym]` get/set (computed member with a Symbol key)
+    routes through the existing symbol-keyed slot (`dynamic_get_symbol`/`set_symbol`),
+    kept distinct from string keys. The read path reuses `DynamicGetValue`; the store path
+    now lowers `obj[key] = v` on dynamic receivers to `DynamicSetValue` (string **and**
+    symbol keys) — `StoreDynamicValue`/`LoadDynamicValue` dispatch on the key's tag.
+  - `Symbol.iterator` iteration dispatch for Array/Map/Set/Error preserved
+    (`check.rs` ComputedCall intercept for `x[Symbol.iterator]()` → `*IteratorNew`).
+  - Parser now accepts reserved keywords as member names (`Symbol.for`), via
+    `TokenKind::is_keyword` + `member_name` in `zun_syntax`.
+- **Deferred (documented follow-up):**
+  - **Behavioral dispatch** of the non-iterator well-known symbols: making `instanceof`
+    consult `Symbol.hasInstance`, coercion consult `Symbol.toPrimitive`, and
+    `Object.prototype.toString` consult `Symbol.toStringTag`. These are exposed as
+    **values** only; wiring their dispatch is a separate step (the iterator one already
+    drives `for...of`).
+  - **Object-literal computed symbol-key properties** (`{ [computedSymbol]: v }`) now
+    lower: an object literal builds a `DynamicObject` (`Expr::ObjectLiteral` →
+    `hir::ExprKind::DynamicObjectLiteral` → `NewDynamic` + per-entry `StoreDynamic`/
+    `StoreDynamicValue`), and a computed key that evaluates to a `Symbol` routes to the
+    symbol-keyed slot. Still deferred: **class** computed symbol-key member definitions
+    and object **method shorthand** with a computed symbol name (`{ [Symbol.iterator]() {} }`)
+    — see §Object literals below.
+  - Other well-known symbols (`isConcatSpreadable match replace search split species
+    unscopables`) — not seeded; add to `WellKnownSymbol` when a consumer needs them.
 
 ## 6. Object — partial  *(HIGH priority — core surface landed)*
 The `Object` global is recognized in sema (`check.rs` `check_object_static` + the
@@ -181,6 +211,28 @@ objects and `DynamicObject`s.
 - **Notes:** these builtins allocate/throw, so per the centralized JIT-eligibility rule
   (`zun_codegen/src/eligible.rs`) they are **not** in the Tier-1 allowlist and run on the
   always-correct Tier-0 interpreter; there is no separate JIT path to keep in sync.
+
+## 6b. Object literals — partial  *(expression syntax landed)*
+`{ key: value, ... }` now parses and lowers in the front-end (both the hand parser —
+`Parser::object_literal`, dispatched from `primary()` on `{` in expression position — and
+the OXC adapter — `Expression::ObjectExpression`). An object literal produces a
+`DynamicObject` (`Ty::DynamicObject`): `Expr::ObjectLiteral` → `hir::ExprKind::DynamicObjectLiteral`
+→ `NewDynamic`, then for each property a `Dup` + store + `Pop` so the object is the result.
+- **Present (v1):** string keys from identifier/string/number property names (`StoreDynamic`);
+  **shorthand** `{ x }` ≡ `{ x: x }`; **computed keys** `{ [expr]: v }` (`StoreDynamicValue`,
+  where a `Symbol` key routes to the symbol-keyed slot and a string key to the ordinary
+  property); empty `{}`; nested literals. Properties are set in source order
+  (`DynamicObject` is insertion-ordered). Values box to `Any` for the dynamic store.
+- **Block-vs-object:** the hand parser treats `{` as an object literal only in expression
+  position; it has no bare block statement, so the ambiguity does not arise there.
+- **Deferred (documented follow-ups — the OXC adapter errors rather than miscompiling, the
+  hand parser does not yet accept them):** method shorthand `{ m() {} }`, getters/setters
+  `{ get x() {} }` / `{ set x(v) {} }`, and spread `{ ...o }`.
+- **Note on computed keys:** like `obj[k] = v` on a dynamic receiver, a computed key must be
+  a string or a `Symbol` at runtime (`StoreDynamicValue` dispatches on tag); full ToString
+  coercion of arbitrary computed keys is not implemented (consistent with `IndexAssign`).
+- Interp fix landed alongside: `Value::as_object` now unwraps an object-tagged `Any`, so a
+  nested object read back out of a dynamic property (`{ a: { b } }.a.b`) works.
 
 ## 7. Array — partial
 `std/array.zun` (large custom surface) + special ZIL lowering for `push/pop`
@@ -274,11 +326,20 @@ table. Iterator intrinsics present (`mapIterator*`).
 - **Present:** `set get has delete`. Correctly non-iterable.
 - **Missing:** nothing material for the spec surface (WeakMap has no iteration/size/clear).
 
-## 14. WeakSet — missing  *(mid priority)*
-Not implemented. GC base ready (WeakMap ephemeron floor). Needs `add/has/delete`.
+## 14. WeakSet — done
+`builtin/weak_set.zun`; reuses the WeakMap ephemeron floor (each object member is
+stored keyed to itself, value-less).
+- **Present:** `add has delete`. Correctly non-iterable. Registered declaratively
+  (`new WeakSet()` / `: WeakSet` via the realm registry).
+- **Missing:** nothing material (WeakSet has no iteration/size/clear).
 
-## 15. WeakRef — missing  *(mid priority)*
-Not implemented. Needs `new WeakRef(obj)` + `deref()`, over the GC weak-reference base.
+## 15. WeakRef — done
+`builtin/weak_ref.zun`; a single weakly-held reference over the GC weak-reference
+floor (`alloc_weak_ref`/`weak_ref_get_object`, cleared on the collection that
+reclaims the target).
+- **Present:** `new WeakRef(obj)` + `deref()` (returns the target while live,
+  `undefined` once collected). Registered declaratively.
+- **Missing:** nothing material.
 
 ## 16. FinalizationRegistry — partial
 `std/finalization_registry.zun` → GC finalization queue.
@@ -432,13 +493,15 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
 2. **`Function.call/apply/bind`** (#8) — ✅ landed (receiver-as-leading-param model,
    Tier 0) with `.name/.length`. **Remaining:** `Function` constructor; function-typed
    bound args.
-3. **Symbol — complete** (#5) — `Symbol()` unique primitives; `Symbol.for/keyFor` (wire
-   the existing `SymbolRegistry` global map); well-known symbols as dispatch points
-   (`iterator asyncIterator hasInstance toPrimitive toStringTag`); user symbol-keyed
-   members + computed keys (slot already exists).
+3. **Symbol — foundation complete** (#5) — ✅ `Symbol()` unique primitives;
+   `Symbol.for/keyFor`; well-known symbols as **values**
+   (`iterator asyncIterator hasInstance toPrimitive toStringTag`); `.description`;
+   user symbol-keyed `obj[sym]` get/set over the existing slot. **Remaining (deferred):**
+   behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only for now);
+   object-literal/class computed-key member definitions (no object literals in the AST).
 
 ### MID
-4. **WeakSet** (#14) and **WeakRef** (#15) — GC base ready (WeakMap ephemerons).
+4. ~~**WeakSet** (#14) and **WeakRef** (#15)~~ — done (reuse the WeakMap ephemeron / GC weak-reference floors).
 5. **Decorators** (#25) — parse + sema + lowering + macro mechanism.
 6. **Method-surface tail** — ECMAScript gaps on existing classes:
    - Array (#7): `forEach find/findIndex(cb) some every flatMap join splice shift unshift
@@ -480,5 +543,8 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
   that float unary minus lowered as `0 - x`, so `-0.0` came out `+0.0`.
 - **Infinities print as `inf`/`-inf`**, not JS's `Infinity`/`-Infinity` (`format_number`
   in `zun_interp/value.rs`). Belongs to the Number surface (#2).
-- **Symbol infrastructure exists but is dark:** `SymbolRegistry` is fully implemented in
-  `zun_core` yet only `Symbol.iterator` reaches user code.
+- **Symbol infrastructure is now surfaced:** the `SymbolRegistry` (`zun_core`) backs a
+  first-class `Ty::Symbol` value (immediate `AnyTag::Symbol`). `Symbol()`,
+  `Symbol.for/keyFor`, the five well-known symbols as values, `.description`, and
+  symbol-keyed `obj[sym]` get/set all reach user code. The behavioral dispatch of
+  `hasInstance/toPrimitive/toStringTag` remains a value-only follow-up (see §5).

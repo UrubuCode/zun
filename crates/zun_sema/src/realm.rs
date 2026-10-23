@@ -83,6 +83,18 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "Map" => (Ty::Map, collection0("mapNew", Ty::Map)),
         "Set" => (Ty::Set, collection0("setNew", Ty::Set)),
         "WeakMap" => (Ty::WeakMap, collection0("weakMapNew", Ty::WeakMap)),
+        "WeakSet" => (Ty::WeakSet, collection0("weakSetNew", Ty::WeakSet)),
+        "WeakRef" => (
+            Ty::WeakRef,
+            CtorLowering::IntrinsicN {
+                module: "zun:collections",
+                native: "weakRefNew",
+                ty: Ty::WeakRef,
+                min_args: 1,
+                max_args: 1,
+                pad_empty_flags: false,
+            },
+        ),
         "FinalizationRegistry" => (
             Ty::FinalizationRegistry,
             collection0("finalizationRegistryNew", Ty::FinalizationRegistry),
@@ -143,7 +155,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "Number" => (Ty::F64, CtorLowering::FallThrough),
         "Boolean" => (Ty::Boolean, CtorLowering::FallThrough),
         "Object" => (Ty::DynamicObject, CtorLowering::FallThrough),
-        "Symbol" => (Ty::Any, CtorLowering::FallThrough),
+        "Symbol" => (Ty::Symbol, CtorLowering::FallThrough),
         _ => return None,
     })
 }
