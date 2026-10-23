@@ -344,6 +344,17 @@ impl Translator<'_> {
                 Opcode::SubF64 => self.float_bin(&mut stack, FloatOp::Sub)?,
                 Opcode::MulF64 => self.float_bin(&mut stack, FloatOp::Mul)?,
                 Opcode::DivF64 => self.float_bin(&mut stack, FloatOp::Div)?,
+                // Float math machine ops: one Cranelift instruction each, so
+                // these are instructions in the generated code rather than the
+                // libm calls the native path still uses for transcendentals.
+                Opcode::SqrtF64 => self.float_un(&mut stack, FloatUnOp::Sqrt)?,
+                Opcode::AbsF64 => self.float_un(&mut stack, FloatUnOp::Abs)?,
+                Opcode::NegF64 => self.float_un(&mut stack, FloatUnOp::Neg)?,
+                Opcode::FloorF64 => self.float_un(&mut stack, FloatUnOp::Floor)?,
+                Opcode::CeilF64 => self.float_un(&mut stack, FloatUnOp::Ceil)?,
+                Opcode::TruncF64 => self.float_un(&mut stack, FloatUnOp::Trunc)?,
+                Opcode::MinF64 => self.float_bin(&mut stack, FloatOp::Min)?,
+                Opcode::MaxF64 => self.float_bin(&mut stack, FloatOp::Max)?,
                 Opcode::CmpEq => self.compare(&mut stack, Cmp::Eq)?,
                 Opcode::CmpNe => self.compare(&mut stack, Cmp::Ne)?,
                 Opcode::CmpLt => self.compare(&mut stack, Cmp::Lt)?,
@@ -2136,6 +2147,26 @@ impl Translator<'_> {
             FloatOp::Sub => ins.fsub(a, b),
             FloatOp::Mul => ins.fmul(a, b),
             FloatOp::Div => ins.fdiv(a, b),
+            // IEEE-754 2019 minimum/maximum: NaN propagates and -0.0 sorts
+            // below +0.0, which is what `Math.min`/`Math.max` and the Tier 0
+            // `js_min`/`js_max` do. The equivalence suite pins both edges.
+            FloatOp::Min => ins.fmin(a, b),
+            FloatOp::Max => ins.fmax(a, b),
+        };
+        stack.push((r, k));
+        Ok(())
+    }
+
+    fn float_un(&mut self, stack: &mut Vec<Slot>, op: FloatUnOp) -> Result<(), String> {
+        let (a, k) = stack.pop().ok_or("stack underflow")?;
+        let ins = self.builder.ins();
+        let r = match op {
+            FloatUnOp::Sqrt => ins.sqrt(a),
+            FloatUnOp::Abs => ins.fabs(a),
+            FloatUnOp::Neg => ins.fneg(a),
+            FloatUnOp::Floor => ins.floor(a),
+            FloatUnOp::Ceil => ins.ceil(a),
+            FloatUnOp::Trunc => ins.trunc(a),
         };
         stack.push((r, k));
         Ok(())
@@ -2865,6 +2896,20 @@ enum FloatOp {
     Sub,
     Mul,
     Div,
+    Min,
+    Max,
+}
+
+/// Float operations that take a single operand and lower to one Cranelift
+/// instruction.
+#[derive(Clone, Copy)]
+enum FloatUnOp {
+    Sqrt,
+    Abs,
+    Neg,
+    Floor,
+    Ceil,
+    Trunc,
 }
 #[derive(Clone, Copy)]
 enum Cmp {
