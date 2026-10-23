@@ -255,7 +255,7 @@ fn assert_tiers_agree(src: &str) {
         other => panic!("expected a float, got {other:?}"),
     };
 
-    assert_same(format!("{src}"), interp_result, jit_result);
+    assert_same(src.to_string(), interp_result, jit_result);
 }
 
 #[test]
