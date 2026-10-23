@@ -205,3 +205,68 @@ fn math_ops_do_not_force_a_tier0_fallback() {
         assert!(jit.is_compiled(1), "{} fell back to Tier 0", op.mnemonic());
     }
 }
+
+// --- f32 ---------------------------------------------------------------
+//
+// The math opcodes are float-kind generic, exactly as `add.f64` is: an f32
+// operand flows through the same opcode. The two tiers reach the result by
+// different routes, though — Tier 0 computes in f64 and rounds the result to
+// f32, while Tier 1 emits native F32 instructions — so single vs double
+// rounding is a real way they could disagree, and worth pinning rather than
+// reasoning about.
+
+/// Compile source through the full front-end (needed to get f32-typed values;
+/// a synthesized body only has `const.f64`).
+fn compile(src: &str) -> Module {
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    assert!(diags.is_empty(), "parse: {diags:?}");
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty(), "sema: {diags:?}");
+    zun_ilgen::lower(&hir)
+}
+
+/// Run a compiled entry point through both tiers and require agreement.
+fn assert_tiers_agree(src: &str) {
+    let module = compile(src);
+    let entry = module.entry_point.expect("entry point").rid();
+
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(entry), "entry should be JIT-eligible:\n{src}");
+    let jit_result = match jit.call_entry(entry).expect("jit call") {
+        RetVal::Float(value) => value,
+        other => panic!("expected a float, got {other:?}"),
+    };
+
+    let mut output = CaptureOutput::default();
+    let interp_result = match zun_interp::run(&module, &mut output).expect("interpreter runs") {
+        Value::Float(value, _) => value,
+        other => panic!("expected a float, got {other:?}"),
+    };
+
+    assert_same(format!("{src}"), interp_result, jit_result);
+}
+
+#[test]
+fn f32_math_ops_agree_across_tiers() {
+    for value in ["2.0", "0.5", "16.0", "3.7", "0.0", "1.0"] {
+        for op in ["sqrtNumber", "floorNumber", "ceilNumber", "truncNumber"] {
+            assert_tiers_agree(&format!(
+                r#"import {{ math }} from "zun:core";
+                function main(): f32 {{
+                    let x: f32 = {value} as f32;
+                    return math.{op}(x as number) as f32;
+                }}"#
+            ));
+        }
+    }
+}
+
+#[test]
+fn f32_negation_agrees_across_tiers() {
+    for value in ["0.0", "1.5", "3.7"] {
+        assert_tiers_agree(&format!(
+            "function main(): f32 {{ let x: f32 = {value} as f32; return -x; }}"
+        ));
+    }
+}
