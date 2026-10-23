@@ -132,6 +132,60 @@ pub(crate) fn js_max(a: f64, b: f64) -> f64 {
     }
 }
 
+/// `min`/`max` over integers, comparing by the operand kind's signedness.
+///
+/// The i64 container holds values already wrapped to their kind, so a signed
+/// kind compares correctly as i64 and an unsigned one as u64. Comparing a
+/// `u64` above 2^63 as i64 would otherwise invert the result.
+pub(crate) fn bin_int_minmax(stack: &mut Vec<Value>, is_min: bool) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (_, signed) = kind.int_parts().expect("int kind");
+    let (x, y) = (a.as_int(), b.as_int());
+    let take_left = if signed {
+        if is_min {
+            x < y
+        } else {
+            x > y
+        }
+    } else {
+        let (ux, uy) = (x as u64, y as u64);
+        if is_min {
+            ux < uy
+        } else {
+            ux > uy
+        }
+    };
+    let result = if take_left { x } else { y };
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
+
+/// Bit-counting over the operand kind's width.
+///
+/// `f` receives the operand masked to its width plus that width, because the
+/// answers are width-relative: `clz` of `1u8` is 7, and `ctz` of `0u8` is 8.
+/// Reading the i64 container directly would answer for 64 bits every time.
+pub(crate) fn un_int_bits(
+    stack: &mut Vec<Value>,
+    f: impl Fn(u64, u32) -> u64,
+) -> Result<(), RunError> {
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (bits, _) = kind.int_parts().expect("int kind");
+    let bits = bits as u32;
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
+    let masked = (a.as_int() as u64) & mask;
+    let result = f(masked, bits) as i64;
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
+
 pub(crate) fn bin_int(
     stack: &mut Vec<Value>,
     f: impl Fn(i64, i64) -> i64,

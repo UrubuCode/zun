@@ -90,3 +90,56 @@ fn round_and_sign_have_no_opcode() {
         );
     }
 }
+
+/// The integer machine ops, pinned the same way.
+const INT_MATH_OPS: &[(Opcode, u8, &str)] = &[
+    (Opcode::MinI32, 0x9E, "min.i32"),
+    (Opcode::MaxI32, 0x9F, "max.i32"),
+    (Opcode::ClzI32, 0xA0, "clz.i32"),
+    (Opcode::CtzI32, 0xA1, "ctz.i32"),
+    (Opcode::PopcntI32, 0xA2, "popcnt.i32"),
+];
+
+#[test]
+fn int_math_byte_values_and_mnemonics_are_pinned() {
+    for &(op, byte, mnemonic) in INT_MATH_OPS {
+        assert_eq!(op.to_byte(), byte, "{mnemonic} changed its byte value");
+        assert_eq!(op.mnemonic(), mnemonic, "{op:?} changed its mnemonic");
+        assert_eq!(Opcode::from_byte(byte), Some(op));
+        assert_eq!(op.operand(), OperandKind::None);
+    }
+}
+
+#[test]
+fn int_math_stack_effects() {
+    for &(op, _, mnemonic) in INT_MATH_OPS {
+        let expected_pops = match op {
+            Opcode::MinI32 | Opcode::MaxI32 => 2,
+            _ => 1,
+        };
+        assert_eq!(
+            op.stack_effect(),
+            StackEffect::Fixed {
+                pops: expected_pops,
+                pushes: 1
+            },
+            "{mnemonic} has the wrong stack effect"
+        );
+    }
+}
+
+#[test]
+fn int_math_ops_round_trip_through_the_encoder() {
+    let mut code = Vec::new();
+    for &(op, _, _) in INT_MATH_OPS {
+        encode(&Instruction::simple(op), &mut code);
+    }
+    assert_eq!(code.len(), INT_MATH_OPS.len());
+    let decoded: Vec<Opcode> = decode_all(&code)
+        .expect("int math ops decode")
+        .iter()
+        .map(|i| i.opcode)
+        .collect();
+    let expected: Vec<Opcode> = INT_MATH_OPS.iter().map(|&(op, _, _)| op).collect();
+    assert_eq!(decoded, expected);
+}

@@ -355,6 +355,15 @@ impl Translator<'_> {
                 Opcode::TruncF64 => self.float_un(&mut stack, FloatUnOp::Trunc)?,
                 Opcode::MinF64 => self.float_bin(&mut stack, FloatOp::Min)?,
                 Opcode::MaxF64 => self.float_bin(&mut stack, FloatOp::Max)?,
+                // Integer machine ops. The Cranelift value already has the
+                // operand kind's width (clif_ty maps u8 to I8), so the
+                // bit-counting instructions answer for that width natively,
+                // matching Tier 0's explicit masking.
+                Opcode::MinI32 => self.int_minmax(&mut stack, true)?,
+                Opcode::MaxI32 => self.int_minmax(&mut stack, false)?,
+                Opcode::ClzI32 => self.int_un(&mut stack, IntUnOp::Clz)?,
+                Opcode::CtzI32 => self.int_un(&mut stack, IntUnOp::Ctz)?,
+                Opcode::PopcntI32 => self.int_un(&mut stack, IntUnOp::Popcnt)?,
                 Opcode::CmpEq => self.compare(&mut stack, Cmp::Eq)?,
                 Opcode::CmpNe => self.compare(&mut stack, Cmp::Ne)?,
                 Opcode::CmpLt => self.compare(&mut stack, Cmp::Lt)?,
@@ -2157,6 +2166,35 @@ impl Translator<'_> {
         Ok(())
     }
 
+    /// `min`/`max` over integers, picking the signed or unsigned instruction
+    /// from the operand kind — the same rule `compare` uses for `icmp`.
+    fn int_minmax(&mut self, stack: &mut Vec<Slot>, is_min: bool) -> Result<(), String> {
+        let (b, _) = stack.pop().ok_or("stack underflow")?;
+        let (a, k) = stack.pop().ok_or("stack underflow")?;
+        let signed = is_signed(k);
+        let ins = self.builder.ins();
+        let r = match (is_min, signed) {
+            (true, true) => ins.smin(a, b),
+            (true, false) => ins.umin(a, b),
+            (false, true) => ins.smax(a, b),
+            (false, false) => ins.umax(a, b),
+        };
+        stack.push((r, k));
+        Ok(())
+    }
+
+    fn int_un(&mut self, stack: &mut Vec<Slot>, op: IntUnOp) -> Result<(), String> {
+        let (a, k) = stack.pop().ok_or("stack underflow")?;
+        let ins = self.builder.ins();
+        let r = match op {
+            IntUnOp::Clz => ins.clz(a),
+            IntUnOp::Ctz => ins.ctz(a),
+            IntUnOp::Popcnt => ins.popcnt(a),
+        };
+        stack.push((r, k));
+        Ok(())
+    }
+
     fn float_un(&mut self, stack: &mut Vec<Slot>, op: FloatUnOp) -> Result<(), String> {
         let (a, k) = stack.pop().ok_or("stack underflow")?;
         let ins = self.builder.ins();
@@ -2898,6 +2936,15 @@ enum FloatOp {
     Div,
     Min,
     Max,
+}
+
+/// Integer operations that take a single operand and lower to one Cranelift
+/// instruction.
+#[derive(Clone, Copy)]
+enum IntUnOp {
+    Clz,
+    Ctz,
+    Popcnt,
 }
 
 /// Float operations that take a single operand and lower to one Cranelift

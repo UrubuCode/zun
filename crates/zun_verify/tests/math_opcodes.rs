@@ -134,3 +134,65 @@ fn fixture_invalid_bad_return_height_from_leftover_math_result() {
         })
     );
 }
+
+const INT_UNARY: &[Opcode] = &[Opcode::ClzI32, Opcode::CtzI32, Opcode::PopcntI32];
+const INT_BINARY: &[Opcode] = &[Opcode::MinI32, Opcode::MaxI32];
+
+fn int_konst(value: i32) -> Instruction {
+    Instruction::new(Opcode::ConstI32, Operand::Imm32(value))
+}
+
+#[test]
+fn fixture_valid_unary_int_math_consumes_one_operand() {
+    for &op in INT_UNARY {
+        let code = asm(&[
+            int_konst(1),
+            Instruction::simple(op),
+            Instruction::simple(Opcode::Ret),
+        ]);
+        assert_eq!(check(&code, RETURNS), Ok(()), "{}", op.mnemonic());
+    }
+}
+
+#[test]
+fn fixture_valid_binary_int_math_consumes_two_operands() {
+    for &op in INT_BINARY {
+        let code = asm(&[
+            int_konst(1),
+            int_konst(2),
+            Instruction::simple(op),
+            Instruction::simple(Opcode::Ret),
+        ]);
+        assert_eq!(check(&code, RETURNS), Ok(()), "{}", op.mnemonic());
+    }
+}
+
+#[test]
+fn fixture_invalid_stack_underflow_on_empty_int_unary() {
+    for &op in INT_UNARY {
+        let code = asm(&[Instruction::simple(op), Instruction::simple(Opcode::Ret)]);
+        assert_eq!(
+            check(&code, RETURNS).map_err(|e| e.kind),
+            Err(ErrorKind::StackUnderflow),
+            "{}",
+            op.mnemonic()
+        );
+    }
+}
+
+#[test]
+fn fixture_invalid_stack_underflow_on_single_operand_int_binary() {
+    for &op in INT_BINARY {
+        let code = asm(&[
+            int_konst(1),
+            Instruction::simple(op),
+            Instruction::simple(Opcode::Ret),
+        ]);
+        assert_eq!(
+            check(&code, RETURNS).map_err(|e| e.kind),
+            Err(ErrorKind::StackUnderflow),
+            "{}",
+            op.mnemonic()
+        );
+    }
+}

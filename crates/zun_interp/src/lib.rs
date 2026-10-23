@@ -29,8 +29,8 @@ use operands::{
     operand_token, operand_token_imm32,
 };
 use stack::{
-    bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, js_max, js_min, pop, pop_n,
-    un_float, underflow,
+    bin_float, bin_int, bin_int_minmax, bin_int_signed_aware, cmp, compare, convert, js_max,
+    js_min, pop, pop_n, un_float, un_int_bits, underflow,
     Ordering,
 };
 use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
@@ -490,6 +490,23 @@ impl Interp<'_> {
                 Opcode::TruncF64 => un_float(&mut stack, f64::trunc)?,
                 Opcode::MinF64 => bin_float(&mut stack, js_min)?,
                 Opcode::MaxF64 => bin_float(&mut stack, js_max)?,
+                // Integer machine ops. Widths come from the operand kind, so
+                // the bit counts are relative to that width, not to i64.
+                Opcode::MinI32 => bin_int_minmax(&mut stack, true)?,
+                Opcode::MaxI32 => bin_int_minmax(&mut stack, false)?,
+                Opcode::ClzI32 => un_int_bits(&mut stack, |value, bits| {
+                    (value.leading_zeros() - (64 - bits)) as u64
+                })?,
+                Opcode::CtzI32 => un_int_bits(&mut stack, |value, bits| {
+                    if value == 0 {
+                        bits as u64
+                    } else {
+                        value.trailing_zeros() as u64
+                    }
+                })?,
+                Opcode::PopcntI32 => {
+                    un_int_bits(&mut stack, |value, _| value.count_ones() as u64)?
+                }
                 // Integer arithmetic is width-generic here: the result kind
                 // comes from the operands (which sema guarantees match) and the
                 // value wraps to that width. A future typed-stack JIT will

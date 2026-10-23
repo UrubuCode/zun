@@ -339,6 +339,26 @@ define_opcodes! {
     /// Greater of two floats, IEEE-754 2019 `maximum`: NaN propagates and
     /// `+0.0` is greater than `-0.0`, which is exactly `Math.max`.
     MaxF64 = 0x9D, None, "max.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
+
+    // --- integer math machine ops (PLAN.md §3, criterion (d)) ---
+    //
+    // Width- and signedness-generic, like the integer arithmetic above: the
+    // operand's numeric kind decides whether `min`/`max` compare signed or
+    // unsigned, and how wide the bit-counting ops consider their operand to
+    // be. `clz` of `1u8` is 7, not 63.
+    /// Lesser of two integers, compared according to the operand kind's
+    /// signedness.
+    MinI32 = 0x9E, None, "min.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Greater of two integers, compared according to the operand kind's
+    /// signedness.
+    MaxI32 = 0x9F, None, "max.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Count leading zero bits within the operand kind's width.
+    ClzI32 = 0xA0, None, "clz.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Count trailing zero bits within the operand kind's width; a zero
+    /// operand yields the full width.
+    CtzI32 = 0xA1, None, "ctz.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Count set bits within the operand kind's width.
+    PopcntI32 = 0xA2, None, "popcnt.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]
