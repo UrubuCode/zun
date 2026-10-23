@@ -11,8 +11,25 @@
 //! This is distinct from the **intrinsics** (`zun:fs`, `zun:io`, ...), which are
 //! runtime-implemented in Rust (see `zun_intrinsics`).
 
-/// The prelude source, compiled with every program.
+/// The numeric helper portion of the prelude.
 pub const PRELUDE: &str = include_str!("prelude.zun");
+
+/// The managed error hierarchy (`builtin/error.zun`), also compiled with every
+/// program.
+///
+/// `Error` and its subclasses are ordinary Zun classes with no dedicated `Ty`,
+/// unlike `Array` or `Map`, whose names the checker resolves to a built-in
+/// representation. A plain class only exists if some source declares it, so
+/// until the precompiled `zun:std` module of PLAN §3.2 can carry classes, the
+/// prelude is how they reach a program at all. Before this, `builtin/error.zun`
+/// was compiled only inside `compile_standard_library`, which no user program
+/// can reach, so `new Error("x")` was an unknown-class error and programs that
+/// needed one declared their own.
+///
+/// Kept separate from [`PRELUDE`] so the numeric fingerprint above keeps its
+/// meaning, and so the two can be split again once the std module can supply
+/// classes.
+pub const ERRORS: &str = include_str!("../../../builtin/error.zun");
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.
 ///
@@ -34,10 +51,13 @@ pub const fn fingerprint() -> u64 {
 /// Combine user source with the base prelude, returning the full source to
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
-    let mut combined = String::with_capacity(user_source.len() + PRELUDE.len() + 1);
+    let mut combined =
+        String::with_capacity(user_source.len() + PRELUDE.len() + ERRORS.len() + 2);
     combined.push_str(user_source);
     combined.push('\n');
     combined.push_str(PRELUDE);
+    combined.push('\n');
+    combined.push_str(ERRORS);
     combined
 }
 

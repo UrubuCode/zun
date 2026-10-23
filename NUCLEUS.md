@@ -432,13 +432,23 @@ ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
 - **`.stack` is absent** — not merely unverified, which is what this entry used to
   say. There is no `stack` property and no capture anywhere; the sequence-point
   debug info that landed is a prerequisite, not the feature.
-- **`Error` is not reachable as a global.** It is neither in `builtin/realm.zun` nor
-  in any hardcoded checker path — the realm section's claim that it sits on a
-  "hardcoded fallback" was wrong. Programs must declare their own class, which is
-  what the existing tests do. Blocked on the same gap the realm section names: a
-  static `base_type_facets` entry cannot denote `Ty::Instance(<program-assigned
-  class index>)`, so class-backed base types cannot be registered declaratively.
-  Fixing that unblocks **#20 Date** too.
+- **`Error` is now a global**, in both compile paths. It reaches programs through
+  the prelude (`zun_prelude::ERRORS`), not as a module: **a class cannot cross a
+  module boundary in Zun**, so `builtin/error.zun` as the `zun:std:error` module was
+  unreachable from user code and programs declared their own `class Error {}`.
+  It is no longer registered as a module, to avoid declaring each class twice.
+- **Why not linked instead of inlined.** Making classes importable needs a
+  program-wide type identity first. The object header stores a per-module type RID
+  and the GC reads it (`ref_slots(obj.type_rid())`) to find reference slots, while
+  `TypeSystem` is built per module — so an object built from a foreign `TypeRef`
+  would make the collector trace the wrong fields. That is heap corruption, not a
+  wrong answer, which is why the cheap inlining is the safe option and the linking
+  work is a project of its own. It would also unblock **#20 Date** and the
+  precompiled `zun:std` of PLAN §3.2.
+- **Still not a realm global** (`globalThis.Error`): a static `base_type_facets`
+  entry cannot denote `Ty::Instance(<program-assigned class index>)`. The class is
+  in scope by name, which is what user code needs; the realm binding waits on the
+  same type-identity work.
 - **`cause` and `AggregateError` are blocked on construction, not on effort.** Object
   construction requires exactly one positional argument per declared field, with no
   constructors, defaults or optional arguments. So `cause` cannot be an optional

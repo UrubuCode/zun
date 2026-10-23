@@ -1980,7 +1980,7 @@ mod method_tests {
     #[test]
     fn catches_a_thrown_error_in_the_current_frame() {
         let module = zun_compiler::compile(
-            "class Error {} function main(): int { try { throw new Error(); } catch (error: Error) { return 42; } }",
+            "function main(): int { try { throw new Error(\"boom\"); } catch (error: Error) { return 42; } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();
@@ -2015,7 +2015,7 @@ mod method_tests {
     #[test]
     fn finally_runs_before_an_unhandled_rethrow() {
         let module = zun_compiler::compile(
-            "class Error {} function main() { try { throw new Error(); } finally { print(2); } }",
+            "function main() { try { throw new Error(\"boom\"); } finally { print(2); } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();
@@ -2027,7 +2027,7 @@ mod method_tests {
     #[test]
     fn catches_an_exception_from_a_called_method() {
         let module = zun_compiler::compile(
-            "class Error {} function fail(): int { throw new Error(); } function main(): int { try { return fail(); } catch (error: Error) { return 7; } }",
+            "function fail(): int { throw new Error(\"boom\"); } function main(): int { try { return fail(); } catch (error: Error) { return 7; } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();
@@ -2038,7 +2038,7 @@ mod method_tests {
     #[test]
     fn nested_catch_can_rethrow_to_an_outer_handler() {
         let module = zun_compiler::compile(
-            "class Error {} function main(): int { try { try { throw new Error(); } catch (inner: Error) { throw inner; } } catch (outer: Error) { return 9; } }",
+            "function main(): int { try { try { throw new Error(\"boom\"); } catch (inner: Error) { throw inner; } } catch (outer: Error) { return 9; } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();
@@ -2049,7 +2049,7 @@ mod method_tests {
     #[test]
     fn inner_finally_rethrows_to_an_outer_catch_in_the_same_frame() {
         let module = zun_compiler::compile(
-            "class Error {} function main(): int { try { try { throw new Error(); } finally { print(1); } } catch (outer: Error) { return 42; } }",
+            "function main(): int { try { try { throw new Error(\"boom\"); } finally { print(1); } } catch (outer: Error) { return 42; } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();
@@ -2061,7 +2061,7 @@ mod method_tests {
     #[test]
     fn callee_finally_rethrows_to_a_caller_catch() {
         let module = zun_compiler::compile(
-            "class Error {} function fail(): int { try { throw new Error(); } finally { print(1); } } function main(): int { try { return fail(); } catch (outer: Error) { return 42; } }",
+            "function fail(): int { try { throw new Error(\"boom\"); } finally { print(1); } } function main(): int { try { return fail(); } catch (outer: Error) { return 42; } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();
@@ -2073,7 +2073,7 @@ mod method_tests {
     #[test]
     fn return_inside_inner_try_runs_finally_before_outer_catch_path() {
         let module = zun_compiler::compile(
-            "class Error {} function main(): int { try { try { return 1; } finally { print(1); } } catch (outer: Error) { return 42; } }",
+            "function main(): int { try { try { return 1; } finally { print(1); } } catch (outer: Error) { return 42; } }",
         )
         .expect("compile");
         let mut output = CaptureOutput::default();

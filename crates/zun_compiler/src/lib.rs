@@ -323,7 +323,16 @@ fn compile_with_cached_module(
         .map(|function| function.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let linked_source = format!("{source}\nimport {{ {imports} }} from \"{module_name}\";\n");
+    // Functions come from the cached module by import, but classes cannot
+    // cross a module boundary in Zun — there is no way to import a type — so
+    // the error hierarchy is compiled into this module as source. It is a
+    // compile-time shape, so duplicating the declaration costs nothing at run
+    // time, and without it `Error` would exist on the plain compile path and
+    // not this one.
+    let linked_source = format!(
+        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n",
+        zun_prelude::ERRORS
+    );
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();
     let app_scope = zun_loader::ModuleScope::from_bytes("app", &module.write())
@@ -548,9 +557,22 @@ fn collect_function_signatures(source: &str) -> Vec<zun_sema::check::ExternalFun
     let ast = zun_syntax::parse(&source, &mut parse_diagnostics);
     let mut check_diagnostics = Vec::new();
     let hir = zun_sema::check_with_externals(&source, &ast, &mut check_diagnostics, &[]);
+
+    // Class methods share the function table with top-level functions, but
+    // they are reached through their class and are not module exports. Listing
+    // one here would ask the cached module for an export it never had — which
+    // is what happened the moment the prelude first contained a class.
+    let methods: std::collections::HashSet<usize> = hir
+        .classes
+        .iter()
+        .flat_map(|class| class.methods.iter().map(|index| *index as usize))
+        .collect();
+
     hir.functions
         .into_iter()
-        .map(|function| zun_sema::check::ExternalFunction {
+        .enumerate()
+        .filter(|(index, _)| !methods.contains(index))
+        .map(|(_, function)| zun_sema::check::ExternalFunction {
             module: String::new(),
             name: function.name,
             params: function.locals[..function.param_count as usize].to_vec(),
@@ -590,7 +612,10 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
         ),
         ("zun:std:regexp", include_str!("../../../builtin/regexp.zun")),
         ("zun:std:date", include_str!("../../../builtin/date.zun")),
-        ("zun:std:error", include_str!("../../../builtin/error.zun")),
+        // NOTE: `builtin/error.zun` is deliberately absent. The error classes
+        // now ship through the prelude (`zun_prelude::ERRORS`) so that `Error`
+        // is reachable from user code at all; compiling them here as well
+        // would declare each class twice in any program that has both.
         // NOTE: `builtin/realm.zun` is intentionally not a compiled module. Its
         // `global.set("<BaseType>", <BaseType>, true)` directives are
         // declarative data recognized by `zun_sema::realm` (which seeds the
@@ -819,11 +844,44 @@ mod tests {
     }
 
     #[test]
-    fn default_std_entry_point_does_not_concatenate_prelude_source() {
+    fn default_std_entry_point_does_not_concatenate_prelude_functions() {
+        // The property this protects is that prelude *functions* stay in the
+        // cached module and are reached by import, so the user's module does
+        // not grow a copy of them and its offsets and RIDs stay stable.
+        //
+        // It used to be checked by requiring every sequence point to sit in
+        // the user's own short source. That no longer holds, and the reason is
+        // a genuine limitation rather than a regression: a class cannot cross
+        // a module boundary in Zun, so the error hierarchy has to be compiled
+        // into each module as source. Making classes linkable needs a
+        // program-wide type identity first — the object header stores a
+        // per-module type RID that the GC uses to find reference slots, so a
+        // foreign RID would trace the wrong fields.
+        //
+        // So the assertion is now on what it was really about: `abs` is
+        // imported rather than inlined, and no prelude *function* body came
+        // along with it.
         let module = compile_with_default_std("function main(): int { return abs(-7); }")
             .expect("default std should compile");
         assert_eq!(module.tables.member_refs.len(), 1);
-        assert!(module.sequence_points.iter().all(|point| point.source_start < 50));
+
+        let method_names: Vec<&str> = module
+            .tables
+            .method_defs
+            .iter()
+            .map(|method| module.strings.get(method.name))
+            .collect();
+        assert!(
+            method_names.contains(&"main"),
+            "the user's own function must be here: {method_names:?}"
+        );
+        for prelude_function in ["abs", "clamp", "min", "max"] {
+            assert!(
+                !method_names.contains(&prelude_function),
+                "`{prelude_function}` should come from the cached module, not be \
+                 compiled in: {method_names:?}"
+            );
+        }
     }
 
     #[test]
@@ -1174,7 +1232,26 @@ mod tests {
         assert!(loader.get("zun:std:map").is_some());
         assert!(loader.get("zun:std:set").is_some());
         assert!(loader.get("zun:std:date").is_some());
-        assert!(loader.get("zun:std:error").is_some());
+        // The error classes are not a module: they reach programs through the
+        // prelude, because a class cannot cross a module boundary.
+        assert!(loader.get("zun:std:error").is_none());
+    }
+
+    #[test]
+    fn the_prelude_makes_the_error_hierarchy_available_to_user_code() {
+        // `Error` used to be an unknown class in any ordinary program, so code
+        // that wanted one declared its own.
+        compile("function main(): string { return new TypeError(\"bad\").toString(); }")
+            .expect("Error and its subclasses should be in scope");
+    }
+
+    #[test]
+    fn the_cached_std_path_also_has_the_error_hierarchy() {
+        // Functions arrive from the cached module by import and classes by
+        // source, so the two compile paths could easily disagree about which
+        // names exist. They must not.
+        compile_with_default_std("function main(): string { return new RangeError(\"x\").name; }")
+            .expect("the cached-std path should see the same classes");
     }
 
     #[test]
