@@ -50,9 +50,9 @@ read.
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
-| 26 | ZIL math opcodes | partial | Only generic `add/sub/mul/div/rem.f64` + `conv`. **No dedicated `fsqrt/fabs/fmin/fmax/fneg` opcodes** — Math routes through `call.builtin` to native libm (`math.rs`), not ZIL ops lowering to Cranelift as §3 specifies |
+| 26 | ZIL math opcodes | done | `sqrt/abs/neg/floor/ceil/trunc/min/max.f64` (`0x96-0x9D`) lower to one Cranelift instruction each; `round`/`sign`/transcendentals stay on libm by design |
 
-**Counts:** done 3 · partial 16 · missing 4 (of 26 nucleus items, JSON excluded).
+**Counts:** done 4 · partial 15 · missing 4 (of 26 nucleus items, JSON excluded).
 
 ### Declarative realm-global registration (PLAN §3.1)
 
@@ -321,15 +321,34 @@ f64-everything is scaffolding; the *type surface* is present.)
 Listed in A ("language feature + macro"). No parser/sema/lowering support found. Needs
 decorator syntax, evaluation order, and the metadata/macro mechanism.
 
-## 26. ZIL math opcodes — partial
-`opcode.rs` has generic float arithmetic (`add/sub/mul/div/rem.f64` `0x40-0x44`, `conv`
-`0x45`) but **no dedicated math opcodes** (`fsqrt fabs fmin fmax fneg`). The Math surface
-is implemented as `call.builtin` to native libm functions (`math.rs`: `sqrt powNumber
-sinNumber cosNumber expNumber logNumber tanNumber atan2Number hypotNumber floor ceil
-round …`) consumed by `std/math.zun` free functions. PLAN §3 requires Math machine ops
-to lower to **ZIL opcodes → Cranelift** (`fsqrt/fabs/fmin/fmax/…`), transcendentals to
-libm. So: transcendentals-via-libm is correct, but the lowerable primitives are **not**
-ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here.)
+## 26. ZIL math opcodes — done
+Eight machine ops at `0x96-0x9D` in the master table: `sqrt.f64 abs.f64 neg.f64
+floor.f64 ceil.f64 trunc.f64 min.f64 max.f64`. Each lowers to exactly one Cranelift
+instruction (`sqrt/fabs/fneg/floor/ceil/trunc/fmin/fmax`), is JIT-eligible, and has an
+interpreter implementation. `zun_ilgen::MATH_MACHINE_OPS` maps the `zun:math` natives
+onto them, so `math.sqrtNumber(x)` emits `sqrt.f64` instead of `call.builtin`.
+
+- **Deliberately excluded:** `Math.round` (JS rounds halves toward +Infinity; machine
+  `nearest` rounds halves to even) and `Math.sign` (a comparison chain, not an
+  instruction). Transcendentals (`sin cos tan exp log pow atan2 hypot cbrt …`) stay on
+  libm, which PLAN §3 already specifies. All keep calling the native.
+- **min/max semantics:** IEEE-754 2019 `minimum`/`maximum` — NaN propagates and `-0.0`
+  sorts below `+0.0`, matching JS. Note this is *not* Rust's `f64::min`/`f64::max`
+  (IEEE-754 2008 `minNum`, which returns the non-NaN operand and is unspecified between
+  the two zeros); Tier 0 uses explicit `js_min`/`js_max`.
+- **Substitution, not replacement:** the natives stay registered, so a mapping that
+  stops matching costs performance and not correctness. A test walks
+  `MATH_MACHINE_OPS` against the registry, because a native rename would otherwise
+  disable the expansion silently (`.docs-dotnet/07-actions-operations/05-jit-intrinsics.md`).
+- **Fixed in passing:** float unary minus lowered as `0 - x`, which yields `+0.0` for
+  `-0.0`. It now uses `neg.f64`.
+- **Tests:** `zun_il/tests/math_opcodes.rs` (table), `zun_verify/tests/math_opcodes.rs`
+  (`_Valid`/`_Invalid_*` fixtures), `zun_interp/tests/math_opcodes.rs` (Tier 0 edges),
+  `zun_codegen/tests/math_opcode_equivalence.rs` (interp↔JIT over 19 edge operands, the
+  full 19×19 matrix for binaries), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
+  `zun_vm/tests/math_machine_ops.rs` (end to end).
+
+(Math as a `Math` *global object* is bucket B, not audited here.)
 
 ---
 
@@ -370,8 +389,8 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
 7. **Boolean wrapper object** (#3) — low (primitive suffices for most code).
 
 ### Infra (separate from the class surface)
-- **ZIL math opcodes** (#26) — add `fsqrt/fabs/fmin/fmax/fneg` to the master opcode table
-  (with `_Valid`/`_Invalid` fixtures) and lower to Cranelift; keep transcendentals on libm.
+- ~~**ZIL math opcodes** (#26)~~ — done: eight ops at `0x96-0x9D` lowering to one
+  Cranelift instruction each, transcendentals left on libm. See §26.
 
 ---
 
@@ -388,7 +407,9 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
   spec arity — latent semantic traps.
 - **FinalizationRegistry signature diverges** from spec (numeric id vs unregister token;
   no heldValue).
-- **ZIL math opcodes are not opcodes** — Math is native `call.builtin`, so PLAN §3's
-  "Math machine ops → ZIL opcodes" is unfulfilled despite being listed as nucleus.
+- ~~**ZIL math opcodes are not opcodes**~~ — resolved; see §26. Fixing it also exposed
+  that float unary minus lowered as `0 - x`, so `-0.0` came out `+0.0`.
+- **Infinities print as `inf`/`-inf`**, not JS's `Infinity`/`-Infinity` (`format_number`
+  in `zun_interp/value.rs`). Belongs to the Number surface (#2).
 - **Symbol infrastructure exists but is dark:** `SymbolRegistry` is fully implemented in
   `zun_core` yet only `Symbol.iterator` reaches user code.
