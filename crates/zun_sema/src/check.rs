@@ -2702,6 +2702,18 @@ impl Checker<'_> {
                         Ty::Boolean,
                         vec![Ty::Int(IntKind::U64), Ty::F64, Ty::Boolean],
                     )),
+                    // `ArrayBuffer`, which is what `Ty::Buffer` denotes. These
+                    // are methods rather than the properties JS has, matching
+                    // `String.length()` and `Map.size()` here; the divergence
+                    // is recorded in NUCLEUS rather than special-cased.
+                    (Ty::Buffer, "byteLength") => {
+                        Some(("bufferLength", Ty::Int(IntKind::U64), vec![]))
+                    }
+                    (Ty::Buffer, "slice") => Some((
+                        "bufferSlice",
+                        Ty::Buffer,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
+                    )),
                     _ => None,
                 };
                 if let Some((native_name, return_ty, expected)) = managed_method {
@@ -2735,6 +2747,7 @@ impl Checker<'_> {
                     let module = if receiver_is_string {
                         "zun:string"
                     } else if native_name.starts_with("dataView")
+                        || native_name.starts_with("buffer")
                         || native_name.ends_with("ArrayGet")
                         || native_name.ends_with("ArraySet")
                     {

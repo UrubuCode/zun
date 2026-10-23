@@ -33,6 +33,27 @@ impl<'a> Interp<'a> {
                     zun_il::NumKind::U64,
                 ))
             }
+            "bufferSlice" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index_at = |position: usize| -> Result<usize, RunError> {
+                    match args.get(position).ok_or(RunError::BadToken)? {
+                        // A negative bound is JS's count-from-the-end; the
+                        // caller resolves that, so anything negative here has
+                        // already been clamped and reads as a huge unsigned
+                        // value, which `buffer_slice` clamps to the length.
+                        Value::Int(value, _) => Ok(*value as usize),
+                        _ => Err(RunError::BadToken),
+                    }
+                };
+                let begin = index_at(1)?;
+                let end = index_at(2)?;
+                let copy = zun_gc::with_current_heap_mut(|heap| {
+                    heap.buffer_slice(object, begin, end)
+                })
+                .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(copy))
+            }
             "bufferGetU8" => {
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

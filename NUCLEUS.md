@@ -41,18 +41,18 @@ read.
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
-| 17 | ArrayBuffer | partial | `new ArrayBuffer(len)` intrinsic; no `byteLength/slice/isView/resize` |
+| 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping. Missing `isView`, resizable buffers |
 | 18 | DataView | partial | Only `getUint32/setUint32/getUint16/setUint16/getFloat64/setFloat64`; missing Int8/16/32, Uint8, Float32, BigInt64/Uint64, `byteLength/byteOffset/buffer` |
 | 19 | TypedArrays | partial | Only `Uint8Array/Uint16Array/Uint32Array/Float64Array`, each only `get/set`. Missing Int8/16/32, Uint8Clamped, Float32, BigInt64/Uint64 Array, and the whole method surface (`length/subarray/set/slice/fill/map/forEach/iterator`) |
 | 20 | Date | partial | Now a global with JS statics (`now/parse/fromISO`); UTC getters present. Missing all setters, local-time getters (UTC-only calendar), `Date.UTC`, `toLocale*`; `new Date()` needs optional construction args |
-| 21 | Buffer | partial | Native `zun:buffer` surface exists; verify Node `Buffer` API coverage (`from/alloc/write/read*/toString/slice/concat`) |
+| 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · partial 19 · missing 2 (of 26 nucleus items, JSON excluded).
+**Counts:** done 5 · partial 18 · missing 3 (of 26 nucleus items, JSON excluded).
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -388,10 +388,18 @@ reclaims the target).
   [,token])`. Signature diverges from spec — flag as semantic gap.
 
 ## 17. ArrayBuffer — partial
-- **Present:** `new ArrayBuffer(length)` intrinsic (`check.rs:2501`), backing
-  `byte_buffer.rs`.
-- **Missing:** `.byteLength` (property), `.slice(begin,end)`, `ArrayBuffer.isView(x)`,
-  resizable buffers (`.resize/.maxByteLength`), `SharedArrayBuffer` (deferred, OK).
+`Ty::Buffer` is what the realm registers under the name `ArrayBuffer`; the byte
+storage lives in `zun_gc/buffers.rs`.
+
+- **Present:** `new ArrayBuffer(length)`, `byteLength()`, `slice(begin, end)`.
+  `slice` copies rather than aliasing, as JS does, and clamps inverted or
+  out-of-range bounds to an empty result instead of failing.
+- **Methods, not properties.** JS has `buffer.byteLength`; this is
+  `buffer.byteLength()`, consistent with `String.length()` and `Map.size()` here.
+  The property-vs-method divergence is repo-wide and listed under Surprising
+  findings rather than patched per type.
+- **Missing:** `ArrayBuffer.isView(x)`, resizable buffers
+  (`resize`/`maxByteLength`), `SharedArrayBuffer` (deferred, fine).
 
 ## 18. DataView — partial
 `BufferViewKind::DataView`; dispatch in `check.rs:2117+`; native `views.rs`.
@@ -438,13 +446,23 @@ reclaims the target).
   wrong because the calendar is UTC-only; `Date.UTC`; `toDateString toTimeString
   toLocale*` `toUTCString`.
 
-## 21. Buffer — partial / verify
-Native surface in `zun_natives/src/buffer.rs` (also hosts array/map/set iterator
-intrinsics). Node `Buffer` API coverage not confirmed from the TS side.
-- **Verify:** `Buffer.from/alloc/allocUnsafe/concat/isBuffer/byteLength`, instance
-  `write readUInt*/readInt*/readFloat*/readDouble* toString(encoding) slice fill copy
-  equals indexOf`. Likely largely **missing** as a user-facing `Buffer` class — flag for
-  deeper read.
+## 21. Buffer (Node) — missing
+
+Audited 2026-10-23, and the previous entry was wrong twice over. It read
+"partial / verify" and pointed at `zun_natives/src/buffer.rs` as evidence of a
+Buffer implementation.
+
+- **There is no `Buffer` class.** No `builtin/buffer.zun`, no realm entry, no
+  checker path; `new Buffer(4)` is an unknown class.
+- **`zun_natives/src/buffer.rs` is not it.** That module is the `ArrayBuffer`,
+  `DataView` and typed-array floor (`bufferNew`, `bufferGetU8`, `dataViewGetU32`,
+  `u8ArrayGet`, …), which belongs to #17, #18 and #19. `Ty::Buffer` is the type
+  behind the name `ArrayBuffer`, not Node's `Buffer`.
+- **What a real entry needs:** `Buffer.from/alloc/allocUnsafe/concat/isBuffer/
+  byteLength`, instance `write read*/toString(encoding) slice fill copy equals
+  indexOf`, and the encodings (`utf8`, `hex`, `base64`) that none of the floor
+  provides. PLAN §3.2 does place Buffer in bucket A, so it stays here, but it is
+  a surface to build rather than one to finish.
 
 ## 22. Error (+ subclasses) — partial
 `builtin/error.zun` (module `zun:std:error`): `Error` + `EvalError RangeError
