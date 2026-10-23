@@ -442,7 +442,7 @@ heap allocation / the GC is).
 - **Deferred:** true OSR (mid-frame), SharedArrayBuffer/Atomics + multi-thread STW GC,
   RegExp engine, full trimming/R2R, LLVM second backend.
 
-## 7. Implementation ledger (2026-10-22)
+## 7. Implementation ledger (2026-10-23)
 
 On `main`, implemented and test-covered: format/metadata/verifier; interpreter with
 precise roots; mark-sweep GC + moving compaction + forwarding map + remembered-set
@@ -621,6 +621,38 @@ object manifest field, and covers string execution end to end.
 If no runtime library is provisioned, the same path now exits successfully with
 the `.zm` interpreter fallback and a manifest that does not advertise a native
 object; this is covered by the no-runtime AOT fixture.
+
+**Math machine ops (§3 criterion (d)) — landed 2026-10-23.** Fifteen opcodes at
+`0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign` and integer
+`min/max/clz/ctz/popcnt`. The first eight floats and all five integer ops are one
+Cranelift instruction each; `round` and `sign` lower to a short branchless
+sequence, since no ISA has JS's rounding rule or signum. Transcendentals stay on
+libm as this section specifies. `zun_ilgen::MATH_MACHINE_OPS` maps the `zun:math`
+natives onto them, so Math no longer reaches the machine through `call.builtin`,
+nor is it recognized by matching native function *name* strings in the JIT. Float
+min/max are IEEE-754 2019 (NaN propagates, `-0.0` below `+0.0`), which is JS and
+is *not* Rust's `f64::min`. Interpreter↔JIT equivalence covers the edge operands,
+f32, and the `0.49999999999999994` case that breaks `floor(x + 0.5)`. Measured
+(`zun_codegen/tests/math_opcode_bench.rs`): no speed claim is supported — `round`
+leads its call 1.21-1.54x but `sign` straddles 1.0, and a single `sqrt`
+instruction measures the same as a call performing it, so the harness does not
+isolate call overhead at this scale. These rest on the §3 mandate and on what the
+IL carries, with the measurement showing only that nothing regressed. Fixed in
+passing: float unary minus lowered as `0 - x`, turning `-0.0` into `+0.0`.
+
+**Verifier fixture coverage — 2026-10-23.** All 88 opcodes now have `_Valid` /
+`_Invalid_*` arity fixtures; 22 previously had none despite the invariant in §1.
+The fixtures build from an arity oracle stated separately from the master table
+(`zun_verify/tests/opcode_coverage.rs`), because generating them from
+`stack_effect()` only proves the table agrees with itself — verified by mutation.
+
+**AOT fallback test harness — 2026-10-23.** The five tests that link `zun_vm`'s
+static library used to return early when it was absent, which the harness reports
+as a pass, so the group could be green having run nothing. The library is also in
+no test's dependency graph, so `cargo test` never rebuilds it and a stale one
+fails at run time with an empty stderr. Both are now loud: a visible skip (a
+failure under `ZUN_REQUIRE_AOT_RUNTIME=1`, which CI should set) and a hard error
+naming the rebuild, with freshness measured against the runtime's `src` files.
 
 ## 8. Risks & attention points
 
