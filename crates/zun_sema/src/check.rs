@@ -1391,6 +1391,18 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::ArrayLiteral { elements, .. } => {
+                // Allocate an Array of length N and store each element at its
+                // index. Elements keep their natural type; `StoreArray` boxes
+                // to Any at the store boundary (the dynamic array element
+                // model), so no explicit BoxAny is inserted here.
+                let elements = elements.iter().map(|element| self.check_expr(cx, element)).collect();
+                hir::Expr {
+                    kind: hir::ExprKind::ArrayLiteral { elements },
+                    ty: Ty::Array,
+                    span,
+                }
+            }
             ast::Expr::Yield { value, .. } => {
                 if !cx.is_generator {
                     self.error(span, "yield is only valid inside a generator function");
@@ -4795,6 +4807,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
                 key + count_yields_in_expr(&property.value)
             })
             .sum(),
+        ArrayLiteral { elements, .. } => elements.iter().map(count_yields_in_expr).sum(),
     }
 }
 
@@ -4885,6 +4898,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
                 key + count_awaits_in_expr(&property.value)
             })
             .sum(),
+        ArrayLiteral { elements, .. } => elements.iter().map(count_awaits_in_expr).sum(),
     }
 }
 

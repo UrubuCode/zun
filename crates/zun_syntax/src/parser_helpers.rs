@@ -51,6 +51,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
                 rebase_expression_names(&mut property.value, base);
             }
         }
+        Expr::ArrayLiteral { elements, .. } => { for element in elements { rebase_expression_names(element, base); } }
         Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::RegexLiteral { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
     }
 }
@@ -258,6 +259,7 @@ impl Parser<'_> {
                 Expr::Ident(name)
             }
             TokenKind::LBrace => self.object_literal(),
+            TokenKind::LBracket => self.array_literal(),
             TokenKind::LParen => {
                 if self.parenthesized_arrow_start() {
                     let start = self.bump().span;
@@ -340,6 +342,41 @@ impl Parser<'_> {
         self.expect(TokenKind::RBrace, "`}` after object literal");
         Expr::ObjectLiteral {
             properties,
+            span: start.to(close),
+        }
+    }
+
+    /// Parse an array literal `[ e1, e2, ... ]` in expression position.
+    ///
+    /// The leading `[` has not been consumed. A single trailing comma is
+    /// accepted and `[]` is a valid empty literal. Elision/holes (`[1, , 3]`)
+    /// and spread (`[...xs]`) are deferred: a bare `,` or a `...` element is
+    /// reported as unsupported rather than silently miscompiled.
+    pub(crate) fn array_literal(&mut self) -> Expr {
+        let start = self.bump().span; // `[`
+        let mut elements = Vec::new();
+        while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
+            if self.at(TokenKind::Comma) {
+                // Elision/holes are a deferred follow-up; do not fake them.
+                self.error_at(self.peek().span, "array elision (holes) is not supported yet");
+                self.bump();
+                continue;
+            }
+            if self.at(TokenKind::Ellipsis) {
+                self.error_at(self.peek().span, "array spread `...` is not supported yet");
+                self.bump();
+                let _ = self.assignment();
+            } else {
+                elements.push(self.assignment());
+            }
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let close = self.peek().span;
+        self.expect(TokenKind::RBracket, "`]` after array literal");
+        Expr::ArrayLiteral {
+            elements,
             span: start.to(close),
         }
     }

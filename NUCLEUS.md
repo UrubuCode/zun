@@ -314,6 +314,29 @@ dispatch (`check.rs`, `Ty::Array` arm of the managed-method table plus the
   JIT-lowered, so there is no new JIT path. `indexOf`/`lastIndexOf`/`includes`
   stay value-based (spec) and `indexOf` returns `int`.
 
+### 7b. Array literals — partial  *(expression syntax landed)*
+`[ e1, e2, ... ]` now parses and lowers in the front-end (both the hand parser —
+`Parser::array_literal`, dispatched from `primary()` on `[` in expression position — and
+the OXC adapter — `Expression::ArrayExpression`). An array literal produces a managed
+`Array` (`Ty::Array`): `Expr::ArrayLiteral` → `hir::ExprKind::ArrayLiteral` → `ConstI32 N`
++ `NewArray`, then for each element a `Dup` + `ConstI32 i` + element + `StoreArray` + `Pop`
+so the array stays on the stack as the result. This parallels the object-literal work
+(§6b); it reuses the existing array runtime (no new opcodes).
+- **Present (v1):** positional elements of any element type; `StoreArray` boxes each value
+  to `Any` at the store boundary (the dynamic array element model — elements read back out
+  as `Any`, exactly like `new Array(n)` + `a[i] = v`), so no explicit `BoxAny` is inserted.
+  Empty `[]`; nested literals; a single **trailing comma** (`[1, 2, 3,]`). Elements are set
+  in source index order. Composes with the standard Array natives (`.map`, `.sort`, …) and
+  with the `Set`/`Map` array-iterable constructors (`new Set([…])`, `new Map([[k, v], …])`).
+- **Deferred (documented follow-ups — the OXC adapter errors rather than miscompiling, the
+  hand parser reports them as unsupported rather than silently dropping them):** elision /
+  **holes** `[1, , 3]` and **spread** `[...xs]`. Both need element kinds the v1 lowering
+  does not model (a hole is a distinct "no element at this index" vs. `undefined`, and
+  spread needs iteration/concatenation at the literal site).
+- **Note on nested access:** because elements are `Any`, a direct `m[i][j]` chain needs the
+  middle value cast back to `Array` (`(m[i] as Array)[j]`), consistent with every other
+  array read — this is the element-typing model, not an array-literal limitation.
+
 ## 8. Function — partial  *(HIGH priority — core surface landed)*
 `call/apply/bind` + `.name/.length` are implemented. Recognition is in sema's
 member-call path when the receiver is `Ty::Function` (`zun_sema/src/function_reflect.rs`,

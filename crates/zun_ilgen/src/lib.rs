@@ -1348,6 +1348,25 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(length);
                 self.emit(Instruction::simple(Opcode::NewArray));
             }
+            ExprKind::ArrayLiteral { elements } => {
+                // Allocate an array of fixed length, then store each element on
+                // a duplicated handle at its positional index, discarding the
+                // value `StoreArray` leaves behind. The array stays on the stack
+                // as the literal's result. `StoreArray` boxes each value to Any.
+                let length = i32::try_from(elements.len())
+                    .expect("array literal length exceeds i32 range");
+                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(length)));
+                self.emit(Instruction::simple(Opcode::NewArray));
+                for (index, element) in elements.iter().enumerate() {
+                    let index = i32::try_from(index)
+                        .expect("array literal index exceeds i32 range");
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index)));
+                    self.expr(element);
+                    self.emit(Instruction::simple(Opcode::StoreArray));
+                    self.emit(Instruction::simple(Opcode::Pop));
+                }
+            }
             ExprKind::FieldGet {
                 object,
                 class,

@@ -7,7 +7,8 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, AssignmentOperator, AssignmentTarget, BinaryOperator, BindingPattern, ChainElement,
+    Argument, ArrayExpressionElement, AssignmentOperator, AssignmentTarget, BinaryOperator,
+    BindingPattern, ChainElement,
     ClassElement, Declaration, ExportDefaultDeclarationKind, Expression, ForStatementInit,
     ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind,
     ModuleExportName, ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
@@ -824,6 +825,35 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             Ok(Expr::ObjectLiteral {
                 properties,
                 span: span(object.span),
+            })
+        }
+        Expression::ArrayExpression(array) => {
+            let mut elements = Vec::with_capacity(array.elements.len());
+            for element in &array.elements {
+                match element {
+                    // Holes and spread are deferred; map them to an explicit
+                    // "unsupported" path instead of silently miscompiling.
+                    ArrayExpressionElement::Elision(_) => {
+                        return Err(
+                            "OXC adapter does not support array elision (holes) yet".into()
+                        );
+                    }
+                    ArrayExpressionElement::SpreadElement(_) => {
+                        return Err("OXC adapter does not support array spread yet".into());
+                    }
+                    other => {
+                        let Some(expression) = other.as_expression() else {
+                            return Err(
+                                "OXC adapter expected an array element expression".into()
+                            );
+                        };
+                        elements.push(convert_expression(expression)?);
+                    }
+                }
+            }
+            Ok(Expr::ArrayLiteral {
+                elements,
+                span: span(array.span),
             })
         }
         Expression::NewExpression(new_expression) => {

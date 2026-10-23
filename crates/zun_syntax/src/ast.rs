@@ -413,6 +413,16 @@ pub enum Expr {
         /// Span including the braces.
         span: Span,
     },
+    /// `[ e1, e2, ... ]` — an array literal producing a managed `Array`.
+    ///
+    /// Elision/holes (`[1, , 3]`) and spread (`[...xs]`) are deferred and are
+    /// not represented here; see the NUCLEUS note and the OXC adapter.
+    ArrayLiteral {
+        /// Elements in source order, each stored at its positional index.
+        elements: Vec<Expr>,
+        /// Span including the brackets.
+        span: Span,
+    },
     /// A numeric literal.
     Number {
         /// The parsed value (JS numbers are f64).
@@ -708,6 +718,7 @@ impl Expr {
             Expr::ImportCall { span, .. } => *span,
             Expr::Yield { span, .. } => *span,
             Expr::ObjectLiteral { span, .. } => *span,
+            Expr::ArrayLiteral { span, .. } => *span,
             Expr::Function(function) => function.span,
             Expr::Ident(name) => name.span,
         }

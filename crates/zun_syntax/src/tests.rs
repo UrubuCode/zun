@@ -562,3 +562,29 @@
         };
         assert!(matches!(properties[0].value, Expr::ObjectLiteral { .. }));
     }
+
+    #[test]
+    fn parses_array_literals_empty_nested_and_trailing_comma() {
+        let p = parse_ok(
+            "function main() { let e = []; let a = [1, 2, 3,]; let n = [[1], [2]]; }",
+        );
+        let Stmt::Let { init: Expr::ArrayLiteral { elements, .. }, .. } =
+            &p.functions[0].body.statements[0]
+        else {
+            panic!("expected empty array literal");
+        };
+        assert!(elements.is_empty());
+        // A single trailing comma is accepted and does not add an element.
+        let Stmt::Let { init: Expr::ArrayLiteral { elements, .. }, .. } =
+            &p.functions[0].body.statements[1]
+        else {
+            panic!("expected array literal");
+        };
+        assert_eq!(elements.len(), 3);
+        let Stmt::Let { init: Expr::ArrayLiteral { elements, .. }, .. } =
+            &p.functions[0].body.statements[2]
+        else {
+            panic!("expected nested array literal");
+        };
+        assert!(matches!(elements[0], Expr::ArrayLiteral { .. }));
+    }

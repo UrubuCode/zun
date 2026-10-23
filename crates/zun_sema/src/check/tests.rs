@@ -545,6 +545,29 @@
     }
 
     #[test]
+    fn oxc_array_expression_lowers_to_an_array_literal() {
+        let source = "function main() { let a = [1, 2, 3]; }";
+        let ast = parse_subset(source, true).unwrap();
+        let mut diagnostics = Vec::new();
+        let hir = check(source, &ast, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let hir::Stmt::Let { init, .. } = &hir.functions[0].body[0] else {
+            panic!("expected let statement");
+        };
+        assert_eq!(init.ty, Ty::Array);
+        assert!(matches!(
+            &init.kind,
+            hir::ExprKind::ArrayLiteral { elements } if elements.len() == 3
+        ));
+    }
+
+    #[test]
+    fn oxc_array_spread_and_holes_are_rejected_not_miscompiled() {
+        assert!(parse_subset("function main() { let a = [...b]; }", true).is_err());
+        assert!(parse_subset("function main() { let a = [1, , 3]; }", true).is_err());
+    }
+
+    #[test]
     fn namespace_import_member_call_lowers_to_static_native_call() {
         let source = "import * as math from 'zun:math'; function main(): number { return math.sqrt(9.0); }";
         let mut diagnostics = Vec::new();

@@ -263,6 +263,55 @@ fn array_custom_extensions_are_preserved() {
     assert_eq!(out, ["1", "4", "2", "1", "2"]);
 }
 
+#[test]
+fn array_literal_length_and_indexing() {
+    let out = run_source(
+        "function main() { \
+            print([1.0, 2.0, 3.0].length); \
+            print([1.0, 2.0, 3.0][1] as number); }",
+    );
+    assert_eq!(out, ["3", "2"]);
+}
+
+#[test]
+fn array_literal_empty_and_nested() {
+    // Array elements are `Any`, so a nested access casts the middle value back
+    // to `Array` before indexing it again.
+    let out = run_source(
+        "function main() { \
+            let e = []; \
+            print(e.length); \
+            let inner = [[1.0], [2.0]][0] as Array; \
+            print(inner[0] as number); }",
+    );
+    assert_eq!(out, ["0", "1"]);
+}
+
+#[test]
+fn array_literal_composes_with_map_and_sort() {
+    let out = run_source(
+        "function main() { \
+            let doubled = [1.0, 2.0, 3.0].map((x: any, i: any, a: any) => (x as number) * 2.0); \
+            print(doubled[0] as number); print(doubled[2] as number); \
+            let sorted = [3.0, 1.0, 2.0].sort(); \
+            print(sorted[0] as number); print(sorted[2] as number); }",
+    );
+    assert_eq!(out, ["2", "6", "1", "3"]);
+}
+
+#[test]
+fn array_literal_feeds_set_and_map_constructors() {
+    let out = run_source(
+        r#"function main() {
+            let s: Set = new Set([1.0, 2.0, 2.0, 3.0]);
+            print(s.size());
+            let m: Map = new Map([["a", 1.0]]);
+            print(m.get(box_any("a")) as number);
+        }"#,
+    );
+    assert_eq!(out, ["3", "1"]);
+}
+
 /// Build `a` as a fresh `[1.0, 2.0, 3.0]` array in a program preamble.
 fn array_123() -> &'static str {
     "let a = new Array(3); a[0] = 1.0; a[1] = 2.0; a[2] = 3.0;"

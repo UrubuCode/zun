@@ -765,6 +765,15 @@ pub enum ExprKind {
         /// Number of elements to allocate.
         length: Box<Expr>,
     },
+    /// Allocate a managed array of length `elements.len()` from an array
+    /// literal and store each element at its positional index.
+    ///
+    /// Elements keep their natural static type; the `StoreArray` boundary boxes
+    /// each value to `Any`, matching the dynamic array element model.
+    ArrayLiteral {
+        /// Elements in source order; element `i` is stored at index `i`.
+        elements: Vec<Expr>,
+    },
     /// Read `object`'s field at `field_slot`.
     FieldGet {
         /// The object expression.

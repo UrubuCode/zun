@@ -476,6 +476,11 @@ impl Checker<'_> {
                     }
                 }
             }
+            ast::Expr::ArrayLiteral { elements, .. } => {
+                for element in elements {
+                    self.collect_capture_expr(cx, parameters, element, uses);
+                }
+            }
             ast::Expr::ObjectLiteral { properties, .. } => {
                 for property in properties {
                     if let ast::PropertyKey::Computed(key) = &property.key {
