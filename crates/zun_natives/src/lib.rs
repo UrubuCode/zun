@@ -1011,6 +1011,95 @@ mod tests {
     }
 
     #[test]
+    fn number_strict_statics_do_not_coerce() {
+        let mut sink = TestSink;
+        let (is_nan, _) = resolve("zun:number", "isNaNStrict").unwrap();
+        let (is_finite, _) = resolve("zun:number", "isFiniteStrict").unwrap();
+        let (is_integer, _) = resolve("zun:number", "isIntegerStrict").unwrap();
+        let (is_safe, _) = resolve("zun:number", "isSafeIntegerStrict").unwrap();
+        let string_any = zun_core::Any::string(0);
+        assert!(matches!(
+            dispatch(is_nan, &[NativeArg::Float(f64::NAN)], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        // A non-number answers `false` without coercion.
+        assert!(matches!(
+            dispatch(is_nan, &[NativeArg::Any(string_any)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+        assert!(matches!(
+            dispatch(is_finite, &[NativeArg::Float(f64::INFINITY)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+        assert!(matches!(
+            dispatch(is_integer, &[NativeArg::Float(4.0)], &mut sink).unwrap(),
+            NativeValue::Bool(true)
+        ));
+        assert!(matches!(
+            dispatch(is_integer, &[NativeArg::Float(4.5)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+        assert!(matches!(
+            dispatch(is_safe, &[NativeArg::Float(9_007_199_254_740_992.0)], &mut sink).unwrap(),
+            NativeValue::Bool(false)
+        ));
+    }
+
+    #[test]
+    fn number_parse_statics_follow_js_semantics() {
+        let mut sink = TestSink;
+        let (parse_float, _) = resolve("zun:number", "parseFloatPrefix").unwrap();
+        let (parse_int, _) = resolve("zun:number", "parseIntRadix").unwrap();
+        assert!(matches!(
+            dispatch(parse_float, &[NativeArg::Str("3.14abc")], &mut sink).unwrap(),
+            NativeValue::Float(v) if v == 3.14
+        ));
+        assert!(matches!(
+            dispatch(parse_float, &[NativeArg::Str("nope")], &mut sink).unwrap(),
+            NativeValue::Float(v) if v.is_nan()
+        ));
+        assert!(matches!(
+            dispatch(parse_int, &[NativeArg::Str("42"), NativeArg::Int(0)], &mut sink).unwrap(),
+            NativeValue::Float(v) if v == 42.0
+        ));
+        assert!(matches!(
+            dispatch(parse_int, &[NativeArg::Str("ff"), NativeArg::Int(16)], &mut sink).unwrap(),
+            NativeValue::Float(v) if v == 255.0
+        ));
+        assert!(matches!(
+            dispatch(parse_int, &[NativeArg::Str("0x1F"), NativeArg::Int(0)], &mut sink).unwrap(),
+            NativeValue::Float(v) if v == 31.0
+        ));
+        assert!(matches!(
+            dispatch(parse_int, &[NativeArg::Str("-10"), NativeArg::Int(2)], &mut sink).unwrap(),
+            NativeValue::Float(v) if v == -2.0
+        ));
+    }
+
+    #[test]
+    fn number_to_string_radix_renders_bases() {
+        let mut sink = TestSink;
+        let (to_string, _) = resolve("zun:number", "toStringRadix").unwrap();
+        assert!(matches!(
+            dispatch(to_string, &[NativeArg::Float(255.0), NativeArg::Int(16)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "ff"
+        ));
+        assert!(matches!(
+            dispatch(to_string, &[NativeArg::Float(10.0), NativeArg::Int(2)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "1010"
+        ));
+        assert!(matches!(
+            dispatch(to_string, &[NativeArg::Float(255.0), NativeArg::Int(10)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "255"
+        ));
+        assert!(matches!(
+            dispatch(to_string, &[NativeArg::Float(f64::INFINITY), NativeArg::Int(2)], &mut sink).unwrap(),
+            NativeValue::Str(v) if v == "Infinity"
+        ));
+        assert!(dispatch(to_string, &[NativeArg::Float(1.0), NativeArg::Int(40)], &mut sink).is_err());
+    }
+
+    #[test]
     fn math_rounding_matches_numeric_expectations() {
         let mut sink = TestSink;
         let (floor_id, _) = resolve("zun:math", "floor").unwrap();
