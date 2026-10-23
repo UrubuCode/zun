@@ -605,6 +605,98 @@ fn realm_map_new_and_annotation_resolve_through_the_registry() {
 }
 
 #[test]
+fn map_for_each_visits_entries_in_insertion_order_with_value_key_map() {
+    // `(value, key, map)` in insertion order. The callback records the key and
+    // value of each visit; it also pushes the third (map) argument so the arity
+    // is exercised, though the `any` map value is not inspected further.
+    let out = run_source(
+        r#"function main() {
+            let m: Map = new Map();
+            m.set(box_any("a"), box_any(1.0));
+            m.set(box_any("b"), box_any(2.0));
+            let keys = new Array(0);
+            let values = new Array(0);
+            m.forEach((v: any, k: any, src: any) => {
+                values.push(v);
+                keys.push(k);
+            });
+            print(keys[0] as string); print(values[0] as number);
+            print(keys[1] as string); print(values[1] as number);
+        }"#,
+    );
+    assert_eq!(out, ["a", "1", "b", "2"]);
+}
+
+#[test]
+fn set_for_each_passes_the_value_twice_in_insertion_order() {
+    let out = run_source(
+        r#"function main() {
+            let s: Set = new Set();
+            s.add(box_any(10.0));
+            s.add(box_any(20.0));
+            let firsts = new Array(0);
+            let seconds = new Array(0);
+            s.forEach((v: any, v2: any, src: any) => {
+                firsts.push(v);
+                seconds.push(v2);
+            });
+            print(firsts[0] as number); print(seconds[0] as number);
+            print(firsts[1] as number); print(seconds[1] as number);
+        }"#,
+    );
+    assert_eq!(out, ["10", "10", "20", "20"]);
+}
+
+#[test]
+fn map_constructed_from_an_array_of_pairs_holds_the_entries() {
+    // `new Map(iterable)` from an array of `[key, value]` pairs (the pairs are
+    // built with `new Array` since the language has no array literal).
+    let out = run_source(
+        r#"function main() {
+            let p0 = new Array(2); p0[0] = box_any("a"); p0[1] = box_any(1.0);
+            let p1 = new Array(2); p1[0] = box_any("b"); p1[1] = box_any(2.0);
+            let pairs = new Array(2); pairs[0] = box_any(p0); pairs[1] = box_any(p1);
+            let m: Map = new Map(pairs);
+            print(m.size());
+            print(m.get(box_any("a")) as number);
+            print(m.get(box_any("b")) as number);
+            print(m.has(box_any("a")));
+        }"#,
+    );
+    assert_eq!(out, ["2", "1", "2", "true"]);
+}
+
+#[test]
+fn set_constructed_from_an_array_deduplicates_elements() {
+    let out = run_source(
+        r#"function main() {
+            let items = new Array(4);
+            items[0] = box_any(1.0); items[1] = box_any(2.0);
+            items[2] = box_any(2.0); items[3] = box_any(3.0);
+            let s: Set = new Set(items);
+            print(s.size());
+            print(s.has(box_any(2.0)));
+            print(s.has(box_any(4.0)));
+        }"#,
+    );
+    assert_eq!(out, ["3", "true", "false"]);
+}
+
+#[test]
+fn empty_map_and_set_constructors_still_work() {
+    let out = run_source(
+        r#"function main() {
+            let m: Map = new Map();
+            let s: Set = new Set();
+            m.set(box_any("x"), box_any(7.0));
+            s.add(box_any(9.0));
+            print(m.size()); print(s.size());
+        }"#,
+    );
+    assert_eq!(out, ["1", "1"]);
+}
+
+#[test]
 fn bigint_constructor_arithmetic_and_formatting_use_the_managed_floor() {
     let out = run_source(
         r#"function main(): int {

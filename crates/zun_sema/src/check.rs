@@ -2925,6 +2925,11 @@ impl Checker<'_> {
                     (Ty::Map, "values") => Some(("mapValues", Ty::Array, vec![])),
                     (Ty::Map, "keys") => Some(("mapKeys", Ty::Array, vec![])),
                     (Ty::Map, "entries") => Some(("mapEntries", Ty::Array, vec![])),
+                    (Ty::Map, "forEach") => Some((
+                        "mapForEach",
+                        Ty::Void,
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
                     (Ty::Set, "add") => Some(("setAdd", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "has") => Some(("setHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),
@@ -2933,6 +2938,11 @@ impl Checker<'_> {
                     (Ty::Set, "values") => Some(("setValues", Ty::Array, vec![])),
                     (Ty::Set, "keys") => Some(("setValues", Ty::Array, vec![])),
                     (Ty::Set, "entries") => Some(("setEntries", Ty::Array, vec![])),
+                    (Ty::Set, "forEach") => Some((
+                        "setForEach",
+                        Ty::Void,
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
                     (Ty::WeakMap, "set") => {
                         Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any]))
                     }
@@ -3578,6 +3588,56 @@ impl Checker<'_> {
                                 ty,
                                 span,
                             };
+                        }
+                        CtorLowering::CollectionFrom { module, empty, from, ty } => {
+                            // `new Map()`/`new Set()` → the empty allocator;
+                            // `new Map(iterable)`/`new Set(iterable)` → the
+                            // one-argument iterable constructor (array only for
+                            // now; arbitrary iterables are deferred).
+                            match args.len() {
+                                0 => {
+                                    let Some((id, _)) = zun_natives::resolve(module, empty) else {
+                                        self.error(span, format!("missing intrinsic `{empty}`"));
+                                        return self.poison(span);
+                                    };
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                                        ty,
+                                        span,
+                                    };
+                                }
+                                1 => {
+                                    let Some((id, _)) = zun_natives::resolve(module, from) else {
+                                        self.error(span, format!("missing intrinsic `{from}`"));
+                                        return self.poison(span);
+                                    };
+                                    let argument = self.check_expr(cx, &args[0]);
+                                    if !argument.ty.is_error()
+                                        && !self.is_assignable(argument.ty, Ty::Array)
+                                    {
+                                        self.error(
+                                            argument.span,
+                                            format!(
+                                                "`{name}` iterable constructor currently accepts \
+                                                 only an array argument, found {:?}",
+                                                argument.ty
+                                            ),
+                                        );
+                                    }
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id, args: vec![argument] },
+                                        ty,
+                                        span,
+                                    };
+                                }
+                                _ => {
+                                    self.error(
+                                        span,
+                                        format!("`{name}` expects at most one constructor argument, found {}", args.len()),
+                                    );
+                                    return self.poison(span);
+                                }
+                            }
                         }
                         CtorLowering::IntrinsicN { module, native, ty, min_args, max_args, pad_empty_flags } => {
                             if args.len() < min_args || args.len() > max_args {

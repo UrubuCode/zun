@@ -10,4 +10,8 @@ class Set {
     values(): Array { return set.values(this); }
     keys(): Array { return set.values(this); }
     entries(): Array { return set.entries(this); }
+    // `forEach(callback)` invokes `callback(value, value, set)` (the value
+    // twice, per spec) in insertion order; it is provided by the `zun:core`
+    // `set.forEach` native, routed by the sema layer before class dispatch. The
+    // iterable constructor `new Set([a, b, ...])` lowers through `setFrom`.
 }

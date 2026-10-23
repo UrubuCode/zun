@@ -11,4 +11,8 @@ class Map {
     values(): Array { return map.values(this); }
     keys(): Array { return map.keys(this); }
     entries(): Array { return map.entries(this); }
+    // `forEach(callback)` invokes `callback(value, key, map)` in insertion
+    // order; it is provided by the `zun:core` `map.forEach` native, which the
+    // sema layer routes before class dispatch (as with Array's callbacks). The
+    // iterable constructor `new Map([[k, v], ...])` lowers through `mapFrom`.
 }

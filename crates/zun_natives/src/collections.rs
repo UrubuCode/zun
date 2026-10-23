@@ -363,5 +363,18 @@ pub const MODULE: crate::Module = crate::Module {
         // interpreter owns the body; the signature fixes only the argument
         // count the verifier pops.
         NativeFn { name: "stringSplit", params: &[Str, Str, I64], ret: Array, imp: unavailable },
+        // `Map.prototype.forEach(cb)` / `Set.prototype.forEach(cb)`. Each
+        // re-enters the interpreter, invoking the callback with the ECMAScript
+        // signatures `(value, key, map)` and `(value, value, set)` respectively;
+        // excess arguments are dropped to the callback's declared arity. The
+        // signatures fix only the argument count the verifier pops.
+        NativeFn { name: "mapForEach", params: &[Map, Function], ret: Void, imp: unavailable },
+        NativeFn { name: "setForEach", params: &[Set, Function], ret: Void, imp: unavailable },
+        // Iterable constructors. `new Map(iterable)` consumes `[key, value]`
+        // pairs; `new Set(iterable)` consumes elements. Currently an ARRAY
+        // argument is accepted (the common case); arbitrary iterator-protocol
+        // objects are deferred.
+        NativeFn { name: "mapFrom", params: &[Array], ret: Map, imp: unavailable },
+        NativeFn { name: "setFrom", params: &[Array], ret: Set, imp: unavailable },
     ],
 };

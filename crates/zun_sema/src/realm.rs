@@ -38,6 +38,17 @@ pub(crate) enum CtorLowering {
         max_args: usize,
         pad_empty_flags: bool,
     },
+    /// A managed collection with both a zero-argument allocator (`empty`) and a
+    /// one-argument iterable constructor (`from`) in `module`, yielding `ty`.
+    /// `new Map()`/`new Set()` lower through `empty`; `new Map(iterable)`/
+    /// `new Set(iterable)` through `from`. The iterable is currently restricted
+    /// to an ARRAY argument; arbitrary iterator-protocol objects are deferred.
+    CollectionFrom {
+        module: &'static str,
+        empty: &'static str,
+        from: &'static str,
+        ty: Ty,
+    },
     /// `new Array(len)` → an `ArrayNew` node (`Ty::Array`).
     ArrayNew,
     /// `new ArrayBuffer(len)` → `bufferNew` (`Ty::Buffer`).
@@ -79,9 +90,26 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
     use hir::BufferViewKind as Bv;
     let collection0 = |native, ty| CtorLowering::Intrinsic0 { module: "zun:collections", native, ty };
     Some(match name {
+        // Managed collections with an optional iterable constructor argument.
+        "Map" => (
+            Ty::Map,
+            CtorLowering::CollectionFrom {
+                module: "zun:collections",
+                empty: "mapNew",
+                from: "mapFrom",
+                ty: Ty::Map,
+            },
+        ),
+        "Set" => (
+            Ty::Set,
+            CtorLowering::CollectionFrom {
+                module: "zun:collections",
+                empty: "setNew",
+                from: "setFrom",
+                ty: Ty::Set,
+            },
+        ),
         // Zero-argument managed collections.
-        "Map" => (Ty::Map, collection0("mapNew", Ty::Map)),
-        "Set" => (Ty::Set, collection0("setNew", Ty::Set)),
         "WeakMap" => (Ty::WeakMap, collection0("weakMapNew", Ty::WeakMap)),
         "WeakSet" => (Ty::WeakSet, collection0("weakSetNew", Ty::WeakSet)),
         "WeakRef" => (

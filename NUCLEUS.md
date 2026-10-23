@@ -35,8 +35,8 @@ read.
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Remaining: `withResolvers`, microtask deferral of a *pending*-source reaction (eager-at-settle on Tier 0), AggregateError for `any` |
 | 10 | Proxy / Reflect | partial | `proxyNew` + `reflect_get/reflect_set` exist; no full trap set, no `Reflect` global object surface |
-| 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, `size` as property (is a method), constructor-from-iterable |
-| 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, constructor-from-iterable |
+| 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Map([[k,v],…])`, array only); missing only `size` as property (is a method), general (non-array) iterable construction |
+| 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Set([…])`, array only); missing only `size` as property, general (non-array) iterable construction |
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
@@ -413,16 +413,24 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
 ## 11. Map — partial
 `std/map.zun` → `zun:collections` (`collections.rs`, `ordered_map.rs`). Ordered hash
 table. Iterator intrinsics present (`mapIterator*`).
-- **Present:** `set get has size() delete clear values keys entries` + `[Symbol.iterator]`.
-- **Missing:** `forEach(cb)`; `size` is a method, spec is a getter property; construction
-  from an iterable (`new Map([[k,v],…])`).
+- **Present:** `set get has size() delete clear values keys entries` + `[Symbol.iterator]`
+  + `forEach(cb)` (`callback(value, key, map)`, insertion order; routed to the
+  `mapForEach` native via the sema managed-method path, reusing the Array callback
+  re-entry/rooting machinery) + iterable constructor `new Map(iterable)` (`mapFrom`).
+- **Missing:** `size` is a method, spec is a getter property. The iterable constructor
+  currently accepts only an ARRAY of `[key, value]` pairs; arbitrary iterator-protocol
+  objects are deferred (no general iterator consumption yet).
 
 ## 12. Set — partial
 `std/set.zun` → `zun:collections`.
-- **Present:** `add has size() delete clear values keys(→values) entries` + iterator.
-- **Missing:** `forEach(cb)`; `size` as property; construct-from-iterable; ES2024 set
-  ops (`union/intersection/difference/isSubsetOf/…`) — note Array has these as extras but
-  Set does not.
+- **Present:** `add has size() delete clear values keys(→values) entries` + iterator
+  + `forEach(cb)` (`callback(value, value, set)` — the value twice per spec — insertion
+  order; routed to the `setForEach` native, reusing the Array callback machinery) +
+  iterable constructor `new Set(iterable)` (`setFrom`).
+- **Missing:** `size` as property; ES2024 set ops
+  (`union/intersection/difference/isSubsetOf/…`) — note Array has these as extras but
+  Set does not. The iterable constructor currently accepts only an ARRAY of elements;
+  arbitrary iterator-protocol objects are deferred.
 
 ## 13. WeakMap — partial / effectively done
 `std/weak_map.zun`; ephemeron-backed GC floor.
@@ -698,7 +706,8 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      + constants, and `toString(radix)` — landed. Remaining: `toPrecision toExponential
      toLocaleString valueOf`.
    - Date (#20): setters, local-time getters, `Date.now/parse/UTC`, `getTimezoneOffset`.
-   - Map/Set (#11,#12): `forEach`, construct-from-iterable, `size` as property.
+   - Map/Set (#11,#12): `forEach` and array-iterable construction landed. Remaining:
+     `size` as a property; general (non-array) iterable construction.
    - Promise (#9): ✅ `then/catch/finally` (new-promise + Promise adoption) and statics
      `resolve/reject/all/allSettled/race/any` landed. Remaining: `withResolvers`,
      AggregateError for `any`, microtask deferral of a pending-source reaction.
