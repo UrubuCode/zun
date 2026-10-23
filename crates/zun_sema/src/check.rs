@@ -1261,6 +1261,62 @@ impl Checker<'_> {
         acc
     }
 
+    /// Lower a `Promise.<method>(...)` static call. `resolve`/`reject` take one
+    /// value; the combinators (`all`/`allSettled`/`race`/`any`) take one
+    /// iterable, which this floor requires to be a managed array.
+    fn check_promise_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let (native, arg_ty): (&str, Ty) = match method {
+            "resolve" => ("promiseResolveStatic", Ty::Any),
+            "reject" => ("promiseRejectStatic", Ty::Any),
+            "all" => ("promiseAll", Ty::Array),
+            "allSettled" => ("promiseAllSettled", Ty::Array),
+            "race" => ("promiseRace", Ty::Array),
+            "any" => ("promiseAny", Ty::Array),
+            other => {
+                self.error(
+                    method_span,
+                    format!("`Promise.{other}` is not supported in this runtime"),
+                );
+                return self.poison(span);
+            }
+        };
+        if args.len() != 1 {
+            self.error(span, format!("`Promise.{method}` expects 1 argument, found {}", args.len()));
+            return self.poison(span);
+        }
+        let mut arg = self.check_expr(cx, &args[0]);
+        if arg_ty == Ty::Array {
+            if !arg.ty.is_error() && !self.is_assignable(arg.ty, Ty::Array) {
+                self.error(arg.span, format!("`Promise.{method}` expects an array of promises"));
+            }
+        } else {
+            // `resolve`/`reject` accept any value; box a non-`any` operand.
+            if arg.ty != Ty::Any {
+                arg = hir::Expr {
+                    span: arg.span,
+                    kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                    ty: Ty::Any,
+                };
+            }
+        }
+        let Some((id, _)) = zun_natives::resolve("zun:promise", native) else {
+            self.error(span, format!("missing Promise intrinsic `{native}`"));
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+            ty: Ty::Promise,
+            span,
+        }
+    }
+
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
@@ -2300,6 +2356,18 @@ impl Checker<'_> {
                             span,
                         };
                     }
+                    // `Promise.*` statics (`resolve reject all allSettled race
+                    // any`). Recognized by receiver name when no user class
+                    // shadows `Promise`; a Promise *value* is dispatched by type.
+                    if class_name == "Promise" && !self.classes_by_name.contains_key("Promise") {
+                        return self.check_promise_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
                     if let Some(&namespace) = self.core_namespaces.get(&class_name) {
                         let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
                             self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
@@ -2538,6 +2606,64 @@ impl Checker<'_> {
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin { id, args: call_args },
                         ty: return_ty,
+                        span,
+                    };
+                }
+                if receiver.ty == Ty::Promise
+                    && matches!(mname.as_str(), "then" | "catch" | "finally")
+                {
+                    // `then`/`catch`/`finally` take optional function callbacks
+                    // and return a NEW Promise settled from the callback's result
+                    // (adopting a returned Promise). Absent callback slots lower
+                    // to `null`, which the floor reads as "no handler". The
+                    // callback re-enters the interpreter, so this stays Tier 0.
+                    let (native_name, max_callbacks) = match mname.as_str() {
+                        "then" => ("promiseThen", 2usize),
+                        "catch" => ("promiseCatch", 1usize),
+                        _ => ("promiseFinally", 1usize),
+                    };
+                    if args.len() > max_callbacks {
+                        self.error(
+                            span,
+                            format!(
+                                "`Promise.{mname}` accepts at most {max_callbacks} argument(s), found {}",
+                                args.len()
+                            ),
+                        );
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver];
+                    for index in 0..max_callbacks {
+                        match args.get(index) {
+                            Some(arg) => {
+                                let value = self.check_expr(cx, arg);
+                                if !value.ty.is_error()
+                                    && !self.is_assignable(
+                                        value.ty,
+                                        Ty::Function(hir::DYNAMIC_FUNCTION),
+                                    )
+                                {
+                                    self.error(
+                                        value.span,
+                                        format!("`Promise.{mname}` expects a function callback"),
+                                    );
+                                }
+                                call_args.push(value);
+                            }
+                            None => call_args.push(hir::Expr {
+                                kind: hir::ExprKind::Null,
+                                ty: Ty::Any,
+                                span,
+                            }),
+                        }
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:promise", native_name) else {
+                        self.error(span, format!("missing Promise intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: Ty::Promise,
                         span,
                     };
                 }

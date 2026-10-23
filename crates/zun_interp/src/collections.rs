@@ -15,6 +15,12 @@ impl<'a> Interp<'a> {
             _ => None,
         };
         let any = |value: &Value| zun_gc::with_current_heap_mut(|heap| value.box_any(heap));
+        // A Promise callback argument: a function value, or absent (the lowering
+        // passes `null`/`undefined` for an omitted `then`/`catch`/`finally` slot).
+        let callback_arg = |value: Option<&Value>| match value {
+            Some(Value::Function(handle)) => Some(*handle),
+            _ => None,
+        };
         match name {
             "bufferNew" => {
                 let length = match args.first().ok_or(RunError::BadToken)? {
@@ -1836,6 +1842,56 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?,
                 ))
             }
+            "promiseThen" => {
+                let source = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let on_fulfilled = callback_arg(args.get(1));
+                let on_rejected = callback_arg(args.get(2));
+                self.promise_then(source, on_fulfilled, on_rejected)
+            }
+            "promiseCatch" => {
+                let source = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let on_rejected = callback_arg(args.get(1));
+                self.promise_then(source, None, on_rejected)
+            }
+            "promiseFinally" => {
+                let source = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let on_finally = callback_arg(args.get(1));
+                self.promise_finally(source, on_finally)
+            }
+            "promiseResolveStatic" => {
+                let value = args.first().ok_or(RunError::BadToken)?;
+                // A value that is already a Promise is returned unchanged.
+                if let Some(existing) = object(value) {
+                    if zun_gc::with_current_heap(|heap| heap.promise_state(existing)).is_some() {
+                        return Ok(Value::Object(existing));
+                    }
+                }
+                let boxed = any(value).ok_or(RunError::BadToken)?;
+                let promise = zun_gc::with_current_heap_mut(|heap| {
+                    let promise = heap.alloc_promise();
+                    heap.promise_resolve(promise, boxed);
+                    promise
+                });
+                Ok(Value::Object(promise))
+            }
+            "promiseRejectStatic" => {
+                let value = args.first().ok_or(RunError::BadToken)?;
+                let message = value_to_error_string(value);
+                let promise = zun_gc::with_current_heap_mut(|heap| {
+                    let promise = heap.alloc_promise();
+                    heap.promise_reject(promise, message);
+                    promise
+                });
+                Ok(Value::Object(promise))
+            }
+            "promiseAll" | "promiseAllSettled" | "promiseRace" | "promiseAny" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                self.promise_combinator(name, array)
+            }
             "objectKeys" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let entries = self.object_own_entries(obj)?;
@@ -2251,6 +2307,327 @@ impl<'a> Interp<'a> {
             .map_err(|error| RunError::Malformed(error.to_string()))?;
         final_args.truncate(body.param_count as usize);
         self.call(method_rid, final_args, None)
+    }
+
+    /// Read the settlement of a managed Promise. Errors if the object is not a
+    /// Promise cell.
+    fn promise_settlement_of(&self, promise: zun_gc::Obj) -> Result<PromiseSettlement, RunError> {
+        zun_gc::with_current_heap(|heap| match heap.promise_state(promise) {
+            Some(zun_core::ManagedPromiseState::Resolved) => Ok(PromiseSettlement::Resolved(
+                heap.promise_result(promise).unwrap_or_else(zun_core::Any::null),
+            )),
+            Some(zun_core::ManagedPromiseState::Rejected) => Ok(PromiseSettlement::Rejected(
+                heap.promise_error(promise).unwrap_or_else(|| "Promise rejected".into()),
+            )),
+            Some(zun_core::ManagedPromiseState::Pending) => Ok(PromiseSettlement::Pending),
+            None => Err(RunError::BadToken),
+        })
+    }
+
+    /// Settle a Promise as if by `Promise.resolve`: a Promise argument is
+    /// adopted (its settlement is mirrored), otherwise the raw value is used.
+    /// This is the thenable-adoption rule restricted to the Promise case; full
+    /// assimilation of arbitrary `then`-able objects is deferred.
+    fn value_settlement(&self, value: &Value) -> Result<PromiseSettlement, RunError> {
+        if let Some(obj) = as_object_ref(value) {
+            if zun_gc::with_current_heap(|heap| heap.promise_state(obj)).is_some() {
+                return self.promise_settlement_of(obj);
+            }
+        }
+        let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+            .unwrap_or_else(zun_core::Any::null);
+        Ok(PromiseSettlement::Resolved(boxed))
+    }
+
+    /// Settle `target` with a callback's return value, adopting a returned
+    /// Promise (chaining, not wrapping).
+    fn settle_target_with(&mut self, target: zun_gc::Obj, value: Value) {
+        if let Some(obj) = as_object_ref(&value) {
+            if let Some(state) = zun_gc::with_current_heap(|heap| heap.promise_state(obj)) {
+                match state {
+                    zun_core::ManagedPromiseState::Resolved => {
+                        let inner = zun_gc::with_current_heap(|heap| heap.promise_result(obj))
+                            .unwrap_or_else(zun_core::Any::null);
+                        zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(target, inner));
+                    }
+                    zun_core::ManagedPromiseState::Rejected => {
+                        let error = zun_gc::with_current_heap(|heap| heap.promise_error(obj))
+                            .unwrap_or_else(|| "Promise rejected".into());
+                        zun_gc::with_current_heap_mut(|heap| heap.promise_reject(target, error));
+                    }
+                    // A pending adopted Promise cannot be driven on this floor
+                    // (no event loop in a plain run); the target stays pending.
+                    zun_core::ManagedPromiseState::Pending => {}
+                }
+                return;
+            }
+        }
+        let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+            .unwrap_or_else(zun_core::Any::null);
+        zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(target, boxed));
+    }
+
+    /// Run a settle reaction: invoke `callback` with `arg`, then settle the
+    /// Promise held at `roots[target_index]` (re-read after the re-entry, which
+    /// may have relocated it). A throw rejects the target with its message.
+    fn run_reaction(
+        &mut self,
+        callback: zun_core::FunctionHandle,
+        arg: Value,
+        roots: &[zun_gc::Obj],
+        target_index: usize,
+    ) -> Result<(), RunError> {
+        match self.invoke_callback(callback, vec![arg]) {
+            Ok(result) => {
+                self.settle_target_with(roots[target_index], result);
+                Ok(())
+            }
+            Err(RunError::Thrown(value)) => {
+                let message = value_to_error_string(&value);
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.promise_reject(roots[target_index], message)
+                });
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// `promise.then(onFulfilled?, onRejected?)` / `catch`. Returns a new
+    /// Promise settled from the matching callback's result, propagating the
+    /// original settlement when the callback is absent. Callbacks run against
+    /// the source's current settlement; a still-pending source leaves the new
+    /// Promise pending (there is no microtask drain in a plain run — the same
+    /// cooperative model `await` uses).
+    fn promise_then(
+        &mut self,
+        source: zun_gc::Obj,
+        on_fulfilled: Option<zun_core::FunctionHandle>,
+        on_rejected: Option<zun_core::FunctionHandle>,
+    ) -> Result<Value, RunError> {
+        let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+        let roots = [source, target];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        match self.promise_settlement_of(roots[0])? {
+            PromiseSettlement::Resolved(value) => match on_fulfilled {
+                Some(callback) => {
+                    // Callbacks with `any` parameters receive the boxed value.
+                    self.run_reaction(callback, Value::Any(value), &roots, 1)?;
+                }
+                None => {
+                    zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(roots[1], value));
+                }
+            },
+            PromiseSettlement::Rejected(error) => match on_rejected {
+                Some(callback) => {
+                    let reason = zun_gc::with_current_heap_mut(|heap| {
+                        zun_core::Any::string(heap.intern_string(std::rc::Rc::from(error.as_str())))
+                    });
+                    self.run_reaction(callback, Value::Any(reason), &roots, 1)?;
+                }
+                None => {
+                    zun_gc::with_current_heap_mut(|heap| heap.promise_reject(roots[1], error));
+                }
+            },
+            PromiseSettlement::Pending => {}
+        }
+        Ok(Value::Object(roots[1]))
+    }
+
+    /// `promise.finally(onFinally)`: run the cleanup on settlement and pass the
+    /// original settlement through, unless the cleanup itself throws.
+    fn promise_finally(
+        &mut self,
+        source: zun_gc::Obj,
+        on_finally: Option<zun_core::FunctionHandle>,
+    ) -> Result<Value, RunError> {
+        let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+        let roots = [source, target];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Only run the cleanup once the source has settled.
+        let settled = !matches!(self.promise_settlement_of(roots[0])?, PromiseSettlement::Pending);
+        let cleanup_error = if settled {
+            match on_finally {
+                Some(callback) => match self.invoke_callback(callback, vec![]) {
+                    Ok(_) => None,
+                    Err(RunError::Thrown(value)) => Some(value_to_error_string(&value)),
+                    Err(other) => return Err(other),
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
+        // Re-read the source after the re-entry (roots were rewritten by any GC).
+        if let Some(error) = cleanup_error {
+            zun_gc::with_current_heap_mut(|heap| heap.promise_reject(roots[1], error));
+        } else {
+            match self.promise_settlement_of(roots[0])? {
+                PromiseSettlement::Resolved(value) => {
+                    zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(roots[1], value));
+                }
+                PromiseSettlement::Rejected(error) => {
+                    zun_gc::with_current_heap_mut(|heap| heap.promise_reject(roots[1], error));
+                }
+                PromiseSettlement::Pending => {}
+            }
+        }
+        Ok(Value::Object(roots[1]))
+    }
+
+    /// `Promise.all/allSettled/race/any`. The input is read as a managed array;
+    /// each element is adopted via `Promise.resolve` semantics. There is no
+    /// re-entry, so no GC occurs while the result is assembled.
+    fn promise_combinator(&mut self, name: &str, array: zun_gc::Obj) -> Result<Value, RunError> {
+        let elements = self.read_array_values(array)?;
+        let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+        match name {
+            "promiseAll" => {
+                let mut results = Vec::with_capacity(elements.len());
+                for element in &elements {
+                    match self.value_settlement(element)? {
+                        PromiseSettlement::Resolved(value) => results.push(value),
+                        PromiseSettlement::Rejected(error) => {
+                            zun_gc::with_current_heap_mut(|heap| heap.promise_reject(target, error));
+                            return Ok(Value::Object(target));
+                        }
+                        // A pending input cannot be awaited here; leave pending.
+                        PromiseSettlement::Pending => return Ok(Value::Object(target)),
+                    }
+                }
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let result = heap.alloc_array(results.len());
+                    for (index, value) in results.iter().enumerate() {
+                        heap.array_set(result, index, *value);
+                    }
+                    result
+                });
+                let boxed = zun_core::Any::object(result.addr() as usize);
+                zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(target, boxed));
+            }
+            "promiseAllSettled" => {
+                let mut descriptors = Vec::with_capacity(elements.len());
+                for element in &elements {
+                    let descriptor = match self.value_settlement(element)? {
+                        PromiseSettlement::Resolved(value) => {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                let object = heap.alloc_dynamic();
+                                let status = Value::Str(std::rc::Rc::from("fulfilled"))
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                heap.dynamic_set(object, "status", status);
+                                heap.dynamic_set(object, "value", value);
+                                object
+                            })
+                        }
+                        PromiseSettlement::Rejected(error) => {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                let object = heap.alloc_dynamic();
+                                let status = Value::Str(std::rc::Rc::from("rejected"))
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                heap.dynamic_set(object, "status", status);
+                                let reason = Value::Str(std::rc::Rc::from(error.as_str()))
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                heap.dynamic_set(object, "reason", reason);
+                                object
+                            })
+                        }
+                        PromiseSettlement::Pending => return Ok(Value::Object(target)),
+                    };
+                    descriptors.push(zun_core::Any::object(descriptor.addr() as usize));
+                }
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let result = heap.alloc_array(descriptors.len());
+                    for (index, value) in descriptors.iter().enumerate() {
+                        heap.array_set(result, index, *value);
+                    }
+                    result
+                });
+                let boxed = zun_core::Any::object(result.addr() as usize);
+                zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(target, boxed));
+            }
+            "promiseRace" => {
+                // The first already-settled input wins; a pending input is
+                // skipped (it could not be observed to settle first here).
+                for element in &elements {
+                    match self.value_settlement(element)? {
+                        PromiseSettlement::Resolved(value) => {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.promise_resolve(target, value)
+                            });
+                            return Ok(Value::Object(target));
+                        }
+                        PromiseSettlement::Rejected(error) => {
+                            zun_gc::with_current_heap_mut(|heap| heap.promise_reject(target, error));
+                            return Ok(Value::Object(target));
+                        }
+                        PromiseSettlement::Pending => {}
+                    }
+                }
+            }
+            "promiseAny" => {
+                let mut rejections = 0usize;
+                for element in &elements {
+                    match self.value_settlement(element)? {
+                        PromiseSettlement::Resolved(value) => {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.promise_resolve(target, value)
+                            });
+                            return Ok(Value::Object(target));
+                        }
+                        PromiseSettlement::Rejected(_) => rejections += 1,
+                        // Cannot yet decide between a pending input and a later
+                        // fulfilment; leave the result pending.
+                        PromiseSettlement::Pending => return Ok(Value::Object(target)),
+                    }
+                }
+                let _ = rejections;
+                // AggregateError is not available in the nucleus (Error is not a
+                // realm global and construction has no optional/ordered args), so
+                // `any` rejects with a plain error carrying the standard message.
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.promise_reject(target, "All promises were rejected")
+                });
+            }
+            _ => return Err(RunError::BadToken),
+        }
+        Ok(Value::Object(target))
+    }
+}
+
+/// Settlement of a managed Promise, read into owned data so it survives a
+/// re-entry that may relocate the heap.
+enum PromiseSettlement {
+    Pending,
+    Resolved(zun_core::Any),
+    Rejected(String),
+}
+
+/// A value's object reference, unwrapping an object-tagged `Any`.
+fn as_object_ref(value: &Value) -> Option<zun_gc::Obj> {
+    match value {
+        Value::Object(object) => Some(*object),
+        Value::Any(any) => any
+            .as_object()
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+        _ => None,
+    }
+}
+
+/// Render a thrown value / rejection reason as a Promise rejection message
+/// (Zun's managed Promise stores a string reason). A boxed `Any` is unwrapped
+/// first, so a `string` reason survives being carried as `any`.
+fn value_to_error_string(value: &Value) -> String {
+    match value {
+        Value::Str(message) => message.to_string(),
+        Value::Any(any) => match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+            Some(Value::Str(message)) => message.to_string(),
+            Some(inner) => inner.display(),
+            None => value.display(),
+        },
+        other => other.display(),
     }
 }
 

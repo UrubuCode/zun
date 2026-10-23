@@ -33,7 +33,7 @@ read.
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
-| 9 | Promise | partial | Instance `state/result/isReady/resolve/reject`; no `then/catch/finally`, no statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode |
+| 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Remaining: `withResolvers`, microtask deferral of a *pending*-source reaction (eager-at-settle on Tier 0), AggregateError for `any` |
 | 10 | Proxy / Reflect | partial | `proxyNew` + `reflect_get/reflect_set` exist; no full trap set, no `Reflect` global object surface |
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, `size` as property (is a method), constructor-from-iterable |
 | 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, constructor-from-iterable |
@@ -353,14 +353,53 @@ signature in `check.rs` `Field`.
   `Any`) — rejected at runtime; multi-argument calls to a bound function beyond the
   dynamic-value single-arg model.
 
-## 9. Promise — partial
-`std/` (none) — dispatched in `check.rs`; native `promise.rs`; `await` opcode `0x8D`.
+## 9. Promise — partial  *(method + static surface landed)*
+`std/` (none) — dispatched in `check.rs`; natives registered in `zun_natives/src/promise.rs`,
+implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opcode `0x8D`.
 
-- **Present:** `state() result() isReady() resolve(v) reject(msg)` + `await` integration
-  (scheduler landed per status).
-- **Missing:** `.then(onF,onR) .catch(onR) .finally(cb)`; statics `Promise.resolve/reject/
-  all/allSettled/race/any/withResolvers`. `reject` takes `string`, not arbitrary value.
-- **Notes:** this is a low-level promise cell, not the ECMAScript thenable surface.
+- **Present (low-level cell):** `state() result() isReady() resolve(v) reject(msg)` +
+  `await` integration.
+- **Present (chaining, new):**
+  - `then(onFulfilled?, onRejected?)` — returns a NEW Promise settled from the matching
+    callback's result; a callback that throws rejects the new Promise; an absent callback
+    propagates the original settlement (pass-through value / forwarded rejection). A
+    callback returning a Promise is **adopted** (chained, its settlement mirrored), not
+    wrapped — the standard thenable-adoption rule restricted to the Promise case (arbitrary
+    `then`-able assimilation is deferred).
+  - `catch(onRejected)` ≡ `then(undefined, onRejected)` (lowers to `promiseCatch`).
+  - `finally(onFinally)` — runs `onFinally` on settlement and passes the original
+    settlement through, unless `onFinally` itself throws (then the new Promise rejects).
+- **Present (statics `Promise.*`):** `resolve(v)` (a Promise argument is returned
+  unchanged; otherwise a resolved Promise), `reject(e)`, `all` (array of results, rejects
+  on first rejection, in order), `allSettled` (array of `{status, value|reason}` dynamic
+  descriptors), `race` (first already-settled input wins), `any` (first fulfilment, else a
+  plain rejection — see AggregateError note).
+- **Recognition (sema, `check.rs`):** `Promise.X(...)` statics follow the
+  `check_number_static`/`check_string_static` pattern — a dedicated `check_promise_static`
+  keyed on the `Promise` receiver name (guarded by `!classes_by_name.contains_key`).
+  Instance `then/catch/finally` are a pre-block on a `Ty::Promise` receiver (like the
+  Array `sort/reduce` pre-block), since they take optional function callbacks; an omitted
+  callback lowers to `null`, which the floor reads as "no handler".
+- **Scheduler reuse:** no second scheduler. Reactions run against the source Promise's
+  current settlement and settle the returned Promise cell, so an already-settled chain is
+  itself settled and `await` takes its synchronous fast path. Callbacks re-enter the
+  interpreter via `invoke_callback` (like array callbacks / `functionApply`), rooted across
+  the re-entry with `NativeRootScope`; not JIT-eligible (Tier 0 only).
+- **Known limitation (documented, not faked):** there is no microtask drain inside a plain
+  `run()` — `await` of a *pending* Promise suspends to a host poll (the existing
+  cooperative model). A reaction whose **source is still pending** at call time therefore
+  cannot be driven here: the returned Promise stays pending (the same place a bare
+  `await <pending>` ends up). In practice Zun Promises settle synchronously
+  (`resolve`/`reject`/`Promise.resolve`), so the chaining surface is exercised end-to-end.
+- **AggregateError note:** `Promise.any` with all-rejected inputs rejects with a plain
+  error message (`"All promises were rejected"`). `AggregateError` is unavailable — `Error`
+  is not a realm global and construction has no ordered/optional args (see §22), so the
+  aggregated `errors` array cannot be carried yet.
+- **`reject` reason** is still a `string` (the managed cell stores a string reason); a boxed
+  `any` reason is unwrapped to its string before storage.
+- **Tests:** `zun_vm/tests/promise_surface.rs` (12 end-to-end cases exercising the scheduler
+  via `await`: then-chaining, adoption, rejection skip/propagation, catch, finally
+  pass-through, all/allSettled/race/any, resolve-of-a-Promise).
 
 ## 10. Proxy / Reflect — partial
 - **Present:** `new Proxy(target,handler)` → `proxyNew` (`check.rs:2590`); dynamic
@@ -651,7 +690,9 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      toLocaleString valueOf`.
    - Date (#20): setters, local-time getters, `Date.now/parse/UTC`, `getTimezoneOffset`.
    - Map/Set (#11,#12): `forEach`, construct-from-iterable, `size` as property.
-   - Promise (#9): `then/catch/finally`, statics `resolve/reject/all/allSettled/race/any`.
+   - Promise (#9): ✅ `then/catch/finally` (new-promise + Promise adoption) and statics
+     `resolve/reject/all/allSettled/race/any` landed. Remaining: `withResolvers`,
+     AggregateError for `any`, microtask deferral of a pending-source reaction.
    - TypedArrays/DataView (#18,#19): missing element kinds + full method surface.
    - BigInt (#4): `div/rem/pow/neg`, bitwise/shift, `BigInt()` coercion, `asIntN/asUintN`.
    - Error (#22): `AggregateError`, `cause`, verify `.stack` capture.
