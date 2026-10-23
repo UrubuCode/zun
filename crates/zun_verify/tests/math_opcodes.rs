@@ -41,6 +41,10 @@ const UNARY: &[Opcode] = &[
     Opcode::FloorF64,
     Opcode::CeilF64,
     Opcode::TruncF64,
+    // Not single instructions, but the same shape to the verifier: one
+    // operand in, one out.
+    Opcode::RoundF64,
+    Opcode::SignF64,
 ];
 const BINARY: &[Opcode] = &[Opcode::MinF64, Opcode::MaxF64];
 
@@ -135,7 +139,14 @@ fn fixture_invalid_bad_return_height_from_leftover_math_result() {
     );
 }
 
-const INT_UNARY: &[Opcode] = &[Opcode::ClzI32, Opcode::CtzI32, Opcode::PopcntI32];
+const INT_UNARY: &[Opcode] = &[
+    Opcode::ClzI32,
+    Opcode::CtzI32,
+    Opcode::PopcntI32,
+    // Pre-dates this work and had no fixture anywhere; the coverage guard
+    // below found it, and it is the same one-in-one-out shape.
+    Opcode::NegI32,
+];
 const INT_BINARY: &[Opcode] = &[Opcode::MinI32, Opcode::MaxI32];
 
 fn int_konst(value: i32) -> Instruction {
@@ -194,5 +205,43 @@ fn fixture_invalid_stack_underflow_on_single_operand_int_binary() {
             "{}",
             op.mnemonic()
         );
+    }
+}
+
+/// Guards the invariant itself: every math machine op must appear in the
+/// fixtures above. Adding a row to the master table without a fixture is the
+/// failure this catches.
+#[test]
+fn every_math_machine_op_has_fixtures() {
+    let covered: Vec<Opcode> = UNARY
+        .iter()
+        .chain(BINARY)
+        .chain(INT_UNARY)
+        .chain(INT_BINARY)
+        .copied()
+        .collect();
+    for &op in Opcode::ALL {
+        let mnemonic = op.mnemonic();
+        let is_math = mnemonic.starts_with("sqrt.")
+            || mnemonic.starts_with("abs.")
+            || mnemonic.starts_with("neg.")
+            || mnemonic.starts_with("floor.")
+            || mnemonic.starts_with("ceil.")
+            || mnemonic.starts_with("trunc.")
+            || mnemonic.starts_with("round.")
+            || mnemonic.starts_with("sign.")
+            || mnemonic.starts_with("min.")
+            || mnemonic.starts_with("max.")
+            || mnemonic.starts_with("clz.")
+            || mnemonic.starts_with("ctz.")
+            || mnemonic.starts_with("popcnt.")
+            || mnemonic.starts_with("neg.");
+        if is_math {
+            assert!(
+                covered.contains(&op),
+                "{mnemonic} has no verifier fixture; every opcode ships \
+                 _Valid/_Invalid_* coverage"
+            );
+        }
     }
 }
