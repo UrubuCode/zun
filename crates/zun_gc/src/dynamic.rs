@@ -76,4 +76,68 @@ impl Heap {
     pub fn dynamic_delete(&mut self, object: Obj, name: &str) -> bool {
         self.dynamic_remove(object, name).is_some()
     }
+
+    /// Whether `object` is a dictionary-backed dynamic object (as opposed to a
+    /// fixed-layout typed object).
+    pub fn is_dynamic_object(&self, object: Obj) -> bool {
+        self.dynamic_objects.contains_key(&(object.addr() as usize))
+    }
+
+    /// Own string data-property keys of a dynamic object, in insertion order.
+    pub fn dynamic_keys(&self, object: Obj) -> Option<Vec<String>> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .map(|properties| properties.keys().map(str::to_owned).collect())
+    }
+
+    /// Own string data-property entries of a dynamic object, in insertion order.
+    pub fn dynamic_entries(&self, object: Obj) -> Option<Vec<(String, zun_core::Any)>> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .map(|properties| {
+                properties
+                    .entries()
+                    .map(|(name, value)| (name.to_owned(), value))
+                    .collect()
+            })
+    }
+
+    /// Freeze a dynamic object: later adds/mutations through the dynamic path
+    /// are rejected. Returns `false` if `object` is not a dynamic object.
+    pub fn dynamic_freeze(&mut self, object: Obj) -> bool {
+        match self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            Some(properties) => {
+                properties.freeze();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether a dynamic object has been frozen.
+    pub fn dynamic_is_frozen(&self, object: Obj) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_frozen())
+    }
+
+    /// The `[[Prototype]]` link of a dynamic object, if any.
+    pub fn dynamic_prototype(&self, object: Obj) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.prototype())
+    }
+
+    /// Set the `[[Prototype]]` link of a dynamic object. Returns `false` if
+    /// `object` is not a dynamic object.
+    pub fn dynamic_set_prototype(&mut self, object: Obj, prototype: Option<zun_core::Any>) -> bool {
+        let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) else {
+            return false;
+        };
+        properties.set_prototype(prototype);
+        if let Some(child) = prototype.and_then(|value| value.as_object()) {
+            self.write_barrier(object, child as u64);
+        }
+        true
+    }
 }

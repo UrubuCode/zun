@@ -26,6 +26,152 @@ fn run_source(src: &str) -> Vec<String> {
 }
 
 #[test]
+fn object_keys_values_entries_on_a_dynamic_object_follow_insertion_order() {
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "b", box_any(2));
+            dynamic_set(o, "a", box_any(1));
+            dynamic_set(o, "c", box_any(3));
+            let keys = Object.keys(o);
+            print(keys.length);
+            print(keys[0] as string);
+            print(keys[1] as string);
+            print(keys[2] as string);
+            let values = Object.values(o);
+            print(values[0] as number);
+            print(values[1] as number);
+            print(values[2] as number);
+            let entries = Object.entries(o);
+            let first = entries[0] as Array;
+            print(first[0] as string);
+            print(first[1] as number);
+        }"#,
+    );
+    assert_eq!(out, ["3", "b", "a", "c", "2", "1", "3", "b", "2"]);
+}
+
+#[test]
+fn object_keys_and_values_on_a_typed_object_use_declared_fields() {
+    let out = run_source(
+        "class Point { x: number; y: number; }\n\
+         function main() {\n\
+            let p = new Point(10.0, 20.0);\n\
+            let keys = Object.keys(p);\n\
+            print(keys.length);\n\
+            print(keys[0] as string);\n\
+            print(keys[1] as string);\n\
+            let values = Object.values(p);\n\
+            print(values[0] as number);\n\
+            print(values[1] as number);\n\
+         }",
+    );
+    assert_eq!(out, ["2", "x", "y", "10", "20"]);
+}
+
+#[test]
+fn object_assign_merges_sources_and_returns_the_target() {
+    let out = run_source(
+        r#"function main() {
+            let target = dynamic_new();
+            dynamic_set(target, "a", box_any(1));
+            let source = dynamic_new();
+            dynamic_set(source, "b", box_any(2));
+            let result = Object.assign(target, source);
+            let keys = Object.keys(result);
+            print(keys.length);
+            print(keys[0] as string);
+            print(keys[1] as string);
+            print(dynamic_get(target, "b") as number);
+        }"#,
+    );
+    assert_eq!(out, ["2", "a", "b", "2"]);
+}
+
+#[test]
+fn object_freeze_blocks_dynamic_mutation_and_is_frozen_reports_it() {
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            if (Object.isFrozen(o)) { print("before-frozen"); } else { print("before-open"); }
+            Object.freeze(o);
+            if (Object.isFrozen(o)) { print("after-frozen"); } else { print("after-open"); }
+            dynamic_set(o, "b", box_any(2));
+            print(Object.keys(o).length);
+        }"#,
+    );
+    assert_eq!(out, ["before-open", "after-frozen", "1"]);
+}
+
+#[test]
+fn object_is_implements_same_value_including_nan_and_negative_zero() {
+    let out = run_source(
+        r#"function main() {
+            let nan = 0.0 / 0.0;
+            if (Object.is(nan, nan)) { print("nan-equal"); }
+            let zero = 0.0;
+            let negative = -0.0;
+            if (Object.is(zero, negative)) { print("zero-equal"); } else { print("zero-distinct"); }
+            if (Object.is(negative, negative)) { print("neg-equal"); }
+            if (Object.is(2.0, 2.0)) { print("two-equal"); }
+        }"#,
+    );
+    assert_eq!(out, ["nan-equal", "zero-distinct", "neg-equal", "two-equal"]);
+}
+
+#[test]
+fn object_from_entries_round_trips_object_entries() {
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            dynamic_set(o, "b", box_any(2));
+            let rebuilt = Object.fromEntries(Object.entries(o));
+            let keys = Object.keys(rebuilt);
+            print(keys.length);
+            print(keys[0] as string);
+            print(keys[1] as string);
+            print(dynamic_get(rebuilt, "a") as number);
+            print(dynamic_get(rebuilt, "b") as number);
+        }"#,
+    );
+    assert_eq!(out, ["2", "a", "b", "1", "2"]);
+}
+
+#[test]
+fn object_has_own_property_on_dynamic_and_typed_objects() {
+    let out = run_source(
+        "class Point { x: number; y: number; }\n\
+         function main() {\n\
+            let o = dynamic_new();\n\
+            dynamic_set(o, \"a\", box_any(1));\n\
+            if (o.hasOwnProperty(\"a\")) { print(\"dyn-has-a\"); }\n\
+            if (!o.hasOwnProperty(\"b\")) { print(\"dyn-no-b\"); }\n\
+            let p = new Point(1.0, 2.0);\n\
+            if (p.hasOwnProperty(\"x\")) { print(\"typed-has-x\"); }\n\
+            if (!p.hasOwnProperty(\"z\")) { print(\"typed-no-z\"); }\n\
+         }",
+    );
+    assert_eq!(out, ["dyn-has-a", "dyn-no-b", "typed-has-x", "typed-no-z"]);
+}
+
+#[test]
+fn object_create_sets_the_prototype_chain_for_is_prototype_of() {
+    let out = run_source(
+        r#"function main() {
+            let proto = dynamic_new();
+            dynamic_set(proto, "kind", box_any(7));
+            let child = Object.create(proto);
+            if (proto.isPrototypeOf(child)) { print("proto-of-child"); }
+            let other = dynamic_new();
+            if (!other.isPrototypeOf(child)) { print("not-proto-of-child"); }
+        }"#,
+    );
+    assert_eq!(out, ["proto-of-child", "not-proto-of-child"]);
+}
+
+#[test]
 fn hello_world() {
     assert_eq!(
         run_source(r#"function main() { print("hello, zun"); }"#),

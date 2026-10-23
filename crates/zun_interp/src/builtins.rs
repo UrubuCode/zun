@@ -114,6 +114,19 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "promiseState",
         "promiseResult",
         "promiseIsReady",
+        "objectKeys",
+        "objectValues",
+        "objectEntries",
+        "objectAssign",
+        "objectFreeze",
+        "objectIsFrozen",
+        "objectCreate",
+        "objectGetPrototypeOf",
+        "objectSetPrototypeOf",
+        "objectFromEntries",
+        "objectIs",
+        "objectHasOwn",
+        "objectIsPrototypeOf",
     ] {
         if zun_natives::resolve("zun:collections", name)
             .or_else(|| zun_natives::resolve("zun:promise", name))

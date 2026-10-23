@@ -30,7 +30,7 @@ read.
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
 | 5 | Symbol | partial | Only `Symbol.iterator` wired as a dispatch point; `SymbolRegistry` in core unused. No `Symbol()`, `Symbol.for/keyFor`, other well-known symbols, user symbol-keyed members |
-| 6 | Object | missing | **No `Object` global at all** — `keys/values/entries/assign/freeze/create/getPrototypeOf/defineProperty/…` all absent |
+| 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Rich custom surface; missing standard `forEach/find/some/every/findLast/flatMap/join/splice/shift/unshift/keys/values/entries`, statics `Array.from/of/isArray`, callback `sort`, iterator-returning methods |
 | 8 | Function | missing | **No `call/apply/bind`**; no `.name/.length` object surface, no `Function` constructor |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject`; no `then/catch/finally`, no statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | partial | Only generic `add/sub/mul/div/rem.f64` + `conv`. **No dedicated `fsqrt/fabs/fmin/fmax/fneg` opcodes** — Math routes through `call.builtin` to native libm (`math.rs`), not ZIL ops lowering to Cranelift as §3 specifies |
 
-**Counts:** done 3 · partial 15 · missing 5 (of 26 nucleus items, JSON excluded).
+**Counts:** done 3 · partial 16 · missing 4 (of 26 nucleus items, JSON excluded).
 
 ---
 
@@ -114,17 +114,42 @@ and only as a hardcoded dispatch point in `check.rs:3080-3106` (for-of / explici
   already exists (measured 16.5x) — the *surface* is unfinished.
 - **Notes:** foundational — iteration and many built-in behaviors ride on this.
 
-## 6. Object — missing  *(HIGH priority)*
-There is **no `Object` global**. No static namespace is recognized in sema.
+## 6. Object — partial  *(HIGH priority — core surface landed)*
+The `Object` global is recognized in sema (`check.rs` `check_object_static` + the
+instance reflectors in the `MethodCall` arm) and lowered to `zun:collections`
+`object*` managed builtins implemented in the interpreter floor
+(`zun_interp/src/collections.rs`). The statics operate on **both** fixed-layout typed
+objects and `DynamicObject`s.
 
-- **Missing (all):** `Object.keys/values/entries/assign/freeze/isFrozen/seal/isSealed/
-  create/getPrototypeOf/setPrototypeOf/defineProperty/defineProperties/
-  getOwnPropertyNames/getOwnPropertyDescriptor/getOwnPropertySymbols/fromEntries/
-  preventExtensions/is`. Instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable/
-  toString/valueOf`.
-- **Notes:** `DynamicObject` (`zun_core/dynamic_object.rs`) supplies the dynamic shape,
-  and `lddyn/stdyn` opcodes exist — the plumbing for a reflective `Object.*` is present;
-  the API surface is not. Highest-value gap per GOAL.
+- **Present (statics):** `keys values entries assign freeze isFrozen create
+  getPrototypeOf setPrototypeOf fromEntries is`.
+- **Present (instance):** `hasOwnProperty isPrototypeOf`.
+- **Key enumeration:** for a typed object, own keys = its declared instance fields in
+  definition order, walking base classes first and excluding `static`/private (`#`)
+  fields; for a `DynamicObject`, its dynamic **string** keys in insertion order
+  (`DynamicObject` now keeps string properties in an insertion-ordered vector + index,
+  replacing the previous sorted `BTreeMap`).
+- **Freeze semantics:** `freeze` sets a per-dynamic-object frozen flag; the dynamic
+  store path (`DynamicObject::set`/`remove`, hence `stdyn`/`dynamic_set`) then rejects
+  adds, overwrites, and deletes (non-throwing). Typed objects already have an immutable
+  fixed layout, so `freeze` is a no-op on them and `isFrozen` reports `true`.
+- **Prototype model:** `DynamicObject` carries an optional `[[Prototype]]` link;
+  `create`/`getPrototypeOf`/`setPrototypeOf`/`isPrototypeOf` operate over it. Typed
+  objects expose no reflective prototype (their `getPrototypeOf` is `null`).
+- **`Object.is`:** ECMAScript `SameValue` (NaN equals NaN; +0 distinct from −0;
+  numbers compared by IEEE-754 bits after the NaN check; strings by content; objects by
+  identity).
+- **Deferred (documented follow-up — need a property-descriptor model that Zun does not
+  have yet):** `defineProperty defineProperties getOwnPropertyDescriptor
+  getOwnPropertyDescriptors seal isSealed preventExtensions isExtensible
+  getOwnPropertyNames getOwnPropertySymbols`, and instance `propertyIsEnumerable`. These
+  require configurable/enumerable/writable attribute slots and a non-extensible flag that
+  is distinct from `freeze`. Implementing them soundly means first adding a descriptor
+  layer to `DynamicObject` (and deciding how it interacts with the frozen typed-object
+  floor) — a design decision left for the human. Not faked.
+- **Notes:** these builtins allocate/throw, so per the centralized JIT-eligibility rule
+  (`zun_codegen/src/eligible.rs`) they are **not** in the Tier-1 allowlist and run on the
+  always-correct Tier-0 interpreter; there is no separate JIT path to keep in sync.
 
 ## 7. Array — partial
 `std/array.zun` (large custom surface) + special ZIL lowering for `push/pop`
@@ -283,11 +308,12 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
 ## Prioritized gap list (matches GOAL.md tiers)
 
 ### HIGH — "everything uses these"
-1. **`Object.*`** (#6) — implement the global: `keys values entries assign freeze isFrozen
-   seal create getPrototypeOf setPrototypeOf defineProperty defineProperties
-   getOwnPropertyNames getOwnPropertyDescriptor fromEntries preventExtensions is`, plus
-   instance `hasOwnProperty isPrototypeOf`. Plumbing (`DynamicObject`, `lddyn/stdyn`)
-   exists.
+1. **`Object.*`** (#6) — ✅ core surface landed: `keys values entries assign freeze
+   isFrozen create getPrototypeOf setPrototypeOf fromEntries is` + instance
+   `hasOwnProperty isPrototypeOf`. **Remaining (deferred):** the descriptor-based statics
+   (`defineProperty defineProperties getOwnPropertyDescriptor(s) seal isSealed
+   preventExtensions isExtensible getOwnPropertyNames getOwnPropertySymbols`) + instance
+   `propertyIsEnumerable` — blocked on introducing a property-descriptor model (see §6).
 2. **`Function.call/apply/bind`** (#8) — reflective invokers (PLAN §3.1 says implement
    directly); add `.name/.length`. `CallIndirect` + function-handle base exists.
 3. **Symbol — complete** (#5) — `Symbol()` unique primitives; `Symbol.for/keyFor` (wire
@@ -322,8 +348,9 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
 ---
 
 ## Surprising findings
-- **Object and Function have zero surface** — not even a recognized global namespace;
-  these are the two most-used built-ins and are the top-tier gaps.
+- **Object and Function started with zero surface** — not even a recognized global
+  namespace. `Object` now has its enumeration/reflection surface (§6); `Function.call/
+  apply/bind` remains the top-tier gap.
 - **Number predicates are instance-only** (`x.isNaN()`), the opposite of idiomatic JS;
   the `Number.*` statics are entirely absent.
 - **Array carries a large non-standard "collection algebra" surface** (`chunk windowed

@@ -1404,8 +1404,303 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?,
                 ))
             }
+            "objectKeys" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let entries = self.object_own_entries(obj)?;
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(entries.len());
+                    for (index, (key, _)) in entries.iter().enumerate() {
+                        let item = Value::Str(key.clone().into())
+                            .box_any(heap)
+                            .unwrap_or_else(zun_core::Any::null);
+                        let _ = heap.array_set(array, index, item);
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
+            "objectValues" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let entries = self.object_own_entries(obj)?;
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(entries.len());
+                    for (index, (_, value)) in entries.iter().enumerate() {
+                        let item = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                        let _ = heap.array_set(array, index, item);
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
+            "objectEntries" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let entries = self.object_own_entries(obj)?;
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(entries.len());
+                    for (index, (key, value)) in entries.iter().enumerate() {
+                        let key_any = Value::Str(key.clone().into())
+                            .box_any(heap)
+                            .unwrap_or_else(zun_core::Any::null);
+                        let value_any = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                        let pair = heap.alloc_array(2);
+                        let _ = heap.array_set(pair, 0, key_any);
+                        let _ = heap.array_set(pair, 1, value_any);
+                        let _ = heap.array_set(array, index, zun_core::Any::object(pair.addr() as usize));
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
+            "objectAssign" => {
+                let target = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let source = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let entries = self.object_own_entries(source)?;
+                for (key, value) in entries {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(target, key, boxed);
+                    });
+                }
+                Ok(Value::Object(target))
+            }
+            "objectFreeze" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));
+                Ok(Value::Object(obj))
+            }
+            "objectIsFrozen" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A dynamic object is frozen only when `Object.freeze` ran on it;
+                // a fixed-layout typed object has an immutable shape, so it is
+                // reported frozen.
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                let frozen = if is_dynamic {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_is_frozen(obj))
+                } else {
+                    true
+                };
+                Ok(Value::Bool(frozen))
+            }
+            "objectCreate" => {
+                let prototype = prototype_from_arg(args.first().ok_or(RunError::BadToken)?);
+                let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
+                Ok(Value::Object(obj))
+            }
+            "objectGetPrototypeOf" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
+                Ok(Value::Any(prototype.unwrap_or_else(zun_core::Any::null)))
+            }
+            "objectSetPrototypeOf" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let prototype = prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?);
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
+                Ok(Value::Object(obj))
+            }
+            "objectFromEntries" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(array))
+                    .ok_or(RunError::BadToken)?;
+                let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                for index in 0..length {
+                    let pair_any = zun_gc::with_current_heap(|heap| heap.array_get(array, index))
+                        .ok_or(RunError::BadToken)?;
+                    let pair = pair_any.as_object().ok_or(RunError::BadToken)?;
+                    let pair = unsafe { zun_gc::Obj::from_addr(pair as *mut u64) };
+                    let (key_any, value_any) = zun_gc::with_current_heap(|heap| {
+                        (heap.array_get(pair, 0), heap.array_get(pair, 1))
+                    });
+                    let key_any = key_any.ok_or(RunError::BadToken)?;
+                    let value_any = value_any.ok_or(RunError::BadToken)?;
+                    let key = zun_gc::with_current_heap(|heap| stringify_any(key_any, heap))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(obj, key, value_any);
+                    });
+                }
+                Ok(Value::Object(obj))
+            }
+            "objectIs" => {
+                let left = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let right = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                Ok(Value::Bool(same_value(&left, &right)))
+            }
+            "objectHasOwn" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(key) => key.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                let has = if is_dynamic {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_has(obj, &key))
+                } else {
+                    self.object_own_entries(obj)?.iter().any(|(name, _)| name == &key)
+                };
+                Ok(Value::Bool(has))
+            }
+            "objectIsPrototypeOf" => {
+                let prototype = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let target = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let prototype_addr = prototype.addr() as usize;
+                let mut current = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(target));
+                let mut found = false;
+                while let Some(link) = current {
+                    match link.as_object() {
+                        Some(addr) if addr == prototype_addr => {
+                            found = true;
+                            break;
+                        }
+                        Some(addr) => {
+                            let next = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
+                            current = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(next));
+                        }
+                        None => break,
+                    }
+                }
+                Ok(Value::Bool(found))
+            }
             _ => Err(RunError::BadToken),
         }
     }
 
+    /// Enumerate the own enumerable string keys and their values for either a
+    /// dynamic object (insertion-ordered dynamic keys) or a fixed-layout typed
+    /// object (declared instance fields, base classes first, static and private
+    /// fields excluded).
+    pub(crate) fn object_own_entries(
+        &self,
+        obj: zun_gc::Obj,
+    ) -> Result<Vec<(String, Value)>, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+            let entries = zun_gc::with_current_heap(|heap| heap.dynamic_entries(obj))
+                .ok_or(RunError::BadToken)?;
+            let mut out = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                let value = zun_gc::with_current_heap(|heap| Value::unbox_any(value, heap))
+                    .ok_or(RunError::BadToken)?;
+                out.push((key, value));
+            }
+            return Ok(out);
+        }
+        // Typed object: walk the declared-field layout from the base-most type
+        // down to the concrete type so keys read in definition order.
+        let type_rid = obj.type_rid();
+        let mut chain = Vec::new();
+        let mut current = type_rid;
+        loop {
+            chain.push(current);
+            let ty = self
+                .module
+                .tables
+                .type_defs
+                .get(current as usize - 1)
+                .ok_or(RunError::BadToken)?;
+            if ty.base.is_null() || ty.base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                break;
+            }
+            current = ty.base.rid();
+        }
+        chain.reverse();
+        let mut out = Vec::new();
+        for type_rid in chain {
+            let (field_start, field_end) = {
+                let ty = self
+                    .module
+                    .tables
+                    .type_defs
+                    .get(type_rid as usize - 1)
+                    .ok_or(RunError::BadToken)?;
+                (ty.field_start, ty.field_end)
+            };
+            for field_rid in field_start..field_end {
+                let field = self
+                    .module
+                    .tables
+                    .field_defs
+                    .get(field_rid as usize - 1)
+                    .ok_or(RunError::BadToken)?;
+                if field.is_static || field.is_private {
+                    continue;
+                }
+                let name = self.module.strings.get(field.name).to_string();
+                let layout = self.types.get_field(field_rid).ok_or(RunError::BadToken)?;
+                let value = zun_gc::with_current_heap(|heap| {
+                    super::value::decode_field(layout.kind, obj.field(layout.slot), heap)
+                });
+                out.push((name, value));
+            }
+        }
+        Ok(out)
+    }
+
+}
+
+/// Interpret an argument as a `[[Prototype]]` link: `null`/`undefined` clears
+/// it, an object reference becomes the prototype, anything else is ignored.
+fn prototype_from_arg(value: &Value) -> Option<zun_core::Any> {
+    match value {
+        Value::Null | Value::Void => None,
+        Value::Object(object) => Some(zun_core::Any::object(object.addr() as usize)),
+        Value::Any(any) => match any.tag() {
+            zun_core::AnyTag::Null | zun_core::AnyTag::Void => None,
+            zun_core::AnyTag::Object => Some(*any),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Coerce a boxed value to a property-key string (ECMAScript ToPropertyKey for
+/// the string cases this floor supports).
+fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<String> {
+    match Value::unbox_any(any, heap)? {
+        Value::Str(text) => Some(text.to_string()),
+        Value::Int(value, _) => Some(value.to_string()),
+        Value::Float(value, _) => Some(
+            if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e15 {
+                format!("{}", value as i64)
+            } else {
+                format!("{value}")
+            },
+        ),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+/// Unbox an argument to its concrete value (an `Any` carrier is unwrapped).
+fn unbox_arg(value: &Value) -> Result<Value, RunError> {
+    match value {
+        Value::Any(any) => {
+            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).ok_or(RunError::BadToken)
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// ECMAScript `SameValue`: like `===` but `NaN` equals `NaN` and `+0` differs
+/// from `-0`. Numbers compare by IEEE-754 bit pattern after the `NaN` check.
+fn same_value(left: &Value, right: &Value) -> bool {
+    let number = |value: &Value| match value {
+        Value::Int(value, _) => Some(*value as f64),
+        Value::Float(value, _) => Some(*value),
+        _ => None,
+    };
+    if let (Some(left), Some(right)) = (number(left), number(right)) {
+        if left.is_nan() && right.is_nan() {
+            return true;
+        }
+        return left.to_bits() == right.to_bits();
+    }
+    match (left, right) {
+        (Value::Bool(left), Value::Bool(right)) => left == right,
+        (Value::Str(left), Value::Str(right)) => left == right,
+        (Value::Object(left), Value::Object(right)) => left.addr() == right.addr(),
+        (Value::Null, Value::Null) => true,
+        (Value::Void, Value::Void) => true,
+        _ => false,
+    }
 }

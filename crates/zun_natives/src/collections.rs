@@ -274,5 +274,22 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "dynamicCall0", params: &[Opaque, Str], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall1", params: &[Opaque, Str, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall2", params: &[Opaque, Str, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `Object.*` reflective statics. These touch the managed heap (dynamic
+        // objects and typed field layouts), so the interpreter intercepts them
+        // by name; the signatures here fix only the argument count the verifier
+        // pops. `Opaque`/`Any` stand for "any managed value".
+        NativeFn { name: "objectKeys", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "objectValues", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "objectEntries", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "objectAssign", params: &[DynamicObject, Opaque], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "objectFreeze", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectIsFrozen", params: &[Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "objectCreate", params: &[Opaque], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "objectGetPrototypeOf", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectSetPrototypeOf", params: &[DynamicObject, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectFromEntries", params: &[Array], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "objectIs", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "objectHasOwn", params: &[Opaque, Str], ret: Bool, imp: unavailable },
+        NativeFn { name: "objectIsPrototypeOf", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
     ],
 };

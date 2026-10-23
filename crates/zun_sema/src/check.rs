@@ -927,6 +927,93 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower an `Object.<method>(...)` reflective static to its managed
+    /// builtin. Operates on both typed objects (declared fields) and dynamic
+    /// objects (insertion-ordered dynamic keys); the heavy lifting lives in the
+    /// interpreter floor. Descriptor-based statics are intentionally absent —
+    /// Zun has no property-descriptor model yet (see NUCLEUS.md).
+    fn check_object_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let intrinsic = |name: &str| {
+            zun_natives::resolve("zun:collections", name).map(|(id, _)| id)
+        };
+        let builtin = |checker: &mut Self, name: &str, checked: Vec<hir::Expr>, ty: Ty| {
+            let Some(id) = intrinsic(name) else {
+                checker.error(span, format!("missing Object intrinsic `{name}`"));
+                return checker.poison(span);
+            };
+            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: checked }, ty, span }
+        };
+        // Expected argument count per static (`assign` is variadic: 1+).
+        let fixed = match method {
+            "keys" | "values" | "entries" | "freeze" | "isFrozen" | "create"
+            | "getPrototypeOf" | "fromEntries" => Some(1usize),
+            "setPrototypeOf" | "is" => Some(2usize),
+            "assign" => None,
+            _ => {
+                self.error(
+                    method_span,
+                    format!("`Object.{method}` is not supported in this runtime"),
+                );
+                return self.poison(span);
+            }
+        };
+        let mut checked: Vec<hir::Expr> =
+            args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+        if let Some(expected) = fixed {
+            if checked.len() != expected {
+                self.error(
+                    span,
+                    format!("`Object.{method}` expects {expected} argument(s), found {}", checked.len()),
+                );
+                return self.poison(span);
+            }
+        } else if checked.is_empty() {
+            self.error(span, "`Object.assign` expects at least one argument");
+            return self.poison(span);
+        }
+        match method {
+            "keys" | "values" | "entries" => {
+                let name = match method {
+                    "keys" => "objectKeys",
+                    "values" => "objectValues",
+                    _ => "objectEntries",
+                };
+                builtin(self, name, checked, Ty::Array)
+            }
+            "freeze" => builtin(self, "objectFreeze", checked, Ty::Any),
+            "isFrozen" => builtin(self, "objectIsFrozen", checked, Ty::Boolean),
+            "create" => builtin(self, "objectCreate", checked, Ty::DynamicObject),
+            "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
+            "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),
+            "fromEntries" => builtin(self, "objectFromEntries", checked, Ty::DynamicObject),
+            "is" => builtin(self, "objectIs", checked, Ty::Boolean),
+            "assign" => {
+                let Some(id) = intrinsic("objectAssign") else {
+                    self.error(span, "missing Object intrinsic `objectAssign`");
+                    return self.poison(span);
+                };
+                let mut sources = checked.split_off(1);
+                let mut acc = checked.pop().unwrap();
+                for source in sources.drain(..) {
+                    acc = hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, source] },
+                        ty: Ty::DynamicObject,
+                        span,
+                    };
+                }
+                acc
+            }
+            _ => unreachable!(),
+        }
+    }
+
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
@@ -1823,6 +1910,15 @@ impl Checker<'_> {
             } => {
                 if let ast::Expr::Ident(class) = receiver.as_ref() {
                     let class_name = self.text(class).to_string();
+                    if class_name == "Object" && !self.classes_by_name.contains_key("Object") {
+                        return self.check_object_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
                     if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
                         if zun_natives::module(&module).is_none() {
                             // Source-module namespaces are handled below.
@@ -1920,6 +2016,32 @@ impl Checker<'_> {
                 }
                 let receiver = self.check_expr(cx, receiver);
                 let mname = self.text(method).to_string();
+                // `Object.prototype` instance reflectors over typed, dynamic, or
+                // `any` receivers. Checked before the generic `any` member-call
+                // path so they are not swallowed by dynamic dispatch.
+                if (mname == "hasOwnProperty" || mname == "isPrototypeOf")
+                    && args.len() == 1
+                    && matches!(
+                        receiver.ty,
+                        Ty::DynamicObject | Ty::Any | Ty::Instance(_)
+                    )
+                {
+                    let argument = self.check_expr(cx, &args[0]);
+                    let (name, ty) = if mname == "hasOwnProperty" {
+                        ("objectHasOwn", Ty::Boolean)
+                    } else {
+                        ("objectIsPrototypeOf", Ty::Boolean)
+                    };
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", name) else {
+                        self.error(span, format!("missing Object intrinsic `{name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, argument] },
+                        ty,
+                        span,
+                    };
+                }
                 if receiver.ty == Ty::Array && mname == "pop" {
                     if !args.is_empty() {
                         self.error(span, "Array.pop expects no arguments");

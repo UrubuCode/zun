@@ -413,4 +413,42 @@ mod tests {
         assert_eq!(map.get(1, |key| key.as_int() == Some(9)).and_then(Any::as_int), Some(90));
         assert_eq!(map.len(), 6);
     }
+
+    #[test]
+    fn dynamic_object_keeps_string_keys_in_insertion_order() {
+        let mut object = DynamicObject::new();
+        object.set("b", Any::int(2));
+        object.set("a", Any::int(1));
+        object.set("c", Any::int(3));
+        assert_eq!(object.keys().collect::<Vec<_>>(), ["b", "a", "c"]);
+        // Overwriting keeps position.
+        object.set("a", Any::int(10));
+        assert_eq!(object.keys().collect::<Vec<_>>(), ["b", "a", "c"]);
+        assert_eq!(object.get("a").and_then(Any::as_int), Some(10));
+        // Removal preserves the order of the survivors.
+        object.remove("b");
+        assert_eq!(object.keys().collect::<Vec<_>>(), ["a", "c"]);
+    }
+
+    #[test]
+    fn dynamic_object_freeze_rejects_adds_and_mutations() {
+        let mut object = DynamicObject::new();
+        object.set("a", Any::int(1));
+        object.freeze();
+        assert!(object.is_frozen());
+        // Neither a new key nor an overwrite takes effect once frozen.
+        assert_eq!(object.set("b", Any::int(2)), None);
+        assert_eq!(object.set("a", Any::int(9)), None);
+        assert_eq!(object.remove("a"), None);
+        assert_eq!(object.keys().collect::<Vec<_>>(), ["a"]);
+        assert_eq!(object.get("a").and_then(Any::as_int), Some(1));
+    }
+
+    #[test]
+    fn dynamic_object_tracks_its_prototype_link() {
+        let mut object = DynamicObject::new();
+        assert_eq!(object.prototype(), None);
+        object.set_prototype(Some(Any::object(0x2000)));
+        assert_eq!(object.prototype().and_then(Any::as_object), Some(0x2000));
+    }
 }
