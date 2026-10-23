@@ -40,16 +40,58 @@ class Date {
     utcDayOfYear(): i32 { return date.dayOfYear(this.millis); }
     isoDate(): string { return date.isoDate(this.millis); }
     isoDateTime(): string { return date.isoDateTime(this.millis); }
+    // The JS-named getters follow JS conventions, which differ from the
+    // calendar accessors above: months are 0-based and the weekday is
+    // 0-based from Sunday, where `utcMonth`/`utcWeekday` are 1-based and
+    // ISO (1 = Monday). Both used to return the calendar value directly,
+    // so `getUTCMonth()` was off by one and `getUTCDay()` gave 7 for the
+    // Sunday JS calls 0 — wrong answers rather than missing ones.
     getUTCFullYear(): i32 { return this.utcYear(); }
-    getUTCMonth(): i32 { return this.utcMonth(); }
+    getUTCMonth(): i32 { return this.utcMonth() - 1; }
     getUTCDate(): i32 { return this.utcDay(); }
     getUTCHours(): i32 { return this.utcHour(); }
     getUTCMinutes(): i32 { return this.utcMinute(); }
     getUTCSeconds(): i32 { return this.utcSecond(); }
     getUTCMilliseconds(): i32 { return this.utcMillisecond(); }
     getUTCWeekday(): i32 { return this.utcWeekday(); }
-    getUTCDay(): i32 { return this.utcWeekday(); }
+    getUTCDay(): i32 { return this.utcWeekday() % 7; }
     getUTCDayOfYear(): i32 { return this.utcDayOfYear(); }
+
+    // UTC-only calendar, so local time is UTC and the offset is always zero.
+    // Reporting 0 is accurate here; it is not a stub.
+    getTimezoneOffset(): i32 { return 0; }
+
+    // Setters rebuild the timestamp from the components, replacing one. Each
+    // returns the new timestamp, as JS does. Out-of-range values roll over
+    // (month 13 is January of the next year), also as JS does.
+    setUTCFullYear(value: i32): i64 {
+        this.millis = date.fromUTC(value as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setUTCMonth(value: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, (value + 1) as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setUTCDate(value: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, value as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setUTCHours(value: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, value as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setUTCMinutes(value: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, value as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setUTCSeconds(value: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, value as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setUTCMilliseconds(value: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, value as i64);
+        return this.millis;
+    }
     toISOString(): string { return this.isoDateTime(); }
     toJSON(): string { return this.toISOString(); }
     toString(): string { return this.isoDateTime(); }
@@ -61,4 +103,8 @@ class Date {
     static fromMillis(value: i64): Date { return new Date(value); }
     static fromISO(value: string): Date { return new Date(date.parseIsoDateTime(value)); }
     static fromISODate(value: string): Date { return new Date(date.parseIsoDate(value)); }
+    // `Date.UTC(year, month, ...)` takes a 0-based month, as JS does.
+    static UTC(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, milli: i32): i64 {
+        return date.fromUTC(year as i64, (month + 1) as i64, day as i64, hour as i64, minute as i64, second as i64, milli as i64);
+    }
 }

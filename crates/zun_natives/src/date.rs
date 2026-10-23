@@ -132,6 +132,24 @@ fn parse_iso_date(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
         .ok_or_else(|| NativeError(format!("parseIsoDate: invalid ISO date `{value}`")))
 }
 
+/// Compose a timestamp from UTC components. `month` is 1-based, like the
+/// value `month()` returns; `Date.UTC` converts from JS's 0-based form.
+fn from_utc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let at = |index: usize| -> Result<i64, NativeError> {
+        match args.get(index) {
+            Some(NativeArg::Int(value)) => Ok(*value),
+            Some(NativeArg::Float(value)) => Ok(*value as i64),
+            _ => Err(NativeError("fromUTC: expected seven integers".into())),
+        }
+    };
+    let year = i32::try_from(at(0)?)
+        .map_err(|_| NativeError("fromUTC: year out of range".into()))?;
+    let value = zun_core::DateValue::from_utc(year, at(1)?, at(2)?, at(3)?, at(4)?, at(5)?, at(6)?)
+        .and_then(|date| date.millis())
+        .ok_or_else(|| NativeError("fromUTC: date out of range".into()))?;
+    Ok(NativeValue::Int(value))
+}
+
 pub const MODULE: crate::Module = crate::Module {
     name: "zun:date",
     functions: &[
@@ -218,6 +236,12 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[Str],
             ret: I64,
             imp: parse_iso_date,
+        },
+        NativeFn {
+            name: "fromUTC",
+            params: &[I64, I64, I64, I64, I64, I64, I64],
+            ret: I64,
+            imp: from_utc,
         },
     ],
 };

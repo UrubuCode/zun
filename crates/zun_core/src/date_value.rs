@@ -9,6 +9,45 @@ impl DateValue {
     pub const fn millis(self) -> Option<i64> { if self.valid { Some(self.millis) } else { None } }
     pub fn compare(self, other: Self) -> Option<std::cmp::Ordering> { Some(self.millis()?.cmp(&other.millis()?)) }
 
+    /// Build a timestamp from UTC calendar components.
+    ///
+    /// The inverse of [`utc_date`](Self::utc_date) and
+    /// [`utc_time`](Self::utc_time), and the primitive the `Date` setters and
+    /// `Date.UTC` need: without it a component could be read but never
+    /// written. `month` is 1-based here, matching what `utc_date` returns;
+    /// the JS-facing 0-based form is converted at that boundary.
+    ///
+    /// Out-of-range components roll over as JS does — month 13 of 2020 is
+    /// January 2021, and hour 25 is 1am the next day — which falls out of
+    /// doing the arithmetic in absolute units rather than validating.
+    pub fn from_utc(
+        year: i32,
+        month: i64,
+        day: i64,
+        hour: i64,
+        minute: i64,
+        second: i64,
+        milli: i64,
+    ) -> Option<Self> {
+        // Normalize the month first so the year absorbs any overflow; the
+        // civil-days conversion needs a month in 1..=12.
+        let zero_based = month.checked_sub(1)?;
+        let year = i64::from(year).checked_add(zero_based.div_euclid(12))?;
+        let month = zero_based.rem_euclid(12) + 1;
+        let year = i32::try_from(year).ok()?;
+
+        // Day is applied as an offset from the first of the month so that an
+        // out-of-range day rolls into neighbouring months.
+        let days = days_from_civil(year, month as u32, 1)?.checked_add(day.checked_sub(1)?)?;
+        let millis = days
+            .checked_mul(86_400_000)?
+            .checked_add(hour.checked_mul(3_600_000)?)?
+            .checked_add(minute.checked_mul(60_000)?)?
+            .checked_add(second.checked_mul(1_000)?)?
+            .checked_add(milli)?;
+        Some(Self::from_millis(millis))
+    }
+
     pub fn utc_date(self) -> Option<(i32, u32, u32)> {
         let days = self.millis()?.div_euclid(86_400_000);
         let z = days + 719_468;

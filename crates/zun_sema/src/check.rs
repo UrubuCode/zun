@@ -2398,7 +2398,12 @@ impl Checker<'_> {
                             if param_tys.len() == args.len() {
                                 let mut checked = Vec::with_capacity(args.len());
                                 for (arg, &expected) in args.iter().zip(&param_tys) {
-                                    let value = self.check_expr(cx, arg);
+                                    let mut value = self.check_expr(cx, arg);
+                                    // The only argument-checking site that
+                                    // skipped this, so a bare literal failed
+                                    // here while the identical argument was
+                                    // accepted through every other call shape.
+                                    coerce_numeric_literal(&mut value, expected);
                                     if !expected.is_error()
                                         && !value.ty.is_error()
                                         && !self.is_assignable(value.ty, expected)
@@ -3270,7 +3275,13 @@ impl Checker<'_> {
                 }
                 let mut checked = Vec::with_capacity(args.len());
                 for (arg, &expected) in args.iter().zip(&param_tys) {
-                    let value = self.check_expr(cx, arg);
+                    let mut value = self.check_expr(cx, arg);
+                    // Instance and free calls narrow a bare numeric literal to
+                    // the parameter type; static calls did not, so
+                    // `Date.UTC(2020, 0, 1, ...)` failed on literals that the
+                    // same arguments would accept through any other call
+                    // shape.
+                    coerce_numeric_literal(&mut value, expected);
                     if !expected.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                         self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
                     }

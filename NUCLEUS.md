@@ -44,7 +44,7 @@ read.
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping. Missing `isView`, resizable buffers |
 | 18 | DataView | partial | Only `getUint32/setUint32/getUint16/setUint16/getFloat64/setFloat64`; missing Int8/16/32, Uint8, Float32, BigInt64/Uint64, `byteLength/byteOffset/buffer` |
 | 19 | TypedArrays | partial | Only `Uint8Array/Uint16Array/Uint32Array/Float64Array`, each only `get/set`. Missing Int8/16/32, Uint8Clamped, Float32, BigInt64/Uint64 Array, and the whole method surface (`length/subarray/set/slice/fill/map/forEach/iterator`) |
-| 20 | Date | partial | Now a global with JS statics (`now/parse/fromISO`); UTC getters present. Missing all setters, local-time getters (UTC-only calendar), `Date.UTC`, `toLocale*`; `new Date()` needs optional construction args |
+| 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
@@ -447,29 +447,34 @@ storage lives in `zun_gc/buffers.rs`.
   `TypedArray.from/of`, construction from buffer/length/array.
 
 ## 20. Date — partial
-`builtin/date.zun` over the `zun:date`/`zun:time` intrinsics.
+`builtin/date.zun` over the `zun:date`/`zun:time` intrinsics, reachable as a
+global through the prelude.
 
-- **Now reachable as a global**, through the prelude, for the same reason as
-  `Error` (#22): a plain class exists only where its source does, and the
-  `zun:std:date` module registration it had was unreachable from user code. That
-  registration is removed so the class is not declared twice.
-- **JS statics added:** `Date.now()` and `Date.parse(iso)` return a timestamp, as
-  they do in JS, plus `Date.fromMillis`, `Date.fromISO` and `Date.fromISODate` for
-  the object-returning forms. These replace the former top-level `dateNow`,
-  `dateParse`, `dateParseDate` and `dateFromMillis`, which could not live in the
-  prelude: top-level functions there become expected exports of the cached `zun:std`
-  module, which does not have them.
-- **Present:** millis storage, `getTime/setTime valueOf isValid isBefore/isAfter/
-  isEqual`, UTC getters `getUTCFullYear/Month/Date/Hours/Minutes/Seconds/
-  Milliseconds/Day`, `toISOString toJSON toString`.
-- **Construction is `new Date(millis)` only.** JS also has `new Date()` and
-  `new Date(string)`; Zun builds an object from exactly one positional argument per
-  field, with no constructors or overloads, so those are the statics above. Same
-  blocker as `cause`/`AggregateError` in #22.
-- **Missing:** all setters (`setFullYear setMonth …`); local-time getters
-  (`getFullYear getHours …`) and `getTimezoneOffset`, which are absent rather than
-  wrong because the calendar is UTC-only; `Date.UTC`; `toDateString toTimeString
-  toLocale*` `toUTCString`.
+- **Two JS-named getters were returning wrong answers**, not missing ones.
+  `getUTCMonth()` gave the 1-based calendar month where JS is 0-based, and
+  `getUTCDay()` gave the ISO weekday (1 = Monday … 7 = Sunday) where JS is
+  0-based from Sunday. For 2021-01-03, a Sunday, JS says month 0 and day 0; Zun
+  said 1 and 7. Ported code computed the wrong date silently. Both now follow
+  JS; the Zun-named `utcMonth()`/`utcWeekday()` keep the 1-based and ISO
+  conventions.
+- **Setters:** `setUTCFullYear/Month/Date/Hours/Minutes/Seconds/Milliseconds`,
+  each returning the new timestamp as JS does. Out-of-range components roll
+  over — month 12 is January of the next year, day 32 of January is 1 February,
+  hour 25 is 1am the next day — which is JS behaviour and falls out of composing
+  in absolute units rather than validating.
+- **`Date.UTC(year, month, …)`** with a 0-based month, over a new
+  `DateValue::from_utc` and the `date.fromUTC` native. That composition
+  primitive did not exist: components could be read but never written, so no
+  setter was possible before it.
+- **`getTimezoneOffset()`** returns 0. With a UTC-only calendar local time *is*
+  UTC, so this is accurate rather than a stub.
+- **Present:** millis storage, `getTime/setTime valueOf isValid
+  isBefore/isAfter/isEqual`, the UTC getters, `toISOString toJSON toString`, and
+  the statics `now/parse/fromMillis/fromISO/fromISODate`.
+- **Missing:** local-time getters (`getFullYear`, `getHours`, …), absent rather
+  than wrong because the calendar is UTC-only; `toDateString toTimeString
+  toUTCString toLocale*`; `new Date()` and `new Date(string)`, which need
+  optional construction arguments.
 
 ## 21. Buffer (Node) — missing
 
