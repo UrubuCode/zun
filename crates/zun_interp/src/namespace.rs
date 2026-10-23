@@ -163,6 +163,50 @@ mod tests {
         assert!(matches!(result, Value::Int(7, _)));
     }
 
+    const APP_SOURCE: &str = "async function compute(): Promise { let ns: any = await import(\"lib\"); let p = new Promise(); let v: any = ns.answer(41.0); p.resolve(v); return p; }
+\n        function main(): any { let r = compute(); return r.result(); }";
+
+    #[test]
+    fn import_expression_runs_end_to_end_on_tier_zero() {
+        // v1 scope: only function exports are present on the namespace; const/let and
+        // class exports read as undefined until the compiler emits value-export metadata.
+        let lib = zun_compiler::compile(
+            "function answer(value: number): number { return value + 1.0; } function main(): int { return 0; }",
+        )
+        .expect("compile lib");
+        for oxc in [false, true] {
+        let app = if oxc {
+            zun_compiler::compile_with_oxc(APP_SOURCE, true).expect("compile app with import() via OXC")
+        } else {
+            zun_compiler::compile(APP_SOURCE).expect("compile app with import()")
+        };
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("lib", &lib.write()).unwrap();
+        loader.load_bytes("app", &app.write()).unwrap();
+        let entry = loader.get("app").unwrap().module().entry_point.unwrap().rid();
+        let mut output = CaptureOutput::default();
+        let imported = run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output).unwrap();
+        // The same export called directly (what a static import links to).
+        let answer = loader.get("lib").unwrap().export("answer").map(|export| match export {
+            Export::Method(token) => token.rid(),
+            Export::Type(_) => unreachable!(),
+        });
+        let direct = run_method_loaded(
+            loader.get("lib").unwrap(),
+            &loader,
+            answer.unwrap(),
+            vec![Value::Float(41.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .unwrap();
+        let (Value::Any(any), Value::Float(direct, _)) = (imported, direct) else {
+            panic!("unexpected result shapes");
+        };
+        assert_eq!(any.as_float(), Some(direct));
+        assert_eq!(direct, 42.0);
+        }
+    }
+
     #[test]
     fn dynamic_import_promise_resolves_to_a_callable_namespace() {
         let loader = loader_with_lib();

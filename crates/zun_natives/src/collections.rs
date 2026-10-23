@@ -246,5 +246,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "bigIntGt", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
         NativeFn { name: "bigIntGe", params: &[BigInt, BigInt], ret: Bool, imp: unavailable },
         NativeFn { name: "bigIntToString", params: &[BigInt], ret: Str, imp: unavailable },
+        // Dynamic member calls on `any` receivers (module namespaces from `import()`).
+        NativeFn { name: "dynamicCall0", params: &[Opaque, Str], ret: Opaque, imp: unavailable },
+        NativeFn { name: "dynamicCall1", params: &[Opaque, Str, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "dynamicCall2", params: &[Opaque, Str, Opaque, Opaque], ret: Opaque, imp: unavailable },
     ],
 };

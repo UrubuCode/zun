@@ -853,6 +853,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(operand);
                 self.emit(Instruction::simple(Opcode::Await));
             }
+            ExprKind::ImportDynamic { specifier } => {
+                self.expr(specifier);
+                self.emit(Instruction::simple(Opcode::ImportDynamic));
+            }
             ExprKind::Yield { value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Yield));

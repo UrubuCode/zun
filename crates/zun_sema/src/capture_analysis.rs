@@ -72,6 +72,7 @@ pub(super) fn collect_mutated_expr(
             collect_mutated_expr(checker, operand, names)
         }
         ast::Expr::Await { operand, .. } => collect_mutated_expr(checker, operand, names),
+        ast::Expr::ImportCall { specifier, .. } => collect_mutated_expr(checker, specifier, names),
         ast::Expr::Yield { value, .. } => collect_mutated_expr(checker, value, names),
         ast::Expr::Call { args, .. } | ast::Expr::New { args, .. } => {
             for arg in args { collect_mutated_expr(checker, arg, names); }

@@ -103,6 +103,18 @@
     }
 
     #[test]
+    fn import_call_is_a_promise_and_counts_as_no_await_by_itself() {
+        let hir = check_ok("async function main(): Promise { return import(\"lib\"); }");
+        assert_eq!(hir.functions[0].async_plan.as_ref().unwrap().await_count, 0);
+    }
+
+    #[test]
+    fn import_call_requires_a_string_specifier() {
+        let message = first_error("async function main(): Promise { return import(1); }");
+        assert!(message.contains("specifier must be a string"), "{message}");
+    }
+
+    #[test]
     fn async_functions_require_a_promise_return_type() {
         let message = first_error("async function main(): int { return 1; }");
         assert!(message.contains("Promise return type"), "{message}");

@@ -442,6 +442,13 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `import(specifier)` dynamic import; evaluates to a Promise of the namespace.
+    ImportCall {
+        /// The module specifier expression.
+        specifier: Box<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `yield expression` (generator suspension point).
     Yield {
         /// The value produced by the generator.
@@ -638,6 +645,7 @@ impl Expr {
             | Expr::Index { span, .. } => *span,
             Expr::IndexAssign { span, .. } => *span,
             Expr::Await { span, .. } => *span,
+            Expr::ImportCall { span, .. } => *span,
             Expr::Yield { span, .. } => *span,
             Expr::Function(function) => function.span,
             Expr::Ident(name) => name.span,
