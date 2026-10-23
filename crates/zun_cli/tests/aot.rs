@@ -1,5 +1,93 @@
 use std::process::Command;
 
+/// Locate the `zun_vm` static library the AOT fallback tests link against.
+///
+/// Five tests need it and each used to find it inline and `return` when it was
+/// absent — which the harness reports as a pass. A whole group of AOT tests
+/// could therefore be green having run nothing, and on a clean checkout that
+/// is exactly what happened.
+///
+/// Worse is the other case. The library is a `staticlib` artifact that is not
+/// in any test's dependency graph, so `cargo test` never rebuilds it. A stale
+/// one links fine and then fails at runtime with an empty stderr, because the
+/// interpreter inside it does not recognize opcodes the freshly compiled `.zm`
+/// now contains. That cost real debugging time, so staleness is a hard error
+/// with instructions rather than a mystery.
+///
+/// Returns `None` when the library is absent, after saying so. Set
+/// `ZUN_REQUIRE_AOT_RUNTIME=1` to make that a failure instead, which is what
+/// CI should do so the group cannot silently stop testing anything.
+fn aot_runtime_library() -> Option<std::path::PathBuf> {
+    let test_exe = std::env::current_exe().expect("test executable path");
+    let name = if cfg!(windows) {
+        "zun_vm.lib"
+    } else {
+        "libzun_vm.a"
+    };
+    let library = test_exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|path| path.join(name));
+
+    let Some(library) = library.filter(|path| path.is_file()) else {
+        let message = format!(
+            "{name} is not built, so this AOT fallback test verified nothing. Build it with `cargo build -p zun_vm`."
+        );
+        if std::env::var_os("ZUN_REQUIRE_AOT_RUNTIME").is_some() {
+            panic!("{message}");
+        }
+        eprintln!("SKIPPED: {message}");
+        return None;
+    };
+
+    // Freshness is measured against the runtime's sources, not against
+    // another build artifact: within a single `cargo build` the staticlib and
+    // the binaries are written seconds apart in an order that means nothing.
+    if let Some(newest) = newest_runtime_source() {
+        let built = std::fs::metadata(&library).and_then(|meta| meta.modified());
+        if let Ok(built) = built {
+            assert!(
+                built >= newest,
+                "{name} is older than the runtime sources, so it holds an older runtime than the code under test. It links, then fails at run time with no diagnostic. Rebuild it with `cargo build -p zun_vm`."
+            );
+        }
+    }
+
+    Some(library)
+}
+
+/// Most recent modification time across every crate's `src`, which is what
+/// the static library has to be at least as new as. Only `src` counts: edits
+/// to tests say nothing about the runtime.
+fn newest_runtime_source() -> Option<std::time::SystemTime> {
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut pending = vec![crates.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                // Only descend into a crate root or its `src`.
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if directory == crates || name == "src" {
+                    pending.push(path);
+                }
+                continue;
+            }
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+                    newest = Some(newest.map_or(modified, |best| best.max(modified)));
+                }
+            }
+        }
+    }
+    newest
+}
+
 #[test]
 fn build_uses_native_oxc_for_javascript_inputs() {
     let root = std::env::temp_dir().join(format!("zun-oxc-cli-{}", std::process::id()));
@@ -434,12 +522,7 @@ fn build_aot_rejects_a_stale_explicit_lld_override() {
 
 #[test]
 fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
-    let runtime = std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(|path| path.join(if cfg!(windows) { "zun_vm.lib" } else { "libzun_vm.a" }));
-    let Some(runtime) = runtime.filter(|path| path.is_file()) else {
+    let Some(runtime) = aot_runtime_library() else {
         return;
     };
     let root = std::env::temp_dir().join(format!("zun-aot-runtime-fallback-{}", std::process::id()));
@@ -477,12 +560,7 @@ fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
 
 #[test]
 fn build_aot_runs_string_interpreter_fallback_with_runtime_library() {
-    let runtime = std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(|path| path.join(if cfg!(windows) { "zun_vm.lib" } else { "libzun_vm.a" }));
-    let Some(runtime) = runtime.filter(|path| path.is_file()) else {
+    let Some(runtime) = aot_runtime_library() else {
         return;
     };
     let root = std::env::temp_dir().join(format!("zun-aot-string-fallback-{}", std::process::id()));
@@ -510,12 +588,7 @@ fn build_aot_runs_string_interpreter_fallback_with_runtime_library() {
 
 #[test]
 fn build_aot_runs_unsigned_interpreter_fallback_with_runtime_library() {
-    let runtime = std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(|path| path.join(if cfg!(windows) { "zun_vm.lib" } else { "libzun_vm.a" }));
-    let Some(runtime) = runtime.filter(|path| path.is_file()) else {
+    let Some(runtime) = aot_runtime_library() else {
         return;
     };
     let root = std::env::temp_dir().join(format!("zun-aot-u64-fallback-{}", std::process::id()));
@@ -543,12 +616,7 @@ fn build_aot_runs_unsigned_interpreter_fallback_with_runtime_library() {
 
 #[test]
 fn build_aot_preserves_boolean_interpreter_fallback_output() {
-    let runtime = std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(|path| path.join(if cfg!(windows) { "zun_vm.lib" } else { "libzun_vm.a" }));
-    let Some(runtime) = runtime.filter(|path| path.is_file()) else {
+    let Some(runtime) = aot_runtime_library() else {
         return;
     };
     let root = std::env::temp_dir().join(format!("zun-aot-bool-fallback-{}", std::process::id()));
@@ -574,12 +642,7 @@ fn build_aot_preserves_boolean_interpreter_fallback_output() {
 
 #[test]
 fn build_aot_runs_floating_interpreter_fallback_with_runtime_library() {
-    let runtime = std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(|path| path.join(if cfg!(windows) { "zun_vm.lib" } else { "libzun_vm.a" }));
-    let Some(runtime) = runtime.filter(|path| path.is_file()) else {
+    let Some(runtime) = aot_runtime_library() else {
         return;
     };
     let root = std::env::temp_dir().join(format!("zun-aot-f64-fallback-{}", std::process::id()));
