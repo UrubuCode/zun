@@ -44,7 +44,7 @@ read.
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(len)` intrinsic; no `byteLength/slice/isView/resize` |
 | 18 | DataView | partial | Only `getUint32/setUint32/getUint16/setUint16/getFloat64/setFloat64`; missing Int8/16/32, Uint8, Float32, BigInt64/Uint64, `byteLength/byteOffset/buffer` |
 | 19 | TypedArrays | partial | Only `Uint8Array/Uint16Array/Uint32Array/Float64Array`, each only `get/set`. Missing Int8/16/32, Uint8Clamped, Float32, BigInt64/Uint64 Array, and the whole method surface (`length/subarray/set/slice/fill/map/forEach/iterator`) |
-| 20 | Date | partial | UTC getters + millis + ISO + parse; missing local-time getters, **all setters** (`setFullYear/…`), component `getMonth/getDate/getDay/getHours…` JS-named (only `getUTC*`), `Date.now/parse/UTC` statics, `getTimezoneOffset`, `toLocale*`, `toDateString` |
+| 20 | Date | partial | Now a global with JS statics (`now/parse/fromISO`); UTC getters present. Missing all setters, local-time getters (UTC-only calendar), `Date.UTC`, `toLocale*`; `new Date()` needs optional construction args |
 | 21 | Buffer | partial | Native `zun:buffer` surface exists; verify Node `Buffer` API coverage (`from/alloc/write/read*/toString/slice/concat`) |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
@@ -397,17 +397,29 @@ reclaims the target).
   `TypedArray.from/of`, construction from buffer/length/array.
 
 ## 20. Date — partial
-`std/date.zun` over `zun:date`/`zun:time` intrinsics (`date.rs`, `time/`).
-- **Present:** millis storage, `getTime/setTime valueOf isValid isBefore/isAfter/isEqual`,
-  UTC getters `getUTCFullYear/Month/Date/Hours/Minutes/Seconds/Milliseconds/Day`,
-  `toISOString toJSON toString`, free fns `dateNow/dateParse/dateFromMillis`.
-- **Missing:** **all setters** (`setFullYear setMonth setDate setHours setMinutes
-  setSeconds setMilliseconds setUTC*`); **local-time** getters (`getFullYear getMonth
-  getDate getDay getHours getMinutes getSeconds getMilliseconds`); `getTimezoneOffset`;
-  statics `Date.now() Date.parse() Date.UTC()`; `toDateString toTimeString toLocaleString
-  toLocaleDateString toLocaleTimeString toUTCString`.
-- **Notes:** JS-named instance getters exist only in `getUTC*` form; no local timezone
-  support (UTC-only calendar).
+`builtin/date.zun` over the `zun:date`/`zun:time` intrinsics.
+
+- **Now reachable as a global**, through the prelude, for the same reason as
+  `Error` (#22): a plain class exists only where its source does, and the
+  `zun:std:date` module registration it had was unreachable from user code. That
+  registration is removed so the class is not declared twice.
+- **JS statics added:** `Date.now()` and `Date.parse(iso)` return a timestamp, as
+  they do in JS, plus `Date.fromMillis`, `Date.fromISO` and `Date.fromISODate` for
+  the object-returning forms. These replace the former top-level `dateNow`,
+  `dateParse`, `dateParseDate` and `dateFromMillis`, which could not live in the
+  prelude: top-level functions there become expected exports of the cached `zun:std`
+  module, which does not have them.
+- **Present:** millis storage, `getTime/setTime valueOf isValid isBefore/isAfter/
+  isEqual`, UTC getters `getUTCFullYear/Month/Date/Hours/Minutes/Seconds/
+  Milliseconds/Day`, `toISOString toJSON toString`.
+- **Construction is `new Date(millis)` only.** JS also has `new Date()` and
+  `new Date(string)`; Zun builds an object from exactly one positional argument per
+  field, with no constructors or overloads, so those are the statics above. Same
+  blocker as `cause`/`AggregateError` in #22.
+- **Missing:** all setters (`setFullYear setMonth …`); local-time getters
+  (`getFullYear getHours …`) and `getTimezoneOffset`, which are absent rather than
+  wrong because the calendar is UTC-only; `Date.UTC`; `toDateString toTimeString
+  toLocale*` `toUTCString`.
 
 ## 21. Buffer — partial / verify
 Native surface in `zun_natives/src/buffer.rs` (also hosts array/map/set iterator

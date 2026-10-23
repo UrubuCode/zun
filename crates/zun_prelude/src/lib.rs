@@ -31,6 +31,16 @@ pub const PRELUDE: &str = include_str!("prelude.zun");
 /// classes.
 pub const ERRORS: &str = include_str!("../../../builtin/error.zun");
 
+/// The `Date` calendar class (`builtin/date.zun`), also compiled with every
+/// program, and for the same reason as [`ERRORS`]: it is a plain class, so it
+/// exists only where its source does.
+///
+/// Unlike the error hierarchy this one has imports of its own
+/// (`zun:core`'s `date` and `time` namespaces). Those resolve from the middle
+/// of the combined text, since import declarations are collected before the
+/// body is checked rather than having to lead the file.
+pub const DATE: &str = include_str!("../../../builtin/date.zun");
+
 /// Stable content fingerprint for cache invalidation of compiled prelude data.
 ///
 /// This is deliberately a small, deterministic identifier rather than a
@@ -51,13 +61,16 @@ pub const fn fingerprint() -> u64 {
 /// Combine user source with the base prelude, returning the full source to
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
-    let mut combined =
-        String::with_capacity(user_source.len() + PRELUDE.len() + ERRORS.len() + 2);
+    let mut combined = String::with_capacity(
+        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + 3,
+    );
     combined.push_str(user_source);
     combined.push('\n');
     combined.push_str(PRELUDE);
     combined.push('\n');
     combined.push_str(ERRORS);
+    combined.push('\n');
+    combined.push_str(DATE);
     combined
 }
 

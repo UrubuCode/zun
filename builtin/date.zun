@@ -1,4 +1,12 @@
 // UTC calendar surface over a millisecond timestamp.
+//
+// Construction is `new Date(millis)` only. JS also has `new Date()` for the
+// current time and `new Date(string)`, but Zun builds an object from exactly
+// one positional argument per declared field, with no constructors and no
+// overloads, so those arrive as the `Date.now`/`Date.fromISO` statics instead.
+//
+// The calendar is UTC-only, so the local-time getters (`getFullYear`,
+// `getHours`, ...) and `getTimezoneOffset` are absent rather than wrong.
 
 import { date, time } from "zun:core";
 
@@ -45,20 +53,12 @@ class Date {
     toISOString(): string { return this.isoDateTime(); }
     toJSON(): string { return this.toISOString(); }
     toString(): string { return this.isoDateTime(); }
-}
 
-function dateFromMillis(value: i64): Date {
-    return new Date(value);
-}
-
-function dateNow(): Date {
-    return new Date(time.nowMillis());
-}
-
-function dateParse(value: string): Date {
-    return new Date(date.parseIsoDateTime(value));
-}
-
-function dateParseDate(value: string): Date {
-    return new Date(date.parseIsoDate(value));
+    // JS statics. `now` and `parse` return a timestamp rather than a `Date`,
+    // as they do in JS; the object-returning forms are named separately.
+    static now(): i64 { return time.nowMillis(); }
+    static parse(value: string): i64 { return date.parseIsoDateTime(value); }
+    static fromMillis(value: i64): Date { return new Date(value); }
+    static fromISO(value: string): Date { return new Date(date.parseIsoDateTime(value)); }
+    static fromISODate(value: string): Date { return new Date(date.parseIsoDate(value)); }
 }

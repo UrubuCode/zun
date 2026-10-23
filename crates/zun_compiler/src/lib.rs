@@ -325,13 +325,17 @@ fn compile_with_cached_module(
         .join(", ");
     // Functions come from the cached module by import, but classes cannot
     // cross a module boundary in Zun — there is no way to import a type — so
-    // the error hierarchy is compiled into this module as source. It is a
-    // compile-time shape, so duplicating the declaration costs nothing at run
-    // time, and without it `Error` would exist on the plain compile path and
-    // not this one.
+    // the prelude's classes are compiled into this module as source. They are
+    // compile-time shapes, so duplicating the declarations costs nothing at
+    // run time, and without them `Error` and `Date` would exist on the plain
+    // compile path and not this one.
+    //
+    // Whatever `with_prelude` appends as classes has to be listed here too.
+    // `prelude_classes_match_the_linked_source` holds the two together.
     let linked_source = format!(
-        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n",
-        zun_prelude::ERRORS
+        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n{}\n",
+        zun_prelude::ERRORS,
+        zun_prelude::DATE
     );
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();
@@ -611,11 +615,11 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
             include_str!("../../../builtin/finalization_registry.zun"),
         ),
         ("zun:std:regexp", include_str!("../../../builtin/regexp.zun")),
-        ("zun:std:date", include_str!("../../../builtin/date.zun")),
-        // NOTE: `builtin/error.zun` is deliberately absent. The error classes
-        // now ship through the prelude (`zun_prelude::ERRORS`) so that `Error`
-        // is reachable from user code at all; compiling them here as well
-        // would declare each class twice in any program that has both.
+        // NOTE: `builtin/error.zun` and `builtin/date.zun` are deliberately
+        // absent. Their classes ship through the prelude (`zun_prelude::ERRORS`
+        // and `DATE`) so that `Error` and `Date` are reachable from user code
+        // at all; compiling them here as well would declare each class twice
+        // in any program that has both.
         // NOTE: `builtin/realm.zun` is intentionally not a compiled module. Its
         // `global.set("<BaseType>", <BaseType>, true)` directives are
         // declarative data recognized by `zun_sema::realm` (which seeds the
@@ -1231,7 +1235,7 @@ mod tests {
         assert!(loader.get("zun:std:array").is_some());
         assert!(loader.get("zun:std:map").is_some());
         assert!(loader.get("zun:std:set").is_some());
-        assert!(loader.get("zun:std:date").is_some());
+        assert!(loader.get("zun:std:date").is_none());
         // The error classes are not a module: they reach programs through the
         // prelude, because a class cannot cross a module boundary.
         assert!(loader.get("zun:std:error").is_none());
@@ -1243,6 +1247,35 @@ mod tests {
         // that wanted one declared its own.
         compile("function main(): string { return new TypeError(\"bad\").toString(); }")
             .expect("Error and its subclasses should be in scope");
+    }
+
+    #[test]
+    fn prelude_classes_match_the_linked_source() {
+        // The prelude's classes are listed in two places — `with_prelude` and
+        // the linked source built for the cached path — because classes
+        // cannot be imported. Adding one and forgetting the other makes a
+        // class exist on one compile path only, which is exactly what
+        // happened when `Date` joined `Error`. Compare what both paths see.
+        let program = "function main(): int { return 1; }";
+        let plain = compile(program).expect("plain compile");
+        let cached = compile_with_default_std(program).expect("cached-std compile");
+
+        let type_names = |module: &Module| -> std::collections::BTreeSet<String> {
+            module
+                .tables
+                .type_defs
+                .iter()
+                .map(|ty| module.strings.get(ty.name).to_string())
+                .collect()
+        };
+        assert_eq!(
+            type_names(&plain),
+            type_names(&cached),
+            "the two compile paths disagree about which classes exist"
+        );
+        // And the set is not vacuously empty.
+        assert!(type_names(&plain).contains("Error"));
+        assert!(type_names(&plain).contains("Date"));
     }
 
     #[test]
