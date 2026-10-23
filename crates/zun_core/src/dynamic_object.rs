@@ -1,4 +1,4 @@
-use super::{Any, FunctionHandle, SymbolId};
+use super::{Any, FunctionHandle, ModuleBoundFunction, SymbolId};
 use std::collections::BTreeMap;
 
 /// A dictionary-backed object for opt-in dynamic property access.
@@ -8,6 +8,7 @@ pub struct DynamicObject {
     symbol_properties: BTreeMap<SymbolId, Any>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
+    module_functions: BTreeMap<String, ModuleBoundFunction>,
 }
 
 impl DynamicObject {
@@ -33,6 +34,15 @@ impl DynamicObject {
     }
     pub fn set_symbol_function(&mut self, symbol: SymbolId, function: FunctionHandle) -> Option<FunctionHandle> {
         self.symbol_functions.insert(symbol, function)
+    }
+    pub fn get_module_function(&self, name: &str) -> Option<&ModuleBoundFunction> {
+        self.module_functions.get(name)
+    }
+    pub fn set_module_function(&mut self, name: impl Into<String>, function: ModuleBoundFunction) -> Option<ModuleBoundFunction> {
+        self.module_functions.insert(name.into(), function)
+    }
+    pub fn module_function_names(&self) -> impl Iterator<Item = &str> + '_ {
+        self.module_functions.keys().map(String::as_str)
     }
     pub fn remove(&mut self, name: &str) -> Option<Any> { self.properties.remove(name) }
     pub fn contains(&self, name: &str) -> bool { self.properties.contains_key(name) }

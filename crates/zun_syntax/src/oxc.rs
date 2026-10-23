@@ -658,6 +658,15 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 span: span(unary.span),
             })
         }
+        Expression::ImportExpression(import) => {
+            if !import.options.is_none() {
+                return Err("OXC adapter does not support import options yet".into());
+            }
+            Ok(Expr::ImportCall {
+                specifier: Box::new(convert_expression(&import.source)?),
+                span: span(import.span),
+            })
+        }
         Expression::AwaitExpression(await_expression) => Ok(Expr::Await {
             operand: Box::new(convert_expression(&await_expression.argument)?),
             span: span(await_expression.span),

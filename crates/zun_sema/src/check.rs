@@ -947,6 +947,22 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::ImportCall { specifier, .. } => {
+                let mut checked = self.check_expr(cx, specifier);
+                if !checked.ty.is_error() && checked.ty != Ty::String {
+                    self.error(checked.span, "import() specifier must be a string");
+                    checked = self.poison(span);
+                }
+                // v1 types every dynamic import as `Promise<any>`; the resolved
+                // namespace is an opt-in DynamicObject accessed dynamically.
+                hir::Expr {
+                    kind: hir::ExprKind::ImportDynamic {
+                        specifier: Box::new(checked),
+                    },
+                    ty: Ty::Promise,
+                    span,
+                }
+            }
             ast::Expr::Yield { value, .. } => {
                 if !cx.is_generator {
                     self.error(span, "yield is only valid inside a generator function");
@@ -1908,6 +1924,27 @@ impl Checker<'_> {
                             value: Box::new(value),
                         },
                         ty: Ty::Int(IntKind::U64),
+                        span,
+                    };
+                }
+                if receiver.ty == Ty::Any && args.len() <= 2 {
+                    // Dynamic member call on an `any` receiver (e.g. a namespace from
+                    // `import()`): dispatched by name at run time.
+                    let native_name = ["dynamicCall0", "dynamicCall1", "dynamicCall2"][args.len()];
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let mut call_args = vec![
+                        receiver,
+                        hir::Expr { kind: hir::ExprKind::String(mname.clone()), ty: Ty::String, span: method.span },
+                    ];
+                    for arg in args {
+                        call_args.push(self.check_expr(cx, arg));
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: Ty::Any,
                         span,
                     };
                 }
@@ -3235,6 +3272,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
     use ast::Expr::*;
     match expr {
         Yield { value, .. } => 1 + count_yields_in_expr(value),
+        ImportCall { specifier, .. } => count_yields_in_expr(specifier),
         Assign { value, .. } | Await { operand: value, .. } | Unary { operand: value, .. } | Spread { expr: value, .. } | Cast { expr: value, .. } => count_yields_in_expr(value),
         Binary { lhs, rhs, .. } => count_yields_in_expr(lhs) + count_yields_in_expr(rhs),
         Conditional { condition, when_true, when_false, .. } => count_yields_in_expr(condition) + count_yields_in_expr(when_true) + count_yields_in_expr(when_false),
@@ -3298,6 +3336,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
                 ast::TemplatePart::Expr(expr) => count_awaits_in_expr(expr),
             })
             .sum(),
+        ImportCall { specifier, .. } => count_awaits_in_expr(specifier),
         Assign { value, .. } | Await { operand: value, .. } | Yield { value, .. } | Unary { operand: value, .. }
         | Spread { expr: value, .. } | Cast { expr: value, .. } => {
             usize::from(matches!(expr, Await { .. })) + count_awaits_in_expr(value)

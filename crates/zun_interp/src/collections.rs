@@ -1247,6 +1247,35 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Bool(result))
             }
+            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" => {
+                let namespace = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let member = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let call_args = args[2..]
+                    .iter()
+                    .map(|arg| match arg {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .ok_or(RunError::BadToken),
+                        other => Ok(other.clone()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let loader = self.loader.ok_or(RunError::BadToken)?;
+                let result = super::namespace::call_namespace_member(
+                    loader,
+                    &Value::Object(namespace),
+                    &member,
+                    call_args,
+                    &mut *self.output,
+                )?;
+                if matches!(result, Value::Object(_)) {
+                    // The callee ran on its own heap; references cannot cross.
+                    return Err(RunError::BadToken);
+                }
+                Ok(Value::Any(any(&result).ok_or(RunError::BadToken)?))
+            }
             "dynamicSetFunction" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;

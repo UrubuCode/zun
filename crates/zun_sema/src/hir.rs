@@ -514,6 +514,9 @@ pub enum ExprKind {
     /// Suspend the async state machine until the operand's Promise settles.
     /// This remains gated until async state-machine lowering is enabled.
     Await { operand: Box<Expr> },
+    /// Dynamic `import(specifier)`: a Promise of the module namespace object.
+    /// Async and dynamic, so it is lowered to the Tier-0-only `import.dynamic`.
+    ImportDynamic { specifier: Box<Expr> },
     /// Yield a value from a generator state machine.
     ///
     /// The frontend preserves this node even while generator execution

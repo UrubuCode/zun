@@ -300,6 +300,11 @@ define_opcodes! {
     /// The state-machine lowering owns resumption metadata; ordinary source
     /// functions are rejected before this opcode can be emitted.
     Yield = 0x8E, None, "yield", StackEffect::Fixed { pops: 1, pushes: 0 };
+    /// Dynamically import a module: pops a string specifier, pushes a Promise that
+    /// resolves to the module namespace object (or rejects if it cannot be loaded).
+    ///
+    /// Async and dynamic, so it is Tier 0 only; the JIT importer never lists it.
+    ImportDynamic = 0x95, None, "import.dynamic", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]

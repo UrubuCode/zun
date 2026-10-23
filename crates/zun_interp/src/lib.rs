@@ -11,6 +11,7 @@ mod collections;
 mod errors;
 mod gc_policy;
 mod hooks;
+mod namespace;
 mod native;
 mod metadata;
 mod output;
@@ -70,6 +71,7 @@ pub use zun_natives::Sink as Output;
 pub use output::{CaptureOutput, StdoutOutput};
 pub use hooks::CallHook;
 pub use errors::RunError;
+pub use namespace::{call_namespace_member, materialize_namespace, zun_dynamic_import};
 
 /// A hook the interpreter consults before interpreting a call, so a faster
 /// backend (the JIT) can execute an eligible method instead. Returning `None`
@@ -1334,6 +1336,13 @@ impl Interp<'_> {
                         &locals,
                     ));
                     return Err(RunError::Suspended);
+                }
+                Opcode::ImportDynamic => {
+                    let specifier = match pop(&mut stack)? {
+                        Value::Str(specifier) => specifier,
+                        _ => return Err(RunError::BadToken),
+                    };
+                    stack.push(namespace::zun_dynamic_import(self.loader, &specifier)?);
                 }
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
