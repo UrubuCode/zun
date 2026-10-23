@@ -1464,6 +1464,21 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Object(target))
             }
+            "globalSet" => {
+                // `global.set(name, value, readonly)` — register `name -> value`
+                // on the realm global singleton, non-writable when `readonly`.
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let readonly = matches!(args.get(2), Some(Value::Bool(true)));
+                zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    heap.dynamic_define(global, name, value, !readonly);
+                });
+                Ok(Value::Void)
+            }
             "objectFreeze" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));

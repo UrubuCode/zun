@@ -291,5 +291,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "objectIs", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "objectHasOwn", params: &[Opaque, Str], ret: Bool, imp: unavailable },
         NativeFn { name: "objectIsPrototypeOf", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        // Realm-global registration (PLAN §3.1). Lean positional signature:
+        // `global.set(name, value, readonly)`; registers `name -> value` on the
+        // realm global singleton, non-writable when `readonly`.
+        NativeFn { name: "globalSet", params: &[Str, Opaque, Bool], ret: Void, imp: unavailable },
     ],
 };

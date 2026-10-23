@@ -180,6 +180,57 @@ fn hello_world() {
 }
 
 #[test]
+fn global_set_readonly_registers_and_rejects_reassignment() {
+    // A readonly registration is visible through both realm-global aliases and
+    // its reassignment is silently rejected (freeze-consistent, non-throwing).
+    assert_eq!(
+        run_source(
+            r#"import { global } from "zun:core";
+            function main() {
+                global.set("Foo", box_any(7), true);
+                print(dynamic_get(globalThis, "Foo") as number);
+                dynamic_set(globalThis, "Foo", box_any(9));
+                print(dynamic_get(global, "Foo") as number);
+            }"#,
+        ),
+        ["7", "7"],
+    );
+}
+
+#[test]
+fn global_set_readonly_rejects_computed_store() {
+    // The computed-key dynamic store path (stdyn.value) also respects the
+    // attribute, not only the string-literal `dynamic_set` form.
+    assert_eq!(
+        run_source(
+            r#"import { global } from "zun:core";
+            function main() {
+                global.set("Foo", box_any(7), true);
+                let key: string = "Foo";
+                reflect_set(globalThis, key, box_any(9));
+                print(dynamic_get(global, "Foo") as number);
+            }"#,
+        ),
+        ["7"],
+    );
+}
+
+#[test]
+fn global_set_writable_can_be_reassigned() {
+    assert_eq!(
+        run_source(
+            r#"import { global } from "zun:core";
+            function main() {
+                global.set("Bar", box_any(1), false);
+                dynamic_set(globalThis, "Bar", box_any(2));
+                print(dynamic_get(globalThis, "Bar") as number);
+            }"#,
+        ),
+        ["2"],
+    );
+}
+
+#[test]
 fn realm_global_aliases_share_the_same_dynamic_object() {
     assert_eq!(
         run_source(

@@ -147,6 +147,16 @@ objects and `DynamicObject`s.
   is distinct from `freeze`. Implementing them soundly means first adding a descriptor
   layer to `DynamicObject` (and deciding how it interacts with the frozen typed-object
   floor) — a design decision left for the human. Not faked.
+  - **Writable attribute now exists (B1):** `DynamicObject` carries a general per-entry
+    **writable** bit (`non_writable` key set) with `define(name, value, writable)` /
+    `is_writable(name)` (core) and `Heap::dynamic_define` / `dynamic_is_writable` (gc).
+    The ordinary `set` path (`stdyn`/`dynamic_set`, string-literal and computed) rejects
+    reassigning a non-writable key, silently, exactly as `freeze` rejects — so these are
+    the freeze-consistent, non-throwing semantics. Introduced for `global.set(name,
+    value, readonly)` (the `global` namespace in `zun:core`, PLAN §3.1), but **not**
+    hard-coded to the realm global: it is a general attribute slot that the descriptor
+    statics above can build on (writable first; add `enumerable`/`configurable`
+    alongside it the same way).
 - **Notes:** these builtins allocate/throw, so per the centralized JIT-eligibility rule
   (`zun_codegen/src/eligible.rs`) they are **not** in the Tier-1 allowlist and run on the
   always-correct Tier-0 interpreter; there is no separate JIT path to keep in sync.

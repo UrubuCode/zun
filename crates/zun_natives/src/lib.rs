@@ -314,6 +314,7 @@ fn collections_namespace(name: &str) -> &'static str {
         ("dynamic", "dynamic"),
         ("bigInt", "bigint"),
         ("object", "object"),
+        ("global", "global"),
     ];
     for (prefix, namespace) in PREFIXES {
         if name.starts_with(prefix) {
@@ -408,6 +409,7 @@ fn namespace_prefix(namespace: &str) -> Option<&'static str> {
         "dynamic" => "dynamic",
         "bigint" => "bigInt",
         "object" => "object",
+        "global" => "global",
         "promise" => "promise",
         _ => return None,
     })

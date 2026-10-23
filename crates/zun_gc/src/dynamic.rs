@@ -23,6 +23,31 @@ impl Heap {
         result
     }
 
+    /// Define or redefine a string data property with an explicit `writable`
+    /// attribute, bypassing the per-entry writable guard (the definition path,
+    /// backing `global.set` and a future `Object.defineProperty`). Returns
+    /// `false` if `object` is not a dynamic object or is frozen.
+    pub fn dynamic_define(&mut self, object: Obj, name: impl Into<String>, value: zun_core::Any, writable: bool) -> bool {
+        let ok = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|properties| properties.define(name, value, writable));
+        if ok {
+            if let Some(child) = value.as_object() {
+                self.write_barrier(object, child as u64);
+            }
+        }
+        ok
+    }
+
+    /// Whether `name` may be reassigned on `object` through the dynamic store
+    /// path. Unknown objects/keys report writable.
+    pub fn dynamic_is_writable(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_none_or(|properties| properties.is_writable(name))
+    }
+
     pub fn dynamic_set_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId, value: zun_core::Any) -> Option<zun_core::Any> {
         let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol(symbol, value);
         if let Some(child) = value.as_object() {

@@ -1,5 +1,5 @@
 use super::{Any, FunctionHandle, ModuleBoundFunction, SymbolId};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A dictionary-backed object for opt-in dynamic property access.
 ///
@@ -18,6 +18,14 @@ pub struct DynamicObject {
     prototype: Option<Any>,
     /// When set, the dynamic path rejects adds and mutations (`Object.freeze`).
     frozen: bool,
+    /// String data-property keys whose **writable** attribute is cleared: a
+    /// plain assignment (`set`) through the dynamic store path is rejected for
+    /// these, while the definition path (`define`) may still redefine them. A
+    /// key absent from this set is writable (the default). This is the general
+    /// per-entry attribute slot the property-descriptor model
+    /// (`Object.defineProperty`/`seal`/`getOwnPropertyDescriptor`) will extend
+    /// with `enumerable`/`configurable` (see `NUCLEUS.md` §6).
+    non_writable: HashSet<String>,
     symbol_properties: BTreeMap<SymbolId, Any>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
@@ -29,6 +37,7 @@ impl PartialEq for DynamicObject {
         self.properties == other.properties
             && self.prototype == other.prototype
             && self.frozen == other.frozen
+            && self.non_writable == other.non_writable
             && self.symbol_properties == other.symbol_properties
             && self.symbol_functions == other.symbol_functions
             && self.string_functions == other.string_functions
@@ -43,12 +52,14 @@ impl DynamicObject {
     pub fn get(&self, name: &str) -> Option<Any> {
         self.index.get(name).map(|&i| self.properties[i].1)
     }
-    /// Insert or update a string data property. A frozen object rejects both
-    /// adding a new key and overwriting an existing one, returning `None`.
+    /// Insert or update a string data property through the ordinary assignment
+    /// path. A frozen object rejects both adding a new key and overwriting an
+    /// existing one; a **non-writable** existing key also rejects the overwrite.
+    /// Rejection returns `None` (non-throwing, matching `Object.freeze`).
     pub fn set(&mut self, name: impl Into<String>, value: Any) -> Option<Any> {
         let name = name.into();
         if let Some(&i) = self.index.get(&name) {
-            if self.frozen {
+            if self.frozen || self.non_writable.contains(&name) {
                 return None;
             }
             return Some(std::mem::replace(&mut self.properties[i].1, value));
@@ -59,6 +70,35 @@ impl DynamicObject {
         self.index.insert(name.clone(), self.properties.len());
         self.properties.push((name, value));
         None
+    }
+    /// Define or redefine a string data property with an explicit `writable`
+    /// attribute, bypassing the per-entry writable guard. This is the
+    /// definition path (the basis for a future `Object.defineProperty`) and the
+    /// backing of `global.set`. A frozen object still rejects it, returning
+    /// `false`; otherwise it inserts or overwrites and records writability,
+    /// returning `true`.
+    pub fn define(&mut self, name: impl Into<String>, value: Any, writable: bool) -> bool {
+        if self.frozen {
+            return false;
+        }
+        let name = name.into();
+        if let Some(&i) = self.index.get(&name) {
+            self.properties[i].1 = value;
+        } else {
+            self.index.insert(name.clone(), self.properties.len());
+            self.properties.push((name.clone(), value));
+        }
+        if writable {
+            self.non_writable.remove(&name);
+        } else {
+            self.non_writable.insert(name);
+        }
+        true
+    }
+    /// Whether `name` may be reassigned through the ordinary [`set`](Self::set)
+    /// path. An absent key is writable (a plain assignment would create it).
+    pub fn is_writable(&self, name: &str) -> bool {
+        !self.non_writable.contains(name)
     }
     /// String data-property keys, in insertion order.
     pub fn keys(&self) -> impl Iterator<Item = &str> + '_ {
@@ -105,6 +145,7 @@ impl DynamicObject {
             return None;
         }
         let position = self.index.remove(name)?;
+        self.non_writable.remove(name);
         let (_, value) = self.properties.remove(position);
         for slot in self.index.values_mut() {
             if *slot > position {
