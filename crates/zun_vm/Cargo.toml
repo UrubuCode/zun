@@ -24,6 +24,7 @@ libloading = "0.8"
 
 [dev-dependencies]
 zun_core = { path = "../zun_core" }
+zun_regex = { path = "../zun_regex" }
 zun_compiler = { path = "../zun_compiler" }
 zun_ilgen = { path = "../zun_ilgen" }
 zun_sema = { path = "../zun_sema" }

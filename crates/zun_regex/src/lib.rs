@@ -28,6 +28,7 @@ mod error;
 mod flags;
 mod matcher;
 mod parser;
+pub mod zil;
 
 #[cfg(test)]
 mod tests;

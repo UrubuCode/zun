@@ -7,6 +7,9 @@ repository.workspace = true
 description = "Engine B: a standalone backtracking ECMAScript regex engine (backreferences, lookaround, step limit)."
 
 [dependencies]
+zun_il = { path = "../zun_il" }
+zun_metadata = { path = "../zun_metadata" }
+zun_module = { path = "../zun_module" }
 
 [lints]
 workspace = true
