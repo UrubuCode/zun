@@ -111,7 +111,10 @@ impl Module {
     /// Resolve a runtime method/PC pair into the method name and source span
     /// used by diagnostic and error-stack consumers.
     pub fn debug_frame_at(&self, method_rid: u32, pc: u32) -> Option<DebugFrame<'_>> {
-        let method = self.tables.method_defs.get(method_rid.checked_sub(1)? as usize)?;
+        let method = self
+            .tables
+            .method_defs
+            .get(method_rid.checked_sub(1)? as usize)?;
         Some(DebugFrame {
             method_rid,
             method_name: self.strings.get(method.name),

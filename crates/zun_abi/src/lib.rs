@@ -44,16 +44,15 @@ pub struct ZunValue {
 pub struct ZunTyRepr(pub u32);
 
 impl From<ZunTy> for ZunTyRepr {
-    fn from(value: ZunTy) -> Self { Self(value as u32) }
+    fn from(value: ZunTy) -> Self {
+        Self(value as u32)
+    }
 }
 
 /// Native function implementation. Return zero for success and non-zero for
 /// an extension-defined error. The host initializes `out` for non-void calls.
-pub type ZunInvoke = unsafe extern "C" fn(
-    args: *const ZunValue,
-    arg_count: usize,
-    out: *mut ZunValue,
-) -> i32;
+pub type ZunInvoke =
+    unsafe extern "C" fn(args: *const ZunValue, arg_count: usize, out: *mut ZunValue) -> i32;
 
 /// A function descriptor valid only during the registration call.
 #[repr(C)]
@@ -129,7 +128,11 @@ impl ZunRegistry {
         unsafe { (*function).validate()? };
         let callback = self.register_function.ok_or(-1)?;
         let status = unsafe { callback(self.context, module, function) };
-        if status == 0 { Ok(()) } else { Err(status) }
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(status)
+        }
     }
 }
 
@@ -156,9 +159,11 @@ impl OwnedFunction {
         if args.len() != self.params.len() {
             return Err(-20);
         }
-        if args.iter().zip(&self.params).any(|(value, expected)| {
-            value.reserved != 0 || value.ty != *expected
-        }) {
+        if args
+            .iter()
+            .zip(&self.params)
+            .any(|(value, expected)| value.reserved != 0 || value.ty != *expected)
+        {
             return Err(-21);
         }
         let mut out = ZunValue {
@@ -206,7 +211,9 @@ pub struct OwnedRegistry {
 }
 
 impl OwnedRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn as_registry(&mut self) -> ZunRegistry {
         ZunRegistry {
@@ -224,7 +231,10 @@ impl OwnedRegistry {
 
     /// Open a namespace view for a registered module.
     pub fn module(&self, name: &str) -> ZunModule<'_> {
-        ZunModule { registry: self, name: name.to_owned() }
+        ZunModule {
+            registry: self,
+            name: name.to_owned(),
+        }
     }
 
     unsafe extern "C" fn capture(
@@ -232,13 +242,25 @@ impl OwnedRegistry {
         module: *const c_char,
         function: *const ZunFunction,
     ) -> i32 {
-        let Some(registry) = (unsafe { context.cast::<Self>().as_mut() }) else { return -10 };
-        if module.is_null() || function.is_null() { return -11; }
+        let Some(registry) = (unsafe { context.cast::<Self>().as_mut() }) else {
+            return -10;
+        };
+        if module.is_null() || function.is_null() {
+            return -11;
+        }
         let function = unsafe { &*function };
-        if unsafe { function.validate() }.is_err() { return -12; }
-        let Ok(module) = (unsafe { CStr::from_ptr(module) }).to_str() else { return -13 };
-        let Ok(key) = (unsafe { CStr::from_ptr(function.key) }).to_str() else { return -14 };
-        let params = if function.param_count == 0 { Vec::new() } else {
+        if unsafe { function.validate() }.is_err() {
+            return -12;
+        }
+        let Ok(module) = (unsafe { CStr::from_ptr(module) }).to_str() else {
+            return -13;
+        };
+        let Ok(key) = (unsafe { CStr::from_ptr(function.key) }).to_str() else {
+            return -14;
+        };
+        let params = if function.param_count == 0 {
+            Vec::new()
+        } else {
             unsafe { std::slice::from_raw_parts(function.params, function.param_count) }.to_vec()
         };
         let module = module.to_owned();
@@ -274,8 +296,16 @@ mod tests {
 
     #[test]
     fn registration_reports_host_callback_errors() {
-        unsafe extern "C" fn reject(_: *mut c_void, _: *const c_char, _: *const ZunFunction) -> i32 { 17 }
-        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 { 0 }
+        unsafe extern "C" fn reject(
+            _: *mut c_void,
+            _: *const c_char,
+            _: *const ZunFunction,
+        ) -> i32 {
+            17
+        }
+        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 {
+            0
+        }
         static KEY: &[u8] = b"test\0";
         let function = ZunFunction {
             key: KEY.as_ptr() as *const c_char,
@@ -284,15 +314,22 @@ mod tests {
             ret: ZunTy::Void.into(),
             invoke: Some(invoke),
         };
-        let mut registry = ZunRegistry { abi_version: ZUN_ABI_V1, context: core::ptr::null_mut(), register_function: Some(reject) };
+        let mut registry = ZunRegistry {
+            abi_version: ZUN_ABI_V1,
+            context: core::ptr::null_mut(),
+            register_function: Some(reject),
+        };
         static MODULE: &[u8] = b"zun:test\0";
-        let result = unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) };
+        let result =
+            unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) };
         assert_eq!(result, Err(17));
     }
 
     #[test]
     fn registration_rejects_null_module_name() {
-        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 { 0 }
+        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 {
+            0
+        }
         static KEY: &[u8] = b"answer\0";
         let function = ZunFunction {
             key: KEY.as_ptr() as *const c_char,
@@ -303,24 +340,42 @@ mod tests {
         };
         let mut owned = OwnedRegistry::new();
         let mut registry = owned.as_registry();
-        assert_eq!(unsafe { registry.register_function(core::ptr::null(), &function) }, Err(-5));
+        assert_eq!(
+            unsafe { registry.register_function(core::ptr::null(), &function) },
+            Err(-5)
+        );
     }
 
     #[test]
     fn registry_rejects_wrong_abi_version() {
-        let registry = ZunRegistry { abi_version: 99, context: core::ptr::null_mut(), register_function: None };
+        let registry = ZunRegistry {
+            abi_version: 99,
+            context: core::ptr::null_mut(),
+            register_function: None,
+        };
         assert_eq!(registry.validate(), Err(-1));
     }
 
     #[test]
     fn owned_registry_copies_descriptor_storage() {
-        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 { 0 }
+        unsafe extern "C" fn invoke(_: *const ZunValue, _: usize, _: *mut ZunValue) -> i32 {
+            0
+        }
         static MODULE: &[u8] = b"zun:test\0";
         static KEY: &[u8] = b"answer\0";
-        let function = ZunFunction { key: KEY.as_ptr() as *const c_char, params: core::ptr::null(), param_count: 0, ret: ZunTy::I32.into(), invoke: Some(invoke) };
+        let function = ZunFunction {
+            key: KEY.as_ptr() as *const c_char,
+            params: core::ptr::null(),
+            param_count: 0,
+            ret: ZunTy::I32.into(),
+            invoke: Some(invoke),
+        };
         let mut owned = OwnedRegistry::new();
         let mut registry = owned.as_registry();
-        assert_eq!(unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) }, Ok(()));
+        assert_eq!(
+            unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) },
+            Ok(())
+        );
         assert_eq!(owned.functions[0].module, "zun:test");
         assert_eq!(owned.functions[0].key, "answer");
         assert_eq!(owned.functions[0].params, Vec::<ZunTyRepr>::new());
@@ -328,7 +383,10 @@ mod tests {
         assert!(owned.module("zun:test").func("answer").is_some());
         assert!(owned.module("zun:other").func("answer").is_none());
         assert!(owned.find("zun:test", "missing").is_none());
-        assert_eq!(unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) }, Err(-15));
+        assert_eq!(
+            unsafe { registry.register_function(MODULE.as_ptr() as *const c_char, &function) },
+            Err(-15)
+        );
     }
 
     unsafe extern "C" fn add_one(args: *const ZunValue, count: usize, out: *mut ZunValue) -> i32 {
@@ -351,11 +409,30 @@ mod tests {
             ret: ZunTy::U64.into(),
             invoke: add_one,
         };
-        let value = ZunValue { ty: ZunTy::U64.into(), reserved: 0, payload: 41 };
-        let result = function.invoke_checked(&[value]).expect("typed call").expect("value");
+        let value = ZunValue {
+            ty: ZunTy::U64.into(),
+            reserved: 0,
+            payload: 41,
+        };
+        let result = function
+            .invoke_checked(&[value])
+            .expect("typed call")
+            .expect("value");
         assert_eq!(result.payload, 42);
         assert_eq!(function.invoke_checked(&[]), Err(-20));
-        assert_eq!(function.invoke_checked(&[ZunValue { ty: ZunTy::I64.into(), ..value }]), Err(-21));
-        assert_eq!(function.invoke_checked(&[ZunValue { reserved: 1, ..value }]), Err(-21));
+        assert_eq!(
+            function.invoke_checked(&[ZunValue {
+                ty: ZunTy::I64.into(),
+                ..value
+            }]),
+            Err(-21)
+        );
+        assert_eq!(
+            function.invoke_checked(&[ZunValue {
+                reserved: 1,
+                ..value
+            }]),
+            Err(-21)
+        );
     }
 }

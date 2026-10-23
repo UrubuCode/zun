@@ -75,7 +75,9 @@ fn benchmark_i32_map_loop() {
     }
     let interp_ns = t.elapsed().as_nanos() as f64 / (interp_reps as f64 * COLLECTION_N as f64);
     assert_eq!(jit_warmup, COLLECTION_N as u64 - 1);
-    assert!(matches!(interp_warmup, zun_interp::value::Value::Int(value, _) if value == COLLECTION_N - 1));
+    assert!(
+        matches!(interp_warmup, zun_interp::value::Value::Int(value, _) if value == COLLECTION_N - 1)
+    );
     println!();
     println!("i32 Map mutation loop ({COLLECTION_N} iterations/call, interp == jit: true)");
     println!("interpreter (Tier 0): {interp_ns:8.3} ns/iteration");
@@ -203,12 +205,22 @@ fn main() {
         std::hint::black_box(zun_interp::run(&array_module, &mut out).unwrap());
     }
     let array_interp_ns = t.elapsed().as_nanos() as f64 / (3.0 * N as f64);
-    let RetVal::Int(array_jit_result) = array_jit_warmup else { panic!("unexpected array JIT result") };
-    let zun_interp::value::Value::Int(array_interp_result, _) = array_interp_warmup else { panic!("unexpected array interpreter result") };
+    let RetVal::Int(array_jit_result) = array_jit_warmup else {
+        panic!("unexpected array JIT result")
+    };
+    let zun_interp::value::Value::Int(array_interp_result, _) = array_interp_warmup else {
+        panic!("unexpected array interpreter result")
+    };
     assert_eq!(array_jit_result, array_interp_result);
     println!();
-    println!("i32 array increment loop (interp == jit: {})", array_jit_result == array_interp_result);
+    println!(
+        "i32 array increment loop (interp == jit: {})",
+        array_jit_result == array_interp_result
+    );
     println!("interpreter (Tier 0): {:8.3} ns/iteration", array_interp_ns);
     println!("JIT (Tier 1):         {:8.3} ns/iteration", array_jit_ns);
-    println!("speedup:              {:8.2}x", array_interp_ns / array_jit_ns);
+    println!(
+        "speedup:              {:8.2}x",
+        array_interp_ns / array_jit_ns
+    );
 }

@@ -72,12 +72,20 @@ impl NativeCallHook {
             .all(|param| *param == FfiScalar::U32)
             && signature.result() == FfiScalar::U32
         {
-            let values: Option<Vec<u32>> = args.iter().map(|value| match value {
-                Value::Int(number, NumKind::U32) => Some(*number as u32),
-                _ => None,
-            }).collect();
-            let values = values.ok_or_else(|| RunError::Native("native u32 argument type mismatch".into()))?;
-            let result = unsafe { library.call_u32_signature(export.as_bytes(), signature, &values).map_err(|error| RunError::Native(error.to_string()))? };
+            let values: Option<Vec<u32>> = args
+                .iter()
+                .map(|value| match value {
+                    Value::Int(number, NumKind::U32) => Some(*number as u32),
+                    _ => None,
+                })
+                .collect();
+            let values = values
+                .ok_or_else(|| RunError::Native("native u32 argument type mismatch".into()))?;
+            let result = unsafe {
+                library
+                    .call_u32_signature(export.as_bytes(), signature, &values)
+                    .map_err(|error| RunError::Native(error.to_string()))?
+            };
             return Ok(Value::Int(result as i64, NumKind::U32));
         }
         if signature
@@ -86,12 +94,20 @@ impl NativeCallHook {
             .all(|param| *param == FfiScalar::I32)
             && signature.result() == FfiScalar::I32
         {
-            let values: Option<Vec<i32>> = args.iter().map(|value| match value {
-                Value::Int(number, NumKind::I32) => Some(*number as i32),
-                _ => None,
-            }).collect();
-            let values = values.ok_or_else(|| RunError::Native("native i32 argument type mismatch".into()))?;
-            let result = unsafe { library.call_i32_signature(export.as_bytes(), signature, &values).map_err(|error| RunError::Native(error.to_string()))? };
+            let values: Option<Vec<i32>> = args
+                .iter()
+                .map(|value| match value {
+                    Value::Int(number, NumKind::I32) => Some(*number as i32),
+                    _ => None,
+                })
+                .collect();
+            let values = values
+                .ok_or_else(|| RunError::Native("native i32 argument type mismatch".into()))?;
+            let result = unsafe {
+                library
+                    .call_i32_signature(export.as_bytes(), signature, &values)
+                    .map_err(|error| RunError::Native(error.to_string()))?
+            };
             return Ok(Value::Int(result as i64, NumKind::I32));
         }
         if signature
@@ -161,18 +177,25 @@ impl NativeCallHook {
             return Ok(Value::Bool(result));
         }
         if signature.result() == FfiScalar::String
-            && signature.params().iter().all(|param| *param == FfiScalar::String)
+            && signature
+                .params()
+                .iter()
+                .all(|param| *param == FfiScalar::String)
             && (signature.params().len() == 1 || signature.params().len() == 2)
         {
             let declaration = signature.string_return().ok_or_else(|| {
-                RunError::Native("string native calls require an explicit return declaration".into())
+                RunError::Native(
+                    "string native calls require an explicit return declaration".into(),
+                )
             })?;
             let bytes = if signature.params().len() == 1 {
                 let [Value::Str(value)] = args else {
-                    return Err(RunError::Native("native string argument type mismatch".into()));
+                    return Err(RunError::Native(
+                        "native string argument type mismatch".into(),
+                    ));
                 };
-                let argument = FfiStringArgument::from_utf8(value, false)
-                    .map_err(RunError::Native)?;
+                let argument =
+                    FfiStringArgument::from_utf8(value, false).map_err(RunError::Native)?;
                 match declaration {
                     crate::FfiStringReturn::Borrowed { .. } => unsafe {
                         library.call_utf8_borrowed(export.as_bytes(), &argument, declaration)
@@ -186,17 +209,20 @@ impl NativeCallHook {
                 }
             } else {
                 let [Value::Str(first), Value::Str(second)] = args else {
-                    return Err(RunError::Native("native string argument type mismatch".into()));
+                    return Err(RunError::Native(
+                        "native string argument type mismatch".into(),
+                    ));
                 };
-                let first = FfiStringArgument::from_utf8(first, false)
-                    .map_err(RunError::Native)?;
-                let second = FfiStringArgument::from_utf8(second, false)
-                    .map_err(RunError::Native)?;
-                unsafe { library.call_utf8_out_buffer2(export.as_bytes(), &first, &second, declaration) }
+                let first = FfiStringArgument::from_utf8(first, false).map_err(RunError::Native)?;
+                let second =
+                    FfiStringArgument::from_utf8(second, false).map_err(RunError::Native)?;
+                unsafe {
+                    library.call_utf8_out_buffer2(export.as_bytes(), &first, &second, declaration)
+                }
             }
             .map_err(|error| RunError::Native(error.to_string()))?;
-            let string = String::from_utf8(bytes)
-                .map_err(|error| RunError::Native(error.to_string()))?;
+            let string =
+                String::from_utf8(bytes).map_err(|error| RunError::Native(error.to_string()))?;
             return Ok(Value::Str(std::rc::Rc::from(string)));
         }
         Err(RunError::Native("unsupported native call signature".into()))
@@ -325,9 +351,8 @@ mod tests {
         hook.register(
             "missing",
             "echo",
-            FfiSignature::new([FfiScalar::String], FfiScalar::String).with_string_return(
-                crate::FfiStringReturn::OutBuffer { capacity: 16 },
-            ),
+            FfiSignature::new([FfiScalar::String], FfiScalar::String)
+                .with_string_return(crate::FfiStringReturn::OutBuffer { capacity: 16 }),
         );
         let result = hook
             .try_call_external_typed(

@@ -107,14 +107,16 @@ impl FfiStringReturn {
                     .ok_or("NUL-terminated string return has no terminator")?;
                 if let Some(length) = reported_len {
                     if length != end {
-                        return Err("reported string length disagrees with the NUL terminator".into());
+                        return Err(
+                            "reported string length disagrees with the NUL terminator".into()
+                        );
                     }
                 }
                 Ok(payload[..end].to_vec())
             }
-            Self::Owned { .. } => Err(
-                "owned string returns require a generated free callback before copying".into(),
-            ),
+            Self::Owned { .. } => {
+                Err("owned string returns require a generated free callback before copying".into())
+            }
         }
     }
 
@@ -161,7 +163,10 @@ impl FfiStringArgument {
         if nul_terminated {
             bytes.push(0);
         }
-        Ok(Self { bytes, nul_terminated })
+        Ok(Self {
+            bytes,
+            nul_terminated,
+        })
     }
 
     /// Encode an internal UTF-16 string at the native boundary. Conversion
@@ -238,13 +243,17 @@ impl FfiSignature {
         if self.string_return.is_some() && !self.matches_string_call() {
             return Err("string return declaration requires a string -> string signature".into());
         }
-        if self.matches_i32_call() || self.matches_u32_call() || self.matches_i64_call() || self.matches_f64_call() || self.matches_bool_call() {
+        if self.matches_i32_call()
+            || self.matches_u32_call()
+            || self.matches_i64_call()
+            || self.matches_f64_call()
+            || self.matches_bool_call()
+        {
             Ok(())
         } else if self.matches_string_call() {
-            let declaration = self
-                .string_return
-                .as_ref()
-                .ok_or_else(|| String::from("string FFI signatures require an explicit return declaration"))?;
+            let declaration = self.string_return.as_ref().ok_or_else(|| {
+                String::from("string FFI signatures require an explicit return declaration")
+            })?;
             if self.params.len() == 2 && !matches!(declaration, FfiStringReturn::OutBuffer { .. }) {
                 return Err("two-string FFI signatures require an out-buffer declaration".into());
             }
@@ -344,7 +353,9 @@ pub struct FfiError {
 
 impl FfiError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
@@ -496,16 +507,22 @@ impl NativeLibrary {
         declaration: &FfiStringReturn,
     ) -> Result<Vec<u8>, FfiError> {
         if !matches!(declaration, FfiStringReturn::Borrowed { .. }) {
-            return Err(FfiError { message: "borrowed UTF-8 call requires a borrowed return declaration".into() });
+            return Err(FfiError {
+                message: "borrowed UTF-8 call requires a borrowed return declaration".into(),
+            });
         }
-        declaration.validate().map_err(|message| FfiError { message })?;
+        declaration
+            .validate()
+            .map_err(|message| FfiError { message })?;
         let symbol = unsafe {
             self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *const u8>(name)
         }?;
         let mut length = 0usize;
         let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
         if pointer.is_null() && length != 0 {
-            return Err(FfiError { message: "borrowed UTF-8 call returned a null pointer with non-zero length".into() });
+            return Err(FfiError {
+                message: "borrowed UTF-8 call returned a null pointer with non-zero length".into(),
+            });
         }
         let payload = if length == 0 {
             &[][..]
@@ -527,15 +544,26 @@ impl NativeLibrary {
     ) -> Result<Vec<u8>, FfiError> {
         let capacity = match declaration {
             FfiStringReturn::OutBuffer { capacity } => *capacity,
-            _ => return Err(FfiError { message: "out-buffer UTF-8 call requires an out-buffer declaration".into() }),
+            _ => {
+                return Err(FfiError {
+                    message: "out-buffer UTF-8 call requires an out-buffer declaration".into(),
+                })
+            }
         };
-        declaration.validate().map_err(|message| FfiError { message })?;
+        declaration
+            .validate()
+            .map_err(|message| FfiError { message })?;
         let symbol = unsafe {
             self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> usize>(name)
         }?;
         let mut buffer = vec![0u8; capacity];
         let length = unsafe {
-            symbol(argument.as_ptr(), argument.len_bytes(), buffer.as_mut_ptr(), capacity)
+            symbol(
+                argument.as_ptr(),
+                argument.len_bytes(),
+                buffer.as_mut_ptr(),
+                capacity,
+            )
         };
         declaration
             .copy_payload(&buffer, Some(length))
@@ -554,9 +582,15 @@ impl NativeLibrary {
     ) -> Result<Vec<u8>, FfiError> {
         let capacity = match declaration {
             FfiStringReturn::OutBuffer { capacity } => *capacity,
-            _ => return Err(FfiError { message: "two-string calls require an out-buffer declaration".into() }),
+            _ => {
+                return Err(FfiError {
+                    message: "two-string calls require an out-buffer declaration".into(),
+                })
+            }
         };
-        declaration.validate().map_err(|message| FfiError { message })?;
+        declaration
+            .validate()
+            .map_err(|message| FfiError { message })?;
         let symbol = unsafe {
             self.symbol::<unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize>(name)
         }?;
@@ -585,22 +619,36 @@ impl NativeLibrary {
         declaration: &FfiStringReturn,
     ) -> Result<Vec<u8>, FfiError> {
         let (free_symbol, length_mode) = match declaration {
-            FfiStringReturn::Owned { free_symbol, length } => (free_symbol, length),
-            _ => return Err(FfiError { message: "owned UTF-8 call requires an owned return declaration".into() }),
+            FfiStringReturn::Owned {
+                free_symbol,
+                length,
+            } => (free_symbol, length),
+            _ => {
+                return Err(FfiError {
+                    message: "owned UTF-8 call requires an owned return declaration".into(),
+                })
+            }
         };
-        declaration.validate().map_err(|message| FfiError { message })?;
-        let free = unsafe {
-            self.symbol::<unsafe extern "C" fn(*mut u8, usize)>(free_symbol.as_bytes())
-        }?;
+        declaration
+            .validate()
+            .map_err(|message| FfiError { message })?;
+        let free =
+            unsafe { self.symbol::<unsafe extern "C" fn(*mut u8, usize)>(free_symbol.as_bytes()) }?;
         match length_mode {
             FfiStringLength::OutParameter(_) => {
                 let symbol = unsafe {
-                    self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *mut u8>(name)
+                    self.symbol::<unsafe extern "C" fn(*const u8, usize, *mut usize) -> *mut u8>(
+                        name,
+                    )
                 }?;
                 let mut length = 0usize;
-                let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
+                let pointer =
+                    unsafe { symbol(argument.as_ptr(), argument.len_bytes(), &mut length) };
                 if pointer.is_null() && length != 0 {
-                    return Err(FfiError { message: "owned UTF-8 call returned a null pointer with non-zero length".into() });
+                    return Err(FfiError {
+                        message: "owned UTF-8 call returned a null pointer with non-zero length"
+                            .into(),
+                    });
                 }
                 let payload = if length == 0 {
                     Vec::new()
@@ -616,9 +664,13 @@ impl NativeLibrary {
                 }?;
                 let pointer = unsafe { symbol(argument.as_ptr(), argument.len_bytes()) };
                 if pointer.is_null() {
-                    return Err(FfiError { message: "owned NUL-terminated UTF-8 call returned a null pointer".into() });
+                    return Err(FfiError {
+                        message: "owned NUL-terminated UTF-8 call returned a null pointer".into(),
+                    });
                 }
-                let payload = unsafe { CStr::from_ptr(pointer.cast()) }.to_bytes().to_vec();
+                let payload = unsafe { CStr::from_ptr(pointer.cast()) }
+                    .to_bytes()
+                    .to_vec();
                 unsafe { free(pointer, payload.len()) };
                 Ok(payload)
             }
@@ -645,22 +697,41 @@ impl NativeLibrary {
         Ok(unsafe { symbol(first, second) })
     }
 
-    pub unsafe fn call_i32_3(&self, name: &[u8], first: i32, second: i32, third: i32) -> Result<i32, FfiError> {
+    pub unsafe fn call_i32_3(
+        &self,
+        name: &[u8],
+        first: i32,
+        second: i32,
+        third: i32,
+    ) -> Result<i32, FfiError> {
         let symbol = unsafe { self.symbol::<unsafe extern "C" fn(i32, i32, i32) -> i32>(name) }?;
         Ok(unsafe { symbol(first, second, third) })
     }
 
-    pub unsafe fn call_i32_signature(&self, name: &[u8], signature: &FfiSignature, args: &[i32]) -> Result<i32, FfiError> {
+    pub unsafe fn call_i32_signature(
+        &self,
+        name: &[u8],
+        signature: &FfiSignature,
+        args: &[i32],
+    ) -> Result<i32, FfiError> {
         if !signature.matches_i32_call() || signature.arity() != args.len() {
-            return Err(FfiError { message: format!("unsupported i32 FFI signature: arity {}, arguments {}", signature.arity(), args.len()) });
+            return Err(FfiError {
+                message: format!(
+                    "unsupported i32 FFI signature: arity {}, arguments {}",
+                    signature.arity(),
+                    args.len()
+                ),
+            });
         }
-        unsafe { match args {
-            [] => self.call_i32_0(name),
-            [arg] => self.call_i32_1(name, *arg),
-            [first, second] => self.call_i32_2(name, *first, *second),
-            [first, second, third] => self.call_i32_3(name, *first, *second, *third),
-            _ => unreachable!(),
-        }}
+        unsafe {
+            match args {
+                [] => self.call_i32_0(name),
+                [arg] => self.call_i32_1(name, *arg),
+                [first, second] => self.call_i32_2(name, *first, *second),
+                [first, second, third] => self.call_i32_3(name, *first, *second, *third),
+                _ => unreachable!(),
+            }
+        }
     }
 
     pub unsafe fn call_u32_0(&self, name: &[u8]) -> Result<u32, FfiError> {
@@ -678,22 +749,41 @@ impl NativeLibrary {
         Ok(unsafe { symbol(first, second) })
     }
 
-    pub unsafe fn call_u32_3(&self, name: &[u8], first: u32, second: u32, third: u32) -> Result<u32, FfiError> {
+    pub unsafe fn call_u32_3(
+        &self,
+        name: &[u8],
+        first: u32,
+        second: u32,
+        third: u32,
+    ) -> Result<u32, FfiError> {
         let symbol = unsafe { self.symbol::<unsafe extern "C" fn(u32, u32, u32) -> u32>(name) }?;
         Ok(unsafe { symbol(first, second, third) })
     }
 
-    pub unsafe fn call_u32_signature(&self, name: &[u8], signature: &FfiSignature, args: &[u32]) -> Result<u32, FfiError> {
+    pub unsafe fn call_u32_signature(
+        &self,
+        name: &[u8],
+        signature: &FfiSignature,
+        args: &[u32],
+    ) -> Result<u32, FfiError> {
         if !signature.matches_u32_call() || signature.arity() != args.len() {
-            return Err(FfiError { message: format!("unsupported u32 FFI signature: arity {}, arguments {}", signature.arity(), args.len()) });
+            return Err(FfiError {
+                message: format!(
+                    "unsupported u32 FFI signature: arity {}, arguments {}",
+                    signature.arity(),
+                    args.len()
+                ),
+            });
         }
-        unsafe { match args {
-            [] => self.call_u32_0(name),
-            [arg] => self.call_u32_1(name, *arg),
-            [first, second] => self.call_u32_2(name, *first, *second),
-            [first, second, third] => self.call_u32_3(name, *first, *second, *third),
-            _ => unreachable!(),
-        }}
+        unsafe {
+            match args {
+                [] => self.call_u32_0(name),
+                [arg] => self.call_u32_1(name, *arg),
+                [first, second] => self.call_u32_2(name, *first, *second),
+                [first, second, third] => self.call_u32_3(name, *first, *second, *third),
+                _ => unreachable!(),
+            }
+        }
     }
 
     pub unsafe fn call_i64_0(&self, name: &[u8]) -> Result<i64, FfiError> {
@@ -1061,7 +1151,10 @@ mod tests {
         let terminated = FfiStringReturn::Borrowed {
             length: FfiStringLength::NullTerminated,
         };
-        assert_eq!(terminated.copy_payload(b"hello\0ignored", None).unwrap(), b"hello");
+        assert_eq!(
+            terminated.copy_payload(b"hello\0ignored", None).unwrap(),
+            b"hello"
+        );
         assert!(terminated.copy_payload(b"hello\0", Some(4)).is_err());
 
         let buffer = FfiStringReturn::OutBuffer { capacity: 4 };
@@ -1129,16 +1222,20 @@ mod tests {
             .with_string_return(FfiStringReturn::OutBuffer { capacity: 32 })
             .validate()
             .is_err());
-        assert!(FfiSignature::new([FfiScalar::String, FfiScalar::String], FfiScalar::String)
-            .with_string_return(FfiStringReturn::Borrowed {
-                length: FfiStringLength::NullTerminated,
-            })
-            .validate()
-            .is_err());
-        assert!(FfiSignature::new([FfiScalar::String, FfiScalar::String], FfiScalar::String)
-            .with_string_return(FfiStringReturn::OutBuffer { capacity: 32 })
-            .validate()
-            .is_ok());
+        assert!(
+            FfiSignature::new([FfiScalar::String, FfiScalar::String], FfiScalar::String)
+                .with_string_return(FfiStringReturn::Borrowed {
+                    length: FfiStringLength::NullTerminated,
+                })
+                .validate()
+                .is_err()
+        );
+        assert!(
+            FfiSignature::new([FfiScalar::String, FfiScalar::String], FfiScalar::String)
+                .with_string_return(FfiStringReturn::OutBuffer { capacity: 32 })
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1157,18 +1254,16 @@ mod tests {
         let library = unsafe { NativeLibrary::open(path) }.expect("load test executable");
         let argument = FfiStringArgument::from_utf8("input", false).unwrap();
         let out_buffer = FfiStringReturn::OutBuffer { capacity: 16 };
-        let error = unsafe {
-            library.call_utf8_borrowed(b"zun_missing_symbol", &argument, &out_buffer)
-        }
-        .expect_err("borrowed call must reject an out-buffer declaration");
+        let error =
+            unsafe { library.call_utf8_borrowed(b"zun_missing_symbol", &argument, &out_buffer) }
+                .expect_err("borrowed call must reject an out-buffer declaration");
         assert!(error.to_string().contains("borrowed UTF-8 call"));
         let borrowed = FfiStringReturn::Borrowed {
             length: FfiStringLength::OutParameter("len".into()),
         };
-        let error = unsafe {
-            library.call_utf8_out_buffer(b"zun_missing_symbol", &argument, &borrowed)
-        }
-        .expect_err("out-buffer call must reject a borrowed declaration");
+        let error =
+            unsafe { library.call_utf8_out_buffer(b"zun_missing_symbol", &argument, &borrowed) }
+                .expect_err("out-buffer call must reject a borrowed declaration");
         assert!(error.to_string().contains("out-buffer UTF-8 call"));
     }
 

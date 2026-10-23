@@ -26,7 +26,11 @@ impl core::fmt::Display for RunError {
             RunError::Malformed(m) => write!(f, "malformed bytecode: {m}"),
             RunError::Native(m) => write!(f, "{m}"),
             RunError::Thrown(value) => write!(f, "unhandled exception: {value:?}"),
-            RunError::SourceFrame { cause, method, source_span } => {
+            RunError::SourceFrame {
+                cause,
+                method,
+                source_span,
+            } => {
                 write!(f, "{cause} at {method}")?;
                 if let Some((start, end)) = source_span {
                     write!(f, " [{start}..{end}]")?;
@@ -40,7 +44,10 @@ impl core::fmt::Display for RunError {
 
 impl RunError {
     pub(crate) fn annotate(self, module: &zun_module::Module, method_rid: u32, pc: u32) -> Self {
-        if matches!(self, RunError::SourceFrame { .. } | RunError::Suspended | RunError::Thrown(_)) {
+        if matches!(
+            self,
+            RunError::SourceFrame { .. } | RunError::Suspended | RunError::Thrown(_)
+        ) {
             return self;
         }
         let Some(frame) = module.debug_frame_at(method_rid, pc) else {
@@ -56,7 +63,12 @@ impl RunError {
     /// Render an error with the source frame associated with the failing
     /// method and program counter. This keeps the existing error variants
     /// stable while allowing hosts to consume `.zm` sequence-point metadata.
-    pub fn with_source_frame(&self, module: &zun_module::Module, method_rid: u32, pc: u32) -> String {
+    pub fn with_source_frame(
+        &self,
+        module: &zun_module::Module,
+        method_rid: u32,
+        pc: u32,
+    ) -> String {
         let Some(frame) = module.debug_frame_at(method_rid, pc) else {
             return self.to_string();
         };

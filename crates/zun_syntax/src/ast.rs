@@ -425,7 +425,11 @@ pub enum Expr {
         span: Span,
     },
     /// `Class.field` static member read.
-    StaticField { class: Name, field: Name, span: Span },
+    StaticField {
+        class: Name,
+        field: Name,
+        span: Span,
+    },
     /// `name = value`
     Assign {
         /// The assigned variable.
@@ -564,7 +568,11 @@ pub enum Expr {
         span: Span,
     },
     /// `object.#field` private field read.
-    PrivateField { object: Box<Expr>, field: Name, span: Span },
+    PrivateField {
+        object: Box<Expr>,
+        field: Name,
+        span: Span,
+    },
     /// `object.field = value` — write a field; the value is the result.
     FieldAssign {
         /// The object expression.

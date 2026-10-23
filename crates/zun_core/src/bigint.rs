@@ -14,12 +14,23 @@ pub struct BigInt {
 }
 
 impl BigInt {
-    pub fn zero() -> Self { Self { negative: false, limbs: Vec::new() } }
+    pub fn zero() -> Self {
+        Self {
+            negative: false,
+            limbs: Vec::new(),
+        }
+    }
 
     pub fn from_u64(value: u64) -> Self {
         let mut limbs = vec![value as u32];
-        if value >> 32 != 0 { limbs.push((value >> 32) as u32); }
-        Self { negative: false, limbs }.normalized()
+        if value >> 32 != 0 {
+            limbs.push((value >> 32) as u32);
+        }
+        Self {
+            negative: false,
+            limbs,
+        }
+        .normalized()
     }
 
     pub fn from_i64(value: i64) -> Self {
@@ -33,7 +44,9 @@ impl BigInt {
 
     pub fn parse_decimal(text: &str) -> Result<Self, &'static str> {
         let bytes = text.as_bytes();
-        if bytes.is_empty() { return Err("empty bigint literal"); }
+        if bytes.is_empty() {
+            return Err("empty bigint literal");
+        }
         let (negative, digits) = match bytes[0] {
             b'-' => (true, &bytes[1..]),
             b'+' => (false, &bytes[1..]),
@@ -51,28 +64,48 @@ impl BigInt {
         Ok(result)
     }
 
-    pub fn is_zero(&self) -> bool { self.limbs.is_empty() }
-    pub fn is_negative(&self) -> bool { self.negative }
+    pub fn is_zero(&self) -> bool {
+        self.limbs.is_empty()
+    }
+    pub fn is_negative(&self) -> bool {
+        self.negative
+    }
     pub fn add(&self, other: &Self) -> Self {
         match (self.negative, other.negative) {
-            (a, b) if a == b => Self { negative: a, limbs: add_abs(&self.limbs, &other.limbs) }.normalized(),
+            (a, b) if a == b => Self {
+                negative: a,
+                limbs: add_abs(&self.limbs, &other.limbs),
+            }
+            .normalized(),
             _ => match cmp_abs(&self.limbs, &other.limbs) {
                 Ordering::Equal => Self::zero(),
-                Ordering::Greater => Self { negative: self.negative, limbs: sub_abs(&self.limbs, &other.limbs) }.normalized(),
-                Ordering::Less => Self { negative: other.negative, limbs: sub_abs(&other.limbs, &self.limbs) }.normalized(),
+                Ordering::Greater => Self {
+                    negative: self.negative,
+                    limbs: sub_abs(&self.limbs, &other.limbs),
+                }
+                .normalized(),
+                Ordering::Less => Self {
+                    negative: other.negative,
+                    limbs: sub_abs(&other.limbs, &self.limbs),
+                }
+                .normalized(),
             },
         }
     }
 
     pub fn sub(&self, other: &Self) -> Self {
         let mut negated = other.clone();
-        if !negated.is_zero() { negated.negative = !negated.negative; }
+        if !negated.is_zero() {
+            negated.negative = !negated.negative;
+        }
         self.add(&negated)
     }
 
     pub fn neg(&self) -> Self {
         let mut value = self.clone();
-        if !value.is_zero() { value.negative = !value.negative; }
+        if !value.is_zero() {
+            value.negative = !value.negative;
+        }
         value
     }
 
@@ -94,13 +127,19 @@ impl BigInt {
                 index += 1;
             }
         }
-        Self { negative: self.negative != other.negative, limbs }.normalized()
+        Self {
+            negative: self.negative != other.negative,
+            limbs,
+        }
+        .normalized()
     }
 
     /// Divide with truncation toward zero. The remainder has the dividend's
     /// sign, matching JavaScript BigInt semantics.
     pub fn div_rem(&self, other: &Self) -> Option<(Self, Self)> {
-        if other.is_zero() { return None; }
+        if other.is_zero() {
+            return None;
+        }
         let mut dividend = self.clone();
         let mut divisor = other.clone();
         dividend.negative = false;
@@ -134,12 +173,19 @@ impl BigInt {
 
     fn from_u128(mut value: u128, negative: bool) -> Self {
         let mut limbs = Vec::new();
-        while value != 0 { limbs.push(value as u32); value >>= 32; }
+        while value != 0 {
+            limbs.push(value as u32);
+            value >>= 32;
+        }
         Self { negative, limbs }.normalized()
     }
     fn normalized(mut self) -> Self {
-        while self.limbs.last() == Some(&0) { self.limbs.pop(); }
-        if self.limbs.is_empty() { self.negative = false; }
+        while self.limbs.last() == Some(&0) {
+            self.limbs.pop();
+        }
+        if self.limbs.is_empty() {
+            self.negative = false;
+        }
         self
     }
     fn mul_small(&mut self, value: u32) {
@@ -149,7 +195,9 @@ impl BigInt {
             *limb = product as u32;
             carry = product >> 32;
         }
-        if carry != 0 { self.limbs.push(carry as u32); }
+        if carry != 0 {
+            self.limbs.push(carry as u32);
+        }
     }
     fn add_small(&mut self, value: u32) {
         let mut carry = u64::from(value);
@@ -157,30 +205,41 @@ impl BigInt {
             let sum = u64::from(*limb) + carry;
             *limb = sum as u32;
             carry = sum >> 32;
-            if carry == 0 { return; }
+            if carry == 0 {
+                return;
+            }
         }
-        if carry != 0 { self.limbs.push(carry as u32); }
+        if carry != 0 {
+            self.limbs.push(carry as u32);
+        }
     }
     fn set_bit(&mut self, bit: usize) {
         let limb = bit / 32;
-        if self.limbs.len() <= limb { self.limbs.resize(limb + 1, 0); }
+        if self.limbs.len() <= limb {
+            self.limbs.resize(limb + 1, 0);
+        }
         self.limbs[limb] |= 1u32 << (bit % 32);
     }
 }
 
 fn cmp_abs(left: &[u32], right: &[u32]) -> Ordering {
-    left.len().cmp(&right.len()).then_with(|| left.iter().rev().cmp(right.iter().rev()))
+    left.len()
+        .cmp(&right.len())
+        .then_with(|| left.iter().rev().cmp(right.iter().rev()))
 }
 
 fn add_abs(left: &[u32], right: &[u32]) -> Vec<u32> {
     let mut result = Vec::with_capacity(left.len().max(right.len()) + 1);
     let mut carry = 0u64;
     for i in 0..left.len().max(right.len()) {
-        let sum = u64::from(*left.get(i).unwrap_or(&0)) + u64::from(*right.get(i).unwrap_or(&0)) + carry;
+        let sum =
+            u64::from(*left.get(i).unwrap_or(&0)) + u64::from(*right.get(i).unwrap_or(&0)) + carry;
         result.push(sum as u32);
         carry = sum >> 32;
     }
-    if carry != 0 { result.push(carry as u32); }
+    if carry != 0 {
+        result.push(carry as u32);
+    }
     result
 }
 
@@ -197,7 +256,9 @@ fn sub_abs(left: &[u32], right: &[u32]) -> Vec<u32> {
 
 impl core::fmt::Display for BigInt {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.is_zero() { return formatter.write_str("0"); }
+        if self.is_zero() {
+            return formatter.write_str("0");
+        }
         let mut value = self.clone();
         value.negative = false;
         let mut digits = Vec::new();
@@ -211,8 +272,12 @@ impl core::fmt::Display for BigInt {
             value = value.normalized();
             digits.push((b'0' + remainder as u8) as char);
         }
-        if self.negative { formatter.write_str("-")?; }
-        for digit in digits.iter().rev() { formatter.write_str(&digit.to_string())?; }
+        if self.negative {
+            formatter.write_str("-")?;
+        }
+        for digit in digits.iter().rev() {
+            formatter.write_str(&digit.to_string())?;
+        }
         Ok(())
     }
 }
@@ -226,7 +291,12 @@ mod tests {
     fn parses_and_formats_values_beyond_i64() {
         let value = BigInt::parse_decimal("18446744073709551616").unwrap();
         assert_eq!(value.to_string(), "18446744073709551616");
-        assert_eq!(BigInt::parse_decimal("-18446744073709551616").unwrap().to_string(), "-18446744073709551616");
+        assert_eq!(
+            BigInt::parse_decimal("-18446744073709551616")
+                .unwrap()
+                .to_string(),
+            "-18446744073709551616"
+        );
     }
 
     #[test]

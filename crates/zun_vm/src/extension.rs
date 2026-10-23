@@ -146,11 +146,15 @@ impl LoadedExtension {
         args: &[ZunValue],
     ) -> Result<Option<ZunValue>, FfiError> {
         let function = self.find_function(module, key).ok_or_else(|| {
-            FfiError::new(format!("extension function `{module}.{key}` is not registered"))
+            FfiError::new(format!(
+                "extension function `{module}.{key}` is not registered"
+            ))
         })?;
-        function
-            .invoke_checked(args)
-            .map_err(|status| FfiError::new(format!("extension function `{module}.{key}` failed with status {status}")))
+        function.invoke_checked(args).map_err(|status| {
+            FfiError::new(format!(
+                "extension function `{module}.{key}` failed with status {status}"
+            ))
+        })
     }
 }
 
