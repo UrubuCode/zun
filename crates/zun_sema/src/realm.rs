@@ -11,6 +11,7 @@
 //! facets ([`base_type_facets`]) flow through the registry; every other base
 //! type falls through to the checker's existing hardcoded matches unchanged.
 
+use crate::hir;
 use crate::hir::Ty;
 
 /// The declarative seed source. Its directives are the source of truth for which
@@ -22,9 +23,33 @@ const REALM_SOURCE: &str = include_str!("../../../builtin/realm.zun");
 /// frozen representation.
 #[derive(Debug, Clone)]
 pub(crate) enum CtorLowering {
-    /// A runtime-managed collection allocated by a zero-argument intrinsic
-    /// (`mapNew`, `setNew`, ...), yielding a value of type `ty`.
-    ManagedCollection { native: &'static str, ty: Ty },
+    /// A runtime-managed value allocated by a zero-argument intrinsic
+    /// (`mapNew`, `setNew`, `promiseNew`, ...) in `module`, yielding `ty`.
+    Intrinsic0 { module: &'static str, native: &'static str, ty: Ty },
+    /// An argument-taking intrinsic (`regexpNew`, `bigIntNew`, ...) in `module`.
+    /// Accepts `min_args..=max_args` arguments and yields `ty`. When
+    /// `pad_empty_flags` is set and exactly one argument is supplied, an empty
+    /// string is appended (RegExp's optional `flags`).
+    IntrinsicN {
+        module: &'static str,
+        native: &'static str,
+        ty: Ty,
+        min_args: usize,
+        max_args: usize,
+        pad_empty_flags: bool,
+    },
+    /// `new Array(len)` → an `ArrayNew` node (`Ty::Array`).
+    ArrayNew,
+    /// `new ArrayBuffer(len)` → `bufferNew` (`Ty::Buffer`).
+    ArrayBuffer,
+    /// A buffer view built from `(buffer, offset, length)` — `DataView` and the
+    /// typed arrays — yielding the view `kind`.
+    BufferView { native: &'static str, kind: hir::BufferViewKind },
+    /// The registry owns the name's annotation type and descriptor value, but
+    /// `new <Name>()` falls through to the checker's existing resolution. Used
+    /// for value types (`String`/`Number`/`Boolean`) and surface-only globals
+    /// (`Object`/`Symbol`) that have no intrinsic constructor of their own.
+    FallThrough,
 }
 
 /// A base type registered as a realm global.
@@ -43,16 +68,84 @@ pub(crate) struct RealmBinding {
 /// constructor lowers. Returns `None` for names not yet migrated to the
 /// declarative path, so they fall through to the hardcoded resolution.
 ///
-/// For this slice only `Map` is wired; rolling out the rest is a matter of
-/// adding its `(Ty, CtorLowering)` here and listing it in `builtin/realm.zun`.
+/// Rolling out a base type is a matter of adding its `(Ty, CtorLowering)` here
+/// and listing it in `builtin/realm.zun`.
+///
+/// Class-backed base types whose annotation is `Ty::Instance(<class index>)`
+/// (`Date`, `Error` and its subclasses) are *not* expressible here — a static
+/// facet cannot name a program-assigned class index — so they stay on the
+/// checker's hardcoded class-constructor path.
 fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
-    match name {
-        "Map" => Some((
-            Ty::Map,
-            CtorLowering::ManagedCollection { native: "mapNew", ty: Ty::Map },
-        )),
-        _ => None,
-    }
+    use hir::BufferViewKind as Bv;
+    let collection0 = |native, ty| CtorLowering::Intrinsic0 { module: "zun:collections", native, ty };
+    Some(match name {
+        // Zero-argument managed collections.
+        "Map" => (Ty::Map, collection0("mapNew", Ty::Map)),
+        "Set" => (Ty::Set, collection0("setNew", Ty::Set)),
+        "WeakMap" => (Ty::WeakMap, collection0("weakMapNew", Ty::WeakMap)),
+        "FinalizationRegistry" => (
+            Ty::FinalizationRegistry,
+            collection0("finalizationRegistryNew", Ty::FinalizationRegistry),
+        ),
+        "Promise" => (
+            Ty::Promise,
+            CtorLowering::Intrinsic0 { module: "zun:promise", native: "promiseNew", ty: Ty::Promise },
+        ),
+        // Argument-taking intrinsics.
+        "RegExp" => (
+            Ty::RegExp,
+            CtorLowering::IntrinsicN {
+                module: "zun:collections",
+                native: "regexpNew",
+                ty: Ty::RegExp,
+                min_args: 1,
+                max_args: 2,
+                pad_empty_flags: true,
+            },
+        ),
+        "BigInt" => (
+            Ty::BigInt,
+            CtorLowering::IntrinsicN {
+                module: "zun:collections",
+                native: "bigIntNew",
+                ty: Ty::BigInt,
+                min_args: 1,
+                max_args: 1,
+                pad_empty_flags: false,
+            },
+        ),
+        // Array and the buffer family.
+        "Array" => (Ty::Array, CtorLowering::ArrayNew),
+        "ArrayBuffer" => (Ty::Buffer, CtorLowering::ArrayBuffer),
+        "DataView" => (
+            Ty::BufferView(Bv::DataView),
+            CtorLowering::BufferView { native: "dataViewNew", kind: Bv::DataView },
+        ),
+        "Uint8Array" => (
+            Ty::BufferView(Bv::U8),
+            CtorLowering::BufferView { native: "u8ArrayNew", kind: Bv::U8 },
+        ),
+        "Uint16Array" => (
+            Ty::BufferView(Bv::U16),
+            CtorLowering::BufferView { native: "u16ArrayNew", kind: Bv::U16 },
+        ),
+        "Uint32Array" => (
+            Ty::BufferView(Bv::U32),
+            CtorLowering::BufferView { native: "u32ArrayNew", kind: Bv::U32 },
+        ),
+        "Float64Array" => (
+            Ty::BufferView(Bv::F64),
+            CtorLowering::BufferView { native: "f64ArrayNew", kind: Bv::F64 },
+        ),
+        // Value types and surface-only globals: annotation + descriptor only,
+        // `new` (where it exists) stays on the existing class path.
+        "String" => (Ty::String, CtorLowering::FallThrough),
+        "Number" => (Ty::F64, CtorLowering::FallThrough),
+        "Boolean" => (Ty::Boolean, CtorLowering::FallThrough),
+        "Object" => (Ty::DynamicObject, CtorLowering::FallThrough),
+        "Symbol" => (Ty::Any, CtorLowering::FallThrough),
+        _ => return None,
+    })
 }
 
 /// Recognize a single `global.set("<Name>", <Name>, true)` directive on `line`,
@@ -118,10 +211,20 @@ mod tests {
     }
 
     #[test]
-    fn registry_seeds_map_only() {
+    fn registry_seeds_map_first() {
         let registry = registry();
-        assert_eq!(registry.len(), 1);
+        // `Map` must stay first so its descriptor keeps token 0 (end-to-end
+        // tests observe `classDescriptorToken(globalThis.Map) == 0`).
         assert_eq!(registry[0].0, "Map");
+        assert_eq!(registry[0].1.token, 0);
         assert_eq!(registry[0].1.ty, Ty::Map);
+    }
+
+    #[test]
+    fn registry_covers_the_declared_base_types() {
+        let names: Vec<String> = registry().into_iter().map(|(n, _)| n).collect();
+        for expected in ["Set", "WeakMap", "Promise", "RegExp", "Array", "String", "Number"] {
+            assert!(names.iter().any(|n| n == expected), "missing {expected}");
+        }
     }
 }

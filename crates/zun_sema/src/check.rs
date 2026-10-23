@@ -2773,21 +2773,110 @@ impl Checker<'_> {
                 // lowers `new <Name>()` through its recorded constructor shape.
                 // On a miss we fall through to the hardcoded paths unchanged.
                 if let Some(binding) = self.realm_globals.get(&name) {
-                    let crate::realm::CtorLowering::ManagedCollection { native, ty } =
-                        binding.ctor.clone();
-                    if !args.is_empty() {
-                        self.error(span, format!("`{name}` expects no constructor arguments"));
-                        return self.poison(span);
+                    use crate::realm::CtorLowering;
+                    match binding.ctor.clone() {
+                        CtorLowering::Intrinsic0 { module, native, ty } => {
+                            if !args.is_empty() {
+                                self.error(span, format!("`{name}` expects no constructor arguments"));
+                                return self.poison(span);
+                            }
+                            let Some((id, _)) = zun_natives::resolve(module, native) else {
+                                self.error(span, format!("missing intrinsic `{native}`"));
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                                ty,
+                                span,
+                            };
+                        }
+                        CtorLowering::IntrinsicN { module, native, ty, min_args, max_args, pad_empty_flags } => {
+                            if args.len() < min_args || args.len() > max_args {
+                                self.error(
+                                    span,
+                                    format!("`{name}` expects {min_args} to {max_args} constructor argument(s), found {}", args.len()),
+                                );
+                                return self.poison(span);
+                            }
+                            let Some((id, _)) = zun_natives::resolve(module, native) else {
+                                self.error(span, format!("missing intrinsic `{native}`"));
+                                return self.poison(span);
+                            };
+                            let mut checked: Vec<hir::Expr> =
+                                args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                            if pad_empty_flags && checked.len() == 1 {
+                                checked.push(hir::Expr {
+                                    kind: hir::ExprKind::String(String::new()),
+                                    ty: Ty::String,
+                                    span,
+                                });
+                            }
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                                ty,
+                                span,
+                            };
+                        }
+                        CtorLowering::ArrayNew => {
+                            if args.len() != 1 {
+                                self.error(span, "`Array` expects one length argument");
+                                return self.poison(span);
+                            }
+                            let mut length = self.check_expr(cx, &args[0]);
+                            coerce_numeric_literal(&mut length, Ty::INT);
+                            if !length.ty.is_int() {
+                                self.error(length.span, "array length must be an integer");
+                            }
+                            return hir::Expr {
+                                kind: hir::ExprKind::ArrayNew { length: Box::new(length) },
+                                ty: Ty::Array,
+                                span,
+                            };
+                        }
+                        CtorLowering::ArrayBuffer => {
+                            if args.len() != 1 {
+                                self.error(span, "`ArrayBuffer` expects one length argument");
+                                return self.poison(span);
+                            }
+                            let mut length = self.check_expr(cx, &args[0]);
+                            coerce_numeric_literal(&mut length, Ty::INT);
+                            if !length.ty.is_int() {
+                                self.error(length.span, "ArrayBuffer length must be an integer");
+                            }
+                            let Some((id, _)) = zun_natives::resolve("zun:buffer", "bufferNew") else {
+                                self.error(span, "missing ArrayBuffer intrinsic");
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![length] },
+                                ty: Ty::Buffer,
+                                span,
+                            };
+                        }
+                        CtorLowering::BufferView { native, kind } => {
+                            if args.len() != 3 {
+                                self.error(span, format!("`{name}` expects buffer, offset, and length"));
+                                return self.poison(span);
+                            }
+                            let mut call_args: Vec<hir::Expr> =
+                                args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                            for arg in call_args.iter_mut().skip(1) {
+                                coerce_numeric_literal(arg, Ty::INT);
+                            }
+                            let Some((id, _)) = zun_natives::resolve("zun:buffer", native) else {
+                                self.error(span, format!("missing buffer-view intrinsic `{native}`"));
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                ty: Ty::BufferView(kind),
+                                span,
+                            };
+                        }
+                        // The registry owns this name's annotation and descriptor
+                        // value; `new <Name>()` keeps using the existing path.
+                        CtorLowering::FallThrough => {}
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
-                        self.error(span, format!("missing collection intrinsic `{native}`"));
-                        return self.poison(span);
-                    };
-                    return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
-                        ty,
-                        span,
-                    };
                 }
                 let typed_view = match name.as_str() {
                     "Uint8Array" => Some("u8ArrayNew"),

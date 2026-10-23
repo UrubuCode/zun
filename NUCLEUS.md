@@ -54,6 +54,24 @@ read.
 
 **Counts:** done 3 · partial 16 · missing 4 (of 26 nucleus items, JSON excluded).
 
+### Declarative realm-global registration (PLAN §3.1)
+
+Base types are seeded onto `globalThis` from the declarative registry
+(`builtin/realm.zun` → `zun_sema::realm`); the registry is the single source of
+truth for each name's annotation type, descriptor value, and `new` lowering (the
+frozen runtime representation is unchanged — the registry only rebinds the name).
+
+- **Registered declaratively:** `Map`, `Set`, `WeakMap`, `FinalizationRegistry`,
+  `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
+  `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
+  `Number`, `Boolean`, `Object`, `Symbol`. (`Map` keeps token 0.)
+- **Still on the hardcoded fallback:** `Date` and `Error` (+ subclasses
+  `EvalError/RangeError/ReferenceError/SyntaxError/TypeError/URIError`) — their
+  annotation resolves to `Ty::Instance(<program-assigned class index>)`, which a
+  static `base_type_facets` entry cannot name; and `Proxy` (not in bucket A).
+  The hardcoded `new`/annotation matches also remain for the lowercase aliases
+  (`map`, `array`, …) and `Proxy`, so they are not yet removable.
+
 ---
 
 ## 1. String — partial

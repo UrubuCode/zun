@@ -9,8 +9,36 @@
 //
 // The compiler recognizes each `global.set("<BaseType>", <BaseType>, true)`
 // directive at std-compile time; it is not ordinary executable code (Zun has no
-// top-level statements). For now only `Map` flows through this declarative path;
-// every other base type stays on the existing hardcoded resolution until it is
-// listed here too.
+// top-level statements). Each listed base type flows through the declarative
+// path (annotation type, descriptor value, and `new` lowering come from the
+// realm registry); the remaining types stay on the checker's hardcoded
+// resolution until they are listed here too.
+//
+// `Map` stays first so its descriptor keeps token 0.
 
+// Managed collections and the Promise/registry intrinsics.
 global.set("Map", Map, true);
+global.set("Set", Set, true);
+global.set("WeakMap", WeakMap, true);
+global.set("FinalizationRegistry", FinalizationRegistry, true);
+global.set("Promise", Promise, true);
+
+// Argument-taking intrinsics.
+global.set("RegExp", RegExp, true);
+global.set("BigInt", BigInt, true);
+
+// Array and the buffer family.
+global.set("Array", Array, true);
+global.set("ArrayBuffer", ArrayBuffer, true);
+global.set("DataView", DataView, true);
+global.set("Uint8Array", Uint8Array, true);
+global.set("Uint16Array", Uint16Array, true);
+global.set("Uint32Array", Uint32Array, true);
+global.set("Float64Array", Float64Array, true);
+
+// Value types and surface-only globals.
+global.set("String", String, true);
+global.set("Number", Number, true);
+global.set("Boolean", Boolean, true);
+global.set("Object", Object, true);
+global.set("Symbol", Symbol, true);
