@@ -202,6 +202,13 @@ impl Value {
     pub fn as_object(&self) -> zun_gc::Obj {
         match self {
             Value::Object(o) => *o,
+            // A dynamic-get yields `Any`, so an object read back out of a
+            // dynamic property (e.g. the nested object in `{ a: { b } }.a.b`)
+            // arrives wrapped. Unwrap an object-tagged `Any` to its reference.
+            Value::Any(any) => match any.as_object() {
+                Some(address) => unsafe { zun_gc::Obj::from_addr(address as *mut u64) },
+                None => panic!("expected object, found {self:?}"),
+            },
             other => panic!("expected object, found {other:?}"),
         }
     }

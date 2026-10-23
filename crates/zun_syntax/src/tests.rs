@@ -527,3 +527,38 @@
             Stmt::Return { value: Some(Expr::Binary { .. }), .. }
         ));
     }
+
+    #[test]
+    fn parses_object_literal_with_shorthand_and_computed_keys() {
+        let src = "function main() { let o = { a: 1, b, [\"k\"]: 2, [s]: 3 }; }";
+        let p = parse_ok(src);
+        let Stmt::Let { init: Expr::ObjectLiteral { properties, .. }, .. } =
+            &p.functions[0].body.statements[0]
+        else {
+            panic!("expected object literal");
+        };
+        assert_eq!(properties.len(), 4);
+        assert!(matches!(properties[0].key, PropertyKey::Ident(_)));
+        // Shorthand `b` desugars to key=value=ident `b`.
+        assert!(matches!(properties[1].key, PropertyKey::Ident(_)));
+        assert!(matches!(properties[1].value, Expr::Ident(_)));
+        assert!(matches!(properties[2].key, PropertyKey::Computed(_)));
+        assert!(matches!(properties[3].key, PropertyKey::Computed(_)));
+    }
+
+    #[test]
+    fn parses_empty_and_nested_object_literals() {
+        let p = parse_ok("function main() { let e = {}; let o = { a: { b: 1 } }; }");
+        let Stmt::Let { init: Expr::ObjectLiteral { properties, .. }, .. } =
+            &p.functions[0].body.statements[0]
+        else {
+            panic!("expected empty object literal");
+        };
+        assert!(properties.is_empty());
+        let Stmt::Let { init: Expr::ObjectLiteral { properties, .. }, .. } =
+            &p.functions[0].body.statements[1]
+        else {
+            panic!("expected nested object literal");
+        };
+        assert!(matches!(properties[0].value, Expr::ObjectLiteral { .. }));
+    }

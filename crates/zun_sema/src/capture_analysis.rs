@@ -124,5 +124,13 @@ pub(super) fn collect_mutated_expr(
         | ast::Expr::String { .. } | ast::Expr::Template { .. } | ast::Expr::RegexLiteral { .. }
         | ast::Expr::Bool { .. } | ast::Expr::Null { .. } => {}
         ast::Expr::Spread { expr, .. } => collect_mutated_expr(checker, expr, names),
+        ast::Expr::ObjectLiteral { properties, .. } => {
+            for property in properties {
+                if let ast::PropertyKey::Computed(key) = &property.key {
+                    collect_mutated_expr(checker, key, names);
+                }
+                collect_mutated_expr(checker, &property.value, names);
+            }
+        }
     }
 }

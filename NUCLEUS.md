@@ -29,7 +29,7 @@ read.
 | 2 | Number | partial | Instance helpers present; **no statics** (`Number.isNaN/isInteger/isFinite/parseFloat/parseInt`, `MAX_SAFE_INTEGER` …); no `toPrecision/toExponential/toLocaleString`; no radix on `toString` |
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
-| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only), object-literal computed keys (no object literals yet) |
+| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Rich custom surface; missing standard `forEach/find/some/every/findLast/flatMap/join/splice/shift/unshift/keys/values/entries`, statics `Array.from/of/isArray`, callback `sort`, iterator-returning methods |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
@@ -151,10 +151,13 @@ in sync.
     `Object.prototype.toString` consult `Symbol.toStringTag`. These are exposed as
     **values** only; wiring their dispatch is a separate step (the iterator one already
     drives `for...of`).
-  - **Object-literal / class computed symbol-key member definitions**
-    (`[Symbol.iterator]() {}`, `[computedSymbol]: v`): object literals do not exist in the
-    AST yet, so there is no syntactic site; `obj[sym] = ...` is the available definition
-    path. Revisit when object literals land.
+  - **Object-literal computed symbol-key properties** (`{ [computedSymbol]: v }`) now
+    lower: an object literal builds a `DynamicObject` (`Expr::ObjectLiteral` →
+    `hir::ExprKind::DynamicObjectLiteral` → `NewDynamic` + per-entry `StoreDynamic`/
+    `StoreDynamicValue`), and a computed key that evaluates to a `Symbol` routes to the
+    symbol-keyed slot. Still deferred: **class** computed symbol-key member definitions
+    and object **method shorthand** with a computed symbol name (`{ [Symbol.iterator]() {} }`)
+    — see §Object literals below.
   - Other well-known symbols (`isConcatSpreadable match replace search split species
     unscopables`) — not seeded; add to `WellKnownSymbol` when a consumer needs them.
 
@@ -204,6 +207,28 @@ objects and `DynamicObject`s.
 - **Notes:** these builtins allocate/throw, so per the centralized JIT-eligibility rule
   (`zun_codegen/src/eligible.rs`) they are **not** in the Tier-1 allowlist and run on the
   always-correct Tier-0 interpreter; there is no separate JIT path to keep in sync.
+
+## 6b. Object literals — partial  *(expression syntax landed)*
+`{ key: value, ... }` now parses and lowers in the front-end (both the hand parser —
+`Parser::object_literal`, dispatched from `primary()` on `{` in expression position — and
+the OXC adapter — `Expression::ObjectExpression`). An object literal produces a
+`DynamicObject` (`Ty::DynamicObject`): `Expr::ObjectLiteral` → `hir::ExprKind::DynamicObjectLiteral`
+→ `NewDynamic`, then for each property a `Dup` + store + `Pop` so the object is the result.
+- **Present (v1):** string keys from identifier/string/number property names (`StoreDynamic`);
+  **shorthand** `{ x }` ≡ `{ x: x }`; **computed keys** `{ [expr]: v }` (`StoreDynamicValue`,
+  where a `Symbol` key routes to the symbol-keyed slot and a string key to the ordinary
+  property); empty `{}`; nested literals. Properties are set in source order
+  (`DynamicObject` is insertion-ordered). Values box to `Any` for the dynamic store.
+- **Block-vs-object:** the hand parser treats `{` as an object literal only in expression
+  position; it has no bare block statement, so the ambiguity does not arise there.
+- **Deferred (documented follow-ups — the OXC adapter errors rather than miscompiling, the
+  hand parser does not yet accept them):** method shorthand `{ m() {} }`, getters/setters
+  `{ get x() {} }` / `{ set x(v) {} }`, and spread `{ ...o }`.
+- **Note on computed keys:** like `obj[k] = v` on a dynamic receiver, a computed key must be
+  a string or a `Symbol` at runtime (`StoreDynamicValue` dispatches on tag); full ToString
+  coercion of arbitrary computed keys is not implemented (consistent with `IndexAssign`).
+- Interp fix landed alongside: `Value::as_object` now unwraps an object-tagged `Any`, so a
+  nested object read back out of a dynamic property (`{ a: { b } }.a.b`) works.
 
 ## 7. Array — partial
 `std/array.zun` (large custom surface) + special ZIL lowering for `push/pop`

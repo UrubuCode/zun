@@ -2533,6 +2533,72 @@ mod method_tests {
     }
 
     #[test]
+    fn object_literal_builds_dynamic_object_with_dotted_access() {
+        let module = zun_compiler::compile(
+            "function main(): number { let x = { a: 1, b: 2 }; return (x.a as number) + (x.b as number); }",
+        )
+        .expect("compile object literal");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run object literal");
+        assert!(matches!(result, Value::Float(value, _) if value == 3.0));
+    }
+
+    #[test]
+    fn object_literal_keys_preserve_insertion_order() {
+        let module = zun_compiler::compile(
+            "function main(): string { let ks = Object.keys({ a: 1, b: 2 }); return (ks[0] as string) + (ks[1] as string); }",
+        )
+        .expect("compile object literal keys");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run object literal keys");
+        assert!(matches!(result, Value::Str(text) if &*text == "ab"));
+    }
+
+    #[test]
+    fn object_literal_shorthand_property() {
+        let module = zun_compiler::compile(
+            "function main(): number { let a = 5; let o = { a }; return o.a as number; }",
+        )
+        .expect("compile object shorthand");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run object shorthand");
+        assert!(matches!(result, Value::Float(value, _) if value == 5.0));
+    }
+
+    #[test]
+    fn object_literal_computed_string_key() {
+        let module = zun_compiler::compile(
+            "function main(): number { let o = { [\"k\" + \"1\"]: 9 }; return o[\"k1\"] as number; }",
+        )
+        .expect("compile computed string key");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run computed string key");
+        assert!(matches!(result, Value::Float(value, _) if value == 9.0));
+    }
+
+    #[test]
+    fn object_literal_computed_symbol_key_is_distinct_from_strings() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let s = Symbol(\"s\"); let o = { [s]: 7 }; return o[s] as u64; }",
+        )
+        .expect("compile computed symbol key");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run computed symbol key");
+        assert!(matches!(result, Value::Int(7, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn object_literal_empty_and_nested() {
+        let module = zun_compiler::compile(
+            "function main(): number { let e = {}; let o = { a: { b: 1 } }; return o.a.b as number; }",
+        )
+        .expect("compile nested object literal");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run nested object literal");
+        assert!(matches!(result, Value::Float(value, _) if value == 1.0));
+    }
+
+    #[test]
     fn symbol_for_is_canonical_and_key_for_round_trips() {
         // `Symbol.for("k")` returns the same symbol, so the second lookup reads
         // the value stored under the first.

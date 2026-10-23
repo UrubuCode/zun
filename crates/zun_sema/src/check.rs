@@ -1155,6 +1155,44 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::ObjectLiteral { properties, .. } => {
+                // Build a DynamicObject and populate it in source order. Values
+                // box to Any as the dynamic store expects; a computed key is
+                // kept as an expression so a Symbol routes to the symbol slot.
+                let mut entries = Vec::with_capacity(properties.len());
+                for property in properties {
+                    let value = self.check_expr(cx, &property.value);
+                    let value = if value.ty == Ty::Any {
+                        value
+                    } else {
+                        hir::Expr {
+                            span: value.span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                        }
+                    };
+                    let key = match &property.key {
+                        ast::PropertyKey::Ident(name) => {
+                            hir::ObjectKey::Named(self.text(name).to_string())
+                        }
+                        ast::PropertyKey::String { value, .. } => {
+                            hir::ObjectKey::Named(value.clone())
+                        }
+                        ast::PropertyKey::Number { value, .. } => {
+                            hir::ObjectKey::Named(value.to_string())
+                        }
+                        ast::PropertyKey::Computed(key) => {
+                            hir::ObjectKey::Computed(self.check_expr(cx, key))
+                        }
+                    };
+                    entries.push(hir::ObjectEntry { key, value });
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicObjectLiteral { entries },
+                    ty: Ty::DynamicObject,
+                    span,
+                }
+            }
             ast::Expr::Yield { value, .. } => {
                 if !cx.is_generator {
                     self.error(span, "yield is only valid inside a generator function");
@@ -3977,6 +4015,16 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Function(_) | Number { .. } | BigInt { .. } | String { .. } | RegexLiteral { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
         StaticMethodCall { args, .. } => args.iter().map(count_yields_in_expr).sum(),
         StaticField { .. } => 0,
+        ObjectLiteral { properties, .. } => properties
+            .iter()
+            .map(|property| {
+                let key = match &property.key {
+                    ast::PropertyKey::Computed(key) => count_yields_in_expr(key),
+                    _ => 0,
+                };
+                key + count_yields_in_expr(&property.value)
+            })
+            .sum(),
     }
 }
 
@@ -4057,6 +4105,16 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         IndexAssign { object, index, value, .. } => {
             count_awaits_in_expr(object) + count_awaits_in_expr(index) + count_awaits_in_expr(value)
         }
+        ObjectLiteral { properties, .. } => properties
+            .iter()
+            .map(|property| {
+                let key = match &property.key {
+                    ast::PropertyKey::Computed(key) => count_awaits_in_expr(key),
+                    _ => 0,
+                };
+                key + count_awaits_in_expr(&property.value)
+            })
+            .sum(),
     }
 }
 

@@ -451,6 +451,25 @@ pub struct CatchClause {
     pub body: Vec<Stmt>,
 }
 
+/// One populated property of a [`ExprKind::DynamicObjectLiteral`].
+#[derive(Debug)]
+pub struct ObjectEntry {
+    /// How the property key is produced.
+    pub key: ObjectKey,
+    /// The property value, already boxed to `Any`.
+    pub value: Expr,
+}
+
+/// The key of a [`ObjectEntry`].
+#[derive(Debug)]
+pub enum ObjectKey {
+    /// A statically known string key stored via `StoreDynamic`.
+    Named(String),
+    /// A runtime-evaluated key stored via `StoreDynamicValue`; a `Symbol` value
+    /// routes to the symbol-keyed slot, a string to the ordinary property.
+    Computed(Expr),
+}
+
 /// A checked expression: a kind plus its type and origin.
 #[derive(Debug)]
 pub struct Expr {
@@ -663,6 +682,10 @@ pub enum ExprKind {
     },
     /// Write an Any value using a runtime-evaluated property name.
     DynamicSetValue { object: Box<Expr>, key: Box<Expr>, value: Box<Expr> },
+    /// Allocate a `DynamicObject` and populate it from an object literal.
+    ///
+    /// Entries are stored in source order; the object is the result value.
+    DynamicObjectLiteral { entries: Vec<ObjectEntry> },
     /// Explicitly box a statically typed value as Any.
     BoxAny {
         /// The value to box.
