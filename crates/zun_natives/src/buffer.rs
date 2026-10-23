@@ -23,6 +23,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "bufferSlice",
+            params: &[Buffer, U64, U64],
+            ret: Buffer,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "bufferGetU8",
             params: &[Buffer, U64],
             ret: U8,

@@ -26,6 +26,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
     for name in [
         "bufferNew",
         "bufferLength",
+        "bufferSlice",
         "bufferGetU8",
         "bufferSetU8",
         "mapNew",
@@ -175,6 +176,7 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
     for name in [
         "bufferNew",
         "bufferLength",
+        "bufferSlice",
         "bufferGetU8",
         "bufferSetU8",
         "bufferReadU32",

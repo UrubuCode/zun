@@ -29,6 +29,28 @@ impl Heap {
         Some(self.buffers.get_mut(&(object.addr() as usize))?.write_f64(offset, value))
     }
 
+    /// Copy `[begin, end)` of `object` into a freshly allocated buffer.
+    ///
+    /// `ArrayBuffer.prototype.slice` copies rather than aliasing, so the two
+    /// buffers are independent afterwards. Out-of-range and inverted ranges
+    /// clamp to an empty result, as they do in JS, rather than failing.
+    pub fn buffer_slice(&mut self, object: Obj, begin: usize, end: usize) -> Option<Obj> {
+        let length = self.buffer_len(object)?;
+        let begin = begin.min(length);
+        let end = end.min(length).max(begin);
+        let bytes: Vec<u8> = (begin..end)
+            .map(|index| self.buffer_get(object, index).unwrap_or(0))
+            .collect();
+
+        // Allocating may move objects, so nothing read above may be held
+        // across this call as an address.
+        let copy = self.alloc_buffer(bytes.len());
+        for (index, byte) in bytes.into_iter().enumerate() {
+            self.buffer_set(copy, index, byte);
+        }
+        Some(copy)
+    }
+
     pub fn buffer_view(&self, object: Obj, offset: usize, length: usize) -> Option<zun_core::ByteView> {
         zun_core::ByteView::new(self.buffer_len(object)?, offset, length)
     }
