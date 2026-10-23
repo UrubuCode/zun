@@ -46,9 +46,43 @@ Phases 0–4 are done (format, pipeline, runtime+GC mark-sweep/compaction, Crane
 Tier 1, and the dynamic/language surface: closures, exceptions, iteration,
 Map/Set/WeakMap, async/await, generators, BigInt, Group 2 syntax, DataView/typed
 arrays, static/private/accessors, eager-JIT-for-loops, cached prelude, scalar+string
-FFI). The current focus is **Phase 5** (PLAN §6).
+FFI). Phases 0–7 have since landed (generational GC, expanded JIT eligibility,
+nucleus/realm refactor, `zun_abi`, host-target AOT, registry/cache/signatures with the
+trust anchor closed, OXC front-end, dynamic `import()` v1, and the full RegExp surface —
+Engine A/B selection + backtracking Engine B + literal syntax + regex→ZIL compilation in
+progress). **The current focus is the NEW GOAL below.**
 
-## Backlog (in order)
+## New goal (current): complete the nucleus — bucket A → 100%
+
+**The C modules (node `fs/path/http/crypto/net`, browser `DOM/fetch`, `@urubucode/*`)
+depend on a complete nucleus. Do NOT start them until bucket A (PLAN §3.2) is 100%.**
+First run a methodical audit of the nucleus surface against ECMAScript (not just "the
+class exists" but each method/semantic), producing a living `NUCLEUS.md` checklist with
+done / partial / missing per item; then close the gaps in this priority order.
+
+**Audited gaps (2026-10-23), high tier first — "everything uses these":**
+1. **`Object.*`** — `keys/values/entries/assign/freeze/create/getPrototypeOf/defineProperty/…` (currently absent).
+2. **`Function.call/apply/bind`** — currently absent; ubiquitous and needed by libs.
+3. **Symbol — complete** — currently only `Symbol.iterator` is wired (a `SymbolRegistry`
+   exists in `zun_core`). Add `Symbol()` unique primitives, `Symbol.for`/`keyFor`
+   (global registry), the **well-known symbols** as VM dispatch points
+   (`iterator`/`asyncIterator`/`hasInstance`/`toPrimitive`/`toStringTag`), and
+   user-defined **symbol-keyed members** (`[Symbol.iterator]() {}`, computed keys — the
+   symbol-keyed slot already exists, measured 16.5x; finish the surface). Symbol is
+   foundational — the iteration protocol and many built-in behaviors ride on it.
+
+**Lower tier:**
+4. **WeakSet**, **WeakRef** — absent (WeakMap exists → the GC base is ready).
+5. **Decorators** — planned in A, not implemented.
+6. **Method-surface tail** — complete the ECMAScript method surfaces of the existing
+   classes (String/Array/Number/Date/Map/Set/…) that the audit flags as missing.
+7. **Boolean wrapper object** — low (the primitive suffices for most code).
+
+Each item: Rust floor + thin TS wrapper where applicable; interp↔JIT equivalence; tests;
+`cargo test --workspace` green per atomic commit. JSON stays in `@urubucode/common` (ZIL),
+NOT the nucleus. RegExp stage-2d (regex→ZIL) is **perf, bucket B — paused** behind this goal.
+
+## Backlog (done — in order)
 
 1. **Generational GC — highest value** (PLAN §2 GC, §5, §6 Phase 5). The Lua 5.4
    blueprint: nursery + bump allocation; minor collections over young only; rare
