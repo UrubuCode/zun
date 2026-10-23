@@ -359,6 +359,8 @@ impl Translator<'_> {
                 // operand kind's width (clif_ty maps u8 to I8), so the
                 // bit-counting instructions answer for that width natively,
                 // matching Tier 0's explicit masking.
+                Opcode::RoundF64 => self.round_f64(&mut stack)?,
+                Opcode::SignF64 => self.sign_f64(&mut stack)?,
                 Opcode::MinI32 => self.int_minmax(&mut stack, true)?,
                 Opcode::MaxI32 => self.int_minmax(&mut stack, false)?,
                 Opcode::ClzI32 => self.int_un(&mut stack, IntUnOp::Clz)?,
@@ -2181,6 +2183,66 @@ impl Translator<'_> {
         };
         stack.push((r, k));
         Ok(())
+    }
+
+    /// `Math.round`, branchlessly.
+    ///
+    /// Mirrors the Tier 0 `js_round`: take the fractional part rather than
+    /// adding 0.5, because `0.49999999999999994 + 0.5` rounds up to exactly
+    /// `1.0` and would answer 1 where JS answers 0. NaN and the infinities
+    /// need no special case — the subtraction yields NaN, the comparison is
+    /// false, and `floor` already returned the right value.
+    fn round_f64(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
+        let (x, k) = stack.pop().ok_or("stack underflow")?;
+        let ty = self.builder.func.dfg.value_type(x);
+        let half = self.fconst(ty, 0.5)?;
+        let one = self.fconst(ty, 1.0)?;
+        let zero = self.fconst(ty, 0.0)?;
+
+        let truncated = self.builder.ins().floor(x);
+        let fraction = self.builder.ins().fsub(x, truncated);
+        let round_up = self
+            .builder
+            .ins()
+            .fcmp(FloatCC::GreaterThanOrEqual, fraction, half);
+        let incremented = self.builder.ins().fadd(truncated, one);
+        let rounded = self.builder.ins().select(round_up, incremented, truncated);
+
+        // A zero result takes the sign of the input: -0.4 rounds to -0.
+        let is_zero = self.builder.ins().fcmp(FloatCC::Equal, rounded, zero);
+        let signed_zero = self.builder.ins().fcopysign(zero, x);
+        let result = self.builder.ins().select(is_zero, signed_zero, rounded);
+
+        stack.push((result, k));
+        Ok(())
+    }
+
+    /// `Math.sign`: NaN and both zeros pass through, everything else is ±1.
+    fn sign_f64(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
+        let (x, k) = stack.pop().ok_or("stack underflow")?;
+        let ty = self.builder.func.dfg.value_type(x);
+        let one = self.fconst(ty, 1.0)?;
+        let zero = self.fconst(ty, 0.0)?;
+
+        // `Unordered(x, x)` is the NaN test; equality with zero catches both
+        // signed zeros at once.
+        let is_nan = self.builder.ins().fcmp(FloatCC::Unordered, x, x);
+        let is_zero = self.builder.ins().fcmp(FloatCC::Equal, x, zero);
+        let passthrough = self.builder.ins().bor(is_nan, is_zero);
+        let magnitude = self.builder.ins().fcopysign(one, x);
+        let result = self.builder.ins().select(passthrough, x, magnitude);
+
+        stack.push((result, k));
+        Ok(())
+    }
+
+    /// A float constant of `ty`, which is F32 or F64.
+    fn fconst(&mut self, ty: Type, value: f64) -> Result<Value, String> {
+        Ok(match ty {
+            types::F32 => self.builder.ins().f32const(value as f32),
+            types::F64 => self.builder.ins().f64const(value),
+            other => return Err(format!("expected a float type, got {other}")),
+        })
     }
 
     fn int_un(&mut self, stack: &mut Vec<Slot>, op: IntUnOp) -> Result<(), String> {

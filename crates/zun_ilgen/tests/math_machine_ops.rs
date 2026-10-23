@@ -100,10 +100,13 @@ fn rounding_ops_lower_to_machine_ops() {
 }
 
 #[test]
-fn round_and_sign_still_call_the_native() {
-    // Neither matches an IEEE-754 primitive, so both must keep going through
-    // libm rather than being approximated by a machine op.
-    for name in ["roundNumber", "signNumber"] {
+fn round_and_sign_lower_to_machine_ops() {
+    // Neither is a single instruction, but both lower to a short branchless
+    // sequence, which beats calling out to libm.
+    for (name, expected) in [
+        ("roundNumber", Opcode::RoundF64),
+        ("signNumber", Opcode::SignF64),
+    ] {
         let src = format!(
             r#"import {{ math }} from "zun:core";
             function apply(value: number): number {{ return math.{name}(value); }}
@@ -111,9 +114,11 @@ fn round_and_sign_still_call_the_native() {
         );
         let ops = opcodes_of(&src, "apply");
         assert!(
-            ops.contains(&Opcode::CallBuiltin),
-            "{name} must stay on the native path: {ops:?}"
+            ops.contains(&expected),
+            "expected {} in {ops:?}",
+            expected.mnemonic()
         );
+        assert!(!ops.contains(&Opcode::CallBuiltin), "{name}: {ops:?}");
     }
 }
 

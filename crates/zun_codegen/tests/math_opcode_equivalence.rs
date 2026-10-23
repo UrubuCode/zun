@@ -39,6 +39,15 @@ const OPERANDS: &[f64] = &[
     f64::NAN,
     f64::MAX,
     f64::MIN_POSITIVE,
+    // The operand that breaks `floor(x + 0.5)`: the sum rounds up to exactly
+    // 1.0, so that shortcut answers 1 where JS answers 0.
+    0.499_999_999_999_999_94,
+    -0.499_999_999_999_999_94,
+    // Negative values that round to zero, where the sign must survive.
+    -0.4,
+    -0.1,
+    // Large enough that every value is integral already.
+    4.503_599_627_370_496e15,
 ];
 
 const UNARY: &[Opcode] = &[
@@ -48,6 +57,8 @@ const UNARY: &[Opcode] = &[
     Opcode::FloorF64,
     Opcode::CeilF64,
     Opcode::TruncF64,
+    Opcode::RoundF64,
+    Opcode::SignF64,
 ];
 const BINARY: &[Opcode] = &[Opcode::MinF64, Opcode::MaxF64];
 
@@ -268,5 +279,112 @@ fn f32_negation_agrees_across_tiers() {
         assert_tiers_agree(&format!(
             "function main(): f32 {{ let x: f32 = {value} as f32; return -x; }}"
         ));
+    }
+}
+
+// --- round and sign ----------------------------------------------------
+//
+// Unlike the others these are not one instruction: no ISA rounds halves the
+// way JS does, nor has a signum. Each lowers to a short branchless sequence,
+// so the Tier 1 code is a reimplementation of the Tier 0 logic rather than a
+// single opcode, and the cases below are the ones that tell them apart.
+
+/// Evaluate `op` on both tiers and return the agreed result.
+fn agreed(op: Opcode, operand: f64) -> f64 {
+    let module = module_with(&[
+        konst(operand),
+        Instruction::simple(op),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    let a = tier0(&module);
+    let b = tier1(&module);
+    assert_same(format!("{}({operand:?})", op.mnemonic()), a, b);
+    a
+}
+
+#[test]
+fn round_follows_js_and_not_the_machine_nearest() {
+    // `nearest` rounds halves to even, so it would answer 2 and -2 here.
+    assert_eq!(agreed(Opcode::RoundF64, 2.5), 3.0);
+    assert_eq!(agreed(Opcode::RoundF64, 1.5), 2.0);
+    assert_eq!(agreed(Opcode::RoundF64, 0.5), 1.0);
+    // Halves go toward +Infinity, so negative halves round up in magnitude
+    // terms only for the positive side: -2.5 is -2, not -3.
+    assert_eq!(agreed(Opcode::RoundF64, -2.5), -2.0);
+    assert_eq!(agreed(Opcode::RoundF64, -1.5), -1.0);
+}
+
+#[test]
+fn round_handles_the_operand_that_breaks_the_naive_formula() {
+    // `floor(0.49999999999999994 + 0.5)` is 1.0 because the addition rounds
+    // up; JS requires 0.
+    assert_eq!(agreed(Opcode::RoundF64, 0.499_999_999_999_999_94), 0.0);
+}
+
+#[test]
+fn round_preserves_the_sign_of_a_zero_result() {
+    assert!(agreed(Opcode::RoundF64, -0.4).is_sign_negative());
+    assert!(agreed(Opcode::RoundF64, -0.0).is_sign_negative());
+    assert!(agreed(Opcode::RoundF64, 0.4).is_sign_positive());
+    assert!(agreed(Opcode::RoundF64, 0.0).is_sign_positive());
+}
+
+#[test]
+fn round_passes_nan_and_infinities_through() {
+    assert!(agreed(Opcode::RoundF64, f64::NAN).is_nan());
+    assert_eq!(agreed(Opcode::RoundF64, f64::INFINITY), f64::INFINITY);
+    assert_eq!(
+        agreed(Opcode::RoundF64, f64::NEG_INFINITY),
+        f64::NEG_INFINITY
+    );
+}
+
+#[test]
+fn sign_returns_the_signum_and_passes_zeros_and_nan_through() {
+    assert_eq!(agreed(Opcode::SignF64, 3.5), 1.0);
+    assert_eq!(agreed(Opcode::SignF64, -3.5), -1.0);
+    assert_eq!(agreed(Opcode::SignF64, f64::INFINITY), 1.0);
+    assert_eq!(agreed(Opcode::SignF64, f64::NEG_INFINITY), -1.0);
+    assert!(agreed(Opcode::SignF64, f64::NAN).is_nan());
+    // Both zeros come back as themselves, signs intact.
+    assert!(agreed(Opcode::SignF64, 0.0).is_sign_positive());
+    assert!(agreed(Opcode::SignF64, -0.0).is_sign_negative());
+    assert_eq!(agreed(Opcode::SignF64, 0.0), 0.0);
+    assert_eq!(agreed(Opcode::SignF64, -0.0), 0.0);
+}
+
+#[test]
+fn round_and_sign_match_the_natives_they_replace() {
+    // The natives stay the reference implementation; the opcodes must not
+    // drift from them.
+    for &operand in OPERANDS {
+        let expected_round = {
+            let truncated = operand.floor();
+            let rounded = if operand - truncated >= 0.5 {
+                truncated + 1.0
+            } else {
+                truncated
+            };
+            if rounded == 0.0 {
+                0.0f64.copysign(operand)
+            } else {
+                rounded
+            }
+        };
+        let expected_sign = if operand.is_nan() || operand == 0.0 {
+            operand
+        } else {
+            1.0f64.copysign(operand)
+        };
+        assert_same(
+            format!("round({operand:?})"),
+            agreed(Opcode::RoundF64, operand),
+            expected_round,
+        );
+        assert_same(
+            format!("sign({operand:?})"),
+            agreed(Opcode::SignF64, operand),
+            expected_sign,
+        );
     }
 }

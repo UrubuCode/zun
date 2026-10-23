@@ -116,6 +116,40 @@ pub(crate) fn js_min(a: f64, b: f64) -> f64 {
     }
 }
 
+/// `Math.round`: halves go toward +Infinity, and a zero result keeps the sign
+/// of the input.
+///
+/// Deliberately not `floor(x + 0.5)`, the usual shortcut. For
+/// `0.49999999999999994` the addition rounds up to exactly `1.0`, so the
+/// shortcut answers 1 where JS answers 0. Taking the fractional part instead
+/// keeps the comparison exact.
+pub(crate) fn js_round(x: f64) -> f64 {
+    let truncated = x.floor();
+    // NaN and the infinities fall out of this untouched: the subtraction
+    // gives NaN, the comparison is false, and `truncated` is already right.
+    let rounded = if x - truncated >= 0.5 {
+        truncated + 1.0
+    } else {
+        truncated
+    };
+    if rounded == 0.0 {
+        // -0.4 rounds to -0, not +0; +0 and -0 pass through unchanged.
+        0.0f64.copysign(x)
+    } else {
+        rounded
+    }
+}
+
+/// `Math.sign`: NaN and both zeros pass through unchanged, everything else
+/// becomes ±1.
+pub(crate) fn js_sign(x: f64) -> f64 {
+    if x.is_nan() || x == 0.0 {
+        x
+    } else {
+        1.0f64.copysign(x)
+    }
+}
+
 /// `Math.max` / IEEE-754 2019 `maximum`. See [`js_min`] for why `f64::max` is
 /// not used.
 pub(crate) fn js_max(a: f64, b: f64) -> f64 {

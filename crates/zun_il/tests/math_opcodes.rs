@@ -16,6 +16,8 @@ const MATH_OPS: &[(Opcode, u8, &str)] = &[
     (Opcode::TruncF64, 0x9B, "trunc.f64"),
     (Opcode::MinF64, 0x9C, "min.f64"),
     (Opcode::MaxF64, 0x9D, "max.f64"),
+    (Opcode::RoundF64, 0xA3, "round.f64"),
+    (Opcode::SignF64, 0xA4, "sign.f64"),
 ];
 
 #[test]
@@ -77,18 +79,20 @@ fn math_ops_round_trip_through_the_encoder() {
 }
 
 #[test]
-fn round_and_sign_have_no_opcode() {
-    // `Math.round` rounds halves toward +Infinity while the machine `nearest`
-    // rounds halves to even, and `Math.sign` is a comparison chain rather than
-    // an instruction. Neither may be added as a machine op without changing
-    // observable semantics, so assert they stayed off the table.
-    for op in Opcode::ALL {
-        let mnemonic = op.mnemonic();
-        assert!(
-            !matches!(mnemonic, "round.f64" | "sign.f64" | "nearest.f64"),
-            "{mnemonic} is not an IEEE-754 primitive with JS semantics"
-        );
-    }
+fn round_and_sign_are_ops_but_nearest_is_not() {
+    // `round.f64` and `sign.f64` exist as machine ops even though neither is
+    // a single instruction: both lower to a short branchless sequence.
+    //
+    // `nearest` must never appear. It is the machine's rounding mode, which
+    // sends halves to even, so `nearest(2.5)` is 2 where `Math.round(2.5)` is
+    // 3. Offering it under a math name would be a silent semantic change.
+    let mnemonics: Vec<&str> = Opcode::ALL.iter().map(|op| op.mnemonic()).collect();
+    assert!(mnemonics.contains(&"round.f64"));
+    assert!(mnemonics.contains(&"sign.f64"));
+    assert!(
+        !mnemonics.contains(&"nearest.f64"),
+        "machine `nearest` rounds halves to even and is not `Math.round`"
+    );
 }
 
 /// The integer machine ops, pinned the same way.

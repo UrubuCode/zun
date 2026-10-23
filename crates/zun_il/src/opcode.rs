@@ -359,6 +359,17 @@ define_opcodes! {
     CtzI32 = 0xA1, None, "ctz.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
     /// Count set bits within the operand kind's width.
     PopcntI32 = 0xA2, None, "popcnt.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+
+    // These two are machine ops without being single instructions: no ISA has
+    // JS's rounding rule or signum, so each lowers to a short branchless
+    // sequence rather than a libm call.
+    /// `Math.round`: round half toward +Infinity, preserving the sign of a
+    /// zero result. Note this is *not* the machine `nearest`, which rounds
+    /// halves to even — `round(2.5)` is 3, not 2.
+    RoundF64 = 0xA3, None, "round.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// `Math.sign`: -1, -0, +0, 1, or NaN. Zeros and NaN pass through with
+    /// their sign intact.
+    SignF64 = 0xA4, None, "sign.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]

@@ -38,8 +38,10 @@ use helpers::{field_kind_byte, int_or_float, jitkind_byte};
 /// catch the drift .docs-dotnet/07-actions-operations/05-jit-intrinsics.md
 /// warns of, where renaming a native silently disables the expansion.
 ///
-/// Absent on purpose: `round` and `sign` (no IEEE-754 primitive matches their
-/// JS semantics) and the transcendentals (libm's job).
+/// Absent on purpose: the transcendentals, which are libm's job. `round` and
+/// `sign` are here despite not being single instructions — neither has an ISA
+/// equivalent with JS semantics, so each lowers to a short branchless
+/// sequence instead of a call.
 pub const MATH_MACHINE_OPS: &[(&str, Opcode)] = &[
     ("sqrt", Opcode::SqrtF64),
     ("sqrtNumber", Opcode::SqrtF64),
@@ -53,6 +55,8 @@ pub const MATH_MACHINE_OPS: &[(&str, Opcode)] = &[
     ("minNumber", Opcode::MinF64),
     ("max", Opcode::MaxF64),
     ("maxNumber", Opcode::MaxF64),
+    ("roundNumber", Opcode::RoundF64),
+    ("signNumber", Opcode::SignF64),
 ];
 
 /// The machine op that replaces native `id` called with `argc` arguments, if

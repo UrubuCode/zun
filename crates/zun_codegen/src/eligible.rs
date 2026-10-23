@@ -52,6 +52,8 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::TruncF64
             | Opcode::MinF64
             | Opcode::MaxF64
+            | Opcode::RoundF64
+            | Opcode::SignF64
             | Opcode::MinI32
             | Opcode::MaxI32
             | Opcode::ClzI32
