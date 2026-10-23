@@ -1094,14 +1094,20 @@ mod tests {
     fn symbols_are_isolate_local_heap_state() {
         let mut first = Heap::new();
         let mut second = Heap::new();
+        // Each isolate seeds the well-known symbols first; a `Symbol.for` key
+        // then resolves to the same stable id in every isolate.
+        let well_known = first.symbol_count();
+        assert_eq!(second.symbol_count(), well_known);
         let first_symbol = first.symbol_for("iterator");
         let second_symbol = second.symbol_for("iterator");
         assert_eq!(first_symbol, second_symbol);
         assert_eq!(first.symbol_description(first_symbol), Some("iterator"));
-        assert_eq!(first.symbol_count(), 1);
-        assert_eq!(second.symbol_count(), 1);
+        assert_eq!(first.symbol_key_for(first_symbol), Some("iterator"));
+        assert_eq!(first.symbol_count(), well_known + 1);
+        assert_eq!(second.symbol_count(), well_known + 1);
         let unique = first.symbol_create(Some("iterator"));
         assert_ne!(unique, first_symbol);
+        assert_eq!(first.symbol_key_for(unique), None);
     }
 
     #[test]

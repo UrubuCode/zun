@@ -33,7 +33,7 @@ pub use ids::{CoreTypeId, IntrinsicId};
 pub use any_value::{Any, AnyTag};
 pub use function_handle::FunctionHandle;
 pub use module_bound_function::ModuleBoundFunction;
-pub use symbols::{SymbolId, SymbolRegistry};
+pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
 pub use regexp::{EngineKind, RegexError, RegexValue};
 pub use bigint::BigInt;
@@ -113,6 +113,7 @@ mod tests {
     #[test]
     fn symbols_are_unique_but_global_keys_are_canonical() {
         let mut symbols = SymbolRegistry::new();
+        let well_known = symbols.len();
         let first = symbols.create(Some("iterator"));
         let second = symbols.create(Some("iterator"));
         let global_a = symbols.for_key("iterator");
@@ -120,7 +121,10 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(global_a, global_b);
         assert_eq!(symbols.description(first), Some("iterator"));
-        assert_eq!(symbols.len(), 3);
+        assert_eq!(symbols.key_for(global_a), Some("iterator"));
+        assert_eq!(symbols.key_for(first), None);
+        // Well-known symbols are seeded first; the three created here follow.
+        assert_eq!(symbols.len(), well_known + 3);
     }
 
     #[test]

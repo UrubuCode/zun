@@ -29,6 +29,10 @@ impl Heap {
         self.symbols.description(symbol)
     }
 
+    pub fn symbol_key_for(&self, symbol: zun_core::SymbolId) -> Option<&str> {
+        self.symbols.key_for(symbol)
+    }
+
     pub fn symbol_count(&self) -> usize {
         self.symbols.len()
     }

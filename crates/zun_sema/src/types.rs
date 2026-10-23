@@ -46,6 +46,7 @@ impl<'a> Checker<'a> {
             "Uint32Array" => Ty::BufferView(hir::BufferViewKind::U32),
             "Float64Array" => Ty::BufferView(hir::BufferViewKind::F64),
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
+            "Symbol" | "symbol" => Ty::Symbol,
             "any" => Ty::Any,
             "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
             "Predicate" => Ty::Function(hir::DYNAMIC_PREDICATE),

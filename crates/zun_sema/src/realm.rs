@@ -143,7 +143,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "Number" => (Ty::F64, CtorLowering::FallThrough),
         "Boolean" => (Ty::Boolean, CtorLowering::FallThrough),
         "Object" => (Ty::DynamicObject, CtorLowering::FallThrough),
-        "Symbol" => (Ty::Any, CtorLowering::FallThrough),
+        "Symbol" => (Ty::Symbol, CtorLowering::FallThrough),
         _ => return None,
     })
 }

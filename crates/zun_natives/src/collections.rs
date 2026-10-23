@@ -311,5 +311,18 @@ pub const MODULE: crate::Module = crate::Module {
         // seeded onto the realm global.
         NativeFn { name: "realmDescriptor", params: &[F64], ret: Opaque, imp: unavailable },
         NativeFn { name: "classDescriptorToken", params: &[Opaque], ret: F64, imp: unavailable },
+        // `Symbol` surface. Symbols are isolate-local, so the interpreter owns
+        // the registry and intercepts these by name; the signatures fix only the
+        // argument count the verifier pops. A symbol is an immediate `Any`
+        // (`AnyTag::Symbol`), hence `Opaque` in/out.
+        // `symbolNew(description)` mints a unique symbol (`Void` description →
+        // `undefined`); `symbolFor(key)`/`symbolKeyFor(symbol)` are the
+        // cross-realm registry; `symbolWellKnown(index)` returns the stable
+        // well-known symbol value; `symbolDescription(symbol)` reads `.description`.
+        NativeFn { name: "symbolNew", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolFor", params: &[Str], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolKeyFor", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolWellKnown", params: &[F64], ret: Opaque, imp: unavailable },
+        NativeFn { name: "symbolDescription", params: &[Opaque], ret: Opaque, imp: unavailable },
     ],
 };

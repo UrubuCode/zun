@@ -16,6 +16,7 @@ impl Heap {
             zun_core::AnyTag::Null => 0x66,
             zun_core::AnyTag::Void => 0x77,
             zun_core::AnyTag::ClassDescriptor => value.as_class_descriptor().unwrap() as u64 ^ 0x88,
+            zun_core::AnyTag::Symbol => value.as_symbol().unwrap().get() ^ 0x99,
         }
     }
 }

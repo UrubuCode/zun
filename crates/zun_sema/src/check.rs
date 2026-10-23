@@ -1740,6 +1740,39 @@ impl Checker<'_> {
                     };
                 }
 
+                // `Symbol(description?)` mints a fresh, unique symbol. The
+                // description is optional; when present it must be a string.
+                if name == "Symbol" && !self.by_name.contains_key("Symbol") {
+                    if args.len() > 1 {
+                        self.error(span, "`Symbol` takes an optional description argument");
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", "symbolNew") else {
+                        self.error(span, "missing `symbolNew` intrinsic");
+                        return self.poison(span);
+                    };
+                    let description = match args.pop() {
+                        Some(mut value) => {
+                            if value.ty != Ty::String && value.ty != Ty::Any && !value.ty.is_error() {
+                                // Box non-string descriptions to `undefined` at
+                                // runtime by passing them through as `Any`.
+                                value = hir::Expr {
+                                    span: value.span,
+                                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                    ty: Ty::Any,
+                                };
+                            }
+                            value
+                        }
+                        None => hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![description] },
+                        ty: Ty::Symbol,
+                        span,
+                    };
+                }
+
                 let dynamic_property = |checker: &mut Checker<'_>,
                                         args: &mut Vec<hir::Expr>,
                                         span: Span| {
@@ -2028,6 +2061,37 @@ impl Checker<'_> {
                             args,
                             span,
                         );
+                    }
+                    // `Symbol.for(key)` / `Symbol.keyFor(symbol)` — the global
+                    // cross-realm registry.
+                    if class_name == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
+                        let member = self.text(method).to_string();
+                        let (native, arg_ty, ret_ty) = match member.as_str() {
+                            "for" => ("symbolFor", Ty::String, Ty::Symbol),
+                            "keyFor" => ("symbolKeyFor", Ty::Symbol, Ty::Any),
+                            other => {
+                                self.error(method.span, format!("`Symbol.{other}` is not a function"));
+                                return self.poison(span);
+                            }
+                        };
+                        if args.len() != 1 {
+                            self.error(span, format!("`Symbol.{member}` expects one argument"));
+                            return self.poison(span);
+                        }
+                        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+                            self.error(span, format!("missing `{native}` intrinsic"));
+                            return self.poison(span);
+                        };
+                        let mut arg = self.check_expr(cx, &args[0]);
+                        if !arg.ty.is_error() && !self.is_assignable(arg.ty, arg_ty) {
+                            self.error(arg.span, format!("`Symbol.{member}` expects a {arg_ty:?} argument"));
+                        }
+                        coerce_numeric_literal(&mut arg, arg_ty);
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                            ty: ret_ty,
+                            span,
+                        };
                     }
                     if let Some(&namespace) = self.core_namespaces.get(&class_name) {
                         let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
@@ -3113,8 +3177,62 @@ impl Checker<'_> {
                             };
                         }
                     }
+                    // Well-known symbols as first-class values (`Symbol.iterator`,
+                    // `Symbol.asyncIterator`, `Symbol.hasInstance`,
+                    // `Symbol.toPrimitive`, `Symbol.toStringTag`). Their identities
+                    // are stable per isolate.
+                    if self.text(class_name) == "Symbol"
+                        && !self.classes_by_name.contains_key("Symbol")
+                    {
+                        // Stable well-known symbol ids. Source of truth:
+                        // `zun_core::WellKnownSymbol` (the runtime registry seeds
+                        // these at the same ids). Kept inline so the compile-time
+                        // crate does not depend on the runtime crate.
+                        let well_known_id = match fname.as_str() {
+                            "iterator" => Some(0.0),
+                            "asyncIterator" => Some(1.0),
+                            "hasInstance" => Some(2.0),
+                            "toPrimitive" => Some(3.0),
+                            "toStringTag" => Some(4.0),
+                            _ => None,
+                        };
+                        if let Some(well_known_id) = well_known_id {
+                            let Some((id, _)) =
+                                zun_natives::resolve("zun:collections", "symbolWellKnown")
+                            else {
+                                self.error(span, "missing `symbolWellKnown` intrinsic");
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![hir::Expr {
+                                        kind: hir::ExprKind::Number(well_known_id),
+                                        ty: Ty::F64,
+                                        span,
+                                    }],
+                                },
+                                ty: Ty::Symbol,
+                                span,
+                            };
+                        }
+                    }
                 }
                 let object = self.check_expr(cx, object);
+                // `symbol.description` — the creation description or `undefined`.
+                if object.ty == Ty::Symbol && fname == "description" {
+                    let Some((id, _)) =
+                        zun_natives::resolve("zun:collections", "symbolDescription")
+                    else {
+                        self.error(span, "missing `symbolDescription` intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 if object.ty == Ty::Array && fname == "length" {
                     return hir::Expr {
                         kind: hir::ExprKind::ArrayLength {
@@ -3390,6 +3508,31 @@ impl Checker<'_> {
                 ..
             } => {
                 let object = self.check_expr(cx, object);
+                // Computed property store on a dynamic receiver: a Symbol key
+                // routes to the symbol-keyed slot, a string/number key to the
+                // ordinary dynamic property. The key and value are boxed to `Any`.
+                if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                    let key = self.check_expr(cx, index);
+                    let value = self.check_expr(cx, value);
+                    let boxed = if value.ty == Ty::Any {
+                        value
+                    } else {
+                        hir::Expr {
+                            span: value.span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicSetValue {
+                            object: Box::new(object),
+                            key: Box::new(key),
+                            value: Box::new(boxed),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 let mut index = self.check_expr(cx, index);
                 let value = self.check_expr(cx, value);
                 let value_ty = value.ty;

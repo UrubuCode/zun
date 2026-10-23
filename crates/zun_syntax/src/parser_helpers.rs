@@ -326,7 +326,7 @@ impl Parser<'_> {
                         expr = Expr::PrivateField { object: Box::new(expr), field, span };
                         continue;
                     }
-                    let member = self.name("a field or method name");
+                    let member = self.member_name("a field or method name");
                     if self.at(TokenKind::LParen) {
                         self.bump();
                         let args = self.arguments();
@@ -349,7 +349,7 @@ impl Parser<'_> {
                 }
                 TokenKind::QuestionDot => {
                     self.bump();
-                    let field = self.name("an optional field or method name");
+                    let field = self.member_name("an optional field or method name");
                     if self.at(TokenKind::LParen) {
                         self.bump();
                         let args = self.arguments();
@@ -720,6 +720,19 @@ impl Parser<'_> {
             None => Name {
                 span: Span::empty_at(self.peek().span.start),
             },
+        }
+    }
+
+    /// Parse a member name after `.`/`?.`. Unlike [`name`](Self::name), this
+    /// accepts reserved keywords (`Symbol.for`, `obj.class`, ...), matching the
+    /// ECMAScript rule that keywords are valid property names.
+    pub(crate) fn member_name(&mut self, what: &str) -> Name {
+        let token = self.peek();
+        if token.kind == TokenKind::Ident || token.kind.is_keyword() {
+            self.bump();
+            Name { span: token.span }
+        } else {
+            self.name(what)
         }
     }
 

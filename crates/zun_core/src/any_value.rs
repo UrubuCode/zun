@@ -1,7 +1,7 @@
 /// Runtime tag carried by a dynamically typed `Any` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum AnyTag { Int = 0, Float = 1, Bool = 2, Object = 3, String = 4, Null = 5, Void = 6, ClassDescriptor = 7 }
+pub enum AnyTag { Int = 0, Float = 1, Bool = 2, Object = 3, String = 4, Null = 5, Void = 6, ClassDescriptor = 7, Symbol = 8 }
 
 impl AnyTag {
     /// Decode the stable tag byte used by native/JIT ABI boundaries.
@@ -15,6 +15,7 @@ impl AnyTag {
             5 => Some(Self::Null),
             6 => Some(Self::Void),
             7 => Some(Self::ClassDescriptor),
+            8 => Some(Self::Symbol),
             _ => None,
         }
     }
@@ -37,6 +38,10 @@ impl Any {
     /// is a metadata token identifying the base type; the value is immediate
     /// (not a managed reference), so the GC traces straight past it.
     pub const fn class_descriptor(token: u32) -> Self { Self { tag: AnyTag::ClassDescriptor, payload: token as u64 } }
+    /// A first-class Symbol value. The payload is a [`SymbolId`](crate::SymbolId);
+    /// the value is immediate (an isolate-local symbol index, not a managed
+    /// reference), so the GC traces straight past it like a class descriptor.
+    pub const fn symbol(id: crate::SymbolId) -> Self { Self { tag: AnyTag::Symbol, payload: id.get() } }
     /// Return the two machine-word components used by the native/JIT ABI.
     pub const fn raw_parts(self) -> (u8, u64) { (self.tag as u8, self.payload) }
     /// Reconstruct an `Any` value from validated ABI components.
@@ -59,6 +64,7 @@ impl Any {
     }
     pub const fn as_string(self) -> Option<u32> { match self.tag { AnyTag::String => Some(self.payload as u32), _ => None } }
     pub const fn as_class_descriptor(self) -> Option<u32> { match self.tag { AnyTag::ClassDescriptor => Some(self.payload as u32), _ => None } }
+    pub const fn as_symbol(self) -> Option<crate::SymbolId> { match self.tag { AnyTag::Symbol => Some(crate::SymbolId::from_raw(self.payload)), _ => None } }
 }
 
 #[cfg(test)]
@@ -67,11 +73,12 @@ mod tests {
 
     #[test]
     fn any_abi_roundtrips_tag_and_payload_words() {
-        for value in [Any::int(-7), Any::float(2.5), Any::bool(true), Any::object(0x1234), Any::string(9), Any::null(), Any::void(), Any::class_descriptor(3)] {
+        for value in [Any::int(-7), Any::float(2.5), Any::bool(true), Any::object(0x1234), Any::string(9), Any::null(), Any::void(), Any::class_descriptor(3), Any::symbol(crate::SymbolId::from_raw(4))] {
             let (tag, payload) = value.raw_parts();
             assert_eq!(Any::from_raw_parts(tag, payload), Some(value));
         }
         assert_eq!(Any::class_descriptor(3).as_class_descriptor(), Some(3));
+        assert_eq!(Any::symbol(crate::SymbolId::from_raw(4)).as_symbol(), Some(crate::SymbolId::from_raw(4)));
         assert_eq!(Any::from_raw_parts(255, 0), None);
         assert_eq!(core::mem::size_of::<Any>(), 16);
         assert_eq!(core::mem::align_of::<Any>(), 8);

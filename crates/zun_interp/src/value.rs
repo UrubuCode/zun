@@ -127,6 +127,8 @@ impl Value {
             // An opaque class descriptor is an immediate carried as-is; it has
             // no primitive Value projection, so it stays wrapped as `Any`.
             zun_core::AnyTag::ClassDescriptor => Some(Value::Any(any)),
+            // A Symbol value is an immediate (a `SymbolId`) carried as-is.
+            zun_core::AnyTag::Symbol => Some(Value::Any(any)),
         }
     }
 

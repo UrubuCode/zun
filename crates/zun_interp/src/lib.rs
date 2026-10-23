@@ -373,16 +373,29 @@ impl Interp<'_> {
                     stack.push(Value::Any(any));
                 }
                 Opcode::LoadDynamicValue => {
-                    let key = match pop(&mut stack)? {
-                        Value::Str(key) => key,
-                        _ => return Err(RunError::BadToken),
-                    };
+                    // A Symbol key reads the symbol-keyed slot; a string key the
+                    // ordinary dynamic property.
+                    let key = pop(&mut stack)?;
                     let object = pop(&mut stack)?.as_object();
-                    let value = zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_get(object, &key)
-                            .map(Value::Any)
-                            .unwrap_or(Value::Void)
-                    });
+                    let value = if let Value::Any(any) = &key {
+                        if let Some(symbol) = any.as_symbol() {
+                            zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_get_symbol(object, symbol)
+                                    .map(Value::Any)
+                                    .unwrap_or(Value::Void)
+                            })
+                        } else {
+                            return Err(RunError::BadToken);
+                        }
+                    } else if let Value::Str(key) = &key {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get(object, key)
+                                .map(Value::Any)
+                                .unwrap_or(Value::Void)
+                        })
+                    } else {
+                        return Err(RunError::BadToken);
+                    };
                     stack.push(value);
                 }
                 Opcode::StoreDynamicValue => {
@@ -390,14 +403,22 @@ impl Interp<'_> {
                     let Value::Any(any) = value else {
                         return Err(RunError::BadToken);
                     };
-                    let key = match pop(&mut stack)? {
-                        Value::Str(key) => key,
-                        _ => return Err(RunError::BadToken),
-                    };
+                    let key = pop(&mut stack)?;
                     let object = pop(&mut stack)?.as_object();
-                    zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set(object, key.as_ref().to_owned(), any);
-                    });
+                    match &key {
+                        Value::Any(key_any) if key_any.as_symbol().is_some() => {
+                            let symbol = key_any.as_symbol().expect("symbol key");
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set_symbol(object, symbol, any);
+                            });
+                        }
+                        Value::Str(key) => {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set(object, key.as_ref().to_owned(), any);
+                            });
+                        }
+                        _ => return Err(RunError::BadToken),
+                    }
                     stack.push(Value::Any(any));
                 }
                 Opcode::NewArray => {
@@ -2485,6 +2506,79 @@ mod method_tests {
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run collection Symbol.iterator calls");
         assert!(matches!(result, Value::Int(42, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn symbol_values_are_unique_per_call() {
+        // Two `Symbol("x")` are distinct keys: the first slot survives the second
+        // write, so reading the first key still yields its own value.
+        let module = zun_compiler::compile(
+            "function main(): u64 { let a = Symbol(\"x\"); let b = Symbol(\"x\"); let obj = dynamic_new(); obj[a] = box_any(1); obj[b] = box_any(2); return obj[a] as u64; }",
+        )
+        .expect("compile unique symbols");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run unique symbols");
+        assert!(matches!(result, Value::Int(1, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn symbol_description_is_readable() {
+        let module = zun_compiler::compile(
+            "function main(): any { return Symbol(\"desc\").description; }",
+        )
+        .expect("compile symbol description");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run symbol description");
+        assert!(matches!(result, Value::Str(text) if &*text == "desc"));
+    }
+
+    #[test]
+    fn symbol_for_is_canonical_and_key_for_round_trips() {
+        // `Symbol.for("k")` returns the same symbol, so the second lookup reads
+        // the value stored under the first.
+        let module = zun_compiler::compile(
+            "function main(): u64 { let obj = dynamic_new(); obj[Symbol.for(\"k\")] = box_any(5); return obj[Symbol.for(\"k\")] as u64; }",
+        )
+        .expect("compile Symbol.for");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Symbol.for");
+        assert!(matches!(result, Value::Int(5, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn symbol_key_for_returns_registry_key() {
+        let module = zun_compiler::compile(
+            "function main(): any { return Symbol.keyFor(Symbol.for(\"hello\")); }",
+        )
+        .expect("compile Symbol.keyFor");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Symbol.keyFor");
+        assert!(matches!(result, Value::Str(text) if &*text == "hello"));
+    }
+
+    #[test]
+    fn well_known_symbols_have_stable_identity() {
+        // `Symbol.iterator` is the same value every time it is evaluated, so a
+        // slot keyed by it round-trips.
+        let module = zun_compiler::compile(
+            "function main(): u64 { let obj = dynamic_new(); obj[Symbol.iterator] = box_any(9); return obj[Symbol.iterator] as u64; }",
+        )
+        .expect("compile well-known symbol identity");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run well-known symbol identity");
+        assert!(matches!(result, Value::Int(9, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn symbol_keys_are_distinct_from_string_keys() {
+        // A string key and a same-named symbol key occupy separate slots.
+        let module = zun_compiler::compile(
+            "function main(): u64 { let obj = dynamic_new(); obj[\"x\"] = box_any(1); obj[Symbol.for(\"x\")] = box_any(2); return obj[\"x\"] as u64; }",
+        )
+        .expect("compile symbol vs string keys");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run symbol vs string keys");
+        assert!(matches!(result, Value::Int(1, zun_il::NumKind::U64)));
     }
 
     #[test]

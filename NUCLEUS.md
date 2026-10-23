@@ -29,7 +29,7 @@ read.
 | 2 | Number | partial | Instance helpers present; **no statics** (`Number.isNaN/isInteger/isFinite/parseFloat/parseInt`, `MAX_SAFE_INTEGER` …); no `toPrecision/toExponential/toLocaleString`; no radix on `toString` |
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
-| 5 | Symbol | partial | Only `Symbol.iterator` wired as a dispatch point; `SymbolRegistry` in core unused. No `Symbol()`, `Symbol.for/keyFor`, other well-known symbols, user symbol-keyed members |
+| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only), object-literal computed keys (no object literals yet) |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Rich custom surface; missing standard `forEach/find/some/every/findLast/flatMap/join/splice/shift/unshift/keys/values/entries`, statics `Array.from/of/isArray`, callback `sort`, iterator-returning methods |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
@@ -117,20 +117,46 @@ coercion function, no object `.toString()/.valueOf()`. GOAL ranks this lowest.
   `BigInt(value)` coercion, `BigInt.asIntN/asUintN`, `valueOf`, operator-level
   integration (`+ - * / %` on bigint operands), literal `1n` → confirm lowering (verify).
 
-## 5. Symbol — partial  *(HIGH priority)*
-`SymbolRegistry` (`zun_core/src/symbols.rs`) exists with `create/for_key/iterator/
-description` but is **not surfaced to user code**. Only `Symbol.iterator` is recognized,
-and only as a hardcoded dispatch point in `check.rs:3080-3106` (for-of / explicit
-`x[Symbol.iterator]()`), mapping Array/Map/Set/Error to their `*IteratorNew` intrinsics.
+## 5. Symbol — partial  *(HIGH priority — foundation landed)*
+The `SymbolRegistry` (`zun_core/src/symbols.rs`) is now surfaced to user code. A symbol
+is a first-class value: `Ty::Symbol` in sema, carried at runtime as an immediate `Any`
+(`AnyTag::Symbol`, payload = `SymbolId`), so the GC traces straight past it. The
+isolate's `Heap` owns the registry (`symbol_create/for/key_for/description`), seeded with
+the five well-known symbols at fixed ids 0..4 (`zun_core::WellKnownSymbol`) so their
+identities are stable and match the compiler's constants. All Symbol operations are
+allocating/interning managed builtins on the Tier-0 floor (`zun:collections`
+`symbolNew/For/KeyFor/WellKnown/Description`, dispatched in
+`zun_interp/src/collections.rs`) — not JIT-eligible, so there is no second path to keep
+in sync.
 
-- **Present:** `Symbol.iterator` as a VM dispatch point (iteration protocol only).
-- **Missing:** `Symbol(desc)` unique primitives as first-class values; global registry
-  `Symbol.for(key)` / `Symbol.keyFor(sym)`; the other well-known symbols as dispatch
-  points — `asyncIterator hasInstance toPrimitive toStringTag isConcatSpreadable match
-  replace search split species unscopables`; user-defined **symbol-keyed members**
-  (`[Symbol.iterator]() {}`, computed symbol keys). GOAL notes the symbol-keyed slot
-  already exists (measured 16.5x) — the *surface* is unfinished.
-- **Notes:** foundational — iteration and many built-in behaviors ride on this.
+- **Present (value foundation):**
+  - `Symbol(description?)` — a unique symbol every call; `Symbol("x") !== Symbol("x")`.
+  - `Symbol.for(key)` / `Symbol.keyFor(sym)` — the cross-realm registry (reverse map in
+    `SymbolRegistry`); `keyFor` returns `undefined` for unique/well-known symbols.
+  - Well-known symbols as **readable values** — `Symbol.iterator`, `Symbol.asyncIterator`,
+    `Symbol.hasInstance`, `Symbol.toPrimitive`, `Symbol.toStringTag` — stable identities.
+  - `symbol.description`.
+  - User **symbol-keyed members**: `obj[sym]` get/set (computed member with a Symbol key)
+    routes through the existing symbol-keyed slot (`dynamic_get_symbol`/`set_symbol`),
+    kept distinct from string keys. The read path reuses `DynamicGetValue`; the store path
+    now lowers `obj[key] = v` on dynamic receivers to `DynamicSetValue` (string **and**
+    symbol keys) — `StoreDynamicValue`/`LoadDynamicValue` dispatch on the key's tag.
+  - `Symbol.iterator` iteration dispatch for Array/Map/Set/Error preserved
+    (`check.rs` ComputedCall intercept for `x[Symbol.iterator]()` → `*IteratorNew`).
+  - Parser now accepts reserved keywords as member names (`Symbol.for`), via
+    `TokenKind::is_keyword` + `member_name` in `zun_syntax`.
+- **Deferred (documented follow-up):**
+  - **Behavioral dispatch** of the non-iterator well-known symbols: making `instanceof`
+    consult `Symbol.hasInstance`, coercion consult `Symbol.toPrimitive`, and
+    `Object.prototype.toString` consult `Symbol.toStringTag`. These are exposed as
+    **values** only; wiring their dispatch is a separate step (the iterator one already
+    drives `for...of`).
+  - **Object-literal / class computed symbol-key member definitions**
+    (`[Symbol.iterator]() {}`, `[computedSymbol]: v`): object literals do not exist in the
+    AST yet, so there is no syntactic site; `obj[sym] = ...` is the available definition
+    path. Revisit when object literals land.
+  - Other well-known symbols (`isConcatSpreadable match replace search split species
+    unscopables`) — not seeded; add to `WellKnownSymbol` when a consumer needs them.
 
 ## 6. Object — partial  *(HIGH priority — core surface landed)*
 The `Object` global is recognized in sema (`check.rs` `check_object_static` + the
@@ -376,10 +402,12 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
 2. **`Function.call/apply/bind`** (#8) — ✅ landed (receiver-as-leading-param model,
    Tier 0) with `.name/.length`. **Remaining:** `Function` constructor; function-typed
    bound args.
-3. **Symbol — complete** (#5) — `Symbol()` unique primitives; `Symbol.for/keyFor` (wire
-   the existing `SymbolRegistry` global map); well-known symbols as dispatch points
-   (`iterator asyncIterator hasInstance toPrimitive toStringTag`); user symbol-keyed
-   members + computed keys (slot already exists).
+3. **Symbol — foundation complete** (#5) — ✅ `Symbol()` unique primitives;
+   `Symbol.for/keyFor`; well-known symbols as **values**
+   (`iterator asyncIterator hasInstance toPrimitive toStringTag`); `.description`;
+   user symbol-keyed `obj[sym]` get/set over the existing slot. **Remaining (deferred):**
+   behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only for now);
+   object-literal/class computed-key member definitions (no object literals in the AST).
 
 ### MID
 4. **WeakSet** (#14) and **WeakRef** (#15) — GC base ready (WeakMap ephemerons).
@@ -422,5 +450,8 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
   no heldValue).
 - **ZIL math opcodes are not opcodes** — Math is native `call.builtin`, so PLAN §3's
   "Math machine ops → ZIL opcodes" is unfulfilled despite being listed as nucleus.
-- **Symbol infrastructure exists but is dark:** `SymbolRegistry` is fully implemented in
-  `zun_core` yet only `Symbol.iterator` reaches user code.
+- **Symbol infrastructure is now surfaced:** the `SymbolRegistry` (`zun_core`) backs a
+  first-class `Ty::Symbol` value (immediate `AnyTag::Symbol`). `Symbol()`,
+  `Symbol.for/keyFor`, the five well-known symbols as values, `.description`, and
+  symbol-keyed `obj[sym]` get/set all reach user code. The behavioral dispatch of
+  `hasInstance/toPrimitive/toStringTag` remains a value-only follow-up (see §5).

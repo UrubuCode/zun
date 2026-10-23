@@ -107,6 +107,9 @@ pub enum Ty {
     BufferView(BufferViewKind),
     /// A dictionary-backed dynamic object.
     DynamicObject,
+    /// A unique symbol primitive (a first-class `SymbolId`-backed value). Its
+    /// runtime representation is an immediate `Any` (`AnyTag::Symbol`).
+    Symbol,
     /// A dynamically tagged value.
     Any,
     /// A non-capturing function reference identified by function index.

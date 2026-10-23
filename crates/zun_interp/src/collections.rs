@@ -1538,6 +1538,60 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Float(token, zun_il::NumKind::F64))
             }
+            "symbolNew" => {
+                // `Symbol(description?)` mints a fresh, unique symbol. `Void`
+                // (undefined) or `Null` means no description.
+                let description = match args.first() {
+                    Some(Value::Str(text)) => Some(text.to_string()),
+                    Some(Value::Any(any)) => zun_gc::with_current_heap(|heap| {
+                        any.as_string().and_then(|handle| heap.try_string(handle).map(|s| s.to_string()))
+                    }),
+                    _ => None,
+                };
+                let id = zun_gc::with_current_heap_mut(|heap| heap.symbol_create(description));
+                Ok(Value::Any(zun_core::Any::symbol(id)))
+            }
+            "symbolFor" => {
+                // `Symbol.for(key)` — the same symbol for the same key.
+                let key = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(text) => text.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let id = zun_gc::with_current_heap_mut(|heap| heap.symbol_for(key));
+                Ok(Value::Any(zun_core::Any::symbol(id)))
+            }
+            "symbolKeyFor" => {
+                // `Symbol.keyFor(symbol)` — the registry key, or `undefined`.
+                let id = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(zun_gc::with_current_heap(|heap| {
+                    heap.symbol_key_for(id).map(|key| Value::Str(key.into()))
+                })
+                .unwrap_or(Value::Void))
+            }
+            "symbolWellKnown" => {
+                // Materialize a well-known symbol value by its stable index.
+                let index = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u64,
+                    Value::Float(value, _) => *value as u64,
+                    _ => return Err(RunError::BadToken),
+                };
+                let id = zun_core::SymbolId::from_raw(index);
+                Ok(Value::Any(zun_core::Any::symbol(id)))
+            }
+            "symbolDescription" => {
+                // `symbol.description` — the creation description, or `undefined`.
+                let id = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(zun_gc::with_current_heap(|heap| {
+                    heap.symbol_description(id).map(|text| Value::Str(text.into()))
+                })
+                .unwrap_or(Value::Void))
+            }
             "objectFreeze" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));
