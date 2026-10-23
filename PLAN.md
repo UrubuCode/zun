@@ -228,6 +228,22 @@ old `RegexOptions.Compiled` emitted IL. Zun mirrors this:
   quantifiers/loops; (4) backrefs + lookaround. Patterns not yet ZIL-compilable fall
   back to the interpreter (Engine B), so capability never regresses.
 
+### 3.4 Native floor surface — single `zun:core` module, namespaced
+
+The native intrinsic surface is exposed as **one module `zun:core`** whose exports are
+**per-type namespaces** (`string`, `number`, `array`, `object`, `map`, `set`, `weakMap`,
+`weakSet`, `math`, `buffer`, `date`, `promise`, …), not a proliferation of `zun:string`
+/`zun:collections`/… modules. Usage: `import { weakMap } from "zun:core"; weakMap.set(m,k,v)`
+— member access on an imported namespace resolves **statically (sema) to the native
+`call.builtin`**, the same mechanism as the `import * as ns` namespace resolution. The
+`zun_natives` registry is organized as `zun:core` + a `(namespace, name)` address, and
+`resolve` carries the namespace dimension. This is the **low-level typed floor**; it
+coexists with the high-level JS API — the `std/*.zun` classes (`String`, `WeakMap`, …)
+are thin wrappers that `import { … } from "zun:core"` and call the floor (`m.set()` →
+`weakMap.set(this, …)`). Consolidated early (before the nucleus surface grows) so every
+later builtin lands on the final convention. Distinct from `zun:std` (bucket B, the
+precompiled TS std classes).
+
 **Prerequisite surfaced by Error:** **sequence points / debug info** in the `.zm`
 (PC→source), currently minimal — required for useful stack traces (the rts pain that
 motivated Zun).
