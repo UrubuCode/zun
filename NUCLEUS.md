@@ -615,6 +615,27 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
 
 ---
 
+## Language gaps blocking the method-surface tail
+
+These are not per-class work; they are the common causes behind several
+"missing" entries above.
+
+- **`any`-typed class fields silently store zero.** `encode_field` maps `Any` to
+  `JitKind::Other => 0`, so `class H { v: any; }` with `new H(42)` reads back as
+  `Void`, and `new H(null)` does not compare equal to `null`. Making it work needs
+  boxing on store, unboxing on load, and the GC tracing the slot — so it touches
+  collector correctness and belongs in a `GC:` commit. This is what blocks
+  `Error.cause` and `AggregateError.errors` (#22): both want an `any` field.
+- **Construction has no constructors.** An object is built from exactly one
+  positional argument per declared field, inherited fields first. Trailing fields
+  with a default initializer are now optional (`class P { x: i64; y: i64 = 5; }`
+  accepts `new P(1)`), which covers the common case, but there is still no way to
+  reorder arguments or overload. That is why `AggregateError` cannot take JS's
+  `(errors, message)` and `new Date()` cannot mean "now".
+  `.docs-dotnet/05-object-creation/01-newobj-e-construtores.md` recommends the
+  split the CLR makes: `newobj` as one opcode that the backend decomposes into
+  allocation plus a constructor call.
+
 ## Surprising findings
 - **Object and Function started with zero surface** — not even a recognized global
   namespace. `Object` now has its enumeration/reflection surface (§6) and `Function`
