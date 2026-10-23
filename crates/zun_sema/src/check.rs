@@ -1948,6 +1948,58 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // String methods taking a RegExp: match/search/split/replace.
+                // `replace(string, string)` stays on class String; only a
+                // RegExp first argument is routed to the regex engine.
+                if receiver.ty == Ty::String
+                    && matches!(mname.as_str(), "match" | "search" | "split" | "replace")
+                {
+                    let expected_args = if mname == "replace" { 2 } else { 1 };
+                    if args.len() == expected_args {
+                        let first = self.check_expr(cx, &args[0]);
+                        if first.ty == Ty::RegExp || mname != "replace" {
+                            if first.ty != Ty::RegExp && !first.ty.is_error() {
+                                self.error(
+                                    first.span,
+                                    format!("`{mname}` expects a RegExp argument"),
+                                );
+                                return self.poison(span);
+                            }
+                            let (native_name, return_ty) = match mname.as_str() {
+                                "match" => ("regexpExec", Ty::Array),
+                                "search" => ("regexpSearch", Ty::Int(IntKind::I32)),
+                                "split" => ("regexpSplit", Ty::Array),
+                                _ => ("regexpReplace", Ty::String),
+                            };
+                            let mut call_args = vec![first, receiver];
+                            if mname == "replace" {
+                                let replacement = self.check_expr(cx, &args[1]);
+                                if replacement.ty != Ty::String && !replacement.ty.is_error() {
+                                    self.error(
+                                        replacement.span,
+                                        "RegExp replacement must be a string (replace-with-function is not supported)",
+                                    );
+                                    return self.poison(span);
+                                }
+                                call_args.push(replacement);
+                            }
+                            let Some((id, _)) =
+                                zun_natives::resolve("zun:collections", native_name)
+                            else {
+                                self.error(
+                                    span,
+                                    format!("missing collection intrinsic `{native_name}`"),
+                                );
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                ty: return_ty,
+                                span,
+                            };
+                        }
+                    }
+                }
                 let managed_method = match (receiver.ty, mname.as_str()) {
                     (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
                     (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
@@ -1972,7 +2024,8 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
-                    (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "isMatch" | "test") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "exec") => Some(("regexpExec", Ty::Array, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
                     (Ty::BigInt, "add") => Some(("bigIntAdd", Ty::BigInt, vec![Ty::BigInt])),
                     (Ty::BigInt, "sub") => Some(("bigIntSub", Ty::BigInt, vec![Ty::BigInt])),
@@ -2519,7 +2572,7 @@ impl Checker<'_> {
                     _ => None,
                 };
                 if let Some((native_name, ty)) = managed_collection {
-                    let valid_args = (name == "RegExp" && args.len() == 1)
+                    let valid_args = (name == "RegExp" && (args.len() == 1 || args.len() == 2))
                         || (name == "BigInt" && args.len() == 1)
                         || (name == "Proxy" && args.len() == 2);
                     if !args.is_empty() && !valid_args {
@@ -2542,7 +2595,17 @@ impl Checker<'_> {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
                             args: if name == "RegExp" || name == "BigInt" || name == "Proxy" {
-                                args.iter().map(|arg| self.check_expr(cx, arg)).collect()
+                                let mut checked: Vec<hir::Expr> =
+                                    args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                                if name == "RegExp" && checked.len() == 1 {
+                                    // `regexpNew(pattern, flags)`: default to no flags.
+                                    checked.push(hir::Expr {
+                                        kind: hir::ExprKind::String(String::new()),
+                                        ty: Ty::String,
+                                        span,
+                                    });
+                                }
+                                checked
                             } else {
                                 Vec::new()
                             },
@@ -2765,7 +2828,8 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
-                    (Ty::RegExp, "isMatch") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "isMatch" | "test") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "exec") => ("regexpExec", Ty::Array, vec![Ty::String]),
                     (Ty::RegExp, "source") => ("regexpSource", Ty::String, vec![]),
                     (Ty::Promise, "state") => ("promiseState", Ty::Int(IntKind::U8), vec![]),
                     (Ty::Promise, "result") => ("promiseResult", Ty::Any, vec![]),

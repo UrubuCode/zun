@@ -4406,6 +4406,99 @@ mod method_tests {
         assert!(matches!(result, Value::Bool(true)));
     }
 
+    fn run_regexp_bool(source: &str) -> bool {
+        let module = zun_compiler::compile(source).expect("compile RegExp program");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run RegExp program") {
+            Value::Bool(value) => value,
+            other => panic!("expected bool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn regexp_flags_change_matching() {
+        assert!(run_regexp_bool(
+            "function main(): boolean { return !new RegExp(\"abc\").test(\"ABC\") && new RegExp(\"abc\", \"i\").test(\"ABC\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { return !new RegExp(\"^b$\").test(\"a\\nb\") && new RegExp(\"^b$\", \"m\").test(\"a\\nb\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { return !new RegExp(\"a.b\").test(\"a\\nb\") && new RegExp(\"a.b\", \"s\").test(\"a\\nb\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { return new RegExp(\"a\", \"g\").test(\"a\"); }"
+        ));
+    }
+
+    fn run_regexp_value(source: &str) -> Value {
+        let module = zun_compiler::compile(source).expect("compile RegExp program");
+        let mut output = CaptureOutput::default();
+        run(&module, &mut output).expect("run RegExp program")
+    }
+
+    #[test]
+    fn string_match_search_split_replace_use_the_regex_engine() {
+        // match: same shape as exec, null on miss.
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m = \"id-42!\".match(new RegExp(\"([a-z]+)-([0-9]+)\")); let a: string = m[0] as string; let b: string = m[2] as string; if (a != \"id-42\") { return false; } return b == \"42\"; }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m: any = \"zzz\".match(new RegExp(\"[0-9]+\")); return m == null; }"
+        ));
+        // search: hit and miss.
+        assert!(matches!(
+            run_regexp_value("function main(): int { return \"ab12\".search(new RegExp(\"[0-9]+\")); }"),
+            Value::Int(2, _)
+        ));
+        assert!(matches!(
+            run_regexp_value("function main(): int { return \"abc\".search(new RegExp(\"[0-9]+\")); }"),
+            Value::Int(-1, _)
+        ));
+        // split on a pattern.
+        assert!(run_regexp_bool(
+            "function main(): boolean { let p = \"a1b22c\".split(new RegExp(\"[0-9]+\")); if (p.length != 3) { return false; } let x: string = p[1] as string; let y: string = p[2] as string; if (x != \"b\") { return false; } return y == \"c\"; }"
+        ));
+        // replace: $1 / $& substitutions, first match only.
+        assert!(run_regexp_bool(
+            "function main(): boolean { let r: string = \"x a-b c-d\".replace(new RegExp(\"(\\\\w)-(\\\\w)\"), \"$2+$1 [$&]\"); return r == \"x b+a [a-b] c-d\"; }"
+        ));
+        // string/string replace is unchanged.
+        assert!(run_regexp_bool(
+            "import { replace } from \"zun:string\";\n\
+             class String { extern replace(needle: string, replacement: string): string; }\n\
+             function main(): boolean { let r: string = \"aXa\".replace(\"X\", \"-\"); return r == \"a-a\"; }"
+        ));
+    }
+
+    #[test]
+    fn regexp_rejects_unsupported_flags() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { return new RegExp(\"a\", \"y\").test(\"a\"); }",
+        )
+        .expect("compile RegExp");
+        let mut output = CaptureOutput::default();
+        assert!(run(&module, &mut output).is_err());
+    }
+
+    #[test]
+    fn regexp_exec_returns_groups_or_null() {
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m = new RegExp(\"(a)(x)?(b)\").exec(\"zab\"); let a: string = m[0] as string; let b: string = m[1] as string; let c: string = m[3] as string; if (a != \"ab\") { return false; } if (b != \"a\") { return false; } return c == \"b\"; }"
+        ));
+        // A non-participating optional group is `undefined` (Any::void).
+        let module = zun_compiler::compile(
+            "function main(): any { let m = new RegExp(\"(a)(x)?(b)\").exec(\"zab\"); return m[2]; }",
+        )
+        .expect("compile optional group");
+        let mut output = CaptureOutput::default();
+        let value = run(&module, &mut output).expect("run optional group");
+        assert!(matches!(value, Value::Void), "got {value:?}");
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m: any = new RegExp(\"q\").exec(\"zab\"); return m == null; }"
+        ));
+    }
+
     #[test]
     fn casts_any_to_a_class_with_runtime_type_check() {
         let module = zun_compiler::compile(
