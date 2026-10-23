@@ -1841,6 +1841,58 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // String methods taking a RegExp: match/search/split/replace.
+                // `replace(string, string)` stays on class String; only a
+                // RegExp first argument is routed to the regex engine.
+                if receiver.ty == Ty::String
+                    && matches!(mname.as_str(), "match" | "search" | "split" | "replace")
+                {
+                    let expected_args = if mname == "replace" { 2 } else { 1 };
+                    if args.len() == expected_args {
+                        let first = self.check_expr(cx, &args[0]);
+                        if first.ty == Ty::RegExp || mname != "replace" {
+                            if first.ty != Ty::RegExp && !first.ty.is_error() {
+                                self.error(
+                                    first.span,
+                                    format!("`{mname}` expects a RegExp argument"),
+                                );
+                                return self.poison(span);
+                            }
+                            let (native_name, return_ty) = match mname.as_str() {
+                                "match" => ("regexpExec", Ty::Array),
+                                "search" => ("regexpSearch", Ty::Int(IntKind::I32)),
+                                "split" => ("regexpSplit", Ty::Array),
+                                _ => ("regexpReplace", Ty::String),
+                            };
+                            let mut call_args = vec![first, receiver];
+                            if mname == "replace" {
+                                let replacement = self.check_expr(cx, &args[1]);
+                                if replacement.ty != Ty::String && !replacement.ty.is_error() {
+                                    self.error(
+                                        replacement.span,
+                                        "RegExp replacement must be a string (replace-with-function is not supported)",
+                                    );
+                                    return self.poison(span);
+                                }
+                                call_args.push(replacement);
+                            }
+                            let Some((id, _)) =
+                                zun_natives::resolve("zun:collections", native_name)
+                            else {
+                                self.error(
+                                    span,
+                                    format!("missing collection intrinsic `{native_name}`"),
+                                );
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                ty: return_ty,
+                                span,
+                            };
+                        }
+                    }
+                }
                 let managed_method = match (receiver.ty, mname.as_str()) {
                     (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
                     (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),

@@ -36,6 +36,38 @@ impl Heap {
             .map(|regex| regex.find(input))
     }
 
+    /// `String.prototype.search`: UTF-16 index of the first match, or -1.
+    pub fn regex_search(&self, object: Obj, input: &str) -> Option<i64> {
+        self.regexes
+            .get(&(object.addr() as usize))
+            .map(|regex| regex.search(input).map_or(-1, |index| index as i64))
+    }
+
+    /// `String.prototype.split(regex)`: array of Any strings (`undefined` for
+    /// non-participating capture groups).
+    pub fn regex_split(&mut self, object: Obj, input: &str) -> Option<Obj> {
+        let pieces = self
+            .regexes
+            .get(&(object.addr() as usize))
+            .map(|regex| regex.split(input))?;
+        let array = self.alloc_array(pieces.len());
+        for (index, piece) in pieces.into_iter().enumerate() {
+            let value = match piece {
+                Some(text) => zun_core::Any::string(self.intern_string(text.into())),
+                None => zun_core::Any::void(),
+            };
+            self.array_set(array, index, value);
+        }
+        Some(array)
+    }
+
+    /// `String.prototype.replace(regex, string)`: first match only.
+    pub fn regex_replace_first(&self, object: Obj, input: &str, replacement: &str) -> Option<String> {
+        self.regexes
+            .get(&(object.addr() as usize))
+            .map(|regex| regex.replace_first(input, replacement))
+    }
+
     /// Run `exec`: `None` if `object` is not a regex, `Some(None)` when there is
     /// no match, otherwise an array of Any: index 0 is the full match and
     /// indices 1.. are capture-group strings (`undefined` for non-participating

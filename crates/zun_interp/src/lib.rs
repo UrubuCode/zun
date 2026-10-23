@@ -4409,6 +4409,46 @@ mod method_tests {
         ));
     }
 
+    fn run_regexp_value(source: &str) -> Value {
+        let module = zun_compiler::compile(source).expect("compile RegExp program");
+        let mut output = CaptureOutput::default();
+        run(&module, &mut output).expect("run RegExp program")
+    }
+
+    #[test]
+    fn string_match_search_split_replace_use_the_regex_engine() {
+        // match: same shape as exec, null on miss.
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m = \"id-42!\".match(new RegExp(\"([a-z]+)-([0-9]+)\")); let a: string = m[0] as string; let b: string = m[2] as string; if (a != \"id-42\") { return false; } return b == \"42\"; }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m: any = \"zzz\".match(new RegExp(\"[0-9]+\")); return m == null; }"
+        ));
+        // search: hit and miss.
+        assert!(matches!(
+            run_regexp_value("function main(): int { return \"ab12\".search(new RegExp(\"[0-9]+\")); }"),
+            Value::Int(2, _)
+        ));
+        assert!(matches!(
+            run_regexp_value("function main(): int { return \"abc\".search(new RegExp(\"[0-9]+\")); }"),
+            Value::Int(-1, _)
+        ));
+        // split on a pattern.
+        assert!(run_regexp_bool(
+            "function main(): boolean { let p = \"a1b22c\".split(new RegExp(\"[0-9]+\")); if (p.length != 3) { return false; } let x: string = p[1] as string; let y: string = p[2] as string; if (x != \"b\") { return false; } return y == \"c\"; }"
+        ));
+        // replace: $1 / $& substitutions, first match only.
+        assert!(run_regexp_bool(
+            "function main(): boolean { let r: string = \"x a-b c-d\".replace(new RegExp(\"(\\\\w)-(\\\\w)\"), \"$2+$1 [$&]\"); return r == \"x b+a [a-b] c-d\"; }"
+        ));
+        // string/string replace is unchanged.
+        assert!(run_regexp_bool(
+            "import { replace } from \"zun:string\";\n\
+             class String { extern replace(needle: string, replacement: string): string; }\n\
+             function main(): boolean { let r: string = \"aXa\".replace(\"X\", \"-\"); return r == \"a-a\"; }"
+        ));
+    }
+
     #[test]
     fn regexp_rejects_unsupported_flags() {
         let module = zun_compiler::compile(

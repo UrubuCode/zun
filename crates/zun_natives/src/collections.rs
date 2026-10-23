@@ -154,6 +154,24 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "regexpSearch",
+            params: &[RegExp, Str],
+            ret: I32,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "regexpSplit",
+            params: &[RegExp, Str],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "regexpReplace",
+            params: &[RegExp, Str, Str],
+            ret: Str,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "regexpSource",
             params: &[RegExp],
             ret: Str,

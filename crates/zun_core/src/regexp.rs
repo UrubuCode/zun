@@ -78,6 +78,85 @@ impl RegexValue {
         &self.flags
     }
 
+    /// UTF-16 code-unit index of the first match (JS `String.prototype.search`).
+    pub fn search(&self, input: &str) -> Option<usize> {
+        self.compiled
+            .find(input)
+            .map(|m| input[..m.start()].encode_utf16().count())
+    }
+
+    /// JS-style `split`: pieces between matches, with capture groups spliced in
+    /// (`None` for a non-participating group). Empty matches at the start, at
+    /// the end, or directly after the previous match do not split.
+    pub fn split(&self, input: &str) -> Vec<Option<String>> {
+        if input.is_empty() {
+            return if self.compiled.is_match(input) {
+                Vec::new()
+            } else {
+                vec![Some(String::new())]
+            };
+        }
+        let mut pieces = Vec::new();
+        let mut last = 0;
+        for captures in self.compiled.captures_iter(input) {
+            let whole = captures.get(0).expect("group 0 always exists");
+            if whole.is_empty() && (whole.start() == 0 || whole.start() >= input.len() || whole.start() == last) {
+                continue;
+            }
+            pieces.push(Some(input[last..whole.start()].to_owned()));
+            for group in captures.iter().skip(1) {
+                pieces.push(group.map(|m| m.as_str().to_owned()));
+            }
+            last = whole.end();
+        }
+        pieces.push(Some(input[last..].to_owned()));
+        pieces
+    }
+
+    /// Replace the FIRST match (global iteration is deferred). In
+    /// `replacement`, `$&` is the whole match, `$1`..`$9` are capture groups
+    /// (empty if non-participating; a literal `$n` if the group does not
+    /// exist) and `$$` is a literal `$`.
+    pub fn replace_first(&self, input: &str, replacement: &str) -> String {
+        let Some(captures) = self.compiled.captures(input) else {
+            return input.to_owned();
+        };
+        let whole = captures.get(0).expect("group 0 always exists");
+        let mut out = String::from(&input[..whole.start()]);
+        let mut chars = replacement.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '$' {
+                out.push(c);
+                continue;
+            }
+            match chars.peek().copied() {
+                Some('$') => {
+                    chars.next();
+                    out.push('$');
+                }
+                Some('&') => {
+                    chars.next();
+                    out.push_str(whole.as_str());
+                }
+                Some(d) if ('1'..='9').contains(&d) => {
+                    let index = d as usize - '0' as usize;
+                    chars.next();
+                    if index < captures.len() {
+                        if let Some(group) = captures.get(index) {
+                            out.push_str(group.as_str());
+                        }
+                    } else {
+                        out.push('$');
+                        out.push(d);
+                    }
+                }
+                _ => out.push('$'),
+            }
+        }
+        out.push_str(&input[whole.end()..]);
+        out
+    }
+
     /// Run the first-match search and return the full match followed by each
     /// capture group (`None` for a group that did not participate).
     pub fn captures(&self, input: &str) -> Option<Vec<Option<String>>> {
@@ -137,6 +216,27 @@ mod tests {
             Some(vec![Some("ab".into()), Some("a".into()), None, Some("b".into())])
         );
         assert_eq!(value.captures("zzz"), None);
+    }
+
+    #[test]
+    fn search_split_and_replace_follow_js_shapes() {
+        let digits = RegexValue::new(r"[0-9]+").unwrap();
+        assert_eq!(digits.search("ab12"), Some(2));
+        assert_eq!(digits.search("abc"), None);
+        assert_eq!(
+            digits.split("a1b22c"),
+            vec![Some("a".into()), Some("b".into()), Some("c".into())]
+        );
+        let with_group = RegexValue::new(r"(,)").unwrap();
+        assert_eq!(
+            with_group.split("a,b"),
+            vec![Some("a".into()), Some(",".into()), Some("b".into())]
+        );
+        let empty = RegexValue::new("").unwrap();
+        assert_eq!(empty.split("abc").len(), 3);
+        let pair = RegexValue::new(r"(\w)-(\w)").unwrap();
+        assert_eq!(pair.replace_first("x a-b c-d", "$2+$1 [$&] $$ $3"), "x b+a [a-b] $ $3 c-d");
+        assert_eq!(pair.replace_first("nothing", "z"), "nothing");
     }
 
     #[test]
