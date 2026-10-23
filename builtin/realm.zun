@@ -1,0 +1,16 @@
+// Declarative realm globals for the Zun base types (PLAN §3.1).
+//
+// Each line registers a base type onto the realm global as a readonly binding.
+// The value identifier (e.g. `Map`) resolves to an opaque class descriptor; the
+// registry entry it produces is the single source of truth for how the name
+// resolves as a type annotation and how `new <Name>()` lowers, so later a
+// program can rebind the surface name (`import Map from "..."`) over the same
+// frozen runtime representation.
+//
+// The compiler recognizes each `global.set("<BaseType>", <BaseType>, true)`
+// directive at std-compile time; it is not ordinary executable code (Zun has no
+// top-level statements). For now only `Map` flows through this declarative path;
+// every other base type stays on the existing hardcoded resolution until it is
+// listed here too.
+
+global.set("Map", Map, true);

@@ -576,6 +576,11 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
         ("zun:std:regexp", include_str!("../../../builtin/regexp.zun")),
         ("zun:std:date", include_str!("../../../builtin/date.zun")),
         ("zun:std:error", include_str!("../../../builtin/error.zun")),
+        // NOTE: `builtin/realm.zun` is intentionally not a compiled module. Its
+        // `global.set("<BaseType>", <BaseType>, true)` directives are
+        // declarative data recognized by `zun_sema::realm` (which seeds the
+        // realm registry and emits the runtime seed); Zun has no top-level
+        // statements, so the file is read, not compiled.
     ])
 }
 

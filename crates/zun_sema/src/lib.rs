@@ -8,6 +8,7 @@
 
 pub mod check;
 pub mod hir;
+mod realm;
 
 pub use check::{check, check_with_externals, ExternalFunction};
 pub use hir::{Program, Ty};

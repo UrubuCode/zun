@@ -124,6 +124,9 @@ impl Value {
                 .map(Value::Str),
             zun_core::AnyTag::Null => Some(Value::Null),
             zun_core::AnyTag::Void => Some(Value::Void),
+            // An opaque class descriptor is an immediate carried as-is; it has
+            // no primitive Value projection, so it stays wrapped as `Any`.
+            zun_core::AnyTag::ClassDescriptor => Some(Value::Any(any)),
         }
     }
 

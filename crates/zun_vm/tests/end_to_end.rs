@@ -276,6 +276,44 @@ fn realm_global_aliases_share_the_same_dynamic_object() {
 }
 
 #[test]
+fn realm_map_descriptor_registers_as_readonly_and_reads_back() {
+    // The declarative realm directive form (PLAN §3.1): `Map` as a value is the
+    // opaque class descriptor, `global.set` registers it readonly, and reading
+    // it back through `globalThis` observes the descriptor token (0). A readonly
+    // reassignment is silently rejected, so the descriptor survives.
+    assert_eq!(
+        run_source(
+            r#"import { global } from "zun:core";
+            import { classDescriptorToken } from "zun:collections";
+            function main() {
+                global.set("Map", Map, true);
+                print(classDescriptorToken(dynamic_get(globalThis, "Map")));
+                dynamic_set(globalThis, "Map", box_any(9));
+                print(classDescriptorToken(dynamic_get(global, "Map")));
+            }"#,
+        ),
+        ["0", "0"],
+    );
+}
+
+#[test]
+fn realm_map_new_and_annotation_resolve_through_the_registry() {
+    // `new Map()` and the `: Map` annotation resolve via the realm registry yet
+    // lower to the same frozen managed-collection representation as before.
+    assert_eq!(
+        run_source(
+            r#"import { mapSet, mapSize } from "zun:collections";
+            function main() {
+                let m: Map = new Map();
+                mapSet(m, 1.0, 2.0);
+                print(mapSize(m));
+            }"#,
+        ),
+        ["1"],
+    );
+}
+
+#[test]
 fn bigint_constructor_arithmetic_and_formatting_use_the_managed_floor() {
     let out = run_source(
         r#"function main(): int {

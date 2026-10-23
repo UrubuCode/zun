@@ -1479,6 +1479,25 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Void)
             }
+            "realmDescriptor" => {
+                // Box a base-type metadata token into an opaque class-descriptor
+                // `Any` (PLAN §3.1). The token arrives as a `number`.
+                let token = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value as u32,
+                    Value::Int(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Any(zun_core::Any::class_descriptor(token)))
+            }
+            "classDescriptorToken" => {
+                // Read a class descriptor's token back, or `-1` for anything that
+                // is not a descriptor.
+                let token = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_class_descriptor().map(|t| t as f64).unwrap_or(-1.0),
+                    _ => -1.0,
+                };
+                Ok(Value::Float(token, zun_il::NumKind::F64))
+            }
             "objectFreeze" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));

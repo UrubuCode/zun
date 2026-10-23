@@ -123,6 +123,7 @@ fn check_impl(
         external_namespace_functions: external_by_module_name,
         type_aliases: HashMap::new(),
         closures: Vec::new(),
+        realm_globals: crate::realm::registry().into_iter().collect(),
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -204,6 +205,10 @@ struct Checker<'a> {
     /// Imported default type bindings over the frozen runtime floor.
     type_aliases: HashMap<String, Ty>,
     closures: Vec<hir::ClosureFunction>,
+    /// Declarative realm globals (PLAN §3.1): base-type name -> binding. Seeded
+    /// from `builtin/realm.zun`; consulted before the hardcoded base-type
+    /// matches in annotation/`new`/bare-identifier resolution.
+    realm_globals: HashMap<String, crate::realm::RealmBinding>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -232,6 +237,26 @@ struct CaptureUse {
 }
 
 impl Checker<'_> {
+    /// Build an expression that materializes the opaque class descriptor for a
+    /// realm binding's `token` (PLAN §3.1). Lowers to the `realmDescriptor`
+    /// intrinsic over the token, boxed as an `Any`.
+    fn realm_descriptor_expr(&self, token: u32, span: Span) -> hir::Expr {
+        let (id, _) = zun_natives::resolve("zun:collections", "realmDescriptor")
+            .expect("realmDescriptor intrinsic must exist");
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![hir::Expr {
+                    kind: hir::ExprKind::Number(token as f64),
+                    ty: Ty::F64,
+                    span,
+                }],
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
     fn rewrite_boxed_lets(&self, statements: &mut [hir::Stmt], boxed: &HashSet<hir::LocalSlot>) {
         boxed_locals::rewrite_boxed_lets(statements, boxed);
     }
@@ -1205,6 +1230,11 @@ impl Checker<'_> {
                                 ty: Ty::Function(func),
                                 span,
                             };
+                        }
+                        // A declarative realm global read as a value yields its
+                        // opaque class descriptor (PLAN §3.1).
+                        if let Some(token) = self.realm_globals.get(&text).map(|b| b.token) {
+                            return self.realm_descriptor_expr(token, span);
                         }
                         self.error(span, format!("unknown variable `{text}`"));
                         self.poison(span)
@@ -2666,6 +2696,26 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                // Declarative realm globals (PLAN §3.1): a registered base type
+                // lowers `new <Name>()` through its recorded constructor shape.
+                // On a miss we fall through to the hardcoded paths unchanged.
+                if let Some(binding) = self.realm_globals.get(&name) {
+                    let crate::realm::CtorLowering::ManagedCollection { native, ty } =
+                        binding.ctor.clone();
+                    if !args.is_empty() {
+                        self.error(span, format!("`{name}` expects no constructor arguments"));
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+                        self.error(span, format!("missing collection intrinsic `{native}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                        ty,
+                        span,
+                    };
+                }
                 let typed_view = match name.as_str() {
                     "Uint8Array" => Some("u8ArrayNew"),
                     "Uint16Array" => Some("u16ArrayNew"),

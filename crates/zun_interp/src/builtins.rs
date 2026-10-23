@@ -128,6 +128,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectHasOwn",
         "objectIsPrototypeOf",
         "globalSet",
+        "realmDescriptor",
+        "classDescriptorToken",
     ] {
         if zun_natives::resolve("zun:collections", name)
             .or_else(|| zun_natives::resolve("zun:promise", name))

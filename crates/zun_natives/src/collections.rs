@@ -295,5 +295,12 @@ pub const MODULE: crate::Module = crate::Module {
         // `global.set(name, value, readonly)`; registers `name -> value` on the
         // realm global singleton, non-writable when `readonly`.
         NativeFn { name: "globalSet", params: &[Str, Opaque, Bool], ret: Void, imp: unavailable },
+        // Realm base-type class descriptors (PLAN §3.1, opaque representation).
+        // `realmDescriptor(token)` boxes a base-type metadata token into an
+        // opaque class-descriptor `Any`; `classDescriptorToken(value)` reads the
+        // token back (or `-1` for a non-descriptor), used to observe descriptors
+        // seeded onto the realm global.
+        NativeFn { name: "realmDescriptor", params: &[F64], ret: Opaque, imp: unavailable },
+        NativeFn { name: "classDescriptorToken", params: &[Opaque], ret: F64, imp: unavailable },
     ],
 };

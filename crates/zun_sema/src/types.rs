@@ -12,6 +12,11 @@ impl<'a> Checker<'a> {
         if let Some(&ty) = self.type_aliases.get(&text) {
             return ty;
         }
+        // Declarative realm globals (PLAN §3.1) take precedence; on a miss we
+        // fall through to the hardcoded base-type matches unchanged.
+        if let Some(binding) = self.realm_globals.get(&text) {
+            return binding.ty;
+        }
         match text.as_str() {
             "number" | "float" | "f64" => Ty::F64,
             "f32" => Ty::F32,
