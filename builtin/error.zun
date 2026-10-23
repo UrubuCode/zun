@@ -1,29 +1,67 @@
-// Managed error hierarchy. Construction is positional, while throwing and
-// stack capture remain compiler/runtime integration work.
+// Managed error hierarchy.
+//
+// Construction follows JS: `new Error(message)` takes the message, and the
+// name comes from the class. Zun builds an object by assigning one positional
+// argument per declared field, so `name` cannot be a field — that would make
+// the constructor `new Error(name, message)` and force every caller to repeat
+// what the class already knows. It is a getter instead, which each subclass
+// overrides and which virtual dispatch resolves to the right one.
+//
+// The trade is that `name` is read-only here, while JS allows `e.name = "..."`.
+// That is a dynamic-path concern; typed code gets the correct name for free.
+//
+// Stack capture stays runtime work: `.stack` needs frame walking against the
+// sequence-point debug info, which only the VM can do.
 
 class Error {
-    name: string;
     message: string;
 
+    get name(): string {
+        return "Error";
+    }
+
+    // JS omits the separator when either half is empty: `new Error()` prints
+    // "Error", not "Error: ".
     toString(): string {
+        if (this.message == "") {
+            return this.name;
+        }
         return this.name + ": " + this.message;
     }
 }
 
 class EvalError extends Error {
+    get name(): string {
+        return "EvalError";
+    }
 }
 
 class RangeError extends Error {
+    get name(): string {
+        return "RangeError";
+    }
 }
 
 class ReferenceError extends Error {
+    get name(): string {
+        return "ReferenceError";
+    }
 }
 
 class SyntaxError extends Error {
+    get name(): string {
+        return "SyntaxError";
+    }
 }
 
 class TypeError extends Error {
+    get name(): string {
+        return "TypeError";
+    }
 }
 
 class URIError extends Error {
+    get name(): string {
+        return "URIError";
+    }
 }

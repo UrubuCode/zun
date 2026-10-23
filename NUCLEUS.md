@@ -46,7 +46,7 @@ read.
 | 19 | TypedArrays | partial | Only `Uint8Array/Uint16Array/Uint32Array/Float64Array`, each only `get/set`. Missing Int8/16/32, Uint8Clamped, Float32, BigInt64/Uint64 Array, and the whole method surface (`length/subarray/set/slice/fill/map/forEach/iterator`) |
 | 20 | Date | partial | UTC getters + millis + ISO + parse; missing local-time getters, **all setters** (`setFullYear/…`), component `getMonth/getDate/getDay/getHours…` JS-named (only `getUTC*`), `Date.now/parse/UTC` statics, `getTimezoneOffset`, `toLocale*`, `toDateString` |
 | 21 | Buffer | partial | Native `zun:buffer` surface exists; verify Node `Buffer` API coverage (`from/alloc/write/read*/toString/slice/concat`) |
-| 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses (`Eval/Range/Reference/Syntax/Type/URI`); `name/message`. Missing `AggregateError`, `cause`, `.stack` capture wiring (sequence-point debug info landed per GOAL, verify stack population), `Error.captureStackTrace` |
+| 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
@@ -69,12 +69,16 @@ frozen runtime representation is unchanged — the registry only rebinds the nam
   `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
   `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
   `Number`, `Boolean`, `Object`, `Symbol`. (`Map` keeps token 0.)
-- **Still on the hardcoded fallback:** `Date` and `Error` (+ subclasses
+- **Not registrable yet:** `Date` and `Error` (+ subclasses
   `EvalError/RangeError/ReferenceError/SyntaxError/TypeError/URIError`) — their
-  annotation resolves to `Ty::Instance(<program-assigned class index>)`, which a
-  static `base_type_facets` entry cannot name; and `Proxy` (not in bucket A).
-  The hardcoded `new`/annotation matches also remain for the lowercase aliases
-  (`map`, `array`, …) and `Proxy`, so they are not yet removable.
+  annotation would resolve to `Ty::Instance(<program-assigned class index>)`, which
+  a static `base_type_facets` entry cannot name; and `Proxy` (not in bucket A).
+  The hardcoded `new`/annotation matches remain for the lowercase aliases
+  (`map`, `array`, …) and `Proxy`, so those are not yet removable.
+  **Corrected 2026-10-23:** `Date` and `Error` are *not* on a hardcoded fallback,
+  as this previously said. They are absent from the checker entirely, so they are
+  unreachable as globals and a program must declare its own class. Letting the
+  registry name a class-backed base type is the open work, and it unblocks both.
 
 ---
 
@@ -396,12 +400,37 @@ intrinsics). Node `Buffer` API coverage not confirmed from the TS side.
   deeper read.
 
 ## 22. Error (+ subclasses) — partial
-`std/error.zun`: `Error{name,message}` + `EvalError RangeError ReferenceError
-SyntaxError TypeError URIError` (extends Error). `error_value.rs` in core.
-- **Missing:** `AggregateError`; the `cause` option (`new Error(msg,{cause})`);
-  `.stack` population (sequence-point PC→source debug info landed per GOAL status —
-  **verify** the stack string is actually captured and formatted); `Error.captureStackTrace`
-  / `Error.stackTraceLimit`; `toString()` → `"Name: message"` form (verify).
+`builtin/error.zun` (module `zun:std:error`): `Error` + `EvalError RangeError
+ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
+
+- **Construction is now the JS shape.** `new Error(message)` takes the message alone;
+  `name` is a getter each subclass overrides, resolved by virtual dispatch even
+  through a base-typed reference. It was previously a field, which made the
+  constructor `new Error(name, message)` and forced every caller to repeat what the
+  class already knows. The cost is that `name` is read-only, where JS allows
+  `e.name = "..."`; that is a dynamic-path concern.
+- **`toString()`** follows JS, including the empty-message case: `new Error("")`
+  prints `Error`, not `Error: `.
+- **`.stack` is absent** — not merely unverified, which is what this entry used to
+  say. There is no `stack` property and no capture anywhere; the sequence-point
+  debug info that landed is a prerequisite, not the feature.
+- **`Error` is not reachable as a global.** It is neither in `builtin/realm.zun` nor
+  in any hardcoded checker path — the realm section's claim that it sits on a
+  "hardcoded fallback" was wrong. Programs must declare their own class, which is
+  what the existing tests do. Blocked on the same gap the realm section names: a
+  static `base_type_facets` entry cannot denote `Ty::Instance(<program-assigned
+  class index>)`, so class-backed base types cannot be registered declaratively.
+  Fixing that unblocks **#20 Date** too.
+- **`cause` and `AggregateError` are blocked on construction, not on effort.** Object
+  construction requires exactly one positional argument per declared field, with no
+  constructors, defaults or optional arguments. So `cause` cannot be an optional
+  second field without breaking `new Error(msg)`, and `AggregateError` cannot take
+  JS's `(errors, message)` order, since inherited fields come first and would force
+  `(message, errors)`.
+- **`Error.captureStackTrace` / `stackTraceLimit`** are V8 extensions rather than
+  ECMAScript; worth a deliberate decision before implementing.
+- **Tests:** `zun_vm/tests/error_surface.rs` runs the shipped `builtin/error.zun`
+  source itself rather than a copy.
 
 ## 23. globalThis / global — done
 `check.rs:1096`: both identifiers lower to `ExprKind::RealmGlobal` (opcode `0x94`),
