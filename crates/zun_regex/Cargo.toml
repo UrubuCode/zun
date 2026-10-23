@@ -1,0 +1,12 @@
+[package]
+name = "zun_regex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Engine B: a standalone backtracking ECMAScript regex engine (backreferences, lookaround, step limit)."
+
+[dependencies]
+
+[lints]
+workspace = true
