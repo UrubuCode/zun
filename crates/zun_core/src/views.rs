@@ -214,6 +214,150 @@ impl DataView {
             .enumerate()
             .all(|(index, byte)| buffer.set(offset + index, byte))
     }
+
+    // --- the remaining element widths ---
+    //
+    // Reading and writing `N` bytes with a choice of endianness is the same
+    // operation at every width, so it is written once here and the typed
+    // accessors below reinterpret the bits. Repeating the byte loop per type
+    // is how the four above ended up with three slightly different shapes.
+    //
+    // All of these are *bit* reinterpretations, never numeric conversions:
+    // `get_i8` on `0xFF` is `-1`, not `255`.
+
+    fn get_bytes<const N: usize>(
+        self,
+        buffer: &ByteBuffer,
+        relative: usize,
+        little_endian: bool,
+    ) -> Option<[u8; N]> {
+        let offset = self.bytes(relative, N)?;
+        let mut bytes = [0u8; N];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = buffer.get(offset + index)?;
+        }
+        if !little_endian {
+            bytes.reverse();
+        }
+        Some(bytes)
+    }
+
+    fn set_bytes<const N: usize>(
+        self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        mut bytes: [u8; N],
+        little_endian: bool,
+    ) -> bool {
+        let Some(offset) = self.bytes(relative, N) else {
+            return false;
+        };
+        if !little_endian {
+            bytes.reverse();
+        }
+        bytes
+            .into_iter()
+            .enumerate()
+            .all(|(index, byte)| buffer.set(offset + index, byte))
+    }
+
+    pub fn get_i8(self, buffer: &ByteBuffer, relative: usize) -> Option<i8> {
+        self.get_u8(buffer, relative).map(|value| value as i8)
+    }
+
+    pub fn set_i8(self, buffer: &mut ByteBuffer, relative: usize, value: i8) -> bool {
+        self.set_u8(buffer, relative, value as u8)
+    }
+
+    pub fn get_i16(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<i16> {
+        Some(i16::from_le_bytes(self.get_bytes::<2>(
+            buffer,
+            relative,
+            little_endian,
+        )?))
+    }
+
+    pub fn set_i16(
+        self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: i16,
+        little_endian: bool,
+    ) -> bool {
+        self.set_bytes::<2>(buffer, relative, value.to_le_bytes(), little_endian)
+    }
+
+    pub fn get_i32(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<i32> {
+        Some(i32::from_le_bytes(self.get_bytes::<4>(
+            buffer,
+            relative,
+            little_endian,
+        )?))
+    }
+
+    pub fn set_i32(
+        self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: i32,
+        little_endian: bool,
+    ) -> bool {
+        self.set_bytes::<4>(buffer, relative, value.to_le_bytes(), little_endian)
+    }
+
+    pub fn get_f32(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<f32> {
+        Some(f32::from_le_bytes(self.get_bytes::<4>(
+            buffer,
+            relative,
+            little_endian,
+        )?))
+    }
+
+    pub fn set_f32(
+        self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: f32,
+        little_endian: bool,
+    ) -> bool {
+        self.set_bytes::<4>(buffer, relative, value.to_le_bytes(), little_endian)
+    }
+
+    pub fn get_i64(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<i64> {
+        Some(i64::from_le_bytes(self.get_bytes::<8>(
+            buffer,
+            relative,
+            little_endian,
+        )?))
+    }
+
+    pub fn set_i64(
+        self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: i64,
+        little_endian: bool,
+    ) -> bool {
+        self.set_bytes::<8>(buffer, relative, value.to_le_bytes(), little_endian)
+    }
+
+    pub fn get_u64(self, buffer: &ByteBuffer, relative: usize, little_endian: bool) -> Option<u64> {
+        Some(u64::from_le_bytes(self.get_bytes::<8>(
+            buffer,
+            relative,
+            little_endian,
+        )?))
+    }
+
+    pub fn set_u64(
+        self,
+        buffer: &mut ByteBuffer,
+        relative: usize,
+        value: u64,
+        little_endian: bool,
+    ) -> bool {
+        self.set_bytes::<8>(buffer, relative, value.to_le_bytes(), little_endian)
+    }
 }
 
 impl TypedArrayView {

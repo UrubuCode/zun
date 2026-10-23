@@ -442,7 +442,17 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             }
             _ => {
                 // i8/i16/i32/u8/u16/u32: build as i32, then narrow if needed.
-                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(v as i32)));
+                //
+                // Via i64, because `f64 as i32` saturates in Rust: a `u32`
+                // literal above i32::MAX became i32::MAX, so
+                // `let a: u32 = 4294967295` silently held 2147483647. Going
+                // through i64 and truncating keeps the bit pattern, which the
+                // following `conv` reinterprets as the target width. Sema has
+                // already checked the literal fits that width.
+                self.emit(Instruction::new(
+                    Opcode::ConstI32,
+                    Operand::Imm32(v as i64 as i32),
+                ));
                 if kind != NumKind::I32 {
                     self.emit(Instruction::new(
                         Opcode::Conv,

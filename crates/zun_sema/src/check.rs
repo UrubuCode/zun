@@ -3052,6 +3052,85 @@ impl Checker<'_> {
                         Ty::Boolean,
                         vec![Ty::Int(IntKind::U64), Ty::F64, Ty::Boolean],
                     )),
+                    // The remaining DataView element widths. JS names
+                    // 64-bit access `getBigInt64`/`getBigUint64` and returns a
+                    // BigInt; Zun has native 64-bit integers, so these return
+                    // `i64`/`u64` and are named without the Big.
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getInt8") => Some((
+                        "dataViewGetInt8",
+                        Ty::Int(IntKind::I8),
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setInt8") => Some((
+                        "dataViewSetInt8",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I8)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint8") => Some((
+                        "dataViewGetUint8",
+                        Ty::Int(IntKind::U8),
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint8") => Some((
+                        "dataViewSetUint8",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U8)],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getInt16") => Some((
+                        "dataViewGetInt16",
+                        Ty::Int(IntKind::I16),
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setInt16") => Some((
+                        "dataViewSetInt16",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I16), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getInt32") => Some((
+                        "dataViewGetInt32",
+                        Ty::Int(IntKind::I32),
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setInt32") => Some((
+                        "dataViewSetInt32",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I32), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getFloat32") => Some((
+                        "dataViewGetFloat32",
+                        Ty::F32,
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setFloat32") => Some((
+                        "dataViewSetFloat32",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::F32, Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getInt64") => Some((
+                        "dataViewGetInt64",
+                        Ty::Int(IntKind::I64),
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setInt64") => Some((
+                        "dataViewSetInt64",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "getUint64") => Some((
+                        "dataViewGetUint64",
+                        Ty::Int(IntKind::U64),
+                        vec![Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "setUint64") => Some((
+                        "dataViewSetUint64",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64), Ty::Boolean],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "byteLength") => Some((
+                        "dataViewByteLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
                     // `ArrayBuffer`, which is what `Ty::Buffer` denotes. These
                     // are methods rather than the properties JS has, matching
                     // `String.length()` and `Map.size()` here; the divergence

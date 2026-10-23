@@ -42,7 +42,7 @@ read.
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping. Missing `isView`, resizable buffers |
-| 18 | DataView | partial | Only `getUint32/setUint32/getUint16/setUint16/getFloat64/setFloat64`; missing Int8/16/32, Uint8, Float32, BigInt64/Uint64, `byteLength/byteOffset/buffer` |
+| 18 | DataView | partial | All element widths now present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. Missing `byteOffset`/`buffer` |
 | 19 | TypedArrays | partial | Only `Uint8Array/Uint16Array/Uint32Array/Float64Array`, each only `get/set`. Missing Int8/16/32, Uint8Clamped, Float32, BigInt64/Uint64 Array, and the whole method surface (`length/subarray/set/slice/fill/map/forEach/iterator`) |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
@@ -466,12 +466,21 @@ storage lives in `zun_gc/buffers.rs`.
   (`resize`/`maxByteLength`), `SharedArrayBuffer` (deferred, fine).
 
 ## 18. DataView — partial
-`BufferViewKind::DataView`; dispatch in `check.rs:2117+`; native `views.rs`.
-- **Present:** `getUint32/setUint32 getUint16/setUint16 getFloat64/setFloat64` (each with
-  little-endian `boolean` arg).
-- **Missing:** `getInt8/setInt8 getUint8/setUint8 getInt16/setInt16 getInt32/setInt32
-  getFloat32/setFloat32 getBigInt64/getBigUint64/set…`; properties `.byteLength
-  .byteOffset .buffer`.
+`BufferViewKind::DataView`; core accessors in `zun_core/views.rs`.
+
+- **Present:** `getInt8/setInt8`, `getUint8/setUint8`, `getInt16/setInt16`,
+  `getUint16/setUint16`, `getInt32/setInt32`, `getUint32/setUint32`,
+  `getInt64/setInt64`, `getUint64/setUint64`, `getFloat32/setFloat32`,
+  `getFloat64/setFloat64`, each with the little-endian flag (single bytes take
+  none), plus `byteLength()`.
+- **Signed access was missing entirely** before this, so a binary format with
+  signed fields could not be read: the same byte is `-1` as `Int8` and `255` as
+  `Uint8`, and only the unsigned reading existed.
+- **64-bit naming:** JS calls these `getBigInt64`/`getBigUint64` and returns a
+  BigInt. Zun has native 64-bit integers, so they are `getInt64`/`getUint64`
+  returning `i64`/`u64`. A deliberate divergence, not an oversight.
+- **Missing:** `byteOffset()` and `buffer()` accessors; `Uint8Clamped` has no
+  DataView form in JS either.
 
 ## 19. TypedArrays — partial
 `native_types.rs` exposes only `U8Array/U16Array/U32Array/F64Array`; constructed via
@@ -705,6 +714,12 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
   integer), transcendentals left on libm. See §26.
 
 ---
+
+- **Fixed 2026-10-23: unsigned literals above `i32::MAX` saturated.** Lowering
+  built every integer constant of 32 bits or less with `f64 as i32`, which
+  saturates in Rust, so `let a: u32 = 4294967295` silently held 2147483647.
+  Found while testing `DataView.setUint32`. Now lowered through `i64` so the
+  bit pattern survives for the following `conv` to reinterpret.
 
 ## Language gaps blocking the method-surface tail
 
