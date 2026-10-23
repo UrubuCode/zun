@@ -558,24 +558,24 @@ fn collect_function_signatures(source: &str) -> Vec<zun_sema::check::ExternalFun
 /// supplies the stable module identities used by hosts and tests.
 pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
     compile_modules([
-        ("zun:std:math", include_str!("../../../std/math.zun")),
-        ("zun:std:string", include_str!("../../../std/string.zun")),
-        ("zun:std:number", include_str!("../../../std/number.zun")),
-        ("zun:std:bigint", include_str!("../../../std/bigint.zun")),
-        ("zun:std:array", include_str!("../../../std/array.zun")),
-        ("zun:std:map", include_str!("../../../std/map.zun")),
-        ("zun:std:set", include_str!("../../../std/set.zun")),
+        ("zun:std:math", include_str!("../../../builtin/math.zun")),
+        ("zun:std:string", include_str!("../../../builtin/string.zun")),
+        ("zun:std:number", include_str!("../../../builtin/number.zun")),
+        ("zun:std:bigint", include_str!("../../../builtin/bigint.zun")),
+        ("zun:std:array", include_str!("../../../builtin/array.zun")),
+        ("zun:std:map", include_str!("../../../builtin/map.zun")),
+        ("zun:std:set", include_str!("../../../builtin/set.zun")),
         (
             "zun:std:weak-map",
-            include_str!("../../../std/weak_map.zun"),
+            include_str!("../../../builtin/weak_map.zun"),
         ),
         (
             "zun:std:finalization-registry",
-            include_str!("../../../std/finalization_registry.zun"),
+            include_str!("../../../builtin/finalization_registry.zun"),
         ),
-        ("zun:std:regexp", include_str!("../../../std/regexp.zun")),
-        ("zun:std:date", include_str!("../../../std/date.zun")),
-        ("zun:std:error", include_str!("../../../std/error.zun")),
+        ("zun:std:regexp", include_str!("../../../builtin/regexp.zun")),
+        ("zun:std:date", include_str!("../../../builtin/date.zun")),
+        ("zun:std:error", include_str!("../../../builtin/error.zun")),
     ])
 }
 
@@ -1136,8 +1136,8 @@ mod tests {
     #[test]
     fn standard_library_source_is_compilable_by_zun() {
         let source =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/math.zun"))
-                .expect("std/math.zun");
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtin/math.zun"))
+                .expect("builtin/math.zun");
         compile(&source).expect("standard library module should compile");
         let loader = compile_standard_library().expect("standard library should load");
         assert!(loader.get("zun:std:math").is_some());
