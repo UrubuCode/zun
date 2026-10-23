@@ -26,7 +26,7 @@ read.
 | # | Item | Status | One-line gap |
 |---|------|--------|--------------|
 | 1 | String | partial | Core slicing/case/search present; missing `split/match/matchAll/replaceAll/slice/at/concat/codePointAt/normalize/localeCompare`, statics `fromCharCode/fromCodePoint/raw`, iterator |
-| 2 | Number | partial | Instance helpers present; **no statics** (`Number.isNaN/isInteger/isFinite/parseFloat/parseInt`, `MAX_SAFE_INTEGER` …); no `toPrecision/toExponential/toLocaleString`; no radix on `toString` |
+| 2 | Number | partial | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants) and `toString(radix)`; remaining `toPrecision/toExponential/toLocaleString/valueOf` |
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
@@ -100,18 +100,35 @@ Primitive-backed class, statically bound (`std/string.zun`, dispatch in
 - **Notes:** `replace` takes plain strings only (no regex/function replacer). No template
   cooking helper. `substring` uses `u64` start/end, no negative-index `slice`.
 
-## 2. Number — partial
-`std/number.zun`; native `number.rs`.
+## 2. Number — partial  *(statics + radix landed)*
+`std/number.zun`; native `number.rs`. Statics and constants are recognized in sema
+(`check.rs` `check_number_static` for `Number.<m>(...)` and the `Number.<CONST>` fold in
+the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 floor.
 
-- **Present (instance):** `isNaN isFinite isNegativeZero isSafeInteger isInteger toFixed
-  toString` + Zun math helpers (`abs clamp min max sign lerp …`). Free fns
+- **Present (statics):** `isNaN isFinite isInteger isSafeInteger` — the **strict**
+  forms (no coercion: a non-number argument answers `false`, distinct from the global
+  `isNaN`/`isFinite`), `parseFloat(s)` (longest leading numeric prefix, `NaN` on
+  failure), `parseInt(s, radix?)` (radix 2..36, auto `0x`→16 / else 10 when omitted,
+  `NaN` on no digit). Implemented as `isNaNStrict/isFiniteStrict/isIntegerStrict/
+  isSafeIntegerStrict` (param `Opaque`, so the raw value — including an `Any` — reaches
+  the native un-coerced) + `parseFloatPrefix/parseIntRadix`.
+- **Present (constants):** `MAX_SAFE_INTEGER MIN_SAFE_INTEGER MAX_VALUE MIN_VALUE
+  EPSILON POSITIVE_INFINITY NEGATIVE_INFINITY NaN` — folded to compile-time `number`
+  literals in sema (the `Number` class carries no static fields, so `static_field_of`
+  falls through to the fold).
+- **Present (instance):** `isNaN isFinite isNegativeZero isSafeInteger isInteger toFixed`
+  + `toString(radix?)` — base 2..36, default 10, non-finite rendered JS-style
+  (`NaN`/`Infinity`/`-Infinity`); routed via a sema intercept on an `F64` receiver to the
+  `toStringRadix` native ahead of class dispatch (supersedes the no-arg extern
+  `toString`). Plus the Zun math helpers (`abs clamp min max sign lerp …`). Free fns
   `numberParse/numberToFixed`.
-- **Missing:** **all statics** — `Number.isNaN/isInteger/isFinite/isSafeInteger
-  parseFloat parseInt`, constants `MAX_SAFE_INTEGER/MIN_SAFE_INTEGER/MAX_VALUE/MIN_VALUE/
-  EPSILON/POSITIVE_INFINITY/NEGATIVE_INFINITY/NaN`. Instance `toPrecision toExponential
-  toLocaleString valueOf`; `toString(radix)`.
-- **Notes:** the predicates exist only as **instance** methods (`x.isNaN()`), not the
-  idiomatic `Number.isNaN(x)` statics.
+- **Missing / deferred:** instance `toPrecision toExponential valueOf`; `toLocaleString`
+  (locale — deferred, needs an ICU/locale model). `toPrecision`/`toExponential` were
+  deferred rather than faked: JS's precision/exponent formatting (significant-digit
+  rounding, exponent thresholds) is non-trivial and no consumer needs it yet.
+- **Notes:** the instance predicates (`x.isNaN()`) remain for Zun-style call sites; the
+  new statics are the idiomatic `Number.isNaN(x)` surface. All of these allocate/branch
+  only and are not JIT-lowered — Tier-0 only, no second path to keep in sync.
 
 ## 3. Boolean — missing
 No `std/boolean.zun`, no wrapper type; only primitive `Ty::Boolean`. No `Boolean()`
@@ -579,8 +596,9 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      splice shift unshift`, comparator `sort(cmp?)` — all spec `(value,index,array)`.)
    - String (#1): `split slice at concat match/matchAll/search replaceAll charAt
      codePointAt [Symbol.iterator]`, statics `fromCharCode/fromCodePoint`.
-   - Number (#2): statics `isNaN/isInteger/isFinite/parseInt/parseFloat` + constants;
-     `toString(radix) toPrecision toExponential`.
+   - Number (#2): ✅ statics `isNaN/isInteger/isFinite/isSafeInteger/parseInt/parseFloat`
+     + constants, and `toString(radix)` — landed. Remaining: `toPrecision toExponential
+     toLocaleString valueOf`.
    - Date (#20): setters, local-time getters, `Date.now/parse/UTC`, `getTimezoneOffset`.
    - Map/Set (#11,#12): `forEach`, construct-from-iterable, `size` as property.
    - Promise (#9): `then/catch/finally`, statics `resolve/reject/all/allSettled/race/any`.
@@ -601,8 +619,9 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
 - **Object and Function started with zero surface** — not even a recognized global
   namespace. `Object` now has its enumeration/reflection surface (§6) and `Function`
   now has `call/apply/bind` + `.name/.length` (§8), both over the frozen floor.
-- **Number predicates are instance-only** (`x.isNaN()`), the opposite of idiomatic JS;
-  the `Number.*` statics are entirely absent.
+- ~~**Number predicates are instance-only**~~ — resolved: the idiomatic strict
+  `Number.isNaN/isFinite/isInteger/isSafeInteger` statics, `parseFloat/parseInt`, the
+  eight constants, and `toString(radix)` now land (§2). The instance predicates remain.
 - **Array carries a large non-standard "collection algebra" surface** (`chunk windowed
   union intersection isPalindrome isSubsetOf rotateLeft/Right …`) while lacking bread-and-
   butter standards like `forEach/find(cb)/join/splice`.

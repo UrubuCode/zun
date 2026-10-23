@@ -1121,6 +1121,86 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower a `Number.<method>(...)` static call. The strict predicates accept
+    /// any argument type (JS does not coerce — a non-number is simply `false`);
+    /// `parseFloat`/`parseInt` take a string and an optional radix.
+    fn check_number_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let resolve = |checker: &mut Self, native: &str| {
+            match zun_natives::resolve("zun:number", native) {
+                Some((id, _)) => Some(id),
+                None => {
+                    checker.error(span, format!("missing Number intrinsic `{native}`"));
+                    None
+                }
+            }
+        };
+        match method {
+            // Strict predicates: exactly one argument, of any type, no coercion.
+            "isNaN" | "isFinite" | "isInteger" | "isSafeInteger" => {
+                if args.len() != 1 {
+                    self.error(span, format!("`Number.{method}` expects 1 argument, found {}", args.len()));
+                    return self.poison(span);
+                }
+                let native = match method {
+                    "isNaN" => "isNaNStrict",
+                    "isFinite" => "isFiniteStrict",
+                    "isInteger" => "isIntegerStrict",
+                    _ => "isSafeIntegerStrict",
+                };
+                let Some(id) = resolve(self, native) else { return self.poison(span) };
+                let arg = self.check_expr(cx, &args[0]);
+                hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::Boolean, span }
+            }
+            "parseFloat" => {
+                if args.len() != 1 {
+                    self.error(span, format!("`Number.parseFloat` expects 1 argument, found {}", args.len()));
+                    return self.poison(span);
+                }
+                let Some(id) = resolve(self, "parseFloatPrefix") else { return self.poison(span) };
+                let arg = self.check_expr(cx, &args[0]);
+                if !arg.ty.is_error() && !self.is_assignable(arg.ty, Ty::String) {
+                    self.error(arg.span, "`Number.parseFloat` expects a string argument");
+                }
+                hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
+            }
+            "parseInt" => {
+                if args.is_empty() || args.len() > 2 {
+                    self.error(span, format!("`Number.parseInt` expects 1 or 2 arguments, found {}", args.len()));
+                    return self.poison(span);
+                }
+                let Some(id) = resolve(self, "parseIntRadix") else { return self.poison(span) };
+                let value = self.check_expr(cx, &args[0]);
+                if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::String) {
+                    self.error(value.span, "`Number.parseInt` expects a string argument");
+                }
+                let radix = match args.get(1) {
+                    Some(arg) => {
+                        let mut radix = self.check_expr(cx, arg);
+                        coerce_numeric_literal(&mut radix, Ty::Int(IntKind::I32));
+                        if !radix.ty.is_error() && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32)) {
+                            self.error(radix.span, "`Number.parseInt` radix must be an integer");
+                        }
+                        radix
+                    }
+                    // Absent radix → 0 (auto-detect) at the native boundary.
+                    None => hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::Int(IntKind::I32), span },
+                };
+                hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![value, radix] }, ty: Ty::F64, span }
+            }
+            other => {
+                self.error(method_span, format!("`Number.{other}` is not supported in this runtime"));
+                self.poison(span)
+            }
+        }
+    }
+
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
@@ -2102,6 +2182,19 @@ impl Checker<'_> {
                             span,
                         );
                     }
+                    // `Number.*` statics (`isNaN isFinite isInteger isSafeInteger
+                    // parseFloat parseInt`). Unlike `Object`, the `Number` class
+                    // exists (its instance helpers), so recognition keys on the
+                    // receiver name alone — a value never names `Number`.
+                    if class_name == "Number" {
+                        return self.check_number_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
                     // `Symbol.for(key)` / `Symbol.keyFor(symbol)` — the global
                     // cross-realm registry.
                     if class_name == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
@@ -2671,6 +2764,38 @@ impl Checker<'_> {
                     return self.lower_function_reflective_call(
                         cx, receiver, &mname, func, args, span, method.span,
                     );
+                }
+                // `number.toString(radix?)` — base-`radix` (2..=36) rendering,
+                // default 10. Intercepted before class dispatch so it supersedes
+                // the no-arg extern `toString` for the radix form and the
+                // no-arg form alike.
+                if receiver.ty == Ty::F64 && mname == "toString" && args.len() <= 1 {
+                    let Some((id, _)) = zun_natives::resolve("zun:number", "toStringRadix") else {
+                        self.error(span, "missing Number intrinsic `toStringRadix`");
+                        return self.poison(span);
+                    };
+                    let radix = match args.first() {
+                        Some(arg) => {
+                            let mut radix = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut radix, Ty::Int(IntKind::I32));
+                            if !radix.ty.is_error()
+                                && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32))
+                            {
+                                self.error(radix.span, "`toString` radix must be an integer");
+                            }
+                            radix
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(10.0),
+                            ty: Ty::Int(IntKind::I32),
+                            span,
+                        },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, radix] },
+                        ty: Ty::String,
+                        span,
+                    };
                 }
                 let class = match receiver.ty {
                     Ty::String => match self.classes_by_name.get("String") {
@@ -3319,6 +3444,30 @@ impl Checker<'_> {
                             return hir::Expr {
                                 kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot },
                                 ty,
+                                span,
+                            };
+                        }
+                    }
+                    // `Number.*` numeric constants fold to compile-time `number`
+                    // literals. Keyed on the receiver name (the `Number` class
+                    // has no static fields, so `static_field_of` above returns
+                    // `None` and falls through here).
+                    if self.text(class_name) == "Number" {
+                        let constant = match fname.as_str() {
+                            "MAX_SAFE_INTEGER" => Some(9_007_199_254_740_991.0),
+                            "MIN_SAFE_INTEGER" => Some(-9_007_199_254_740_991.0),
+                            "MAX_VALUE" => Some(f64::MAX),
+                            "MIN_VALUE" => Some(f64::MIN_POSITIVE.min(f64::from_bits(1))),
+                            "EPSILON" => Some(f64::EPSILON),
+                            "POSITIVE_INFINITY" => Some(f64::INFINITY),
+                            "NEGATIVE_INFINITY" => Some(f64::NEG_INFINITY),
+                            "NaN" => Some(f64::NAN),
+                            _ => None,
+                        };
+                        if let Some(value) = constant {
+                            return hir::Expr {
+                                kind: hir::ExprKind::Number(value),
+                                ty: Ty::F64,
                                 span,
                             };
                         }

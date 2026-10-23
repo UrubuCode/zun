@@ -121,6 +121,63 @@ fn object_is_implements_same_value_including_nan_and_negative_zero() {
 }
 
 #[test]
+fn number_strict_predicates_do_not_coerce() {
+    let out = run_source(
+        r#"function main() {
+            if (Number.isNaN(Number.NaN)) { print("nan-true"); }
+            if (!Number.isNaN(42.0)) { print("nan-false-number"); }
+            if (!Number.isNaN(box_any("x"))) { print("nan-false-string"); }
+            if (Number.isInteger(4.0)) { print("int-true"); }
+            if (!Number.isInteger(4.5)) { print("int-false"); }
+            if (!Number.isFinite(Number.POSITIVE_INFINITY)) { print("finite-false"); }
+            if (Number.isFinite(3.0)) { print("finite-true"); }
+            if (!Number.isSafeInteger(9007199254740992.0)) { print("safe-false"); }
+            if (Number.isSafeInteger(9007199254740991.0)) { print("safe-true"); }
+        }"#,
+    );
+    assert_eq!(
+        out,
+        [
+            "nan-true",
+            "nan-false-number",
+            "nan-false-string",
+            "int-true",
+            "int-false",
+            "finite-false",
+            "finite-true",
+            "safe-false",
+            "safe-true",
+        ]
+    );
+}
+
+#[test]
+fn number_parse_statics_and_constants() {
+    let out = run_source(
+        r#"function main() {
+            print(Number.parseInt("42"));
+            print(Number.parseInt("ff", 16));
+            print(Number.parseFloat("3.14"));
+            print(Number.MAX_SAFE_INTEGER);
+            if (Number.EPSILON > 0.0) { print("epsilon-positive"); }
+        }"#,
+    );
+    assert_eq!(out, ["42", "255", "3.14", "9007199254740991", "epsilon-positive"]);
+}
+
+#[test]
+fn number_to_string_radix() {
+    let out = run_source(
+        r#"function main() {
+            print((255.0).toString(16));
+            print((10.0).toString(2));
+            print((255.0).toString());
+        }"#,
+    );
+    assert_eq!(out, ["ff", "1010", "255"]);
+}
+
+#[test]
 fn object_from_entries_round_trips_object_entries() {
     let out = run_source(
         r#"function main() {

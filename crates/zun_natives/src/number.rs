@@ -2,6 +2,204 @@
 
 use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
+/// The largest integer that `f64` represents exactly (`2^53 - 1`).
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// Interpret a native argument as a strict `f64`, performing **no** coercion.
+/// `number` immediates (`Float`/`Int`) and `Any` values carrying a number read
+/// back; everything else (strings, booleans, objects, `undefined`) yields
+/// `None` so the strict `Number.*` predicates answer `false` without coercing.
+fn strict_number(arg: Option<&NativeArg>) -> Option<f64> {
+    match arg {
+        Some(NativeArg::Float(value)) => Some(*value),
+        Some(NativeArg::Int(value)) => Some(*value as f64),
+        Some(NativeArg::Any(value)) => value
+            .as_float()
+            .or_else(|| value.as_int().map(|int| int as f64)),
+        _ => None,
+    }
+}
+
+/// Read a radix argument (`Int` or `Float`), defaulting to `fallback` when the
+/// slot is absent.
+fn radix_arg(arg: Option<&NativeArg>, fallback: i64) -> i64 {
+    match arg {
+        Some(NativeArg::Int(value)) => *value,
+        Some(NativeArg::Float(value)) => *value as i64,
+        _ => fallback,
+    }
+}
+
+fn is_nan_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Bool(
+        strict_number(args.first()).is_some_and(|value| value.is_nan()),
+    ))
+}
+
+fn is_finite_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Bool(
+        strict_number(args.first()).is_some_and(|value| value.is_finite()),
+    ))
+}
+
+fn is_integer_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Bool(
+        strict_number(args.first())
+            .is_some_and(|value| value.is_finite() && value.fract() == 0.0),
+    ))
+}
+
+fn is_safe_integer_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Bool(strict_number(args.first()).is_some_and(
+        |value| {
+            value.is_finite()
+                && value.fract() == 0.0
+                && (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&value)
+        },
+    )))
+}
+
+/// `Number.parseFloat(s)` — parse the longest leading numeric prefix, JS-style:
+/// surrounding junk is ignored and an unparseable string yields `NaN` (never an
+/// error).
+fn parse_float_prefix(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let text = match args.first() {
+        Some(NativeArg::Str(value)) => value.trim_start(),
+        Some(NativeArg::Any(value)) if value.as_string().is_some() => "",
+        _ => return Ok(NativeValue::Float(f64::NAN)),
+    };
+    // The longest prefix that parses as an `f64` is the JS result; Rust's
+    // `FromStr` rejects trailing junk, so extend the window greedily.
+    let mut best = f64::NAN;
+    for end in 1..=text.len() {
+        if !text.is_char_boundary(end) {
+            continue;
+        }
+        if let Ok(value) = text[..end].parse::<f64>() {
+            best = value;
+        }
+    }
+    Ok(NativeValue::Float(best))
+}
+
+/// `Number.parseInt(s, radix?)` — parse an integer in `radix` (0 means detect:
+/// `0x`/`0X` → 16, else 10). Leading whitespace and sign are honoured; parsing
+/// stops at the first non-digit; no valid digit yields `NaN`.
+fn parse_int_radix(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let text = match args.first() {
+        Some(NativeArg::Str(value)) => value.trim(),
+        _ => return Ok(NativeValue::Float(f64::NAN)),
+    };
+    let mut radix = radix_arg(args.get(1), 0);
+    let mut sign = 1.0;
+    let mut rest = text;
+    if let Some(stripped) = text.strip_prefix('+') {
+        rest = stripped;
+    } else if let Some(stripped) = text.strip_prefix('-') {
+        sign = -1.0;
+        rest = stripped;
+    }
+    if radix == 0 || radix == 16 {
+        if let Some(stripped) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
+            rest = stripped;
+            radix = 16;
+        }
+    }
+    if radix == 0 {
+        radix = 10;
+    }
+    if !(2..=36).contains(&radix) {
+        return Ok(NativeValue::Float(f64::NAN));
+    }
+    let mut value = 0.0;
+    let mut saw_digit = false;
+    for ch in rest.chars() {
+        match ch.to_digit(radix as u32) {
+            Some(digit) => {
+                value = value * radix as f64 + digit as f64;
+                saw_digit = true;
+            }
+            None => break,
+        }
+    }
+    if saw_digit {
+        Ok(NativeValue::Float(sign * value))
+    } else {
+        Ok(NativeValue::Float(f64::NAN))
+    }
+}
+
+/// `(value).toString(radix)` — base-`radix` (2..=36) rendering, radix 10 using
+/// the default JS numeric formatting. Non-finite values render as JS spells
+/// them (`NaN`/`Infinity`/`-Infinity`).
+fn to_string_radix(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("toString: expected a number".to_string())),
+    };
+    let radix = radix_arg(args.get(1), 10);
+    if !(2..=36).contains(&radix) {
+        return Err(NativeError(format!(
+            "toString: radix must be between 2 and 36, found {radix}"
+        )));
+    }
+    if value.is_nan() {
+        return Ok(NativeValue::Str("NaN".to_string()));
+    }
+    if value.is_infinite() {
+        return Ok(NativeValue::Str(
+            if value < 0.0 { "-Infinity" } else { "Infinity" }.to_string(),
+        ));
+    }
+    if radix == 10 {
+        return Ok(NativeValue::Str(crate::format_float(value)));
+    }
+    Ok(NativeValue::Str(format_radix(value, radix as u32)))
+}
+
+/// Render a finite `f64` in `radix` (2..=36): full integer part plus up to 20
+/// fractional digits.
+fn format_radix(mut value: f64, radix: u32) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let negative = value.is_sign_negative() && value != 0.0;
+    value = value.abs();
+    let mut integer = value.trunc();
+    let mut fraction = value.fract();
+    let base = radix as f64;
+
+    let mut integer_digits = Vec::new();
+    if integer == 0.0 {
+        integer_digits.push(b'0');
+    } else {
+        while integer > 0.0 {
+            let digit = (integer % base) as usize;
+            integer_digits.push(DIGITS[digit]);
+            integer = (integer / base).trunc();
+        }
+        integer_digits.reverse();
+    }
+
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    out.push_str(std::str::from_utf8(&integer_digits).unwrap());
+
+    if fraction > 0.0 {
+        out.push('.');
+        let mut emitted = 0;
+        while fraction > 0.0 && emitted < 20 {
+            fraction *= base;
+            let digit = fraction.trunc() as usize;
+            out.push(DIGITS[digit] as char);
+            fraction -= fraction.trunc();
+            emitted += 1;
+        }
+    }
+    out
+}
+
 fn parse_float(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let text = match args.first() {
         Some(NativeArg::Str(value)) => value.trim(),
@@ -122,6 +320,52 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[F64],
             ret: Bool,
             imp: is_safe_integer,
+        },
+        // Strict `Number.*` statics: the argument is inspected without coercion,
+        // so a non-number answers `false` (distinct from the global `isNaN`/
+        // `isFinite`, which coerce). The parameter is `Opaque` so any value type
+        // reaches the native intact.
+        NativeFn {
+            name: "isNaNStrict",
+            params: &[Opaque],
+            ret: Bool,
+            imp: is_nan_strict,
+        },
+        NativeFn {
+            name: "isFiniteStrict",
+            params: &[Opaque],
+            ret: Bool,
+            imp: is_finite_strict,
+        },
+        NativeFn {
+            name: "isIntegerStrict",
+            params: &[Opaque],
+            ret: Bool,
+            imp: is_integer_strict,
+        },
+        NativeFn {
+            name: "isSafeIntegerStrict",
+            params: &[Opaque],
+            ret: Bool,
+            imp: is_safe_integer_strict,
+        },
+        NativeFn {
+            name: "parseFloatPrefix",
+            params: &[Str],
+            ret: F64,
+            imp: parse_float_prefix,
+        },
+        NativeFn {
+            name: "parseIntRadix",
+            params: &[Str, I32],
+            ret: F64,
+            imp: parse_int_radix,
+        },
+        NativeFn {
+            name: "toStringRadix",
+            params: &[F64, I32],
+            ret: Str,
+            imp: to_string_radix,
         },
     ],
 };
