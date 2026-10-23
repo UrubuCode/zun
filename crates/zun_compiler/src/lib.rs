@@ -663,7 +663,9 @@ where
         for import in program.imports {
             for binding in import.names {
                 let imported = &source[binding.imported.span.start as usize..binding.imported.span.end as usize];
-                let found = if import.module.starts_with("zun:") {
+                let found = if import.module == zun_natives::CORE_MODULE {
+                    zun_natives::is_core_export(imported)
+                } else if import.module.starts_with("zun:") {
                     zun_natives::resolve(&import.module, imported).is_some()
                 } else {
                     modules

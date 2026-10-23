@@ -1,9 +1,9 @@
 // Thin class wrapper over the Rust regex engine and managed heap floor.
-import { regexpIsMatch, regexpExec, regexpSource } from "zun:collections";
+import { regexp } from "zun:core";
 
 class RegExp {
-    isMatch(input: string): boolean { return regexpIsMatch(this, input); }
-    test(input: string): boolean { return regexpIsMatch(this, input); }
-    exec(input: string): array { return regexpExec(this, input); }
-    source(): string { return regexpSource(this); }
+    isMatch(input: string): boolean { return regexp.regexpIsMatch(this, input); }
+    test(input: string): boolean { return regexp.regexpIsMatch(this, input); }
+    exec(input: string): array { return regexp.regexpExec(this, input); }
+    source(): string { return regexp.regexpSource(this); }
 }

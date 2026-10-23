@@ -118,6 +118,7 @@ fn check_impl(
         methods_by_class: Vec::new(),
         imports: HashMap::new(),
         namespace_imports: HashMap::new(),
+        core_namespaces: HashMap::new(),
         external_functions: external_by_name,
         external_namespace_functions: external_by_module_name,
         type_aliases: HashMap::new(),
@@ -192,6 +193,10 @@ struct Checker<'a> {
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
     /// Namespace binding -> native module identity for static member calls.
     namespace_imports: HashMap<String, String>,
+    /// `import { <ns> } from "zun:core"` binding -> `zun:core` namespace. Member
+    /// calls on the binding resolve to the native `call.builtin` for that
+    /// namespace (PLAN.md §3.4).
+    core_namespaces: HashMap<String, &'static str>,
     /// Imported source-module function signatures by local name.
     external_functions: HashMap<String, ExternalFunction>,
     /// Export signatures indexed by module and name for namespace imports.
@@ -1919,6 +1924,30 @@ impl Checker<'_> {
                             span,
                         );
                     }
+                    if let Some(&namespace) = self.core_namespaces.get(&class_name) {
+                        let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
+                            self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
+                            return self.poison(span);
+                        };
+                        if native.params.len() != args.len() {
+                            self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                            return self.poison(span);
+                        }
+                        let mut checked = Vec::with_capacity(args.len());
+                        for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+                            let mut value = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut value, expected);
+                            if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                                self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                            }
+                            checked.push(value);
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                            ty: native_ty(native.ret),
+                            span,
+                        };
+                    }
                     if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
                         if zun_natives::module(&module).is_none() {
                             // Source-module namespaces are handled below.
@@ -2499,6 +2528,30 @@ impl Checker<'_> {
             }
             ast::Expr::StaticMethodCall { class, method, args, .. } => {
                 let class_name = self.text(class).to_string();
+                if let Some(&namespace) = self.core_namespaces.get(&class_name) {
+                    let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
+                        self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
+                        return self.poison(span);
+                    };
+                    if native.params.len() != args.len() {
+                        self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                        return self.poison(span);
+                    }
+                    let mut checked = Vec::with_capacity(args.len());
+                    for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+                        let mut value = self.check_expr(cx, arg);
+                        coerce_numeric_literal(&mut value, expected);
+                        if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                            self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                        }
+                        checked.push(value);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
                 if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
                     let Some((id, native)) = zun_natives::resolve(&module, self.text(method)) else {
                         self.error(method.span, format!("`{}` has no export named `{}`", module, self.text(method)));

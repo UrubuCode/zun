@@ -284,9 +284,136 @@ pub fn by_id(id: u32) -> Option<&'static NativeFn> {
 }
 
 /// Resolve `module::name` to its id and signature (for `import` checking).
+///
+/// This addresses functions by their historical per-type module name
+/// (`zun:string`, `zun:collections`, …). It is retained as an internal,
+/// back-compatible alias while call sites migrate to the consolidated
+/// [`CORE_MODULE`] + `(namespace, name)` surface via [`resolve_core`].
 pub fn resolve(module: &str, name: &str) -> Option<(u32, &'static NativeFn)> {
     let id = *name_index().get(&(module, name))?;
     Some((id, by_id(id)?))
+}
+
+/// The single consolidated native module. All intrinsics are exposed here as
+/// per-type namespaces (PLAN.md §3.4); the historical `zun:<type>` module names
+/// remain resolvable internally through [`resolve`] during migration.
+pub const CORE_MODULE: &str = "zun:core";
+
+/// Classify a `zun:collections` function into its per-type `zun:core`
+/// namespace by name prefix. Every collections function carries an
+/// unambiguous type prefix, so this is a total, order-independent mapping.
+fn collections_namespace(name: &str) -> &'static str {
+    const PREFIXES: &[(&str, &str)] = &[
+        ("weakMap", "weakMap"),
+        ("map", "map"),
+        ("set", "set"),
+        ("regexp", "regexp"),
+        ("finalization", "finalizationRegistry"),
+        ("reflect", "reflect"),
+        ("proxy", "proxy"),
+        ("dynamic", "dynamic"),
+        ("bigInt", "bigint"),
+        ("object", "object"),
+    ];
+    for (prefix, namespace) in PREFIXES {
+        if name.starts_with(prefix) {
+            return namespace;
+        }
+    }
+    "collections"
+}
+
+/// The `zun:core` namespace a historical module's function belongs to. The
+/// single-type modules map wholesale; `zun:collections` splits per type and
+/// `zun:buffer` groups under `buffer`.
+fn module_namespace(module_name: &str, fn_name: &str) -> &'static str {
+    match module_name {
+        "zun:string" => "string",
+        "zun:number" => "number",
+        "zun:math" => "math",
+        "zun:date" => "date",
+        "zun:promise" => "promise",
+        "zun:fs" => "fs",
+        "zun:io" => "io",
+        "zun:env" => "env",
+        "zun:time" => "time",
+        "zun:buffer" => "buffer",
+        "zun:collections" => collections_namespace(fn_name),
+        _ => "core",
+    }
+}
+
+/// `(namespace, name) -> id` index for the consolidated `zun:core` surface.
+fn core_namespace_index() -> &'static HashMap<(&'static str, &'static str), u32> {
+    static INDEX: OnceLock<HashMap<(&'static str, &'static str), u32>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = HashMap::new();
+        for (module_index, module) in MODULES.iter().enumerate() {
+            for (function_index, function) in module.functions.iter().enumerate() {
+                index.insert(
+                    (module_namespace(module.name, function.name), function.name),
+                    global_id(module_index, function_index),
+                );
+            }
+        }
+        index
+    })
+}
+
+/// `name -> id` index. Native function names are globally unique across every
+/// module, so an intrinsic can be resolved by name alone.
+fn flat_name_index() -> &'static HashMap<&'static str, u32> {
+    static INDEX: OnceLock<HashMap<&'static str, u32>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = HashMap::new();
+        for (module_index, module) in MODULES.iter().enumerate() {
+            for (function_index, function) in module.functions.iter().enumerate() {
+                index.insert(function.name, global_id(module_index, function_index));
+            }
+        }
+        index
+    })
+}
+
+fn namespace_set() -> &'static HashMap<&'static str, ()> {
+    static SET: OnceLock<HashMap<&'static str, ()>> = OnceLock::new();
+    SET.get_or_init(|| {
+        core_namespace_index()
+            .keys()
+            .map(|(namespace, _)| (*namespace, ()))
+            .collect()
+    })
+}
+
+/// Resolve a `zun:core` namespaced export `namespace.name` to its id and
+/// signature. Ids are identical to those returned by [`resolve`] for the
+/// historical module that owned the function.
+pub fn resolve_core(namespace: &str, name: &str) -> Option<(u32, &'static NativeFn)> {
+    let id = *core_namespace_index().get(&(namespace, name))?;
+    Some((id, by_id(id)?))
+}
+
+/// Resolve an intrinsic by its (globally unique) name, ignoring the namespace.
+pub fn resolve_name(name: &str) -> Option<(u32, &'static NativeFn)> {
+    let id = *flat_name_index().get(name)?;
+    Some((id, by_id(id)?))
+}
+
+/// Return the interned name of a `zun:core` namespace, or `None` if `name` is
+/// not a namespace exported by `zun:core`.
+pub fn namespace(name: &str) -> Option<&'static str> {
+    namespace_set().get_key_value(name).map(|(key, _)| *key)
+}
+
+/// Whether `name` is a namespace exported by `zun:core`.
+pub fn is_namespace(name: &str) -> bool {
+    namespace_set().contains_key(name)
+}
+
+/// Whether `name` is a valid `zun:core` export: a namespace, or (for direct
+/// intrinsic imports such as `extern`-method bindings) a function name.
+pub fn is_core_export(name: &str) -> bool {
+    is_namespace(name) || flat_name_index().contains_key(name)
 }
 
 /// Look up a module by its `zun:`-prefixed name.
@@ -333,6 +460,35 @@ mod tests {
         assert_eq!(f.name, "readText");
         // Ids are positional and round-trip through by_id.
         assert_eq!(by_id(id).unwrap().name, "readText");
+    }
+
+    #[test]
+    fn core_namespaces_preserve_historical_ids() {
+        // Every function is reachable through the consolidated `zun:core`
+        // surface at exactly the id its historical module assigns, so the
+        // consolidation is a pure re-addressing (no id drift).
+        for module in MODULES {
+            for function in module.functions {
+                let (old_id, _) = resolve(module.name, function.name).expect("historical export");
+                let namespace = module_namespace(module.name, function.name);
+                let (core_id, core_fn) =
+                    resolve_core(namespace, function.name).expect("core export");
+                assert_eq!(old_id, core_id, "id drift for {}", function.name);
+                assert_eq!(core_fn.name, function.name);
+                assert_eq!(resolve_name(function.name).unwrap().0, old_id);
+                assert!(is_namespace(namespace));
+            }
+        }
+        // Spot-check the per-type split of the former `zun:collections`.
+        assert_eq!(
+            resolve_core("weakMap", "weakMapSet").unwrap().0,
+            resolve("zun:collections", "weakMapSet").unwrap().0
+        );
+        assert_eq!(module_namespace("zun:collections", "objectKeys"), "object");
+        assert_eq!(module_namespace("zun:collections", "bigIntAdd"), "bigint");
+        assert!(is_core_export("string"));
+        assert!(is_core_export("length"));
+        assert!(!is_core_export("definitely-not-a-thing"));
     }
 
     #[test]

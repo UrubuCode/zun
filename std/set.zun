@@ -1,13 +1,13 @@
 // Thin class wrapper over the runtime-owned ordered hash table.
-import { setAdd, setHas, setSize, setDelete, setClear, setValues, setEntries } from "zun:collections";
+import { set } from "zun:core";
 
 class Set {
-    add(value: any): boolean { return setAdd(this, value); }
-    has(value: any): boolean { return setHas(this, value); }
-    size(): u64 { return setSize(this); }
-    delete(value: any): boolean { return setDelete(this, value); }
-    clear(): void { setClear(this); }
-    values(): Array { return setValues(this); }
-    keys(): Array { return setValues(this); }
-    entries(): Array { return setEntries(this); }
+    add(value: any): boolean { return set.setAdd(this, value); }
+    has(value: any): boolean { return set.setHas(this, value); }
+    size(): u64 { return set.setSize(this); }
+    delete(value: any): boolean { return set.setDelete(this, value); }
+    clear(): void { set.setClear(this); }
+    values(): Array { return set.setValues(this); }
+    keys(): Array { return set.setValues(this); }
+    entries(): Array { return set.setEntries(this); }
 }

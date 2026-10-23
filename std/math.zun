@@ -1,19 +1,7 @@
 // Numeric helpers implemented in Zun source.
 // Runtime-backed operations remain in the `zun:*` intrinsic modules.
 
-import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from "zun:math";
-import { cbrtNumber } from "zun:math";
-import { powNumber } from "zun:math";
-import { sinNumber, cosNumber } from "zun:math";
-import { expNumber, logNumber } from "zun:math";
-import { log10Number, log2Number } from "zun:math";
-import { expm1Number, log1pNumber } from "zun:math";
-import { sinhNumber, coshNumber, tanhNumber } from "zun:math";
-import { asinhNumber, acoshNumber, atanhNumber } from "zun:math";
-import { tanNumber, atan2Number } from "zun:math";
-import { hypotNumber } from "zun:math";
-import { signNumber } from "zun:math";
-import { truncNumber } from "zun:math";
+import { math } from "zun:core";
 
 
 function mathAbs(value: number): number {
@@ -28,110 +16,110 @@ function mathClamp(value: number, low: number, high: number): number {
 }
 
 function mathSqrt(value: number): number {
-    return sqrtNumber(value);
+    return math.sqrtNumber(value);
 }
 
 function mathCbrt(value: number): number {
-    return cbrtNumber(value);
+    return math.cbrtNumber(value);
 }
 
 function mathMin(left: number, right: number): number {
-    return minNumber(left, right);
+    return math.minNumber(left, right);
 }
 
 function mathMax(left: number, right: number): number {
-    return maxNumber(left, right);
+    return math.maxNumber(left, right);
 }
 
 function mathFloor(value: number): number {
-    return floorNumber(value);
+    return math.floorNumber(value);
 }
 
 function mathCeil(value: number): number {
-    return ceilNumber(value);
+    return math.ceilNumber(value);
 }
 
 function mathRound(value: number): number {
-    return roundNumber(value);
+    return math.roundNumber(value);
 }
 
 function mathPow(base: number, exponent: number): number {
-    return powNumber(base, exponent);
+    return math.powNumber(base, exponent);
 }
 
 function mathSin(value: number): number {
-    return sinNumber(value);
+    return math.sinNumber(value);
 }
 
 function mathCos(value: number): number {
-    return cosNumber(value);
+    return math.cosNumber(value);
 }
 
 function mathExp(value: number): number {
-    return expNumber(value);
+    return math.expNumber(value);
 }
 
 function mathLog(value: number): number {
-    return logNumber(value);
+    return math.logNumber(value);
 }
 
 function mathLog10(value: number): number {
-    return log10Number(value);
+    return math.log10Number(value);
 }
 
 function mathLog2(value: number): number {
-    return log2Number(value);
+    return math.log2Number(value);
 }
 
 function mathExpm1(value: number): number {
-    return expm1Number(value);
+    return math.expm1Number(value);
 }
 
 function mathLog1p(value: number): number {
-    return log1pNumber(value);
+    return math.log1pNumber(value);
 }
 
 function mathSinh(value: number): number {
-    return sinhNumber(value);
+    return math.sinhNumber(value);
 }
 
 function mathCosh(value: number): number {
-    return coshNumber(value);
+    return math.coshNumber(value);
 }
 
 function mathTanh(value: number): number {
-    return tanhNumber(value);
+    return math.tanhNumber(value);
 }
 
 function mathAsinh(value: number): number {
-    return asinhNumber(value);
+    return math.asinhNumber(value);
 }
 
 function mathAcosh(value: number): number {
-    return acoshNumber(value);
+    return math.acoshNumber(value);
 }
 
 function mathAtanh(value: number): number {
-    return atanhNumber(value);
+    return math.atanhNumber(value);
 }
 
 function mathTan(value: number): number {
-    return tanNumber(value);
+    return math.tanNumber(value);
 }
 
 function mathAtan2(y: number, x: number): number {
-    return atan2Number(y, x);
+    return math.atan2Number(y, x);
 }
 
 function mathHypot(left: number, right: number): number {
-    return hypotNumber(left, right);
+    return math.hypotNumber(left, right);
 }
 
 function mathSign(value: number): number {
-    return signNumber(value);
+    return math.signNumber(value);
 }
 
 function mathTrunc(value: number): number {
-    return truncNumber(value);
+    return math.truncNumber(value);
 }
 

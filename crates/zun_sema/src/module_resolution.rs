@@ -10,6 +10,10 @@ impl<'a> Checker<'a> {
         allow_external_modules: bool,
     ) {
         for import in &program.imports {
+            if import.module == zun_natives::CORE_MODULE {
+                self.resolve_core_import(import);
+                continue;
+            }
             let Some(module) = zun_natives::module(&import.module) else {
                 if allow_external_modules
                     && matches!(import.module.as_str(), "zun:prelude" | "zun:std")
@@ -83,6 +87,38 @@ impl<'a> Checker<'a> {
                         format!("`{}` has no export named `{imported}`", import.module),
                     ),
                 }
+            }
+        }
+    }
+
+    /// Resolve an `import { ... } from "zun:core"` declaration. A named import
+    /// binds either a per-type namespace (member access lowers to the native
+    /// `call.builtin`) or, for `extern`-method and free-function bindings, a
+    /// single intrinsic by its globally unique name.
+    fn resolve_core_import(&mut self, import: &ast::Import) {
+        for binding in &import.names {
+            if binding.is_namespace {
+                self.error(
+                    binding.local.span,
+                    "`import * as ns from \"zun:core\"` is not supported; import a namespace by name",
+                );
+                continue;
+            }
+            let imported = if binding.is_default {
+                "default".to_owned()
+            } else {
+                self.text(&binding.imported).to_owned()
+            };
+            let local = self.text(&binding.local).to_string();
+            if let Some(namespace) = zun_natives::namespace(&imported) {
+                self.core_namespaces.insert(local, namespace);
+            } else if let Some((id, f)) = zun_natives::resolve_name(&imported) {
+                self.imports.insert(local, (id, f));
+            } else {
+                self.error(
+                    binding.imported.span,
+                    format!("`zun:core` has no export named `{imported}`"),
+                );
             }
         }
     }
