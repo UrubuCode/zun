@@ -87,6 +87,10 @@ pub enum NativeTy {
     Set,
     /// A managed WeakMap reference.
     WeakMap,
+    /// A managed WeakSet reference.
+    WeakSet,
+    /// A managed WeakRef reference.
+    WeakRef,
     /// A managed Promise object.
     Promise,
     /// A managed compiled regular expression.
@@ -305,6 +309,8 @@ pub const CORE_MODULE: &str = "zun:core";
 fn collections_namespace(name: &str) -> &'static str {
     const PREFIXES: &[(&str, &str)] = &[
         ("weakMap", "weakMap"),
+        ("weakSet", "weakSet"),
+        ("weakRef", "weakRef"),
         ("map", "map"),
         ("set", "set"),
         ("regexp", "regexp"),
@@ -400,6 +406,8 @@ fn namespace_set() -> &'static HashMap<&'static str, ()> {
 fn namespace_prefix(namespace: &str) -> Option<&'static str> {
     Some(match namespace {
         "weakMap" => "weakMap",
+        "weakSet" => "weakSet",
+        "weakRef" => "weakRef",
         "map" => "map",
         "set" => "set",
         "regexp" => "regexp",

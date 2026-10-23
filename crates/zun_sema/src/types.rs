@@ -35,6 +35,8 @@ impl<'a> Checker<'a> {
             "Map" | "map" => Ty::Map,
             "Set" | "set" => Ty::Set,
             "WeakMap" | "weakmap" => Ty::WeakMap,
+            "WeakSet" | "weakset" => Ty::WeakSet,
+            "WeakRef" | "weakref" => Ty::WeakRef,
             "RegExp" | "regexp" => Ty::RegExp,
             "BigInt" | "bigint" => Ty::BigInt,
             "FinalizationRegistry" | "finalizationregistry" => Ty::FinalizationRegistry,

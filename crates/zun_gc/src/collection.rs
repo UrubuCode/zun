@@ -461,6 +461,7 @@ impl Heap {
                 self.maps.remove(&(r.addr as usize));
                 self.sets.remove(&(r.addr as usize));
                 self.weak_map_objects.remove(&(r.addr as usize));
+                self.weak_ref_objects.remove(&(r.addr as usize));
                 self.promises.remove(&(r.addr as usize));
                 self.regexes.remove(&(r.addr as usize));
                 self.bigints.remove(&(r.addr as usize));

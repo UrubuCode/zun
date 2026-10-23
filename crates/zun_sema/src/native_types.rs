@@ -28,6 +28,8 @@ pub(super) fn native_ty(t: zun_natives::NativeTy) -> Ty {
         N::Map => Ty::Map,
         N::Set => Ty::Set,
         N::WeakMap => Ty::WeakMap,
+        N::WeakSet => Ty::WeakSet,
+        N::WeakRef => Ty::WeakRef,
         N::Promise => Ty::Promise,
         N::RegExp => Ty::RegExp,
         N::BigInt => Ty::BigInt,

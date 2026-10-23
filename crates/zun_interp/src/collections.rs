@@ -1000,6 +1000,52 @@ impl<'a> Interp<'a> {
                     heap.weak_map_delete_object(map_object, key)
                 })))
             }
+            "weakSetNew" => {
+                // A WeakSet reuses the WeakMap ephemeron floor; entries are
+                // stored value-less by keying each object to itself.
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_map());
+                Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
+            }
+            "weakSetAdd" => {
+                let set_object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                    heap.weak_map_set_object(set_object, key, key)
+                })))
+            }
+            "weakSetHas" => {
+                let set_object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                    heap.weak_map_has_object(set_object, key)
+                })))
+            }
+            "weakSetDelete" => {
+                let set_object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                    heap.weak_map_delete_object(set_object, key)
+                })))
+            }
+            "weakRefNew" => {
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_ref(target));
+                Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
+            }
+            "weakRefDeref" => {
+                let ref_object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(zun_gc::with_current_heap(|heap| heap.weak_ref_get_object(ref_object))
+                    .map(|target| Value::Any(zun_core::Any::object(target.addr() as usize)))
+                    .unwrap_or(Value::Void))
+            }
             "regexpNew" => {
                 let source = match args.first().ok_or(RunError::BadToken)? {
                     Value::Str(source) => source.to_string(),

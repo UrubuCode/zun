@@ -20,6 +20,8 @@
 global.set("Map", Map, true);
 global.set("Set", Set, true);
 global.set("WeakMap", WeakMap, true);
+global.set("WeakSet", WeakSet, true);
+global.set("WeakRef", WeakRef, true);
 global.set("FinalizationRegistry", FinalizationRegistry, true);
 global.set("Promise", Promise, true);
 

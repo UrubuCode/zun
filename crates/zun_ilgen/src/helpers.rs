@@ -29,6 +29,8 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
                     | Ty::Map
                     | Ty::Set
                     | Ty::WeakMap
+                    | Ty::WeakSet
+                    | Ty::WeakRef
             ) => JitKind::Object,
         None if ty == Ty::Array => JitKind::Array,
         None => JitKind::Other,

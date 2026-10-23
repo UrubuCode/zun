@@ -405,6 +405,8 @@ impl Checker<'_> {
                     "Map" => Ty::Map,
                     "Set" => Ty::Set,
                     "WeakMap" => Ty::WeakMap,
+                    "WeakSet" => Ty::WeakSet,
+                    "WeakRef" => Ty::WeakRef,
                     "RegExp" => Ty::RegExp,
                     "BigInt" => Ty::BigInt,
                     "FinalizationRegistry" => Ty::FinalizationRegistry,
@@ -2402,6 +2404,10 @@ impl Checker<'_> {
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "add") => Some(("weakSetAdd", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "has") => Some(("weakSetHas", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "delete") => Some(("weakSetDelete", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakRef, "deref") => Some(("weakRefDeref", Ty::Any, vec![])),
                     (Ty::RegExp, "isMatch" | "test") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
                     (Ty::RegExp, "exec") => Some(("regexpExec", Ty::Array, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
@@ -3077,6 +3083,7 @@ impl Checker<'_> {
                     "Map" => Some(("mapNew", Ty::Map)),
                     "Set" => Some(("setNew", Ty::Set)),
                     "WeakMap" => Some(("weakMapNew", Ty::WeakMap)),
+                    "WeakSet" => Some(("weakSetNew", Ty::WeakSet)),
                     "RegExp" => Some(("regexpNew", Ty::RegExp)),
                     "BigInt" => Some(("bigIntNew", Ty::BigInt)),
                     "FinalizationRegistry" => Some((
@@ -3443,6 +3450,10 @@ impl Checker<'_> {
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
+                    (Ty::WeakSet, "add") => ("weakSetAdd", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakSet, "has") => ("weakSetHas", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakSet, "delete") => ("weakSetDelete", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakRef, "deref") => ("weakRefDeref", Ty::Any, vec![]),
                     (Ty::RegExp, "isMatch" | "test") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
                     (Ty::RegExp, "exec") => ("regexpExec", Ty::Array, vec![Ty::String]),
                     (Ty::RegExp, "source") => ("regexpSource", Ty::String, vec![]),

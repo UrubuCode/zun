@@ -93,6 +93,10 @@ pub enum Ty {
     Set,
     /// A GC ephemeron-backed weak map.
     WeakMap,
+    /// A GC ephemeron-backed weak set (weakly-held object members).
+    WeakSet,
+    /// A GC-backed single weak reference.
+    WeakRef,
     /// A Rust-engine-backed regular expression.
     RegExp,
     /// An arbitrary-precision integer backed by the managed heap.

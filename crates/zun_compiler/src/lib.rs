@@ -577,6 +577,14 @@ pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagno
             include_str!("../../../builtin/weak_map.zun"),
         ),
         (
+            "zun:std:weak-set",
+            include_str!("../../../builtin/weak_set.zun"),
+        ),
+        (
+            "zun:std:weak-ref",
+            include_str!("../../../builtin/weak_ref.zun"),
+        ),
+        (
             "zun:std:finalization-registry",
             include_str!("../../../builtin/finalization_registry.zun"),
         ),

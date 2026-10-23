@@ -38,8 +38,8 @@ read.
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, `size` as property (is a method), constructor-from-iterable |
 | 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries` + iterator; missing `forEach`, constructor-from-iterable |
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
-| 14 | WeakSet | missing | Not implemented (GC base ready via WeakMap) |
-| 15 | WeakRef | missing | Not implemented |
+| 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
+| 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(len)` intrinsic; no `byteLength/slice/isView/resize` |
 | 18 | DataView | partial | Only `getUint32/setUint32/getUint16/setUint16/getFloat64/setFloat64`; missing Int8/16/32, Uint8, Float32, BigInt64/Uint64, `byteLength/byteOffset/buffer` |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | partial | Only generic `add/sub/mul/div/rem.f64` + `conv`. **No dedicated `fsqrt/fabs/fmin/fmax/fneg` opcodes** — Math routes through `call.builtin` to native libm (`math.rs`), not ZIL ops lowering to Cranelift as §3 specifies |
 
-**Counts:** done 3 · partial 17 · missing 3 (of 26 nucleus items, JSON excluded).
+**Counts:** done 5 · partial 17 · missing 1 (of 26 nucleus items, JSON excluded).
 
 ### Declarative realm-global registration (PLAN §3.1)
 
@@ -61,7 +61,8 @@ Base types are seeded onto `globalThis` from the declarative registry
 truth for each name's annotation type, descriptor value, and `new` lowering (the
 frozen runtime representation is unchanged — the registry only rebinds the name).
 
-- **Registered declaratively:** `Map`, `Set`, `WeakMap`, `FinalizationRegistry`,
+- **Registered declaratively:** `Map`, `Set`, `WeakMap`, `WeakSet`, `WeakRef`,
+  `FinalizationRegistry`,
   `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
   `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
   `Number`, `Boolean`, `Object`, `Symbol`. (`Map` keeps token 0.)
@@ -322,11 +323,20 @@ table. Iterator intrinsics present (`mapIterator*`).
 - **Present:** `set get has delete`. Correctly non-iterable.
 - **Missing:** nothing material for the spec surface (WeakMap has no iteration/size/clear).
 
-## 14. WeakSet — missing  *(mid priority)*
-Not implemented. GC base ready (WeakMap ephemeron floor). Needs `add/has/delete`.
+## 14. WeakSet — done
+`builtin/weak_set.zun`; reuses the WeakMap ephemeron floor (each object member is
+stored keyed to itself, value-less).
+- **Present:** `add has delete`. Correctly non-iterable. Registered declaratively
+  (`new WeakSet()` / `: WeakSet` via the realm registry).
+- **Missing:** nothing material (WeakSet has no iteration/size/clear).
 
-## 15. WeakRef — missing  *(mid priority)*
-Not implemented. Needs `new WeakRef(obj)` + `deref()`, over the GC weak-reference base.
+## 15. WeakRef — done
+`builtin/weak_ref.zun`; a single weakly-held reference over the GC weak-reference
+floor (`alloc_weak_ref`/`weak_ref_get_object`, cleared on the collection that
+reclaims the target).
+- **Present:** `new WeakRef(obj)` + `deref()` (returns the target while live,
+  `undefined` once collected). Registered declaratively.
+- **Missing:** nothing material.
 
 ## 16. FinalizationRegistry — partial
 `std/finalization_registry.zun` → GC finalization queue.
@@ -435,7 +445,7 @@ ZIL opcodes yet. (Math as a `Math` *global object* is bucket B, not audited here
    object-literal/class computed-key member definitions (no object literals in the AST).
 
 ### MID
-4. **WeakSet** (#14) and **WeakRef** (#15) — GC base ready (WeakMap ephemerons).
+4. ~~**WeakSet** (#14) and **WeakRef** (#15)~~ — done (reuse the WeakMap ephemeron / GC weak-reference floors).
 5. **Decorators** (#25) — parse + sema + lowering + macro mechanism.
 6. **Method-surface tail** — ECMAScript gaps on existing classes:
    - Array (#7): `forEach find/findIndex(cb) some every flatMap join splice shift unshift

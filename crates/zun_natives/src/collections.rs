@@ -324,5 +324,15 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "symbolKeyFor", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "symbolWellKnown", params: &[F64], ret: Opaque, imp: unavailable },
         NativeFn { name: "symbolDescription", params: &[Opaque], ret: Opaque, imp: unavailable },
+        // WeakSet: a set of weakly-held object keys over the WeakMap ephemeron
+        // floor (value-less; the interpreter stores each key as its own value).
+        NativeFn { name: "weakSetNew", params: &[], ret: WeakSet, imp: unavailable },
+        NativeFn { name: "weakSetAdd", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "weakSetHas", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "weakSetDelete", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        // WeakRef: a single weakly-held reference over the GC weak-reference
+        // floor. `deref` yields the target while live, `undefined` once collected.
+        NativeFn { name: "weakRefNew", params: &[Opaque], ret: WeakRef, imp: unavailable },
+        NativeFn { name: "weakRefDeref", params: &[WeakRef], ret: Opaque, imp: unavailable },
     ],
 };

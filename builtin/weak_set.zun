@@ -1,0 +1,8 @@
+// Thin class wrapper over the GC ephemeron-backed WeakSet floor.
+import { weakSet } from "zun:core";
+
+class WeakSet {
+    add(value: any): boolean { return weakSet.add(this, value); }
+    has(value: any): boolean { return weakSet.has(this, value); }
+    delete(value: any): boolean { return weakSet.delete(this, value); }
+}
