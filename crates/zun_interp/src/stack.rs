@@ -84,6 +84,142 @@ pub(crate) fn bin_float(
     Ok(())
 }
 
+pub(crate) fn un_float(stack: &mut Vec<Value>, f: impl Fn(f64) -> f64) -> Result<(), RunError> {
+    let a = pop(stack)?;
+    let kind = a.float_kind();
+    let result = value::round_float(f(a.as_number()), kind);
+    stack.push(Value::Float(result, kind));
+    Ok(())
+}
+
+/// `Math.min` / IEEE-754 2019 `minimum`, which is what `min.f64` means and what
+/// Cranelift's `fmin` emits.
+///
+/// Deliberately not `f64::min`: that is IEEE-754 2008 `minNum`, which returns
+/// the *non*-NaN operand instead of propagating NaN, and which the Rust
+/// documentation says may return either operand when they compare equal — so it
+/// picks between `+0.0` and `-0.0` non-deterministically. Both differ from JS,
+/// and both would make Tier 0 disagree with Tier 1.
+pub(crate) fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    if a == 0.0 && b == 0.0 {
+        // The only pair that compares equal while being distinguishable:
+        // -0.0 is the smaller zero.
+        return if a.is_sign_negative() { a } else { b };
+    }
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `Math.round`: halves go toward +Infinity, and a zero result keeps the sign
+/// of the input.
+///
+/// Deliberately not `floor(x + 0.5)`, the usual shortcut. For
+/// `0.49999999999999994` the addition rounds up to exactly `1.0`, so the
+/// shortcut answers 1 where JS answers 0. Taking the fractional part instead
+/// keeps the comparison exact.
+pub(crate) fn js_round(x: f64) -> f64 {
+    let truncated = x.floor();
+    // NaN and the infinities fall out of this untouched: the subtraction
+    // gives NaN, the comparison is false, and `truncated` is already right.
+    let rounded = if x - truncated >= 0.5 {
+        truncated + 1.0
+    } else {
+        truncated
+    };
+    if rounded == 0.0 {
+        // -0.4 rounds to -0, not +0; +0 and -0 pass through unchanged.
+        0.0f64.copysign(x)
+    } else {
+        rounded
+    }
+}
+
+/// `Math.sign`: NaN and both zeros pass through unchanged, everything else
+/// becomes ±1.
+pub(crate) fn js_sign(x: f64) -> f64 {
+    if x.is_nan() || x == 0.0 {
+        x
+    } else {
+        1.0f64.copysign(x)
+    }
+}
+
+/// `Math.max` / IEEE-754 2019 `maximum`. See [`js_min`] for why `f64::max` is
+/// not used.
+pub(crate) fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    if a == 0.0 && b == 0.0 {
+        return if a.is_sign_positive() { a } else { b };
+    }
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `min`/`max` over integers, comparing by the operand kind's signedness.
+///
+/// The i64 container holds values already wrapped to their kind, so a signed
+/// kind compares correctly as i64 and an unsigned one as u64. Comparing a
+/// `u64` above 2^63 as i64 would otherwise invert the result.
+pub(crate) fn bin_int_minmax(stack: &mut Vec<Value>, is_min: bool) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (_, signed) = kind.int_parts().expect("int kind");
+    let (x, y) = (a.as_int(), b.as_int());
+    let take_left = if signed {
+        if is_min {
+            x < y
+        } else {
+            x > y
+        }
+    } else {
+        let (ux, uy) = (x as u64, y as u64);
+        if is_min {
+            ux < uy
+        } else {
+            ux > uy
+        }
+    };
+    let result = if take_left { x } else { y };
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
+
+/// Bit-counting over the operand kind's width.
+///
+/// `f` receives the operand masked to its width plus that width, because the
+/// answers are width-relative: `clz` of `1u8` is 7, and `ctz` of `0u8` is 8.
+/// Reading the i64 container directly would answer for 64 bits every time.
+pub(crate) fn un_int_bits(
+    stack: &mut Vec<Value>,
+    f: impl Fn(u64, u32) -> u64,
+) -> Result<(), RunError> {
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (bits, _) = kind.int_parts().expect("int kind");
+    let bits = bits as u32;
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
+    let masked = (a.as_int() as u64) & mask;
+    let result = f(masked, bits) as i64;
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
+
 pub(crate) fn bin_int(
     stack: &mut Vec<Value>,
     f: impl Fn(i64, i64) -> i64,

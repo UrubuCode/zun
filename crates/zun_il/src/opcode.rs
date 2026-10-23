@@ -305,6 +305,71 @@ define_opcodes! {
     ///
     /// Async and dynamic, so it is Tier 0 only; the JIT importer never lists it.
     ImportDynamic = 0x95, None, "import.dynamic", StackEffect::Fixed { pops: 1, pushes: 1 };
+
+    // --- float math machine ops (PLAN.md §3, criterion (d)) ---
+    //
+    // Each of these lowers to exactly one Cranelift instruction, so the
+    // operation is an instruction in the JIT rather than a libcall. They are
+    // *semantic* intrinsics: the Tier 0 interpreter implements the identical
+    // result, and the equivalence suite pins that down at the edges (NaN, ±0,
+    // ±Infinity) where the two paths are most likely to diverge.
+    //
+    // Only operations whose JS semantics match an IEEE-754 primitive exactly
+    // belong here. `Math.round` (JS rounds halves toward +Infinity, while the
+    // machine `nearest` rounds halves to even) and `Math.sign` (a comparison
+    // chain, not an instruction) are deliberately absent and stay on the
+    // native path, as do the transcendentals, which go to libm.
+    /// Square root of the float on top of the stack (IEEE-754; NaN for a
+    /// negative operand).
+    SqrtF64 = 0x96, None, "sqrt.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Absolute value: clears the sign bit.
+    AbsF64 = 0x97, None, "abs.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Float negate: flips the sign bit (so `-(-0.0)` is `+0.0` and `-NaN` is
+    /// still NaN).
+    NegF64 = 0x98, None, "neg.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Round toward -Infinity.
+    FloorF64 = 0x99, None, "floor.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Round toward +Infinity.
+    CeilF64 = 0x9A, None, "ceil.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Round toward zero.
+    TruncF64 = 0x9B, None, "trunc.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Lesser of two floats, IEEE-754 2019 `minimum`: NaN propagates and
+    /// `-0.0` is less than `+0.0`, which is exactly `Math.min`.
+    MinF64 = 0x9C, None, "min.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Greater of two floats, IEEE-754 2019 `maximum`: NaN propagates and
+    /// `+0.0` is greater than `-0.0`, which is exactly `Math.max`.
+    MaxF64 = 0x9D, None, "max.f64", StackEffect::Fixed { pops: 2, pushes: 1 };
+
+    // --- integer math machine ops (PLAN.md §3, criterion (d)) ---
+    //
+    // Width- and signedness-generic, like the integer arithmetic above: the
+    // operand's numeric kind decides whether `min`/`max` compare signed or
+    // unsigned, and how wide the bit-counting ops consider their operand to
+    // be. `clz` of `1u8` is 7, not 63.
+    /// Lesser of two integers, compared according to the operand kind's
+    /// signedness.
+    MinI32 = 0x9E, None, "min.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Greater of two integers, compared according to the operand kind's
+    /// signedness.
+    MaxI32 = 0x9F, None, "max.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Count leading zero bits within the operand kind's width.
+    ClzI32 = 0xA0, None, "clz.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Count trailing zero bits within the operand kind's width; a zero
+    /// operand yields the full width.
+    CtzI32 = 0xA1, None, "ctz.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Count set bits within the operand kind's width.
+    PopcntI32 = 0xA2, None, "popcnt.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+
+    // These two are machine ops without being single instructions: no ISA has
+    // JS's rounding rule or signum, so each lowers to a short branchless
+    // sequence rather than a libm call.
+    /// `Math.round`: round half toward +Infinity, preserving the sign of a
+    /// zero result. Note this is *not* the machine `nearest`, which rounds
+    /// halves to even — `round(2.5)` is 3, not 2.
+    RoundF64 = 0xA3, None, "round.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// `Math.sign`: -1, -0, +0, 1, or NaN. Zeros and NaN pass through with
+    /// their sign intact.
+    SignF64 = 0xA4, None, "sign.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
 }
 
 #[cfg(test)]

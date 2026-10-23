@@ -42,6 +42,23 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::SubF64
             | Opcode::MulF64
             | Opcode::DivF64
+            // Float math machine ops: each lowers to a single Cranelift
+            // instruction, none can throw, so none needs the exception bridge.
+            | Opcode::SqrtF64
+            | Opcode::AbsF64
+            | Opcode::NegF64
+            | Opcode::FloorF64
+            | Opcode::CeilF64
+            | Opcode::TruncF64
+            | Opcode::MinF64
+            | Opcode::MaxF64
+            | Opcode::RoundF64
+            | Opcode::SignF64
+            | Opcode::MinI32
+            | Opcode::MaxI32
+            | Opcode::ClzI32
+            | Opcode::CtzI32
+            | Opcode::PopcntI32
             | Opcode::CmpEq
             | Opcode::CmpNe
             | Opcode::CmpLt

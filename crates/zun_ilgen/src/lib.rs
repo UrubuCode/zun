@@ -7,7 +7,7 @@
 //!
 //! Lowering invariants:
 //! - `number` is f64 end to end: literals use `const.f64`, arithmetic the
-//!   `.f64` opcodes; negation lowers as `0 - x`.
+//!   `.f64` opcodes; negation uses `neg.f64`.
 //! - Booleans lower to `const.true`/`const.false`; `!x` lowers as
 //!   `x == false`.
 //! - An assignment expression leaves its value on the stack (`dup` before
@@ -28,6 +28,58 @@ use zun_sema::hir::{
 #[path = "helpers.rs"]
 mod helpers;
 use helpers::{field_kind_byte, int_or_float, jitkind_byte};
+
+/// `zun:math` natives the machine can perform in a single instruction, and the
+/// ZIL opcode that replaces the call (PLAN.md §3, criterion (d)).
+///
+/// The native stays registered and keeps working: this is a lowering
+/// substitution, so an entry that stops matching costs speed, never
+/// correctness. `MATH_MACHINE_OPS` is checked against the registry by test, to
+/// catch the drift .docs-dotnet/07-actions-operations/05-jit-intrinsics.md
+/// warns of, where renaming a native silently disables the expansion.
+///
+/// Absent on purpose: the transcendentals, which are libm's job. `round` and
+/// `sign` are here despite not being single instructions — neither has an ISA
+/// equivalent with JS semantics, so each lowers to a short branchless
+/// sequence instead of a call.
+pub const MATH_MACHINE_OPS: &[(&str, Opcode)] = &[
+    ("sqrt", Opcode::SqrtF64),
+    ("sqrtNumber", Opcode::SqrtF64),
+    ("abs", Opcode::AbsF64),
+    ("floor", Opcode::FloorF64),
+    ("floorNumber", Opcode::FloorF64),
+    ("ceil", Opcode::CeilF64),
+    ("ceilNumber", Opcode::CeilF64),
+    ("truncNumber", Opcode::TruncF64),
+    ("min", Opcode::MinF64),
+    ("minNumber", Opcode::MinF64),
+    ("max", Opcode::MaxF64),
+    ("maxNumber", Opcode::MaxF64),
+    ("roundNumber", Opcode::RoundF64),
+    ("signNumber", Opcode::SignF64),
+];
+
+/// The machine op that replaces native `id` called with `argc` arguments, if
+/// there is one.
+///
+/// Two guards keep the substitution honest. The id must be the `zun:math`
+/// function of that name, so a same-named native in another module is never
+/// rewritten; and the argument count must equal the opcode's own `pops`, read
+/// from the master table rather than restated here, so a table row and this
+/// mapping cannot disagree about arity.
+fn math_machine_op(id: u32, argc: usize) -> Option<Opcode> {
+    let native = zun_natives::by_id(id)?;
+    let (_, op) = MATH_MACHINE_OPS
+        .iter()
+        .find(|(name, _)| *name == native.name)?;
+    if zun_natives::resolve("zun:math", native.name)?.0 != id {
+        return None;
+    }
+    let zun_il::StackEffect::Fixed { pops, .. } = op.stack_effect() else {
+        return None;
+    };
+    (argc == pops as usize && native.params.len() == pops as usize).then_some(*op)
+}
 
 /// Map a checked numeric type to the runtime [`NumKind`], or `None` if the type
 /// is not numeric.
@@ -943,11 +995,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.emit(Instruction::simple(Opcode::NegI32));
                 }
                 UnaryOp::Neg => {
-                    // 0 - x, with the zero in the operand's float kind so the
-                    // subtraction keeps that kind.
-                    self.emit_numeric_const(0.0, operand.ty);
+                    // `neg.f64` flips the sign bit. The previous `0 - x` was
+                    // wrong at zero: `0.0 - 0.0` is `+0.0`, while `-0.0` must
+                    // stay `-0.0` (observable as `1 / -x === -Infinity`).
                     self.expr(operand);
-                    self.emit(Instruction::simple(Opcode::SubF64));
+                    self.emit(Instruction::simple(Opcode::NegF64));
                 }
                 UnaryOp::Not => {
                     // x == false
@@ -1076,10 +1128,16 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 for a in args {
                     self.expr(a);
                 }
-                self.emit(Instruction::new(
-                    Opcode::CallBuiltin,
-                    Operand::Imm32(*id as i32),
-                ));
+                // A `zun:math` intrinsic that the machine can do in one
+                // instruction is emitted as that instruction; everything else
+                // keeps calling the native.
+                match math_machine_op(*id, args.len()) {
+                    Some(op) => self.emit(Instruction::simple(op)),
+                    None => self.emit(Instruction::new(
+                        Opcode::CallBuiltin,
+                        Operand::Imm32(*id as i32),
+                    )),
+                }
             }
             ExprKind::DynamicNew => {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
