@@ -2934,6 +2934,14 @@ impl Checker<'_> {
                             }
                         }
                     },
+                    Ty::DynamicObject | Ty::Any => hir::Expr {
+                        kind: hir::ExprKind::DynamicGet {
+                            object: Box::new(object),
+                            name: fname,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    },
                     Ty::Error => self.poison(span),
                     other => {
                         self.error(object.span, format!("type {other:?} has no fields"));
@@ -3238,6 +3246,28 @@ impl Checker<'_> {
                             }
                         }
                     },
+                    Ty::DynamicObject | Ty::Any => {
+                        let boxed = if value.ty == Ty::Any {
+                            value
+                        } else {
+                            hir::Expr {
+                                span: value.span,
+                                kind: hir::ExprKind::BoxAny {
+                                    value: Box::new(value),
+                                },
+                                ty: Ty::Any,
+                            }
+                        };
+                        hir::Expr {
+                            kind: hir::ExprKind::DynamicSet {
+                                object: Box::new(object),
+                                name: fname,
+                                value: Box::new(boxed),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        }
+                    }
                     Ty::Error => self.poison(span),
                     other => {
                         self.error(object.span, format!("type {other:?} has no fields"));

@@ -231,6 +231,38 @@ fn global_set_writable_can_be_reassigned() {
 }
 
 #[test]
+fn dotted_dynamic_store_and_load_round_trip() {
+    // Dotted member access/store on a dynamic receiver lowers to the same
+    // lddyn/stdyn opcodes as `dynamic_get`/`dynamic_set`.
+    assert_eq!(
+        run_source(
+            r#"function main() {
+                globalThis.Foo = 1;
+                print(globalThis.Foo as number);
+            }"#,
+        ),
+        ["1"],
+    );
+}
+
+#[test]
+fn dotted_dynamic_store_rejects_readonly_binding() {
+    // A dotted reassignment of a readonly global is silently rejected, exactly
+    // like the explicit `dynamic_set` store path (freeze-consistent).
+    assert_eq!(
+        run_source(
+            r#"import { global } from "zun:core";
+            function main() {
+                global.set("Foo", box_any(7), true);
+                globalThis.Foo = 9;
+                print(globalThis.Foo as number);
+            }"#,
+        ),
+        ["7"],
+    );
+}
+
+#[test]
 fn realm_global_aliases_share_the_same_dynamic_object() {
     assert_eq!(
         run_source(
