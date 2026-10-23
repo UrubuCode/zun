@@ -29,7 +29,8 @@ use operands::{
     operand_token, operand_token_imm32,
 };
 use stack::{
-    bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, pop, pop_n, underflow,
+    bin_float, bin_int, bin_int_signed_aware, cmp, compare, convert, js_max, js_min, pop, pop_n,
+    un_float, underflow,
     Ordering,
 };
 use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
@@ -478,6 +479,17 @@ impl Interp<'_> {
                 Opcode::MulF64 => bin_float(&mut stack, |a, b| a * b)?,
                 Opcode::DivF64 => bin_float(&mut stack, |a, b| a / b)?,
                 Opcode::RemF64 => bin_float(&mut stack, |a, b| a % b)?,
+                // Float math machine ops. Tier 1 lowers each of these to the
+                // matching Cranelift instruction; these are the reference
+                // results that equivalence testing holds it to.
+                Opcode::SqrtF64 => un_float(&mut stack, f64::sqrt)?,
+                Opcode::AbsF64 => un_float(&mut stack, f64::abs)?,
+                Opcode::NegF64 => un_float(&mut stack, |a| -a)?,
+                Opcode::FloorF64 => un_float(&mut stack, f64::floor)?,
+                Opcode::CeilF64 => un_float(&mut stack, f64::ceil)?,
+                Opcode::TruncF64 => un_float(&mut stack, f64::trunc)?,
+                Opcode::MinF64 => bin_float(&mut stack, js_min)?,
+                Opcode::MaxF64 => bin_float(&mut stack, js_max)?,
                 // Integer arithmetic is width-generic here: the result kind
                 // comes from the operands (which sema guarantees match) and the
                 // value wraps to that width. A future typed-stack JIT will

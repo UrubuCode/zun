@@ -84,6 +84,54 @@ pub(crate) fn bin_float(
     Ok(())
 }
 
+pub(crate) fn un_float(stack: &mut Vec<Value>, f: impl Fn(f64) -> f64) -> Result<(), RunError> {
+    let a = pop(stack)?;
+    let kind = a.float_kind();
+    let result = value::round_float(f(a.as_number()), kind);
+    stack.push(Value::Float(result, kind));
+    Ok(())
+}
+
+/// `Math.min` / IEEE-754 2019 `minimum`, which is what `min.f64` means and what
+/// Cranelift's `fmin` emits.
+///
+/// Deliberately not `f64::min`: that is IEEE-754 2008 `minNum`, which returns
+/// the *non*-NaN operand instead of propagating NaN, and which the Rust
+/// documentation says may return either operand when they compare equal — so it
+/// picks between `+0.0` and `-0.0` non-deterministically. Both differ from JS,
+/// and both would make Tier 0 disagree with Tier 1.
+pub(crate) fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    if a == 0.0 && b == 0.0 {
+        // The only pair that compares equal while being distinguishable:
+        // -0.0 is the smaller zero.
+        return if a.is_sign_negative() { a } else { b };
+    }
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `Math.max` / IEEE-754 2019 `maximum`. See [`js_min`] for why `f64::max` is
+/// not used.
+pub(crate) fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    if a == 0.0 && b == 0.0 {
+        return if a.is_sign_positive() { a } else { b };
+    }
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
 pub(crate) fn bin_int(
     stack: &mut Vec<Value>,
     f: impl Fn(i64, i64) -> i64,
