@@ -11,3 +11,4 @@ workspace = true
 
 [dependencies]
 regex.workspace = true
+zun_regex = { path = "../zun_regex" }

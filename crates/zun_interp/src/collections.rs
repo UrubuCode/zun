@@ -1025,6 +1025,7 @@ impl<'a> Interp<'a> {
                 };
                 match zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
                     .ok_or(RunError::BadToken)?
+                    .map_err(|error| RunError::Native(error.to_string()))?
                 {
                     Some(array) => Ok(Value::Object(array)),
                     None => Ok(Value::Null),
@@ -1104,7 +1105,8 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Bool(
                     zun_gc::with_current_heap(|heap| heap.regex_is_match(object, input))
-                        .ok_or(RunError::BadToken)?,
+                        .ok_or(RunError::BadToken)?
+                        .map_err(|error| RunError::Native(error.to_string()))?,
                 ))
             }
             "regexpSearch" | "regexpSplit" | "regexpReplace" => {
@@ -1118,13 +1120,15 @@ impl<'a> Interp<'a> {
                     "regexpSearch" => {
                         let index =
                             zun_gc::with_current_heap(|heap| heap.regex_search(object, &input))
-                                .ok_or(RunError::BadToken)?;
+                                .ok_or(RunError::BadToken)?
+                                .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Int(index, zun_il::NumKind::I32))
                     }
                     "regexpSplit" => {
                         let array =
                             zun_gc::with_current_heap_mut(|heap| heap.regex_split(object, &input))
-                                .ok_or(RunError::BadToken)?;
+                                .ok_or(RunError::BadToken)?
+                                .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Object(array))
                     }
                     _ => {
@@ -1135,7 +1139,8 @@ impl<'a> Interp<'a> {
                         let result = zun_gc::with_current_heap(|heap| {
                             heap.regex_replace_first(object, &input, &replacement)
                         })
-                        .ok_or(RunError::BadToken)?;
+                        .ok_or(RunError::BadToken)?
+                        .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Str(result.into()))
                     }
                 }

@@ -24,32 +24,61 @@ impl Heap {
             .map(zun_core::RegexValue::source)
     }
 
-    pub fn regex_is_match(&self, object: Obj, input: &str) -> Option<bool> {
+    /// Which engine the regex object selected (`None` if not a regex).
+    pub fn regex_engine_kind(&self, object: Obj) -> Option<zun_core::EngineKind> {
+        self.regexes
+            .get(&(object.addr() as usize))
+            .map(zun_core::RegexValue::engine_kind)
+    }
+
+    /// Match operations return `None` if `object` is not a regex, and an inner
+    /// `Err` if the engine failed (e.g. the backtracking step limit).
+    pub fn regex_is_match(
+        &self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<bool, zun_core::RegexError>> {
         self.regexes
             .get(&(object.addr() as usize))
             .map(|regex| regex.is_match(input))
     }
 
-    pub fn regex_find(&self, object: Obj, input: &str) -> Option<Option<(usize, usize)>> {
+    /// First match as UTF-8 byte offsets (both engines).
+    #[allow(clippy::type_complexity)]
+    pub fn regex_find(
+        &self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Option<(usize, usize)>, zun_core::RegexError>> {
         self.regexes
             .get(&(object.addr() as usize))
             .map(|regex| regex.find(input))
     }
 
     /// `String.prototype.search`: UTF-16 index of the first match, or -1.
-    pub fn regex_search(&self, object: Obj, input: &str) -> Option<i64> {
-        self.regexes
-            .get(&(object.addr() as usize))
-            .map(|regex| regex.search(input).map_or(-1, |index| index as i64))
+    pub fn regex_search(&self, object: Obj, input: &str) -> Option<Result<i64, zun_core::RegexError>> {
+        self.regexes.get(&(object.addr() as usize)).map(|regex| {
+            regex
+                .search(input)
+                .map(|index| index.map_or(-1, |index| index as i64))
+        })
     }
 
     /// `String.prototype.split(regex)`: array of Any strings (`undefined` for
     /// non-participating capture groups).
-    pub fn regex_split(&mut self, object: Obj, input: &str) -> Option<Obj> {
-        let pieces = self
+    pub fn regex_split(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Obj, zun_core::RegexError>> {
+        let pieces = match self
             .regexes
             .get(&(object.addr() as usize))
-            .map(|regex| regex.split(input))?;
+            .map(|regex| regex.split(input))?
+        {
+            Ok(pieces) => pieces,
+            Err(error) => return Some(Err(error)),
+        };
         let array = self.alloc_array(pieces.len());
         for (index, piece) in pieces.into_iter().enumerate() {
             let value = match piece {
@@ -58,11 +87,16 @@ impl Heap {
             };
             self.array_set(array, index, value);
         }
-        Some(array)
+        Some(Ok(array))
     }
 
     /// `String.prototype.replace(regex, string)`: first match only.
-    pub fn regex_replace_first(&self, object: Obj, input: &str, replacement: &str) -> Option<String> {
+    pub fn regex_replace_first(
+        &self,
+        object: Obj,
+        input: &str,
+        replacement: &str,
+    ) -> Option<Result<String, zun_core::RegexError>> {
         self.regexes
             .get(&(object.addr() as usize))
             .map(|regex| regex.replace_first(input, replacement))
@@ -72,13 +106,21 @@ impl Heap {
     /// no match, otherwise an array of Any: index 0 is the full match and
     /// indices 1.. are capture-group strings (`undefined` for non-participating
     /// groups).
-    pub fn regex_exec(&mut self, object: Obj, input: &str) -> Option<Option<Obj>> {
-        let groups = self
+    pub fn regex_exec(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
+        let groups = match self
             .regexes
             .get(&(object.addr() as usize))
-            .map(|regex| regex.captures(input))?;
+            .map(|regex| regex.captures(input))?
+        {
+            Ok(groups) => groups,
+            Err(error) => return Some(Err(error)),
+        };
         let Some(groups) = groups else {
-            return Some(None);
+            return Some(Ok(None));
         };
         let array = self.alloc_array(groups.len());
         for (index, group) in groups.into_iter().enumerate() {
@@ -88,7 +130,7 @@ impl Heap {
             };
             self.array_set(array, index, value);
         }
-        Some(Some(array))
+        Some(Ok(Some(array)))
     }
 }
 
@@ -101,21 +143,61 @@ mod tests {
         let mut heap = Heap::new();
         let regex = heap.alloc_regex(r"zun-[0-9]+").expect("valid regex");
         assert_eq!(heap.regex_source(regex), Some(r"zun-[0-9]+"));
-        assert_eq!(heap.regex_is_match(regex, "zun-42"), Some(true));
-        assert_eq!(heap.regex_find(regex, "x zun-42"), Some(Some((2, 8))));
-        assert_eq!(heap.regex_is_match(regex, "zun-x"), Some(false));
+        assert_eq!(heap.regex_is_match(regex, "zun-42"), Some(Ok(true)));
+        assert_eq!(heap.regex_find(regex, "x zun-42"), Some(Ok(Some((2, 8)))));
+        assert_eq!(heap.regex_is_match(regex, "zun-x"), Some(Ok(false)));
+        assert_eq!(heap.regex_engine_kind(regex), Some(zun_core::EngineKind::Re2));
+    }
+
+    #[test]
+    fn backreference_and_lookaround_use_engine_b_through_the_heap() {
+        let mut heap = Heap::new();
+        let backref = heap.alloc_regex(r"(\w)\1").expect("valid regex");
+        assert_eq!(heap.regex_engine_kind(backref), Some(zun_core::EngineKind::Backtracking));
+        assert_eq!(heap.regex_is_match(backref, "hello"), Some(Ok(true)));
+        assert_eq!(heap.regex_is_match(backref, "helo"), Some(Ok(false)));
+        // Capture spans in exec: "é😀" precedes the match; strings are exact.
+        let array = heap.regex_exec(backref, "é😀xyy").unwrap().unwrap().expect("match");
+        let first = heap.array_get(array, 0).unwrap().as_string().unwrap();
+        assert_eq!(&**heap.string(first), "yy");
+        let group = heap.array_get(array, 1).unwrap().as_string().unwrap();
+        assert_eq!(&**heap.string(group), "y");
+        // Same observable units as Engine A: bytes for find, UTF-16 for search.
+        assert_eq!(heap.regex_find(backref, "é😀xyy"), Some(Ok(Some((7, 9)))));
+        assert_eq!(heap.regex_search(backref, "é😀xyy"), Some(Ok(4)));
+        let plain = heap.alloc_regex(r"yy").expect("valid regex");
+        assert_eq!(heap.regex_find(plain, "é😀xyy"), Some(Ok(Some((7, 9)))));
+        assert_eq!(heap.regex_search(plain, "é😀xyy"), Some(Ok(4)));
+        let ahead = heap.alloc_regex(r"a(?=b)").expect("valid regex");
+        assert_eq!(heap.regex_is_match(ahead, "ab"), Some(Ok(true)));
+        assert_eq!(heap.regex_is_match(ahead, "ac"), Some(Ok(false)));
+        let behind = heap.alloc_regex(r"(?<!a)b").expect("valid regex");
+        assert_eq!(heap.regex_is_match(behind, "ab"), Some(Ok(false)));
+        assert_eq!(heap.regex_is_match(behind, "cb"), Some(Ok(true)));
+    }
+
+    #[test]
+    fn catastrophic_backtracking_surfaces_as_an_error() {
+        let mut heap = Heap::new();
+        let regex = heap.alloc_regex(r"(a+)+\1b").expect("valid regex");
+        let input = format!("{}!", "a".repeat(60));
+        assert!(matches!(heap.regex_is_match(regex, &input), Some(Err(_))));
+        assert!(matches!(heap.regex_exec(regex, &input), Some(Err(_))));
+        assert!(matches!(heap.regex_search(regex, &input), Some(Err(_))));
+        assert!(matches!(heap.regex_split(regex, &input), Some(Err(_))));
+        assert!(matches!(heap.regex_replace_first(regex, &input, "x"), Some(Err(_))));
     }
 
     #[test]
     fn managed_regex_exec_builds_group_array() {
         let mut heap = Heap::new();
         let regex = heap.alloc_regex_with_flags(r"(a)(x)?(b)", "i").expect("valid regex");
-        let array = heap.regex_exec(regex, "zAB").unwrap().expect("match");
+        let array = heap.regex_exec(regex, "zAB").unwrap().unwrap().expect("match");
         assert_eq!(heap.array_len(array), Some(4));
         let first = heap.array_get(array, 0).unwrap().as_string().unwrap();
         assert_eq!(&**heap.string(first), "AB");
         assert_eq!(heap.array_get(array, 2).unwrap().tag(), zun_core::AnyTag::Void);
-        assert!(heap.regex_exec(regex, "zzz").unwrap().is_none());
+        assert!(heap.regex_exec(regex, "zzz").unwrap().unwrap().is_none());
     }
 
     #[test]

@@ -4472,6 +4472,44 @@ mod method_tests {
     }
 
     #[test]
+    fn regexp_backrefs_and_lookaround_work_through_the_api() {
+        // Backreference: RE2 cannot do this; Engine B is selected.
+        assert!(run_regexp_bool(
+            "function main(): boolean { return new RegExp(\"(\\\\w)\\\\1\").test(\"hello\") && !new RegExp(\"(\\\\w)\\\\1\").test(\"helo\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m = new RegExp(\"(\\\\w)\\\\1\").exec(\"xabbc\"); let a: string = m[0] as string; let b: string = m[1] as string; if (a != \"bb\") { return false; } return b == \"b\"; }"
+        ));
+        // Lookahead and lookbehind.
+        assert!(run_regexp_bool(
+            "function main(): boolean { return new RegExp(\"foo(?=bar)\").test(\"foobar\") && !new RegExp(\"foo(?=bar)\").test(\"foobaz\"); }"
+        ));
+        assert!(run_regexp_bool(
+            "function main(): boolean { let m = new RegExp(\"(?<=\\\\$)[0-9]+\").exec(\"cost $42\"); let a: string = m[0] as string; return a == \"42\"; }"
+        ));
+        // search reports UTF-16 units for Engine B exactly like Engine A.
+        assert!(matches!(
+            run_regexp_value("function main(): int { return \"\u{1F600}x12\".search(new RegExp(\"(?<=x)[0-9]+\")); }"),
+            Value::Int(3, _)
+        ));
+        assert!(matches!(
+            run_regexp_value("function main(): int { return \"\u{1F600}x12\".search(new RegExp(\"[0-9]+\")); }"),
+            Value::Int(3, _)
+        ));
+    }
+
+    #[test]
+    fn regexp_catastrophic_pattern_fails_gracefully() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { return new RegExp(\"(a+)+\\\\1b\").test(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!\"); }",
+        )
+        .expect("compile RegExp");
+        let mut output = CaptureOutput::default();
+        let error = run(&module, &mut output).expect_err("step limit must surface as an error");
+        assert!(format!("{error:?}").contains("step limit"), "got {error:?}");
+    }
+
+    #[test]
     fn regexp_rejects_unsupported_flags() {
         let module = zun_compiler::compile(
             "function main(): boolean { return new RegExp(\"a\", \"y\").test(\"a\"); }",

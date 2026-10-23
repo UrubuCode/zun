@@ -35,7 +35,7 @@ pub use function_handle::FunctionHandle;
 pub use module_bound_function::ModuleBoundFunction;
 pub use symbols::{SymbolId, SymbolRegistry};
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
-pub use regexp::{RegexError, RegexValue};
+pub use regexp::{EngineKind, RegexError, RegexValue};
 pub use bigint::BigInt;
 pub use views::ByteView;
 pub use views::DataView;
