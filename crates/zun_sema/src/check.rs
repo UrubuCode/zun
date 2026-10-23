@@ -2307,6 +2307,68 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if receiver.ty == Ty::Array
+                    && matches!(mname.as_str(), "sort" | "reduce" | "reduceRight")
+                {
+                    // Variable-arity standard Array methods. `sort` takes an
+                    // optional comparator (default is ascending string order);
+                    // `reduce`/`reduceRight` require an initial accumulator on
+                    // this floor (the no-initial form is deferred). The callback
+                    // is a dynamic function value invoked by the native with the
+                    // ECMAScript argument shape.
+                    let (native_name, return_ty, expected): (&str, Ty, Vec<Ty>) =
+                        match (mname.as_str(), args.len()) {
+                            ("sort", 0) => ("arraySortDefault", Ty::Array, vec![]),
+                            ("sort", 1) => (
+                                "arraySortBy",
+                                Ty::Array,
+                                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                            ),
+                            ("reduce", 2) => (
+                                "arrayReduce",
+                                Ty::Any,
+                                vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
+                            ),
+                            ("reduceRight", 2) => (
+                                "arrayReduceRight",
+                                Ty::Any,
+                                vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
+                            ),
+                            (other, found) => {
+                                self.error(
+                                    span,
+                                    format!(
+                                        "`Array.{other}` does not accept {found} argument(s)"
+                                    ),
+                                );
+                                return self.poison(span);
+                            }
+                        };
+                    let mut call_args = vec![receiver];
+                    for (arg, expected_ty) in args.iter().zip(expected) {
+                        let mut value = self.check_expr(cx, arg);
+                        coerce_numeric_literal(&mut value, expected_ty);
+                        if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
+                            self.error(
+                                value.span,
+                                format!(
+                                    "argument type {:?} does not match {expected_ty:?}",
+                                    value.ty
+                                ),
+                            );
+                        }
+                        call_args.push(value);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: return_ty,
+                        span,
+                    };
+                }
                 if receiver.ty == Ty::Any && args.len() <= 2 {
                     // Dynamic member call on an `any` receiver (e.g. a namespace from
                     // `import()`): dispatched by name at run time.
@@ -2381,6 +2443,45 @@ impl Checker<'_> {
                     }
                 }
                 let managed_method = match (receiver.ty, mname.as_str()) {
+                    // Standard `Array.prototype` methods routed to natives. The
+                    // callback methods invoke the dynamic function value with the
+                    // ECMAScript `(value, index, array)` signature (extra
+                    // arguments dropped to the callback's declared arity).
+                    (Ty::Array, "forEach") => {
+                        Some(("arrayForEach", Ty::Void, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
+                    }
+                    (Ty::Array, "map") => {
+                        Some(("arrayMap", Ty::Array, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
+                    }
+                    (Ty::Array, "filter") => {
+                        Some(("arrayFilter", Ty::Array, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
+                    }
+                    (Ty::Array, "find") => {
+                        Some(("arrayFind", Ty::Any, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
+                    }
+                    (Ty::Array, "findIndex") => Some((
+                        "arrayFindIndex",
+                        Ty::Int(IntKind::I32),
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
+                    (Ty::Array, "some") => {
+                        Some(("arraySome", Ty::Boolean, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
+                    }
+                    (Ty::Array, "every") => {
+                        Some(("arrayEvery", Ty::Boolean, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
+                    }
+                    (Ty::Array, "join") => {
+                        Some(("arrayJoin", Ty::String, vec![Ty::String]))
+                    }
+                    (Ty::Array, "shift") => Some(("arrayShift", Ty::Any, vec![])),
+                    (Ty::Array, "unshift") => {
+                        Some(("arrayUnshift", Ty::Int(IntKind::U64), vec![Ty::Any]))
+                    }
+                    (Ty::Array, "splice") => Some((
+                        "arraySplice",
+                        Ty::Array,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
+                    )),
                     (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
                     (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),

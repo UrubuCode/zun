@@ -31,7 +31,7 @@ read.
 | 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
-| 7 | Array | partial | Rich custom surface; missing standard `forEach/find/some/every/findLast/flatMap/join/splice/shift/unshift/keys/values/entries`, statics `Array.from/of/isArray`, callback `sort`, iterator-returning methods |
+| 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject`; no `then/catch/finally`, no statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode |
 | 10 | Proxy / Reflect | partial | `proxyNew` + `reflect_get/reflect_set` exist; no full trap set, no `Reflect` global object surface |
@@ -238,21 +238,39 @@ the OXC adapter — `Expression::ObjectExpression`). An object literal produces 
 - Interp fix landed alongside: `Value::as_object` now unwraps an object-tagged `Any`, so a
   nested object read back out of a dynamic property (`{ a: { b } }.a.b`) works.
 
-## 7. Array — partial
-`std/array.zun` (large custom surface) + special ZIL lowering for `push/pop`
-(`ArrayPush/ArrayPop` opcodes), plus `arrayIterator*` intrinsics.
+## 7. Array — partial (standard surface landed)
+`builtin/array.zun` (Zun-extension surface) + special ZIL lowering for `push/pop`
+(`ArrayPush/ArrayPop` opcodes), plus `arrayIterator*` intrinsics. The standard
+callback and structural methods are **`zun:core` `array` natives**
+(`zun_natives/src/collections.rs` signatures, `zun_interp/src/collections.rs`
+implementations); sema routes those method names to the natives before class
+dispatch (`check.rs`, `Ty::Array` arm of the managed-method table plus the
+`sort/reduce/reduceRight` pre-block).
 
-- **Present (standard):** `push pop map(cb) filter(cb) reduce(cb,init) slice(start,end)
-  concat(other) fill(value) reverse copyWithin(t,s,e) flat indexOf lastIndexOf includes
-  at(i) length` + `[Symbol.iterator]`. Plus many Zun extras
-  (`chunk windowed rotateLeft union intersection isPalindrome sum min max sort …`).
-- **Missing (standard):** `forEach find findIndex(cb) findLast findLastIndex some every
-  flatMap join(sep) splice shift unshift keys() values() entries() toSorted toReversed
-  with group`. `sort` takes no comparator (`sort()` only). `map/filter` callbacks do not
-  receive `(value,index,array)` — verify arity. Statics `Array.from(iterable[,mapFn])
-  Array.of(...) Array.isArray(x)`.
-- **Notes:** `findIndex(value)` takes a *value*, not a predicate (non-standard);
-  `indexOf` returns `int`. `fill` takes no range args.
+- **Present (standard):** `map(cb) filter(cb) forEach(cb) find(cb) findIndex(cb)
+  some(cb) every(cb) reduce(cb,init) reduceRight(cb,init) sort(cmp?) join(sep)
+  shift() unshift(v) splice(start,deleteCount) slice(start,end) concat(other)
+  fill(value) reverse copyWithin(t,s,e) flat indexOf lastIndexOf includes at(i)
+  length` + `[Symbol.iterator]`. Every callback receives the ECMAScript
+  `(value, index, array)` signature (comparator `(a, b)`); surplus arguments are
+  dropped to the callback's declared arity (interp `invoke_callback` truncates to
+  the callee `param_count`). `sort()` with no comparator is ascending **string**
+  order (spec default).
+- **Zun extensions (kept, beyond ECMAScript):** `chunk windowed rotateLeft/Right
+  union intersection difference symmetricDifference isSubsetOf isSupersetOf
+  isPalindrome isSorted isUnique sum product average min max transpose sortNumeric
+  take drop insertAt removeAt removeFirst removeAll swap count contains …` — the
+  "collection algebra" surface in `builtin/array.zun`. (`sort`'s former numeric
+  default is preserved as the extension `sortNumeric()`.)
+- **Missing (standard):** `findLast findLastIndex flatMap keys() values() entries()
+  at`-iterators `toSorted toReversed with group`; statics `Array.from(iterable
+  [,mapFn]) Array.of(...) Array.isArray(x)`; variadic `splice` inserts; the
+  no-initial `reduce`/`reduceRight` form (throws-on-empty); `fill`/`copyWithin`
+  range refinements.
+- **Notes:** these callback methods are Tier 0 (they re-enter the interpreter via
+  `self.call`, like proxy traps / `functionApply`); `CallIndirect` is not
+  JIT-lowered, so there is no new JIT path. `indexOf`/`lastIndexOf`/`includes`
+  stay value-based (spec) and `indexOf` returns `int`.
 
 ## 8. Function — partial  *(HIGH priority — core surface landed)*
 `call/apply/bind` + `.name/.length` are implemented. Recognition is in sema's
@@ -533,8 +551,10 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
 4. ~~**WeakSet** (#14) and **WeakRef** (#15)~~ — done (reuse the WeakMap ephemeron / GC weak-reference floors).
 5. **Decorators** (#25) — parse + sema + lowering + macro mechanism.
 6. **Method-surface tail** — ECMAScript gaps on existing classes:
-   - Array (#7): `forEach find/findIndex(cb) some every flatMap join splice shift unshift
-     keys values entries`, comparator `sort(cb)`, statics `from/of/isArray`.
+   - Array (#7): remaining — `findLast findLastIndex flatMap keys values entries at`,
+     statics `from/of/isArray`, variadic `splice` inserts, no-initial `reduce`.
+     (Done: `forEach find findIndex(cb) some every map filter reduce reduceRight join
+     splice shift unshift`, comparator `sort(cmp?)` — all spec `(value,index,array)`.)
    - String (#1): `split slice at concat match/matchAll/search replaceAll charAt
      codePointAt [Symbol.iterator]`, statics `fromCharCode/fromCodePoint`.
    - Number (#2): statics `isNaN/isInteger/isFinite/parseInt/parseFloat` + constants;

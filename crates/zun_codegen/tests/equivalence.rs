@@ -3051,8 +3051,11 @@ fn array_sort_keeps_interpreter_fallback() {
 #[test]
 fn array_find_index_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "class Array { indexOf(value: any): int { let index: u64 = 0; while (index < this.length) { if (this[index] == value) { return index as int; } index = index + 1; } return -1; } findIndex(value: any): int { return this.indexOf(value); } }\n\
-         function main(): int { let values = new Array(3); values[0] = 4; values[1] = 8; values[2] = 15; let needle: any = values[1]; return values.findIndex(needle); }",
+        // `findIndex` now takes an ECMAScript predicate `(value, index, array)`
+        // (previously a value, a Zun divergence); it stays Tier 0 because the
+        // callback re-enters the interpreter.
+        "function is_eight(value: any, index: any, array: any): boolean { return (value as number) == 8.0; }\n\
+         function main(): int { let values = new Array(3); values[0] = 4.0; values[1] = 8.0; values[2] = 15.0; return values.findIndex(is_eight); }",
     )
     .expect("compile Array findIndex");
     let entry = module.entry_point.expect("entry point").rid();

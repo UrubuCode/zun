@@ -311,6 +311,7 @@ fn collections_namespace(name: &str) -> &'static str {
         ("weakMap", "weakMap"),
         ("weakSet", "weakSet"),
         ("weakRef", "weakRef"),
+        ("array", "array"),
         ("map", "map"),
         ("set", "set"),
         ("regexp", "regexp"),

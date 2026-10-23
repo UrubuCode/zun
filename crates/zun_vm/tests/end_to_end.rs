@@ -182,6 +182,159 @@ fn function_call_threads_this_as_the_leading_argument() {
     assert_eq!(out, ["15"]);
 }
 
+/// Compile `user` together with the `Array` class source (so its Zun-extension
+/// methods resolve) and run it.
+fn run_with_array_class(user: &str) -> Vec<String> {
+    let src = format!("{user}\n{}", include_str!("../../../builtin/array.zun"));
+    run_source(&src)
+}
+
+#[test]
+fn array_custom_extensions_are_preserved() {
+    // `chunk` and the renamed numeric `sortNumeric` are Zun extensions beyond
+    // ECMAScript; they must keep working alongside the standard native methods.
+    let out = run_with_array_class(
+        "function main() { \
+            let a = new Array(4); a[0] = 3.0; a[1] = 1.0; a[2] = 4.0; a[3] = 2.0; \
+            a.sortNumeric(); \
+            print(a[0] as number); print(a[3] as number); \
+            let groups = a.chunk(2 as u64); \
+            print(groups.length); \
+            let first = groups[0] as Array; \
+            print(first[0] as number); print(first[1] as number); }",
+    );
+    assert_eq!(out, ["1", "4", "2", "1", "2"]);
+}
+
+/// Build `a` as a fresh `[1.0, 2.0, 3.0]` array in a program preamble.
+fn array_123() -> &'static str {
+    "let a = new Array(3); a[0] = 1.0; a[1] = 2.0; a[2] = 3.0;"
+}
+
+#[test]
+fn array_map_passes_value_index_array_and_builds_a_new_array() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let b = a.map((v: any, i: any, arr: any) => (v as number) + (i as number)); \
+            print(b[0] as number); print(b[1] as number); print(b[2] as number); \
+            print(a.length); }}",
+        array_123()
+    ));
+    // (1+0), (2+1), (3+2); source length unchanged.
+    assert_eq!(out, ["1", "3", "5", "3"]);
+}
+
+#[test]
+fn array_for_each_runs_in_order_with_side_effects() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let sink = new Array(0); \
+            a.forEach((v: any, i: any, arr: any) => {{ sink.push(v); }}); \
+            print(sink.length); print(sink[0] as number); print(sink[2] as number); }}",
+        array_123()
+    ));
+    assert_eq!(out, ["3", "1", "3"]);
+}
+
+#[test]
+fn array_filter_keeps_truthy_predicate_elements() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let b = a.filter((v: any, i: any, arr: any) => (v as number) > 1.0); \
+            print(b.length); print(b[0] as number); print(b[1] as number); }}",
+        array_123()
+    ));
+    assert_eq!(out, ["2", "2", "3"]);
+}
+
+#[test]
+fn array_reduce_and_reduce_right_thread_the_accumulator() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let sum = a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number), 10.0); \
+            print(sum as number); \
+            let order = a.reduceRight((acc: any, v: any, i: any, arr: any) => (acc as number) * 10.0 + (v as number), 0.0); \
+            print(order as number); }}",
+        array_123()
+    ));
+    // reduce: 10+1+2+3 = 16; reduceRight digit-builds right-to-left -> 321.
+    assert_eq!(out, ["16", "321"]);
+}
+
+#[test]
+fn array_find_find_index_some_every() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            print(a.find((v: any, i: any, arr: any) => (v as number) > 1.0) as number); \
+            print(a.findIndex((v: any, i: any, arr: any) => (v as number) > 1.0)); \
+            print(a.some((v: any, i: any, arr: any) => (v as number) > 2.0)); \
+            print(a.every((v: any, i: any, arr: any) => (v as number) > 0.0)); \
+            print(a.every((v: any, i: any, arr: any) => (v as number) > 1.0)); }}",
+        array_123()
+    ));
+    assert_eq!(out, ["2", "1", "true", "true", "false"]);
+}
+
+#[test]
+fn array_join_with_separator() {
+    let out = run_source(&format!(
+        "function main() {{ {} print(a.join(\"-\")); }}",
+        array_123()
+    ));
+    assert_eq!(out, ["1-2-3"]);
+}
+
+#[test]
+fn array_shift_unshift_splice_mutate_in_place() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let first = a.shift(); print(first as number); print(a.length); \
+            let len = a.unshift(9.0); print(len); print(a[0] as number); \
+            let removed = a.splice(1 as u64, 1 as u64); \
+            print(removed.length); print(removed[0] as number); print(a.length); }}",
+        array_123()
+    ));
+    // shift -> 1, len 2 ([2,3]); unshift 9 -> len 3 ([9,2,3]); splice(1,1) removes [2] -> len 2.
+    assert_eq!(out, ["1", "2", "3", "9", "1", "2", "2"]);
+}
+
+#[test]
+fn array_sort_default_is_string_ascending() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(3); a[0] = 10.0; a[1] = 2.0; a[2] = 1.0; \
+            a.sort(); \
+            print(a[0] as number); print(a[1] as number); print(a[2] as number); }",
+    );
+    // String comparison: "1" < "10" < "2".
+    assert_eq!(out, ["1", "10", "2"]);
+}
+
+#[test]
+fn array_sort_with_numeric_comparator() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(3); a[0] = 10.0; a[1] = 2.0; a[2] = 1.0; \
+            a.sort((x: any, y: any) => (x as number) - (y as number)); \
+            print(a[0] as number); print(a[1] as number); print(a[2] as number); }",
+    );
+    assert_eq!(out, ["1", "2", "10"]);
+}
+
+#[test]
+fn array_map_with_a_capturing_closure_survives_allocation() {
+    // The closure captures `bias`; `map` allocates a result array and re-enters
+    // the interpreter per element, exercising native rooting of the closure env.
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let bias: number = 100.0; \
+            let b = a.map((v: any, i: any, arr: any) => (v as number) + bias); \
+            print(b[0] as number); print(b[2] as number); }}",
+        array_123()
+    ));
+    assert_eq!(out, ["101", "103"]);
+}
+
 #[test]
 fn function_apply_spreads_an_array_and_equals_call() {
     let out = run_source(

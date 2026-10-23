@@ -3,6 +3,7 @@
 use super::{Interp, RunError};
 use super::value::Value;
 use super::state::{ExecutionFrame, ExecutionOutcome};
+use zun_module::read_body;
 
 impl<'a> Interp<'a> {
     pub(crate) fn call_managed_collection(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
@@ -1437,6 +1438,275 @@ impl<'a> Interp<'a> {
                     record.addr() as usize,
                 )))
             }
+            "arrayForEach" | "arrayMap" | "arrayFilter" | "arrayFind" | "arrayFindIndex"
+            | "arraySome" | "arrayEvery" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let callback = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    .ok_or(RunError::BadToken)?;
+                // A fresh result array is needed only for `map`/`filter`.
+                let result = if name == "arrayMap" {
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length))
+                } else if name == "arrayFilter" {
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0))
+                } else {
+                    source
+                };
+                // Root both the source and the result across callback re-entry;
+                // a GC during `invoke_callback` may relocate either, so every
+                // access reads the (possibly rewritten) addresses back out.
+                let roots = [source, result];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for index in 0..length {
+                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                        .ok_or(RunError::BadToken)?;
+                    let callback_args = vec![
+                        Value::Any(element),
+                        Value::Any(zun_core::Any::float(index as f64)),
+                        Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                    ];
+                    let produced = self.invoke_callback(callback, callback_args)?;
+                    match name {
+                        "arrayForEach" => {}
+                        "arrayMap" => {
+                            let boxed = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                                .ok_or(RunError::BadToken)?;
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.array_set(roots[1], index, boxed)
+                            });
+                        }
+                        "arrayFilter" => {
+                            let keep = zun_gc::with_current_heap(|heap| is_truthy(&produced, heap));
+                            if keep {
+                                let boxed =
+                                    zun_gc::with_current_heap_mut(|heap| Value::Any(element).box_any(heap))
+                                        .ok_or(RunError::BadToken)?;
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    heap.array_push(roots[1], boxed)
+                                });
+                            }
+                        }
+                        "arrayFind" => {
+                            if zun_gc::with_current_heap(|heap| is_truthy(&produced, heap)) {
+                                // Return the concrete element value (unboxed),
+                                // matching ordinary element access.
+                                return zun_gc::with_current_heap(|heap| {
+                                    Value::unbox_any(element, heap)
+                                })
+                                .ok_or(RunError::BadToken);
+                            }
+                        }
+                        "arrayFindIndex" => {
+                            if zun_gc::with_current_heap(|heap| is_truthy(&produced, heap)) {
+                                return Ok(Value::Int(index as i64, zun_il::NumKind::I32));
+                            }
+                        }
+                        "arraySome" => {
+                            if zun_gc::with_current_heap(|heap| is_truthy(&produced, heap)) {
+                                return Ok(Value::Bool(true));
+                            }
+                        }
+                        "arrayEvery" => {
+                            if !zun_gc::with_current_heap(|heap| is_truthy(&produced, heap)) {
+                                return Ok(Value::Bool(false));
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                match name {
+                    "arrayForEach" => Ok(Value::Void),
+                    "arrayMap" | "arrayFilter" => Ok(Value::Object(roots[1])),
+                    "arrayFind" => Ok(Value::Void),
+                    "arrayFindIndex" => Ok(Value::Int(-1, zun_il::NumKind::I32)),
+                    "arraySome" => Ok(Value::Bool(false)),
+                    "arrayEvery" => Ok(Value::Bool(true)),
+                    _ => unreachable!(),
+                }
+            }
+            "arrayReduce" | "arrayReduceRight" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let callback = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let initial = args.get(2).ok_or(RunError::BadToken)?.clone();
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    .ok_or(RunError::BadToken)?;
+                // Hold the accumulator inside a one-slot GC array so it survives
+                // callback re-entry regardless of whether it is an object.
+                let accumulator = zun_gc::with_current_heap_mut(|heap| {
+                    let holder = heap.alloc_array(1);
+                    if let Some(boxed) = initial.box_any(heap) {
+                        heap.array_set(holder, 0, boxed);
+                    }
+                    holder
+                });
+                let roots = [source, accumulator];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for step in 0..length {
+                    let index = if name == "arrayReduce" {
+                        step
+                    } else {
+                        length - 1 - step
+                    };
+                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                        .ok_or(RunError::BadToken)?;
+                    let acc = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
+                        .ok_or(RunError::BadToken)?;
+                    let callback_args = vec![
+                        Value::Any(acc),
+                        Value::Any(element),
+                        Value::Any(zun_core::Any::float(index as f64)),
+                        Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                    ];
+                    let next = self.invoke_callback(callback, callback_args)?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| next.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.array_set(roots[1], 0, boxed));
+                }
+                let result = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
+                    .ok_or(RunError::BadToken)?;
+                // Unbox to the concrete accumulator value so the result matches
+                // the representation an in-source reducer would have returned.
+                zun_gc::with_current_heap(|heap| Value::unbox_any(result, heap))
+                    .ok_or(RunError::BadToken)
+            }
+            "arraySortBy" | "arraySortDefault" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let comparator = if name == "arraySortBy" {
+                    match args.get(1).ok_or(RunError::BadToken)? {
+                        Value::Function(handle) => Some(*handle),
+                        _ => return Err(RunError::BadToken),
+                    }
+                } else {
+                    None
+                };
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    .ok_or(RunError::BadToken)?;
+                let roots = [source];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Insertion sort so each comparison re-enters the interpreter at
+                // most once; elements are read back from the rooted source after
+                // every comparator call in case a GC relocated the backing store.
+                for i in 1..length {
+                    let mut j = i;
+                    while j > 0 {
+                        let left = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j - 1))
+                            .ok_or(RunError::BadToken)?;
+                        let right = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j))
+                            .ok_or(RunError::BadToken)?;
+                        let ordered_before = match comparator {
+                            Some(handle) => {
+                                let outcome = self.invoke_callback(
+                                    handle,
+                                    vec![Value::Any(left), Value::Any(right)],
+                                )?;
+                                // `<= 0` keeps order; a non-numeric (`NaN`)
+                                // result is treated as `0` (stable, no swap).
+                                !(zun_gc::with_current_heap(|heap| to_number(&outcome, heap)) > 0.0)
+                            }
+                            None => {
+                                let (a, b) = zun_gc::with_current_heap(|heap| {
+                                    (
+                                        stringify_any(left, heap).unwrap_or_default(),
+                                        stringify_any(right, heap).unwrap_or_default(),
+                                    )
+                                });
+                                a <= b
+                            }
+                        };
+                        if ordered_before {
+                            break;
+                        }
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let a = heap.array_get(roots[0], j - 1);
+                            let b = heap.array_get(roots[0], j);
+                            if let (Some(a), Some(b)) = (a, b) {
+                                heap.array_set(roots[0], j - 1, b);
+                                heap.array_set(roots[0], j, a);
+                            }
+                        });
+                        j -= 1;
+                    }
+                }
+                Ok(Value::Object(roots[0]))
+            }
+            "arrayJoin" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let separator = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(text) => text.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let joined = zun_gc::with_current_heap(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    let mut parts = Vec::with_capacity(length);
+                    for index in 0..length {
+                        let element = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        // `null`/`undefined` render as the empty string per spec.
+                        parts.push(stringify_any(element, heap).unwrap_or_default());
+                    }
+                    parts.join(&separator)
+                });
+                Ok(Value::Str(joined.into()))
+            }
+            "arrayShift" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let removed = zun_gc::with_current_heap_mut(|heap| {
+                    if heap.array_len(source).unwrap_or(0) == 0 {
+                        None
+                    } else {
+                        heap.array_remove(source, 0)
+                            .and_then(|value| Value::unbox_any(value, heap))
+                    }
+                });
+                Ok(removed.unwrap_or(Value::Void))
+            }
+            "arrayUnshift" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let length = zun_gc::with_current_heap_mut(|heap| {
+                    heap.array_insert(source, 0, value);
+                    heap.array_len(source).unwrap_or(0)
+                });
+                Ok(Value::Int(length as i64, zun_il::NumKind::U64))
+            }
+            "arraySplice" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let start = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let delete_count = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let removed = zun_gc::with_current_heap_mut(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    let start = start.min(length);
+                    let delete_count = delete_count.min(length - start);
+                    let result = heap.alloc_array(delete_count);
+                    for offset in 0..delete_count {
+                        // Elements shift down on each removal, so the removal
+                        // index stays `start`.
+                        if let Some(element) = heap.array_remove(source, start) {
+                            heap.array_set(result, offset, element);
+                        }
+                    }
+                    result
+                });
+                Ok(Value::Object(removed))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))
@@ -1881,6 +2151,31 @@ impl<'a> Interp<'a> {
         let (method_rid, final_args) = self.resolve_call_target(handle, call_args)?;
         self.call(method_rid, final_args, None)
     }
+
+    /// Invoke a dynamic callback with ECMAScript "extra arguments ignored"
+    /// semantics: after the `bind`/closure environment is threaded, the
+    /// positional argument vector is truncated to the callback's declared
+    /// parameter count before dispatch. A callback declaring fewer parameters
+    /// than the host supplies (`(value, index, array)`) therefore never has its
+    /// own local slots clobbered, and one declaring more sees `undefined` in the
+    /// surplus slots (padded by [`Interp::call`]).
+    pub(crate) fn invoke_callback(
+        &mut self,
+        handle: zun_core::FunctionHandle,
+        call_args: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let (method_rid, mut final_args) = self.resolve_call_target(handle, call_args)?;
+        let target = self
+            .module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+            .ok_or(RunError::BadToken)?;
+        let body = read_body(&self.module.code, target.body_offset)
+            .map_err(|error| RunError::Malformed(error.to_string()))?;
+        final_args.truncate(body.param_count as usize);
+        self.call(method_rid, final_args, None)
+    }
 }
 
 /// Interpret an argument as a `[[Prototype]]` link: `null`/`undefined` clears
@@ -1923,6 +2218,46 @@ fn unbox_arg(value: &Value) -> Result<Value, RunError> {
             zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).ok_or(RunError::BadToken)
         }
         other => Ok(other.clone()),
+    }
+}
+
+/// ECMAScript truthiness for a callback result (unboxing an `Any` carrier
+/// first): `false`, `0`/`NaN`, `""`, `null` and `undefined` are falsy; every
+/// object, function and non-empty string is truthy.
+fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
+    let concrete = match value {
+        Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),
+        other => other.clone(),
+    };
+    match concrete {
+        Value::Bool(flag) => flag,
+        Value::Int(number, _) => number != 0,
+        Value::Float(number, _) => number != 0.0 && !number.is_nan(),
+        Value::Str(text) => !text.is_empty(),
+        Value::Null | Value::Void => false,
+        Value::Object(_) | Value::Function(_) | Value::Any(_) => true,
+    }
+}
+
+/// Coerce a comparator result (unboxing an `Any` carrier) to the number whose
+/// sign decides the ordering. Non-numeric results yield `NaN`, treated by the
+/// caller as "already ordered" (a stable no-swap).
+fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {
+    let concrete = match value {
+        Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),
+        other => other.clone(),
+    };
+    match concrete {
+        Value::Int(number, _) => number as f64,
+        Value::Float(number, _) => number,
+        Value::Bool(flag) => {
+            if flag {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        _ => f64::NAN,
     }
 }
 

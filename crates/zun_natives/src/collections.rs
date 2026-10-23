@@ -300,6 +300,29 @@ pub const MODULE: crate::Module = crate::Module {
         // value whose prepended arguments are `[thisArg, ...partialArgs]`.
         NativeFn { name: "functionApply", params: &[Function, Opaque, Array], ret: Opaque, imp: unavailable },
         NativeFn { name: "functionBind", params: &[Function, Array], ret: Function, imp: unavailable },
+        // Standard `Array.prototype` callback methods. Each re-enters the
+        // interpreter, invoking the callback with the ECMAScript signature
+        // `(value, index, array)` (the comparator with `(a, b)`); excess
+        // positional arguments are dropped to the callback's declared arity.
+        // Signatures here fix only the argument count the verifier pops; the
+        // interpreter intercepts them by name.
+        NativeFn { name: "arrayForEach", params: &[Array, Function], ret: Void, imp: unavailable },
+        NativeFn { name: "arrayMap", params: &[Array, Function], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayFilter", params: &[Array, Function], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayFind", params: &[Array, Function], ret: Opaque, imp: unavailable },
+        NativeFn { name: "arrayFindIndex", params: &[Array, Function], ret: I32, imp: unavailable },
+        NativeFn { name: "arraySome", params: &[Array, Function], ret: Bool, imp: unavailable },
+        NativeFn { name: "arrayEvery", params: &[Array, Function], ret: Bool, imp: unavailable },
+        NativeFn { name: "arrayReduce", params: &[Array, Function, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "arrayReduceRight", params: &[Array, Function, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "arraySortBy", params: &[Array, Function], ret: Array, imp: unavailable },
+        // Standard `Array.prototype` structural methods that do not take a
+        // callback but need host-side element coercion (join) or mutation.
+        NativeFn { name: "arraySortDefault", params: &[Array], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayJoin", params: &[Array, Str], ret: Str, imp: unavailable },
+        NativeFn { name: "arrayShift", params: &[Array], ret: Opaque, imp: unavailable },
+        NativeFn { name: "arrayUnshift", params: &[Array, Opaque], ret: U64, imp: unavailable },
+        NativeFn { name: "arraySplice", params: &[Array, U64, U64], ret: Array, imp: unavailable },
         // Realm-global registration (PLAN §3.1). Lean positional signature:
         // `global.set(name, value, readonly)`; registers `name -> value` on the
         // realm global singleton, non-writable when `readonly`.

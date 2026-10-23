@@ -29,38 +29,11 @@ class Array {
         return value;
     }
 
-    map(callback: Function): Array {
-        let result = new Array(this.length);
-        let index: u64 = 0;
-        while (index < this.length) {
-            result[index] = callback(this[index]);
-            index = index + 1;
-        }
-        return result;
-    }
-
-    filter(callback: Predicate): Array {
-        let result = new Array(0);
-        let index: u64 = 0;
-        while (index < this.length) {
-            let value: any = this[index];
-            if (callback(value)) {
-                result.push(value);
-            }
-            index = index + 1;
-        }
-        return result;
-    }
-
-    reduce(callback: Reducer, initial: any): any {
-        let accumulator: any = initial;
-        let index: u64 = 0;
-        while (index < this.length) {
-            accumulator = callback(accumulator, this[index]);
-            index = index + 1;
-        }
-        return accumulator;
-    }
+    // Standard callback methods (`map`, `filter`, `reduce`, `reduceRight`,
+    // `forEach`, `find`, `findIndex`, `some`, `every`) and `sort` are provided
+    // by the `zun:core` `array` natives, which invoke the callback with the
+    // ECMAScript `(value, index, array)` signature; the sema layer routes those
+    // method names to the natives before class dispatch.
 
     removeAt(index: u64): any {
         let removed: any = this[index];
@@ -524,10 +497,6 @@ class Array {
         return -1;
     }
 
-    findIndex(value: any): int {
-        return this.indexOf(value);
-    }
-
     lastIndexOf(value: any): int {
         let index: int = this.length as int;
         while (index > 0) {
@@ -661,7 +630,7 @@ class Array {
         return result;
     }
 
-    sort(): Array {
+    sortNumeric(): Array {
         let index: u64 = 0;
         while (index < this.length) {
             let smallest: u64 = index;
