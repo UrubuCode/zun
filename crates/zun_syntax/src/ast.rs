@@ -399,6 +399,15 @@ pub enum Expr {
         /// Source location including backticks.
         span: Span,
     },
+    /// A regular-expression literal `/pattern/flags`.
+    RegexLiteral {
+        /// Raw pattern source between the slashes.
+        pattern: String,
+        /// Trailing flag characters.
+        flags: String,
+        /// Source location including slashes and flags.
+        span: Span,
+    },
     /// `true` / `false`.
     Bool {
         /// The literal value.
@@ -628,6 +637,7 @@ impl Expr {
             | Expr::BigInt { span, .. }
             | Expr::String { span, .. }
             | Expr::Template { span, .. }
+            | Expr::RegexLiteral { span, .. }
             | Expr::Bool { span, .. }
             | Expr::Null { span }
             | Expr::Assign { span, .. }

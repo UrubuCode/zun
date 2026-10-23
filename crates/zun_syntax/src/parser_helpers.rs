@@ -41,7 +41,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
-        Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
+        Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::RegexLiteral { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
     }
 }
 
@@ -163,6 +163,17 @@ impl Parser<'_> {
                 self.bump();
                 let raw = self.text(t).to_string();
                 Expr::Template { parts: parse_template_parts(&raw, t.span, &mut self.diagnostics), span: t.span }
+            }
+            TokenKind::Regex => {
+                self.bump();
+                let raw = self.text(t);
+                // The lexer guarantees `/body/flags` with a closing slash.
+                let close = raw.rfind('/').unwrap_or(0);
+                Expr::RegexLiteral {
+                    pattern: raw[1..close].to_owned(),
+                    flags: raw[close + 1..].to_owned(),
+                    span: t.span,
+                }
             }
             TokenKind::KwTrue => { self.bump(); Expr::Bool { value: true, span: t.span } }
             TokenKind::KwFalse => { self.bump(); Expr::Bool { value: false, span: t.span } }

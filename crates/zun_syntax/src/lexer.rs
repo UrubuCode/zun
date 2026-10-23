@@ -18,6 +18,8 @@ pub enum TokenKind {
     String,
     /// A backtick template literal.
     Template,
+    /// A regular-expression literal `/pattern/flags`.
+    Regex,
     /// An identifier.
     Ident,
 
@@ -195,6 +197,44 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                 }
                 continue;
             }
+            b'/' if regex_allowed(source, tokens.last()) => {
+                pos += 1;
+                let mut in_class = false;
+                let mut closed = false;
+                while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                    match bytes[pos] {
+                        b'\\' => {
+                            pos += 1;
+                            if pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                                pos += 1;
+                            }
+                            continue;
+                        }
+                        b'[' => in_class = true,
+                        b']' => in_class = false,
+                        b'/' if !in_class => {
+                            closed = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                    pos += 1;
+                }
+                if closed {
+                    pos += 1;
+                    while pos < bytes.len() && bytes[pos].is_ascii_alphabetic() {
+                        pos += 1;
+                    }
+                    TokenKind::Regex
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error("unterminated regular expression literal")
+                            .with_code("SYN0004")
+                            .with_span(Span::new(start as u32, pos as u32)),
+                    );
+                    TokenKind::Error
+                }
+            }
             b'0'..=b'9' => {
                 while pos < bytes.len() && bytes[pos].is_ascii_digit() {
                     pos += 1;
@@ -371,6 +411,31 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
     tokens
 }
 
+/// Division-vs-regex rule: a `/` starts a regex literal unless the previous
+/// token ends a value (identifier, number, string, template, `)`, `]`,
+/// `true`/`false`/`null`). Operator-like identifiers (`typeof`, `in`,
+/// `instanceof`, `void`, `delete`) allow a regex.
+fn regex_allowed(source: &str, prev: Option<&Token>) -> bool {
+    let Some(prev) = prev else { return true };
+    match prev.kind {
+        TokenKind::Ident => matches!(
+            &source[prev.span.start as usize..prev.span.end as usize],
+            "typeof" | "in" | "instanceof" | "void" | "delete"
+        ),
+        TokenKind::Number
+        | TokenKind::BigInt
+        | TokenKind::String
+        | TokenKind::Template
+        | TokenKind::Regex
+        | TokenKind::RParen
+        | TokenKind::RBracket
+        | TokenKind::KwTrue
+        | TokenKind::KwFalse
+        | TokenKind::KwNull => false,
+        _ => true,
+    }
+}
+
 fn keyword_or_ident(text: &str) -> TokenKind {
     match text {
         "function" => TokenKind::KwFunction,
@@ -496,5 +561,42 @@ mod tests {
         let toks = lex(src, &mut diags);
         let x = toks[1];
         assert_eq!(&src[x.span.start as usize..x.span.end as usize], "x");
+    }
+
+    #[test]
+    fn regex_literal_after_value_starting_tokens() {
+        use TokenKind::*;
+        assert_eq!(kinds("/ab/g"), vec![Regex, Eof]);
+        assert_eq!(kinds("x = /a/"), vec![Ident, Eq, Regex, Eof]);
+        assert_eq!(kinds("f(/a/, /b/i)"), vec![Ident, LParen, Regex, Comma, Regex, RParen, Eof]);
+        assert_eq!(kinds("return /a/"), vec![KwReturn, Regex, Eof]);
+        assert_eq!(kinds("typeof /a/"), vec![Ident, Regex, Eof]);
+        assert_eq!(kinds("a ? /x/ : /y/"), vec![Ident, Question, Regex, Colon, Regex, Eof]);
+    }
+
+    #[test]
+    fn slash_after_value_ending_tokens_is_division() {
+        use TokenKind::*;
+        assert_eq!(kinds("a / b"), vec![Ident, Slash, Ident, Eof]);
+        assert_eq!(kinds("(x) / y"), vec![LParen, Ident, RParen, Slash, Ident, Eof]);
+        assert_eq!(kinds("arr[0] / 2"), vec![Ident, LBracket, Number, RBracket, Slash, Number, Eof]);
+        assert_eq!(kinds("4 / 2 / 1"), vec![Number, Slash, Number, Slash, Number, Eof]);
+        assert_eq!(kinds("this / 2"), vec![Ident, Slash, Number, Eof]);
+    }
+
+    #[test]
+    fn regex_class_and_escape_do_not_terminate() {
+        use TokenKind::*;
+        assert_eq!(kinds("/[/]x/"), vec![Regex, Eof]);
+        assert_eq!(kinds(r"/a\/b/g"), vec![Regex, Eof]);
+        assert_eq!(kinds(r"/[\]/]/"), vec![Regex, Eof]);
+    }
+
+    #[test]
+    fn newline_in_regex_is_an_error() {
+        let mut diags = Vec::new();
+        let toks = lex("x = /ab\ncd/", &mut diags);
+        assert_eq!(toks[2].kind, TokenKind::Error);
+        assert_eq!(diags[0].code, "SYN0004");
     }
 }

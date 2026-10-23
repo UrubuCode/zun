@@ -5991,3 +5991,62 @@ fn bigint_operations_preserve_the_tier0_fallback_boundary() {
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
+
+// ---- Regex literals (`/pattern/flags`) lower to `new RegExp(pattern, flags)` ----
+
+fn compile_oxc(src: &str) -> zun_module::Module {
+    let ast = zun_syntax::oxc::parse_subset(src, true).expect("oxc parse");
+    let mut diags = Vec::new();
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty(), "sema: {diags:?}");
+    zun_ilgen::lower(&hir)
+}
+
+/// Run `body` as `main(): int` through both frontends and expect `expected`.
+fn assert_regex_program(body: &str, expected: i64) {
+    let src = format!("function main(): int {{ {body} }}");
+    for (name, module) in [("hand", compile(&src)), ("oxc", compile_oxc(&src))] {
+        match interp_entry(&module) {
+            Value::Int(v, _) => assert_eq!(v, expected, "{name}: {src}"),
+            other => panic!("{name}: unexpected result {other:?} for {src}"),
+        }
+    }
+}
+
+#[test]
+fn regex_literal_test_method() {
+    assert_regex_program("if (/abc/.test(\"xabcy\")) { return 1; } return 0;", 1);
+    assert_regex_program("if (/abc/.test(\"xyz\")) { return 1; } return 0;", 0);
+}
+
+#[test]
+fn regex_literal_flags_are_forwarded() {
+    assert_regex_program("if (/ABC/i.test(\"abc\")) { return 1; } return 0;", 1);
+    assert_regex_program("if (/ABC/.test(\"abc\")) { return 1; } return 0;", 0);
+}
+
+#[test]
+fn regex_literal_backreference_uses_engine_b() {
+    assert_regex_program(r#"if (/(\w)\1/.test("hello")) { return 1; } return 0;"#, 1);
+    assert_regex_program(r#"if (/(\w)\1/.test("abc")) { return 1; } return 0;"#, 0);
+}
+
+#[test]
+fn regex_literal_slash_in_class_and_escape() {
+    assert_regex_program("if (/[/]x/.test(\"a/x\")) { return 1; } return 0;", 1);
+    assert_regex_program(r#"if (/a\/b/.test("a/b")) { return 1; } return 0;"#, 1);
+}
+
+#[test]
+fn regex_literal_after_assign_paren_comma_and_return() {
+    assert_regex_program("let r = /b+/; if (r.test(\"abbc\")) { return 1; } return 0;", 1);
+    assert_regex_program("let r = /z/; let s = \"zz\"; if (s.search(r) == 0) { return 1; } return 0;", 1);
+}
+
+#[test]
+fn division_is_not_mistaken_for_regex() {
+    assert_regex_program("let a = 8; let b = 2; if (a / b == 4) { return 1; } return 0;", 1);
+    assert_regex_program("let x = 9; let y = 3; if ((x) / y == 3) { return 1; } return 0;", 1);
+    assert_regex_program("let a = 100; let b = 5; let c = 2; if (a / b / c == 10) { return 1; } return 0;", 1);
+    assert_regex_program("if (12 / 4 == 3) { return 1; } return 0;", 1);
+}

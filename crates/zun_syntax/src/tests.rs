@@ -508,3 +508,22 @@
             Stmt::Expr(Expr::Call { args, .. }) if matches!(&args[0], Expr::PrivateField { .. })
         ));
     }
+
+    #[test]
+    fn parses_regex_literal_expression() {
+        let p = parse_ok(r"function main() { return /a\/b[/]/gi; }");
+        let Stmt::Return { value: Some(Expr::RegexLiteral { pattern, flags, .. }), .. } = &p.functions[0].body.statements[0] else {
+            panic!("expected regex literal");
+        };
+        assert_eq!(pattern, r"a\/b[/]");
+        assert_eq!(flags, "gi");
+    }
+
+    #[test]
+    fn division_after_identifier_still_parses_as_binary() {
+        let p = parse_ok("function main(a, b) { return a / b; }");
+        assert!(matches!(
+            &p.functions[0].body.statements[0],
+            Stmt::Return { value: Some(Expr::Binary { .. }), .. }
+        ));
+    }

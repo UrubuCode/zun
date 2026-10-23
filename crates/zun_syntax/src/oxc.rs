@@ -454,6 +454,11 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::NullLiteral(null) => Ok(Expr::Null {
             span: span(null.span),
         }),
+        Expression::RegExpLiteral(regex) => Ok(Expr::RegexLiteral {
+            pattern: regex.regex.pattern.text.to_string(),
+            flags: regex.regex.flags.to_string(),
+            span: span(regex.span),
+        }),
         Expression::TemplateLiteral(template) => {
             let mut parts = Vec::with_capacity(template.quasis.len() + template.expressions.len());
             for (index, quasi) in template.quasis.iter().enumerate() {
@@ -2120,6 +2125,29 @@ mod tests {
                 value: Some(crate::ast::Expr::Template { ref parts, .. }),
                 ..
             } if parts.len() == 3
+        ));
+    }
+
+    #[test]
+    fn converts_regex_literals_and_keeps_division() {
+        let program = parse_subset(
+            "function f(a, b) { return /a[/]b/gi; } function g(a, b) { return a / b; }",
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.functions[0].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::RegexLiteral { ref pattern, ref flags, .. }),
+                ..
+            } if pattern == "a[/]b" && flags == "gi"
+        ));
+        assert!(matches!(
+            program.functions[1].body.statements[0],
+            crate::ast::Stmt::Return {
+                value: Some(crate::ast::Expr::Binary { .. }),
+                ..
+            }
         ));
     }
 

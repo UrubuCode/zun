@@ -468,6 +468,7 @@ impl Checker<'_> {
                     self.collect_capture_stmt(cx, &nested_parameters, statement, uses);
                 }
             }
+            ast::Expr::RegexLiteral { .. } => {}
             ast::Expr::Template { parts, .. } => {
                 for part in parts {
                     if let ast::TemplatePart::Expr(expression) = part {

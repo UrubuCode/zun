@@ -121,7 +121,7 @@ pub(super) fn collect_mutated_expr(
         }
         ast::Expr::Function(_) | ast::Expr::Ident(_) | ast::Expr::Number { .. }
         | ast::Expr::BigInt { .. }
-        | ast::Expr::String { .. } | ast::Expr::Template { .. }
+        | ast::Expr::String { .. } | ast::Expr::Template { .. } | ast::Expr::RegexLiteral { .. }
         | ast::Expr::Bool { .. } | ast::Expr::Null { .. } => {}
         ast::Expr::Spread { expr, .. } => collect_mutated_expr(checker, expr, names),
     }
