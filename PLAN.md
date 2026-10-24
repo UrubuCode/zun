@@ -214,8 +214,13 @@ cannot do lookarounds or backrefs. Its modern **`[GeneratedRegex]`** source gene
 *compiles the pattern to code at build time* (AOT-friendly, no runtime codegen) — the
 old `RegexOptions.Compiled` emitted IL. Zun mirrors this:
 
-- **Engine A — linear-time (default, safe):** the current RE2/`regex`-crate path. The
-  NonBacktracking analogue; the default for untrusted input. No backrefs/lookaround.
+- **Engine A — linear-time (default, safe):** the NonBacktracking analogue; the default
+  for untrusted input. No backrefs/lookaround. **Zun-owned, not the external `regex`
+  crate** — a Thompson-NFA → **PikeVM** and a bounded **lazy DFA** written in-tree (RE2
+  model), so it owns the machine and compiles/JITs through Zun's own IL like everything
+  else, rather than taking a large external dependency. **Status: NOT yet implemented** —
+  every pattern currently runs on Engine B (the backtracker `zun_regex`). See the Engine A
+  build-out note below.
 - **Engine B — backtracking (full JS semantics):** JS regex *requires* backreferences
   and lookahead/lookbehind, which Engine A cannot do, so Zun owns a backtracking matcher
   (parser → `RegexNode` tree → matcher) **with a mandatory step-limit** (the .NET lesson:
@@ -241,6 +246,23 @@ old `RegexOptions.Compiled` emitted IL. Zun mirrors this:
   literal regex, Tier 0 + Tier 1; (2) Split + backtrack stack (alternation); (3)
   quantifiers/loops; (4) backrefs + lookaround. Patterns not yet ZIL-compilable fall
   back to the interpreter (Engine B), so capability never regresses.
+- **Engine A build-out (the linear engine — dedicated future slice).** Benchmarking
+  (2026-10-24) confirmed the remaining performance gap to rts (`regex` crate) and .NET on
+  **linear** patterns is **architectural**, not a constant factor: Engine B is a
+  backtracker, and even with a required-literal prefilter + buffer reuse it still (a) runs
+  a backtracking VM where a DFA scans in one pass, and (b) relies on the step-limit *fuse*
+  for catastrophic patterns (`(a+)+b`) instead of being immune. Engine B's own match hot
+  path is now within ~single-digit×–~14× of .NET's **default backtracker** (same
+  architecture) and the O(n·m) scale-breaker is fixed, so Engine B is "viable"; closing the
+  last gap to the **linear** engines requires building Engine A. Design: a **Zun-owned**
+  Thompson-NFA → PikeVM (correct, linear, captures) with a **bounded lazy DFA** cache for
+  throughput (RE2 / Rust-`regex` / .NET-NonBacktracking model), **no external `regex`
+  dependency**; per-pattern selection routes backref/lookaround → Engine B and everything
+  else → Engine A (the DoS-safe default). This gives DFA-speed on the common case plus
+  linear-time immunity, and — like Engine B — can lower to ZIL/JIT through Zun's one IL. It
+  is a large, self-contained slice (weeks-scale), deliberately staged AFTER the Engine B
+  optimizations above. Literal class-membership scanning should move to byte-level / SIMD
+  class tables here (the per-char class test is Engine B's remaining per-char cost).
 
 ### 3.4 Native floor surface — single `zun:core` module, namespaced
 
