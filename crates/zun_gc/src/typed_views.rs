@@ -2,19 +2,27 @@ use super::{Heap, Obj};
 
 impl Heap {
     pub fn data_view_len(&self, object: Obj) -> Option<usize> {
-        self.data_views.get(&(object.addr() as usize)).map(|view| view.len())
+        let view = self.data_views.get(&(object.addr() as usize))?;
+        let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
+        let buffer_len = self.buffer_len(buffer)?;
+        // Out-of-bounds (a fixed view on a shrunk buffer) reports length 0.
+        Some(view.resolve(buffer_len).map_or(0, |view| view.len()))
     }
 
     pub fn typed_array_len(&self, object: Obj) -> Option<usize> {
-        self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.len())
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+        let buffer_len = self.buffer_len(*buffer)?;
+        Some(view.resolve(buffer_len).map_or(0, |view| view.len()))
     }
 
     pub fn data_view_byte_len(&self, object: Obj) -> Option<usize> {
-        self.data_views.get(&(object.addr() as usize)).map(|view| view.len())
+        self.data_view_len(object)
     }
 
     pub fn typed_array_byte_len(&self, object: Obj) -> Option<usize> {
-        self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.byte_len())
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+        let buffer_len = self.buffer_len(*buffer)?;
+        Some(view.resolve(buffer_len).map_or(0, |view| view.byte_len()))
     }
 
     /// The typed-array view's byte offset into its backing buffer
@@ -199,18 +207,22 @@ macro_rules! typed_array_heap_access {
                 /// the index is outside it, or it is a view of another kind.
                 pub fn $get(&self, object: Obj, index: usize) -> Option<$repr> {
                     let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
-                    view.$read(self.buffers.get(&(buffer.addr() as usize))?, index)
+                    let bytes = self.buffers.get(&(buffer.addr() as usize))?;
+                    // Re-resolve the window against the buffer's current
+                    // length: a resize may have shrunk it out of bounds or
+                    // (for a length-tracking view) changed how many elements
+                    // it covers. `None` here means out-of-bounds — the read
+                    // fails, as ES2024 requires.
+                    view.resolve(bytes.len())?.$read(bytes, index)
                 }
 
                 /// Writes one element, reporting whether it landed.
                 pub fn $set(&mut self, object: Obj, index: usize, value: $arg) -> Option<bool> {
                     let (buffer, view) =
                         self.typed_views.get(&(object.addr() as usize)).copied()?;
-                    Some(view.$write(
-                        self.buffers.get_mut(&(buffer.addr() as usize))?,
-                        index,
-                        value,
-                    ))
+                    let bytes = self.buffers.get_mut(&(buffer.addr() as usize))?;
+                    let resolved = view.resolve(bytes.len())?;
+                    Some(resolved.$write(bytes, index, value))
                 }
             )+
         }
@@ -239,6 +251,23 @@ impl Heap {
         self.typed_views.insert(object.addr() as usize, (buffer, view));
         Some(object)
     }
+
+    /// Allocates a length-tracking typed-array view over `buffer` (`new
+    /// <Kind>Array(resizableBuffer)` / `… (buffer, offset)`, with no explicit
+    /// length). Its element count follows the buffer's current length.
+    pub fn alloc_typed_array_tracking(
+        &mut self,
+        buffer: Obj,
+        offset: usize,
+        element: zun_core::TypedElement,
+    ) -> Option<Obj> {
+        let view =
+            zun_core::TypedArrayView::new_tracking(self.buffer_len(buffer)?, offset, element)?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
 }
 
 impl Heap {
@@ -247,6 +276,10 @@ impl Heap {
     /// them, so the two views see each other's writes.
     pub fn typed_array_subarray(&mut self, object: Obj, begin: usize, end: usize) -> Option<Obj> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
+        // Resolve against the buffer's current length first, so a subarray of
+        // a length-tracking (or resized) view steps over the window the view
+        // actually covers now. The child is a fixed-length view of that range.
+        let view = view.resolve(self.buffer_len(buffer)?)?;
         let subview = view.subview(begin, end);
         // The buffer's address is carried across this allocation, which the
         // comment on `buffer_slice` forbids. It is safe here, and the reason
@@ -273,7 +306,8 @@ impl Heap {
         begin: usize,
         end: usize,
     ) -> Option<std::ops::Range<usize>> {
-        let (_, view) = self.typed_views.get(&(object.addr() as usize))?;
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+        let view = view.resolve(self.buffer_len(*buffer)?)?;
         Some(view.fill_range(begin, end))
     }
 }

@@ -432,6 +432,12 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "typedArrayFrom",
         "typedArrayFromMapped",
         "typedArrayOf",
+        // ES2024 resizable ArrayBuffer.
+        "bufferResizableNew",
+        "bufferResize",
+        "bufferMaxByteLength",
+        "bufferResizable",
+        "typedArrayTrackingNew",
     ]
     .into_iter()
     // The typed-array intrinsics come from the master table, so a kind

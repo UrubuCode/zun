@@ -41,7 +41,7 @@ read.
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | mostly | Spec-shaped `new FinalizationRegistry(cleanup)` / `register(target, heldValue, unregisterToken?)` / `unregister(unregisterToken)`; `unregister` keyed by unregister-token object identity (weak key); cleanup callback delivered on collection. Deferred: `heldValue` is a `u64`, not an arbitrary value |
-| 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, and the static `isView(x)`. Missing resizable buffers (deferred) |
+| 17 | ArrayBuffer | mostly | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, the static `isView(x)`, and now **resizable buffers (ES2024)**: `new ArrayBuffer(n, { maxByteLength })`, `resize(newLength)` (grow zero-fills the tail, shrink preserves the prefix), `maxByteLength()`/`resizable()`. Out-of-bounds / length-tracking view semantics are **lazy-resolved**: typed-array/DataView windows re-resolve against the buffer's current length at access time (no buffer→view back-reference registry), so a resize walks no views — a length-tracking typed array (`new Uint8Array(rab)`, no explicit length) follows the new length, and a fixed-length view that no longer fits reports length 0 and fails on access. Rejected `resize` (fixed buffer or `newLength > maxByteLength`) errs as `BadToken` (project convention, not JS `RangeError`). Deferred: `transfer`/`transferToFixedLength` (buffer detachment), length-tracking `DataView` |
 | 18 | DataView | mostly | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. **Endianness flag is now optional and defaults to `false` (big-endian) per spec** — `getUint32(0)` type-checks and reads big-endian; single-byte widths still take none |
 | 19 | TypedArrays | mostly | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. **Bulk `set(source, offset?)`** (overloaded against the indexed `set(index, value)` by first-argument type), **copying `slice(start?, end?)`**, **in-place `copyWithin(target, start?, end?)`**, the functional methods **`map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`** (spec `(value, index, array)` callback, Tier 0), **`indexOf`/`includes`/`join`**, and the statics **`from(src, mapFn?)`/`of(...)`** all landed, as kind-agnostic `typedArray*` natives (one each, not per-kind). `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: no-initial-value `reduce` (initial value required); `Uint8Array.slice` keeps Buffer (shared-type) semantics. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | mostly | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters AND local-time setters (`setFullYear/setMonth/setDate/setHours/setMinutes/setSeconds/setMilliseconds` with ECMAScript optional trailing args, == their UTC counterparts since the calendar is UTC-only). Only `toLocale*` remains (locale/ICU — gated) |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 6 · mostly 18 · partial 2 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 6 · mostly 19 · partial 1 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -829,14 +829,36 @@ reclaims the target).
   mirrors the surface so the module type-checks but is not the dispatch path — the
   checker lowers `FinalizationRegistry` methods directly against the builtin type.
 
-## 17. ArrayBuffer — partial
+## 17. ArrayBuffer — mostly
 `Ty::Buffer` is what the realm registers under the name `ArrayBuffer`; the byte
-storage lives in `zun_gc/buffers.rs`.
+storage lives in `zun_gc/buffers.rs` (`ByteBuffer` in `zun_core`).
 
 - **Present:** `new ArrayBuffer(length)`, `byteLength()`, `slice(begin, end)`,
-  and the static `ArrayBuffer.isView(x)`.
+  the static `ArrayBuffer.isView(x)`, and resizable buffers (see below).
   `slice` copies rather than aliasing, as JS does, and clamps inverted or
   out-of-range bounds to an empty result instead of failing.
+- **Resizable buffers (ES2024).** `new ArrayBuffer(n, { maxByteLength })` marks
+  the buffer resizable (`ByteBuffer.max: Option<usize>` — `None` is fixed-length,
+  unchanged byte-for-byte). `resize(newLength)` grows (zero-filling the new tail)
+  or shrinks (preserving the surviving prefix); `maxByteLength()` returns the cap
+  (or the current length for a fixed buffer) and `resizable()` the flag. A
+  rejected resize (fixed buffer, or `newLength > maxByteLength`) errs as
+  `BadToken`, the project convention (not JS `RangeError`).
+- **View revalidation = lazy resolve (no back-reference registry).** The prior
+  blocker — that a `resize` would have to re-validate every outstanding view —
+  is dissolved by not caching an absolute window: a typed-array/DataView view
+  re-resolves its window against the buffer's *current* length at access time
+  (`TypedArrayView::resolve`/`DataView::resolve`), so a resize touches no views.
+  A **length-tracking** typed array (`new Uint8Array(rab)` / `(rab, offset)`, no
+  explicit length — a `track` flag, allocated via `typedArrayTrackingNew`)
+  follows the new length; a **fixed-length** view whose window no longer fits is
+  out-of-bounds — length 0, access fails — exactly as the spec requires. This is
+  sound because every access already borrows the backing buffer, so re-reading
+  its length costs nothing and no stale window can outlive a resize.
+- **Deferred:** `transfer`/`transferToFixedLength` (buffer detachment — would
+  need a detached-state on every view access), length-tracking `DataView`
+  (constructor still requires an explicit length; fixed DataViews do resolve for
+  out-of-bounds), `SharedArrayBuffer` (fine).
 - **`ArrayBuffer.isView(x)`** — `true` for a `DataView` or any typed array,
   `false` for everything else (including a plain `ArrayBuffer`, a non-view
   object, and any non-object value). The argument is accepted as an opaque
@@ -847,11 +869,6 @@ storage lives in `zun_gc/buffers.rs`.
   `buffer.byteLength()`, consistent with `String.length()` and `Map.size()` here.
   The property-vs-method divergence is repo-wide and listed under Surprising
   findings rather than patched per type.
-- **Missing:** resizable buffers (`resize`/`maxByteLength`),
-  `SharedArrayBuffer` (deferred, fine). Resizable buffers stay deferred: a
-  `resize` would have to re-validate every outstanding view's window against the
-  new length, which the view registries do not track back-references for yet.
-
 ## 18. DataView — mostly
 `BufferViewKind::DataView`; core accessors in `zun_core/views.rs`.
 

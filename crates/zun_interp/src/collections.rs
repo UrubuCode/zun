@@ -77,6 +77,56 @@ impl<'a> Interp<'a> {
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(copy))
             }
+            "bufferResizableNew" => {
+                let int_at = |position: usize| -> Result<usize, RunError> {
+                    match args.get(position).ok_or(RunError::BadToken)? {
+                        Value::Int(value, _) => Ok(*value as usize),
+                        _ => Err(RunError::BadToken),
+                    }
+                };
+                let length = int_at(0)?;
+                let max = int_at(1)?;
+                // `maxByteLength < byteLength` is a construction-time error.
+                let object = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_resizable_buffer(length, max)
+                })
+                .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(object))
+            }
+            "bufferResize" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let new_length = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let ok = zun_gc::with_current_heap_mut(|heap| heap.buffer_resize(object, new_length))
+                    .ok_or(RunError::BadToken)?;
+                // A fixed-length buffer or an out-of-range length is a
+                // `RangeError`; surfaced through the project's native-error
+                // convention (as with other rejected buffer ops).
+                if !ok {
+                    return Err(RunError::BadToken);
+                }
+                Ok(Value::Bool(true))
+            }
+            "bufferMaxByteLength" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(
+                    zun_gc::with_current_heap(|heap| heap.buffer_max_byte_length(object))
+                        .ok_or(RunError::BadToken)? as i64,
+                    zun_il::NumKind::U64,
+                ))
+            }
+            "bufferResizable" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| heap.buffer_resizable(object))
+                        .ok_or(RunError::BadToken)?,
+                ))
+            }
             "bufferGetU8" => {
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -3912,6 +3962,19 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(result))
             })()),
             "typedArrayFromMapped" => Some(self.typed_array_from_mapped(args)),
+            "typedArrayTrackingNew" => Some((|| {
+                let buffer = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let offset = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let kind = kind_arg(args.get(2))?;
+                let view = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_typed_array_tracking(buffer, offset, kind)
+                })
+                .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(view))
+            })()),
             _ => None,
         }
     }

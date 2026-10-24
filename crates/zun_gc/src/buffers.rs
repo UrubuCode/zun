@@ -5,6 +5,32 @@ impl Heap {
         self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::len)
     }
 
+    /// Allocates a resizable `ArrayBuffer` of `length` bytes growable to
+    /// `max`. `None` when `length > max` (the constructor's `TypeError`).
+    pub fn alloc_resizable_buffer(&mut self, length: usize, max: usize) -> Option<Obj> {
+        let buffer = zun_core::ByteBuffer::new_resizable(length, max)?;
+        let object = self.alloc(0, 0);
+        self.buffers.insert(object.addr() as usize, buffer);
+        Some(object)
+    }
+
+    /// `ArrayBuffer.prototype.maxByteLength`.
+    pub fn buffer_max_byte_length(&self, object: Obj) -> Option<usize> {
+        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::max_byte_length)
+    }
+
+    /// `ArrayBuffer.prototype.resizable`.
+    pub fn buffer_resizable(&self, object: Obj) -> Option<bool> {
+        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::resizable)
+    }
+
+    /// `ArrayBuffer.prototype.resize(newLength)`. Outstanding typed-array and
+    /// `DataView` windows are not walked: each re-resolves against the new
+    /// length on its next access, so nothing here has to touch them.
+    pub fn buffer_resize(&mut self, object: Obj, new_length: usize) -> Option<bool> {
+        Some(self.buffers.get_mut(&(object.addr() as usize))?.resize(new_length))
+    }
+
     pub fn buffer_get(&self, object: Obj, index: usize) -> Option<u8> {
         self.buffers.get(&(object.addr() as usize))?.get(index)
     }

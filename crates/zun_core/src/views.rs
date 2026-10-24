@@ -13,14 +13,28 @@ pub struct ByteView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataView {
     pub(crate) view: ByteView,
+    /// Length-tracking (created with no explicit length over a resizable
+    /// buffer): the window follows the buffer's current length. `false` for a
+    /// fixed-length view.
+    pub(crate) track: bool,
 }
 
 
 /// Typed-array view metadata over a bounded byte window.
+///
+/// The window (`view`) is the range that was valid when the view was created.
+/// For a view over a resizable `ArrayBuffer`, the *effective* window is
+/// recomputed from the buffer's current length at access time via
+/// [`Self::resolve`], rather than being cached here — so a resize needs no
+/// walk of outstanding views, and every view re-reads the buffer on the next
+/// access. This is the ES2024 out-of-bounds / length-tracking semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TypedArrayView {
     pub(crate) view: ByteView,
     pub(crate) element: TypedElement,
+    /// Length-tracking (created with no explicit length): the element count
+    /// follows the buffer's current length. `false` for a fixed-length view.
+    pub(crate) track: bool,
 }
 
 impl ByteView {
@@ -71,7 +85,28 @@ impl DataView {
     pub fn new(buffer_length: usize, offset: usize, length: usize) -> Option<Self> {
         Some(Self {
             view: ByteView::new(buffer_length, offset, length)?,
+            track: false,
         })
+    }
+
+    /// The effective view against a (possibly resized) buffer of
+    /// `buffer_length` bytes, or `None` when a fixed-length view no longer
+    /// fits (ES2024: the view is out-of-bounds — length 0, access throws).
+    /// A length-tracking view follows the buffer's current length.
+    pub fn resolve(self, buffer_length: usize) -> Option<Self> {
+        let offset = self.view.offset;
+        if offset > buffer_length {
+            return None;
+        }
+        let available = buffer_length - offset;
+        let length = if self.track {
+            available
+        } else if self.view.length > available {
+            return None;
+        } else {
+            self.view.length
+        };
+        Some(Self { view: ByteView { offset, length }, track: self.track })
     }
 
     pub fn offset(self) -> usize {
@@ -357,7 +392,54 @@ impl TypedArrayView {
     ) -> Option<Self> {
         let byte_length = length.checked_mul(element.size())?;
         let view = ByteView::new(buffer_length, offset, byte_length)?;
-        (offset % element.size() == 0).then_some(Self { view, element })
+        (offset % element.size() == 0).then_some(Self { view, element, track: false })
+    }
+
+    /// A length-tracking view: created with no explicit length (`new
+    /// Uint8Array(resizableBuffer)` / `new Uint8Array(rab, offset)`), so its
+    /// element count follows the buffer's current length. The initial window
+    /// spans from `offset` to the end of the buffer, floored to a whole number
+    /// of elements. Fails when `offset` is misaligned or past the buffer end.
+    pub fn new_tracking(
+        buffer_length: usize,
+        offset: usize,
+        element: TypedElement,
+    ) -> Option<Self> {
+        if offset % element.size() != 0 || offset > buffer_length {
+            return None;
+        }
+        let length = ((buffer_length - offset) / element.size()) * element.size();
+        Some(Self {
+            view: ByteView { offset, length },
+            element,
+            track: true,
+        })
+    }
+
+    /// The effective view against a (possibly resized) buffer of
+    /// `buffer_length` bytes, or `None` when a fixed-length view no longer
+    /// fits (ES2024: the view is out-of-bounds — length 0, access fails). A
+    /// length-tracking view's window follows the buffer's current length,
+    /// floored to whole elements.
+    pub fn resolve(self, buffer_length: usize) -> Option<Self> {
+        let size = self.element.size();
+        let offset = self.view.offset;
+        if offset > buffer_length {
+            return None;
+        }
+        let available = buffer_length - offset;
+        let length = if self.track {
+            (available / size) * size
+        } else if self.view.length > available {
+            return None;
+        } else {
+            self.view.length
+        };
+        Some(Self {
+            view: ByteView { offset, length },
+            element: self.element,
+            track: self.track,
+        })
     }
 
     pub fn len(self) -> usize {
@@ -397,6 +479,7 @@ impl TypedArrayView {
                 length: (end - begin) * size,
             },
             element: self.element,
+            track: false,
         }
     }
 

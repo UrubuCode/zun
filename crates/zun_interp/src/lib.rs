@@ -3211,6 +3211,82 @@ mod method_tests {
     }
 
     #[test]
+    fn resizable_array_buffer_grows_with_zero_filled_tail() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(8, { maxByteLength: 16 }); b.resize(16); return b.byteLength() as u64; }",
+        )
+        .expect("compile resizable grow");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run resizable grow");
+        assert!(matches!(result, Value::Int(16, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn resizable_array_buffer_reports_max_and_resizable() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(8, { maxByteLength: 16 }); if (b.resizable()) { return b.maxByteLength() as u64; } return 0; }",
+        )
+        .expect("compile max/resizable");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run max/resizable");
+        assert!(matches!(result, Value::Int(16, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn fixed_array_buffer_is_not_resizable() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(8); if (b.resizable()) { return 1; } if (b.maxByteLength() == 8) { return 0; } return 2; }",
+        )
+        .expect("compile fixed buffer");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run fixed buffer");
+        assert!(matches!(result, Value::Int(0, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn resize_beyond_max_is_rejected() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(8, { maxByteLength: 16 }); b.resize(32); return 0; }",
+        )
+        .expect("compile over-max resize");
+        let mut output = CaptureOutput::default();
+        assert!(run(&module, &mut output).is_err(), "resize beyond max must error");
+    }
+
+    #[test]
+    fn length_tracking_typed_array_reflects_resize() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(4, { maxByteLength: 16 }); let arr = new Uint8Array(b); b.resize(12); return arr.length() as u64; }",
+        )
+        .expect("compile length-tracking");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run length-tracking");
+        assert!(matches!(result, Value::Int(12, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn fixed_view_that_no_longer_fits_becomes_out_of_bounds() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(16, { maxByteLength: 16 }); let arr = new Uint8Array(b, 0, 16); b.resize(4); return arr.length() as u64; }",
+        )
+        .expect("compile OOB view");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run OOB view");
+        assert!(matches!(result, Value::Int(0, zun_il::NumKind::U64)));
+    }
+
+    #[test]
+    fn resize_preserves_data_and_zero_fills_grown_tail() {
+        let module = zun_compiler::compile(
+            "function main(): u64 { let b = new ArrayBuffer(4, { maxByteLength: 8 }); let arr = new Uint8Array(b); arr.set(0, 99); b.resize(8); return (arr.get(0) as u64) + (arr.get(7) as u64); }",
+        )
+        .expect("compile preserve/zero-fill");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run preserve/zero-fill");
+        assert!(matches!(result, Value::Int(99, zun_il::NumKind::U64)));
+    }
+
+    #[test]
     fn accesses_numeric_values_in_gc_backed_buffers_from_source() {
         let module = zun_compiler::compile(
             "import { bufferNew, bufferWriteU32, bufferReadU32, bufferWriteF64, bufferReadF64 } from \"zun:core\"; function main(): number { let buffer = bufferNew(16); bufferWriteU32(buffer, 0, 16909060); bufferWriteF64(buffer, 8, 2.5); if (bufferReadU32(buffer, 0) == 16909060) { return bufferReadF64(buffer, 8); } return 0.0; }",

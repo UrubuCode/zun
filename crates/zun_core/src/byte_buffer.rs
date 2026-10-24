@@ -1,11 +1,44 @@
 /// Contiguous byte storage for ArrayBuffer-like runtime objects.
+///
+/// A fixed-length buffer carries `max == None`; a resizable buffer (ES2024
+/// `new ArrayBuffer(n, { maxByteLength })`) carries `max == Some(cap)`, where
+/// `cap` is the largest byte length [`Self::resize`] will grow to. The stored
+/// `bytes` length is always the buffer's current byte length.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ByteBuffer {
     bytes: Vec<u8>,
+    /// `Some(max)` for a resizable buffer, `None` for a fixed-length one.
+    max: Option<usize>,
 }
 
 impl ByteBuffer {
-    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length] } }
+    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length], max: None } }
+
+    /// A resizable buffer of initial byte length `length` that can grow to at
+    /// most `max`. Returns `None` when `length > max`, matching the TypeError
+    /// the JS constructor throws for `maxByteLength < byteLength`.
+    pub fn new_resizable(length: usize, max: usize) -> Option<Self> {
+        (length <= max).then(|| Self { bytes: vec![0; length], max: Some(max) })
+    }
+
+    /// Whether this buffer was created resizable.
+    pub fn resizable(&self) -> bool { self.max.is_some() }
+
+    /// `ArrayBuffer.prototype.maxByteLength`: the growth cap for a resizable
+    /// buffer, or the current (fixed) byte length otherwise.
+    pub fn max_byte_length(&self) -> usize { self.max.unwrap_or(self.bytes.len()) }
+
+    /// `ArrayBuffer.prototype.resize(newLength)`. Fails (returns `false`,
+    /// leaving the buffer untouched) for a fixed-length buffer or when
+    /// `new_length` exceeds `maxByteLength`. Growing zero-fills the new tail;
+    /// shrinking preserves the surviving prefix.
+    pub fn resize(&mut self, new_length: usize) -> bool {
+        let Some(max) = self.max else { return false; };
+        if new_length > max { return false; }
+        self.bytes.resize(new_length, 0);
+        true
+    }
+
     pub fn len(&self) -> usize { self.bytes.len() }
     pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
     pub fn get(&self, index: usize) -> Option<u8> { self.bytes.get(index).copied() }

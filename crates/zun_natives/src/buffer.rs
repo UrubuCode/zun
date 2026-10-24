@@ -371,6 +371,21 @@ macro_rules! buffer_module {
             NativeFn { name: "typedArrayFrom", params: &[Opaque, U32], ret: Opaque, imp: unavailable },
             NativeFn { name: "typedArrayFromMapped", params: &[Opaque, Function, U32], ret: Opaque, imp: unavailable },
             NativeFn { name: "typedArrayOf", params: &[Opaque, U32], ret: Opaque, imp: unavailable },
+            // ES2024 resizable `ArrayBuffer`. Appended last so no existing
+            // dispatch id shifts. `bufferResizableNew(length, maxByteLength)`
+            // marks the buffer resizable; `bufferResize` grows/shrinks it (new
+            // bytes zero-filled, data preserved up to min(old,new)), returning
+            // `false` when the buffer is fixed-length or `newLength` exceeds
+            // the maximum. Outstanding views re-resolve their window against
+            // the buffer's current length on their next access, so a resize
+            // walks no views. `typedArrayTrackingNew(buffer, offset, kind)`
+            // builds a length-tracking typed array (no explicit length); the
+            // `kind` is the `TypedElement` table-order discriminant.
+            NativeFn { name: "bufferResizableNew", params: &[U64, U64], ret: Buffer, imp: unavailable },
+            NativeFn { name: "bufferResize", params: &[Buffer, U64], ret: Bool, imp: unavailable },
+            NativeFn { name: "bufferMaxByteLength", params: &[Buffer], ret: U64, imp: unavailable },
+            NativeFn { name: "bufferResizable", params: &[Buffer], ret: Bool, imp: unavailable },
+            NativeFn { name: "typedArrayTrackingNew", params: &[Opaque, U64, U32], ret: Opaque, imp: unavailable },
         ],
     };
     };

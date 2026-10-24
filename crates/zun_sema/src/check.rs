@@ -2581,6 +2581,76 @@ impl Checker<'_> {
         }
     }
 
+    /// `new ArrayBuffer(length)` or `new ArrayBuffer(length, { maxByteLength })`.
+    /// Without the options bag the buffer is fixed-length (`bufferNew`); with a
+    /// `maxByteLength` it is resizable (`bufferResizableNew`, ES2024).
+    fn check_array_buffer_new(
+        &mut self,
+        cx: &mut FunctionCx,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        if args.is_empty() || args.len() > 2 {
+            self.error(span, "`ArrayBuffer` expects a length and an optional options object");
+            return self.poison(span);
+        }
+        let mut length = self.check_expr(cx, &args[0]);
+        coerce_numeric_literal(&mut length, Ty::INT);
+        if !length.ty.is_int() {
+            self.error(length.span, "ArrayBuffer length must be an integer");
+        }
+        // The optional second argument is `{ maxByteLength: <expr> }`, which
+        // marks the buffer resizable. Only `maxByteLength` is read; the bag is
+        // otherwise an object literal like any other.
+        let max = if let Some(options) = args.get(1) {
+            match options {
+                ast::Expr::ObjectLiteral { properties, .. } => {
+                    let found = properties.iter().find(|property| match &property.key {
+                        ast::PropertyKey::Ident(name) => self.text(name) == "maxByteLength",
+                        ast::PropertyKey::String { value, .. } => value == "maxByteLength",
+                        _ => false,
+                    });
+                    match found {
+                        Some(property) => {
+                            let mut value = self.check_expr(cx, &property.value);
+                            coerce_numeric_literal(&mut value, Ty::INT);
+                            if !value.ty.is_int() {
+                                self.error(value.span, "`maxByteLength` must be an integer");
+                            }
+                            Some(value)
+                        }
+                        None => {
+                            self.error(
+                                options.span(),
+                                "`ArrayBuffer` options object must have a `maxByteLength`",
+                            );
+                            return self.poison(span);
+                        }
+                    }
+                }
+                other => {
+                    self.error(other.span(), "`ArrayBuffer` second argument must be an options object");
+                    return self.poison(span);
+                }
+            }
+        } else {
+            None
+        };
+        let (native, call_args) = match max {
+            Some(max) => ("bufferResizableNew", vec![length, max]),
+            None => ("bufferNew", vec![length]),
+        };
+        let Some((id, _)) = zun_natives::resolve("buffer", native) else {
+            self.error(span, "missing ArrayBuffer intrinsic");
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+            ty: Ty::Buffer,
+            span,
+        }
+    }
+
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
@@ -5046,6 +5116,21 @@ impl Checker<'_> {
                         Ty::Buffer,
                         vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
                     )),
+                    // ES2024 resizable ArrayBuffer. As with `byteLength`, these
+                    // JS properties are methods here (the divergence is in
+                    // NUCLEUS). `resize` returns a boolean rather than JS's
+                    // `undefined`; a rejected resize is a runtime error.
+                    (Ty::Buffer, "maxByteLength") => {
+                        Some(("bufferMaxByteLength", Ty::Int(IntKind::U64), vec![]))
+                    }
+                    (Ty::Buffer, "resizable") => {
+                        Some(("bufferResizable", Ty::Boolean, vec![]))
+                    }
+                    (Ty::Buffer, "resize") => Some((
+                        "bufferResize",
+                        Ty::Boolean,
+                        vec![Ty::Int(IntKind::U64)],
+                    )),
                     _ => None,
                 });
                 if let Some((native_name, return_ty, expected)) = managed_method {
@@ -5702,26 +5787,56 @@ impl Checker<'_> {
                             };
                         }
                         CtorLowering::ArrayBuffer => {
-                            if args.len() != 1 {
-                                self.error(span, "`ArrayBuffer` expects one length argument");
-                                return self.poison(span);
-                            }
-                            let mut length = self.check_expr(cx, &args[0]);
-                            coerce_numeric_literal(&mut length, Ty::INT);
-                            if !length.ty.is_int() {
-                                self.error(length.span, "ArrayBuffer length must be an integer");
-                            }
-                            let Some((id, _)) = zun_natives::resolve("buffer", "bufferNew") else {
-                                self.error(span, "missing ArrayBuffer intrinsic");
-                                return self.poison(span);
-                            };
-                            return hir::Expr {
-                                kind: hir::ExprKind::CallBuiltin { id, args: vec![length] },
-                                ty: Ty::Buffer,
-                                span,
-                            };
+                            return self.check_array_buffer_new(cx, args, span);
                         }
                         CtorLowering::BufferView { native, kind } => {
+                            // A typed array (not `DataView`) created with the
+                            // length omitted (`new Uint8Array(buffer)` or
+                            // `… (buffer, offset)`) is a length-tracking view
+                            // over a resizable buffer (ES2024): its element
+                            // count follows the buffer's current length.
+                            // `DataView` keeps requiring an explicit length;
+                            // length-tracking DataViews are a documented
+                            // follow-up.
+                            let element_index = crate::typed_arrays::element_index(kind);
+                            if args.len() < 3 && element_index.is_some() {
+                                if args.is_empty() {
+                                    self.error(span, format!("`{name}` expects at least a buffer"));
+                                    return self.poison(span);
+                                }
+                                let buffer = self.check_expr(cx, &args[0]);
+                                let offset = match args.get(1) {
+                                    Some(arg) => {
+                                        let mut offset = self.check_expr(cx, arg);
+                                        coerce_numeric_literal(&mut offset, Ty::INT);
+                                        offset
+                                    }
+                                    None => hir::Expr {
+                                        kind: hir::ExprKind::Number(0.0),
+                                        ty: Ty::Int(IntKind::U64),
+                                        span,
+                                    },
+                                };
+                                let kind_lit = hir::Expr {
+                                    kind: hir::ExprKind::Number(element_index.unwrap() as f64),
+                                    ty: Ty::Int(IntKind::U32),
+                                    span,
+                                };
+                                let Some((id, _)) =
+                                    zun_natives::resolve("buffer", "typedArrayTrackingNew")
+                                else {
+                                    self.error(span, "missing typed-array intrinsic `typedArrayTrackingNew`");
+                                    return self.poison(span);
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id,
+                                        args: vec![buffer, offset, kind_lit],
+                                    },
+                                    ty: Ty::BufferView(kind),
+                                    span,
+                                };
+                            }
                             if args.len() != 3 {
                                 self.error(span, format!("`{name}` expects buffer, offset, and length"));
                                 return self.poison(span);
@@ -5756,27 +5871,7 @@ impl Checker<'_> {
                     _ => None,
                 };
                 if name == "ArrayBuffer" {
-                    if args.len() != 1 {
-                        self.error(span, "`ArrayBuffer` expects one length argument");
-                        return self.poison(span);
-                    }
-                    let mut length = self.check_expr(cx, &args[0]);
-                    coerce_numeric_literal(&mut length, Ty::INT);
-                    if !length.ty.is_int() {
-                        self.error(length.span, "ArrayBuffer length must be an integer");
-                    }
-                    let Some((id, _)) = zun_natives::resolve("buffer", "bufferNew") else {
-                        self.error(span, "missing ArrayBuffer intrinsic");
-                        return self.poison(span);
-                    };
-                    return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin {
-                            id,
-                            args: vec![length],
-                        },
-                        ty: Ty::Buffer,
-                        span,
-                    };
+                    return self.check_array_buffer_new(cx, args, span);
                 }
                 if name == "DataView" {
                     if args.len() != 3 {
@@ -5802,9 +5897,63 @@ impl Checker<'_> {
                     };
                 }
                 if let Some(native_name) = typed_view {
-                    if args.len() != 3 {
-                        self.error(span, format!("`{name}` expects buffer, offset, and length"));
+                    let view_kind = match name.as_str() {
+                        "Uint8Array" => hir::BufferViewKind::U8,
+                        "Uint16Array" => hir::BufferViewKind::U16,
+                        "Uint32Array" => hir::BufferViewKind::U32,
+                        "Float64Array" => hir::BufferViewKind::F64,
+                        _ => unreachable!(),
+                    };
+                    // `new <Kind>Array(buffer, offset, length)` is a
+                    // fixed-length view. With the length omitted (`(buffer)` or
+                    // `(buffer, offset)`) it is a **length-tracking** view over
+                    // a resizable buffer (ES2024): its element count follows the
+                    // buffer's current length. Tracking routes to a
+                    // kind-agnostic native carrying the element discriminant.
+                    if args.is_empty() || args.len() > 3 {
+                        self.error(
+                            span,
+                            format!("`{name}` expects a buffer and an optional offset and length"),
+                        );
                         return self.poison(span);
+                    }
+                    if args.len() < 3 {
+                        let buffer = self.check_expr(cx, &args[0]);
+                        let offset = match args.get(1) {
+                            Some(arg) => {
+                                let mut offset = self.check_expr(cx, arg);
+                                coerce_numeric_literal(&mut offset, Ty::INT);
+                                offset
+                            }
+                            None => hir::Expr {
+                                kind: hir::ExprKind::Number(0.0),
+                                ty: Ty::Int(IntKind::U64),
+                                span,
+                            },
+                        };
+                        let Some(discriminant) = crate::typed_arrays::element_index(view_kind)
+                        else {
+                            self.error(span, "typed array requires an element kind".to_string());
+                            return self.poison(span);
+                        };
+                        let kind_lit = hir::Expr {
+                            kind: hir::ExprKind::Number(discriminant as f64),
+                            ty: Ty::Int(IntKind::U32),
+                            span,
+                        };
+                        let Some((id, _)) = zun_natives::resolve("buffer", "typedArrayTrackingNew")
+                        else {
+                            self.error(span, "missing typed-array intrinsic `typedArrayTrackingNew`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![buffer, offset, kind_lit],
+                            },
+                            ty: Ty::BufferView(view_kind),
+                            span,
+                        };
                     }
                     let mut call_args: Vec<hir::Expr> =
                         args.iter().map(|arg| self.check_expr(cx, arg)).collect();
@@ -5817,13 +5966,6 @@ impl Checker<'_> {
                             format!("missing typed-array intrinsic `{native_name}`"),
                         );
                         return self.poison(span);
-                    };
-                    let view_kind = match name.as_str() {
-                        "Uint8Array" => hir::BufferViewKind::U8,
-                        "Uint16Array" => hir::BufferViewKind::U16,
-                        "Uint32Array" => hir::BufferViewKind::U32,
-                        "Float64Array" => hir::BufferViewKind::F64,
-                        _ => unreachable!(),
                     };
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
