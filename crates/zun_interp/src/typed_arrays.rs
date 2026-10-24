@@ -110,6 +110,8 @@ macro_rules! typed_array_dispatch {
                 concat!($native, "ByteLength"),
                 concat!($native, "Get"),
                 concat!($native, "Set"),
+                concat!($native, "Subarray"),
+                concat!($native, "Fill"),
             )+
         ];
 
@@ -121,6 +123,9 @@ macro_rules! typed_array_dispatch {
             // per-kind arms below are only the ones that need the kind.
             if let Some(measure) = measurement(name, args) {
                 return Some(measure);
+            }
+            if let Some(child) = subarray(name, args) {
+                return Some(child);
             }
             match name {
                 $(
@@ -143,9 +148,42 @@ macro_rules! typed_array_dispatch {
                         Some(Value::Bool(stored))
                     })()
                     .ok_or(RunError::BadToken)),
+                    concat!($native, "Fill") => Some((|| {
+                        let view = object(args.first()?)?;
+                        let value = <$arg as ElementValue>::from_value(args.get(1)?)?;
+                        let begin = index(args.get(2)).ok()?;
+                        let end = index(args.get(3)).ok()?;
+                        let range = zun_gc::with_current_heap(|heap| {
+                            heap.typed_array_fill_range(view, begin, end)
+                        })?;
+                        let filled = zun_gc::with_current_heap_mut(|heap| {
+                            range.map(|index| heap.$set(view, index, value) == Some(true))
+                                .all(|stored| stored)
+                        });
+                        Some(Value::Bool(filled))
+                    })()
+                    .ok_or(RunError::BadToken)),
                 )+
                 _ => None,
             }
+        }
+
+        /// `subarray` for any kind: the element width it steps by is the
+        /// view's own, so one arm serves them all.
+        fn subarray(name: &str, args: &[Value]) -> Option<Result<Value, RunError>> {
+            if !matches!(name, $(concat!($native, "Subarray"))|+) {
+                return None;
+            }
+            Some((|| {
+                let view = object(args.first()?)?;
+                let begin = index(args.get(1)).ok()?;
+                let end = index(args.get(2)).ok()?;
+                let child = zun_gc::with_current_heap_mut(|heap| {
+                    heap.typed_array_subarray(view, begin, end)
+                })?;
+                Some(Value::Object(child))
+            })()
+            .ok_or(RunError::BadToken))
         }
 
         /// `length`/`byteLength` for any kind.

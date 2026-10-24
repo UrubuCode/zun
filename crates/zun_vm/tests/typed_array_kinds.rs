@@ -161,3 +161,74 @@ fn a_view_sees_writes_made_through_another_view_of_the_same_buffer() {
     // Little-endian: the low byte holds the 1.
     assert_eq!(out, vec!["1", "0"]);
 }
+
+#[test]
+fn every_kind_has_subarray_and_fill() {
+    // The sweep that keeps the method surface uniform: a kind that gained
+    // `get`/`set` but not these would be half a typed array.
+    for (name, value) in KINDS {
+        let program = format!(
+            "function main() {{
+                let b = new ArrayBuffer(64);
+                let a = new {name}(b, 0, 8);
+                a.fill({value}, 2, 5);
+                let part = a.subarray(2, 5);
+                print(part.length());
+                print(part.get(0));
+                print(a.get(1));
+                print(a.get(4));
+                print(a.get(5));
+            }}"
+        );
+        let out = try_run(&program).unwrap_or_else(|e| panic!("{name}: {e}"));
+        // Three filled elements; the window starts at the first of them; the
+        // elements on either side of the range were left alone and the last
+        // one inside it was written.
+        assert_eq!(out[0], "3", "{name} subarray length");
+        assert_eq!(&out[1], *value, "{name} subarray sees the fill");
+        assert_ne!(&out[2], *value, "{name} filled outside the range");
+        assert_eq!(&out[3], *value, "{name} missed the last element in range");
+        assert_ne!(&out[4], *value, "{name} filled past the end of the range");
+    }
+}
+
+#[test]
+fn subarray_shares_the_bytes_rather_than_copying_them() {
+    // The difference between `subarray` and `ArrayBuffer.slice`: a write
+    // through one view is visible through the other.
+    let out = run_source(
+        r#"function main() {
+            let b = new ArrayBuffer(32);
+            let a = new Uint32Array(b, 0, 8);
+            let part = a.subarray(2, 5);
+            part.set(0, 7);
+            print(a.get(2));
+            a.set(4, 9);
+            print(part.get(2));
+        }"#,
+    );
+    assert_eq!(out, vec!["7", "9"]);
+}
+
+#[test]
+fn subarray_and_fill_clamp_their_bounds() {
+    // Out-of-range bounds clamp into the view, and a backwards range is
+    // empty, rather than either failing.
+    let out = run_source(
+        r#"function main() {
+            let b = new ArrayBuffer(32);
+            let a = new Uint32Array(b, 0, 8);
+            print(a.subarray(6, 99).length());
+            print(a.subarray(5, 2).length());
+            print(a.subarray(99, 99).length());
+            a.fill(3, 6, 99);
+            print(a.get(7));
+            a.fill(4, 5, 2);
+            print(a.get(5));
+        }"#,
+    );
+    // Two elements from index 6; an empty window; an empty window past the
+    // end; the clamped fill reached the last element; the backwards fill
+    // wrote nothing.
+    assert_eq!(out, vec!["2", "0", "0", "3", "0"]);
+}

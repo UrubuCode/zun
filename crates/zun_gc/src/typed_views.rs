@@ -198,3 +198,33 @@ impl Heap {
         Some(object)
     }
 }
+
+impl Heap {
+    /// `subarray(begin, end)`: a second view of the same kind over the same
+    /// buffer. The object it returns shares the bytes rather than copying
+    /// them, so the two views see each other's writes.
+    pub fn typed_array_subarray(&mut self, object: Obj, begin: usize, end: usize) -> Option<Obj> {
+        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
+        let subview = view.subview(begin, end);
+        // Same shape as `alloc_typed_array`: the buffer's address is carried
+        // across the allocation and into the child's field, exactly as every
+        // view allocation here already does.
+        let child = self.alloc(0, 1);
+        child.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(child.addr() as usize, (buffer, subview));
+        Some(child)
+    }
+
+    /// The element range a `fill(value, begin, end)` covers on this view,
+    /// clamped as JS clamps it. The filling is per kind, so the caller walks
+    /// this range calling the kind's setter.
+    pub fn typed_array_fill_range(
+        &self,
+        object: Obj,
+        begin: usize,
+        end: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        let (_, view) = self.typed_views.get(&(object.addr() as usize))?;
+        Some(view.fill_range(begin, end))
+    }
+}

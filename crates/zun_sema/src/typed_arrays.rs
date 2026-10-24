@@ -108,6 +108,19 @@ macro_rules! typed_array_surface {
                         Ty::Boolean,
                         vec![index, scalar_ty($arg_ty)],
                     )),
+                    // `subarray` yields another view of the same kind over
+                    // the same bytes; `fill` writes one value across a range.
+                    // Both clamp their element bounds the way `slice` does.
+                    (BufferViewKind::$variant, "subarray") => Some((
+                        concat!($native, "Subarray"),
+                        Ty::BufferView(BufferViewKind::$variant),
+                        vec![index, index],
+                    )),
+                    (BufferViewKind::$variant, "fill") => Some((
+                        concat!($native, "Fill"),
+                        Ty::Boolean,
+                        vec![scalar_ty($arg_ty), index, index],
+                    )),
                 )+
                 _ => None,
             }

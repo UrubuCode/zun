@@ -237,6 +237,18 @@ macro_rules! buffer_module {
                 ret: Bool,
                 imp: unavailable,
             },
+            NativeFn {
+                name: concat!($native, "Subarray"),
+                params: &[$view_ty, U64, U64],
+                ret: $view_ty,
+                imp: unavailable,
+            },
+            NativeFn {
+                name: concat!($native, "Fill"),
+                params: &[$view_ty, $arg_native, U64, U64],
+                ret: Bool,
+                imp: unavailable,
+            },
         )+
             NativeFn {
                 name: "arrayIteratorNew",

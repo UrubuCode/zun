@@ -371,6 +371,36 @@ impl TypedArrayView {
     pub fn element(self) -> TypedElement {
         self.element
     }
+
+    /// `subarray(begin, end)`: another view of the same kind over the same
+    /// bytes. Unlike `ArrayBuffer.slice`, this shares the buffer rather than
+    /// copying it — a write through either view is visible through the other,
+    /// which is the whole reason JS has both.
+    ///
+    /// `begin` and `end` count elements and are clamped into the view the way
+    /// `slice` clamps, so an empty result is a view of length zero rather than
+    /// a failure.
+    pub fn subview(self, begin: usize, end: usize) -> Self {
+        let length = self.len();
+        let begin = begin.min(length);
+        let end = end.min(length).max(begin);
+        let size = self.element.size();
+        Self {
+            view: ByteView {
+                offset: self.view.offset() + begin * size,
+                length: (end - begin) * size,
+            },
+            element: self.element,
+        }
+    }
+
+    /// The element range `fill(value, begin, end)` covers, clamped the same
+    /// way. The filling itself is per kind, since the value is.
+    pub fn fill_range(self, begin: usize, end: usize) -> std::ops::Range<usize> {
+        let length = self.len();
+        let begin = begin.min(length);
+        begin..end.min(length).max(begin)
+    }
 }
 
 impl TypedArrayView {
