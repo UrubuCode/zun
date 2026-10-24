@@ -1606,6 +1606,102 @@ mod method_tests {
         assert!(terminal.done);
     }
 
+    fn typeof_of(source: &str) -> String {
+        let module = zun_compiler::compile(source).expect("compile typeof program");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run typeof program") {
+            Value::Str(text) => text.to_string(),
+            other => panic!("expected a string result, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_typeof_classifies_any_values() {
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = box_any(42); return typeof x; }"),
+            "number"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = box_any(\"hi\"); return typeof x; }"),
+            "string"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = box_any(true); return typeof x; }"),
+            "boolean"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = 10n; return typeof x; }"),
+            "bigint"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = Symbol(\"s\"); return typeof x; }"),
+            "symbol"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = dynamic_new(); return typeof x; }"),
+            "object"
+        );
+    }
+
+    #[test]
+    fn runtime_typeof_null_is_object_and_undefined_stays_undefined() {
+        // In JS `typeof null === "object"`, while an absent/void value is
+        // `"undefined"`. A `null`-initialized `any` reports `object`.
+        assert_eq!(
+            typeof_of("function main(): string { let x: any = null; return typeof x; }"),
+            "object"
+        );
+    }
+
+    #[test]
+    fn runtime_typeof_supports_string_type_guard() {
+        // The canonical `typeof x === "string"` narrowing pattern compiles and
+        // branches correctly at runtime over an `any` value.
+        let source = "function classify(x: any): string { if (typeof x === \"string\") { return \"is-string\"; } return \"other\"; } function main(): string { return classify(box_any(\"hi\")) + \"/\" + classify(box_any(7)); }";
+        assert_eq!(typeof_of(source), "is-string/other");
+    }
+
+    #[test]
+    fn static_typeof_still_folds_to_constants() {
+        assert_eq!(
+            typeof_of("function main(): string { return typeof 1; }"),
+            "number"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { return typeof \"a\"; }"),
+            "string"
+        );
+    }
+
+    fn bool_of(source: &str) -> bool {
+        let module = zun_compiler::compile(source).expect("compile instanceof program");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run instanceof program") {
+            Value::Bool(flag) => flag,
+            other => panic!("expected a boolean result, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_instanceof_handles_upcast_instance_in_any() {
+        // A `Derived` held through an `any` is still `instanceof` both its own
+        // class and its base — the old constant fold answered `false` here.
+        let source = "class Base {} class Derived extends Base {} function main(): boolean { let x: any = new Derived(); return (x instanceof Derived) && (x instanceof Base); }";
+        assert!(bool_of(source));
+        // A sibling class is not matched.
+        let negative = "class Base {} class Derived extends Base {} class Other extends Base {} function main(): boolean { let x: any = new Derived(); return x instanceof Other; }";
+        assert!(!bool_of(negative));
+        // A non-object `any` is never an instance.
+        let primitive = "class Base {} function main(): boolean { let x: any = box_any(7); return x instanceof Base; }";
+        assert!(!bool_of(primitive));
+    }
+
+    #[test]
+    fn static_instanceof_still_folds_for_known_instances() {
+        let source = "class Base {} class Derived extends Base {} function main(): boolean { let x = new Derived(); return x instanceof Base; }";
+        assert!(bool_of(source));
+    }
+
     #[test]
     fn generator_session_contextual_next_uses_owned_state() {
         let module = zun_compiler::compile("function* main(): int { yield 3; return 4; }")

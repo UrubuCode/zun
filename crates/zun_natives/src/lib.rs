@@ -27,6 +27,7 @@ mod number;
 mod string;
 mod time;
 mod promise;
+mod typeinfo;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -231,6 +232,7 @@ pub static MODULES: &[Module] = &[
     promise::MODULE,
     // Appended last so every existing dispatch id stays stable.
     boolean::MODULE,
+    typeinfo::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
@@ -349,6 +351,7 @@ fn module_namespace(module_name: &str, fn_name: &str) -> &'static str {
         "zun:env" => "env",
         "zun:time" => "time",
         "zun:buffer" => "buffer",
+        "zun:typeinfo" => "typeinfo",
         "zun:collections" => collections_namespace(fn_name),
         _ => "core",
     }

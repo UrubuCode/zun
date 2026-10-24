@@ -2596,6 +2596,62 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Bool(found))
             }
+            "typeofAny" => {
+                // Runtime `typeof` for an `any` operand. A managed reference is
+                // refined with the heap: a BigInt payload is `"bigint"`, every
+                // other object is `"object"`. `null` is `"object"` and
+                // `undefined`/absent is `"undefined"`, as in JavaScript.
+                let classify_object = |obj: zun_gc::Obj| {
+                    if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
+                        "bigint"
+                    } else {
+                        "object"
+                    }
+                };
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(..) | Value::Float(..) => "number",
+                    Value::Bool(_) => "boolean",
+                    Value::Str(_) => "string",
+                    Value::Function(_) => "function",
+                    Value::Void => "undefined",
+                    Value::Null => "object",
+                    Value::Object(obj) => classify_object(*obj),
+                    Value::Any(any) => match any.tag() {
+                        zun_core::AnyTag::Int | zun_core::AnyTag::Float => "number",
+                        zun_core::AnyTag::Bool => "boolean",
+                        zun_core::AnyTag::String => "string",
+                        zun_core::AnyTag::Symbol => "symbol",
+                        // A realm class descriptor is a constructor value.
+                        zun_core::AnyTag::ClassDescriptor => "function",
+                        zun_core::AnyTag::Void => "undefined",
+                        zun_core::AnyTag::Null => "object",
+                        zun_core::AnyTag::Object => match any.as_object() {
+                            Some(address) => classify_object(unsafe {
+                                zun_gc::Obj::from_addr(address as *mut u64)
+                            }),
+                            None => "object",
+                        },
+                    },
+                };
+                Ok(Value::Str(name.into()))
+            }
+            "instanceofClass" => {
+                // Runtime `instanceof` for an operand whose static type does not
+                // fold the answer. The second argument is the right-hand class's
+                // metadata TypeDef rid; walk the operand's runtime class
+                // hierarchy against it. A non-object operand (number, string,
+                // `null`, …) and a plain dynamic object are never an instance.
+                let class_rid = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let found = match object(args.first().ok_or(RunError::BadToken)?) {
+                    Some(obj) => self.types.is_assignable(obj.type_rid(), class_rid),
+                    None => false,
+                };
+                Ok(Value::Bool(found))
+            }
             _ => Err(RunError::BadToken),
         }
     }
