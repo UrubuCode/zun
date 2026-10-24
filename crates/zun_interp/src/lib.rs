@@ -2510,7 +2510,7 @@ mod method_tests {
     #[test]
     fn reflect_has_and_delete_use_dynamic_object_storage() {
         let module = zun_compiler::compile(
-            "import { reflectHas, reflectDelete } from \"zun:collections\"; function main(): boolean { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); if (!reflectHas(object, \"answer\")) { return false; } if (!reflectDelete(object, \"answer\")) { return false; } return !reflectHas(object, \"answer\"); }",
+            "import { reflectHas, reflectDelete } from \"zun:core\"; function main(): boolean { let object = dynamic_new(); dynamic_set(object, \"answer\", box_any(41)); if (!reflectHas(object, \"answer\")) { return false; } if (!reflectDelete(object, \"answer\")) { return false; } return !reflectHas(object, \"answer\"); }",
         )
         .expect("compile reflect has/delete");
         let mut output = CaptureOutput::default();
@@ -2532,7 +2532,7 @@ mod method_tests {
     #[test]
     fn proxy_get_falls_back_to_target_dynamic_properties() {
         let module = zun_compiler::compile(
-            "import { proxyGet } from \"zun:collections\"; function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+            "import { proxyGet } from \"zun:core\"; function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
         )
         .expect("compile proxy get");
         let mut output = CaptureOutput::default();
@@ -2543,7 +2543,7 @@ mod method_tests {
     #[test]
     fn proxy_set_falls_back_to_target_dynamic_properties() {
         let module = zun_compiler::compile(
-            "import { proxySet, proxyGet } from \"zun:collections\"; function main(): any { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyGet(proxy, \"answer\"); }",
+            "import { proxySet, proxyGet } from \"zun:core\"; function main(): any { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyGet(proxy, \"answer\"); }",
         )
         .expect("compile proxy set");
         let mut output = CaptureOutput::default();
@@ -2554,7 +2554,7 @@ mod method_tests {
     #[test]
     fn proxy_has_and_delete_fall_back_to_target_dynamic_properties() {
         let module = zun_compiler::compile(
-            "import { proxyHas, proxySet, proxyDelete } from \"zun:collections\"; function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); if (!proxyHas(proxy, \"answer\")) { return false; } return proxyDelete(proxy, \"answer\") && !proxyHas(proxy, \"answer\"); }",
+            "import { proxyHas, proxySet, proxyDelete } from \"zun:core\"; function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); if (!proxyHas(proxy, \"answer\")) { return false; } return proxyDelete(proxy, \"answer\") && !proxyHas(proxy, \"answer\"); }",
         )
         .expect("compile proxy has/delete");
         let mut output = CaptureOutput::default();
@@ -2565,7 +2565,7 @@ mod method_tests {
     #[test]
     fn proxy_get_invokes_a_named_handler_trap() {
         let module = zun_compiler::compile(
-            "import { dynamicSetFunction } from \"zun:collections\"; import { proxyGet } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+            "import { dynamicSetFunction } from \"zun:core\"; import { proxyGet } from \"zun:core\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
         )
         .expect("compile proxy trap");
         let mut output = CaptureOutput::default();
@@ -2576,7 +2576,7 @@ mod method_tests {
     #[test]
     fn proxy_property_traps_invoke_named_handlers() {
         let module = zun_compiler::compile(
-            "import { dynamicSetFunction, proxySet, proxyHas, proxyDelete } from \"zun:collections\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function hasTrap(target: any, key: string): boolean { return true; } function deleteTrap(target: any, key: string): boolean { return true; } function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); dynamicSetFunction(handler, \"has\", hasTrap); dynamicSetFunction(handler, \"deleteProperty\", deleteTrap); let proxy = new Proxy(target, handler); return proxySet(proxy, \"answer\", box_any(41)) && proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\"); }",
+            "import { dynamicSetFunction, proxySet, proxyHas, proxyDelete } from \"zun:core\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function hasTrap(target: any, key: string): boolean { return true; } function deleteTrap(target: any, key: string): boolean { return true; } function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); dynamicSetFunction(handler, \"has\", hasTrap); dynamicSetFunction(handler, \"deleteProperty\", deleteTrap); let proxy = new Proxy(target, handler); return proxySet(proxy, \"answer\", box_any(41)) && proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\"); }",
         )
         .expect("compile proxy property traps");
         let mut output = CaptureOutput::default();
@@ -2587,7 +2587,7 @@ mod method_tests {
     #[test]
     fn proxy_field_get_syntax_routes_through_handler_trap() {
         let module = zun_compiler::compile(
-            "import { dynamicSetFunction } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxy.answer; }",
+            "import { dynamicSetFunction } from \"zun:core\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxy.answer; }",
         )
         .expect("compile proxy field get");
         let mut output = CaptureOutput::default();
@@ -2611,7 +2611,7 @@ mod method_tests {
         // A `set` trap that intercepts without writing leaves the target
         // untouched; reading the target directly still sees the original value.
         let module = zun_compiler::compile(
-            "import { dynamicSetFunction } from \"zun:collections\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(1)); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); let proxy = new Proxy(target, handler); proxy.answer = box_any(7); return reflect_get(target, \"answer\"); }",
+            "import { dynamicSetFunction } from \"zun:core\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(1)); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); let proxy = new Proxy(target, handler); proxy.answer = box_any(7); return reflect_get(target, \"answer\"); }",
         )
         .expect("compile proxy field set");
         let mut output = CaptureOutput::default();
@@ -2635,7 +2635,7 @@ mod method_tests {
     #[test]
     fn proxy_index_get_syntax_routes_through_handler_trap() {
         let module = zun_compiler::compile(
-            "import { dynamicSetFunction } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(123); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); let key = \"x\"; return proxy[key]; }",
+            "import { dynamicSetFunction } from \"zun:core\"; function getTrap(target: any, key: string): any { return box_any(123); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); let key = \"x\"; return proxy[key]; }",
         )
         .expect("compile proxy index get");
         let mut output = CaptureOutput::default();
@@ -2761,7 +2761,7 @@ mod method_tests {
     #[test]
     fn invokes_array_symbol_iterator_from_source() {
         let module = zun_compiler::compile(
-            "import { arrayIteratorNext } from \"zun:buffer\"; function main(): u64 { let values = new Array(1); values[0] = 7.0; let iterator = values[Symbol.iterator](); return arrayIteratorNext(iterator) as u64; }",
+            "import { arrayIteratorNext } from \"zun:core\"; function main(): u64 { let values = new Array(1); values[0] = 7.0; let iterator = values[Symbol.iterator](); return arrayIteratorNext(iterator) as u64; }",
         )
         .expect("compile Symbol.iterator call");
         let mut output = CaptureOutput::default();
@@ -2772,7 +2772,7 @@ mod method_tests {
     #[test]
     fn invokes_map_and_set_symbol_iterators_from_source() {
         let module = zun_compiler::compile(
-            "import { mapIteratorNext, setIteratorNext } from \"zun:buffer\"; function main(): u64 { let map = new Map(); map.set(1.0, 10.0); let map_iterator = map[Symbol.iterator](); let pair: Array = mapIteratorNext(map_iterator) as Array; let set = new Set(); set.add(32.0); let set_iterator = set[Symbol.iterator](); let value = setIteratorNext(set_iterator); return pair[1] as u64 + value as u64; }",
+            "import { mapIteratorNext, setIteratorNext } from \"zun:core\"; function main(): u64 { let map = new Map(); map.set(1.0, 10.0); let map_iterator = map[Symbol.iterator](); let pair: Array = mapIteratorNext(map_iterator) as Array; let set = new Set(); set.add(32.0); let set_iterator = set[Symbol.iterator](); let value = setIteratorNext(set_iterator); return pair[1] as u64 + value as u64; }",
         )
         .expect("compile collection Symbol.iterator calls");
         let mut output = CaptureOutput::default();
@@ -2945,7 +2945,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_byte_buffers_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, bufferSetU8, bufferGetU8, bufferLength } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); bufferSetU8(buffer, 2, 127); if (bufferLength(buffer) == 4) { return bufferGetU8(buffer, 2) as u64; } return 0; }",
+            "import { bufferNew, bufferSetU8, bufferGetU8, bufferLength } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(4); bufferSetU8(buffer, 2, 127); if (bufferLength(buffer) == 4) { return bufferGetU8(buffer, 2) as u64; } return 0; }",
         )
         .expect("compile buffer intrinsics");
         let mut output = CaptureOutput::default();
@@ -2956,7 +2956,7 @@ mod method_tests {
     #[test]
     fn accesses_numeric_values_in_gc_backed_buffers_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, bufferWriteU32, bufferReadU32, bufferWriteF64, bufferReadF64 } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); bufferWriteU32(buffer, 0, 16909060); bufferWriteF64(buffer, 8, 2.5); if (bufferReadU32(buffer, 0) == 16909060) { return bufferReadF64(buffer, 8); } return 0.0; }",
+            "import { bufferNew, bufferWriteU32, bufferReadU32, bufferWriteF64, bufferReadF64 } from \"zun:core\"; function main(): number { let buffer = bufferNew(16); bufferWriteU32(buffer, 0, 16909060); bufferWriteF64(buffer, 8, 2.5); if (bufferReadU32(buffer, 0) == 16909060) { return bufferReadF64(buffer, 8); } return 0.0; }",
         )
         .expect("compile numeric buffer intrinsics");
         let mut output = CaptureOutput::default();
@@ -2967,7 +2967,7 @@ mod method_tests {
     #[test]
     fn accesses_data_views_over_gc_backed_buffers_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, dataViewNew, dataViewSetU32, dataViewGetU32 } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let view = dataViewNew(buffer, 2, 4); dataViewSetU32(view, 0, 16909060, true); return dataViewGetU32(view, 0, true) as u64; }",
+            "import { bufferNew, dataViewNew, dataViewSetU32, dataViewGetU32 } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(8); let view = dataViewNew(buffer, 2, 4); dataViewSetU32(view, 0, 16909060, true); return dataViewGetU32(view, 0, true) as u64; }",
         )
         .expect("compile DataView intrinsics");
         let mut output = CaptureOutput::default();
@@ -2978,7 +2978,7 @@ mod method_tests {
     #[test]
     fn accesses_data_view_u16_and_f64_operations_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, dataViewNew, dataViewSetU16, dataViewGetU16, dataViewSetF64, dataViewGetF64 } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); let view = dataViewNew(buffer, 0, 16); dataViewSetU16(view, 0, 4660, false); dataViewSetF64(view, 8, 2.5, true); if (dataViewGetU16(view, 0, false) == 4660) { return dataViewGetF64(view, 8, true); } return 0.0; }",
+            "import { bufferNew, dataViewNew, dataViewSetU16, dataViewGetU16, dataViewSetF64, dataViewGetF64 } from \"zun:core\"; function main(): number { let buffer = bufferNew(16); let view = dataViewNew(buffer, 0, 16); dataViewSetU16(view, 0, 4660, false); dataViewSetF64(view, 8, 2.5, true); if (dataViewGetU16(view, 0, false) == 4660) { return dataViewGetF64(view, 8, true); } return 0.0; }",
         )
         .expect("compile extended DataView intrinsics");
         let mut output = CaptureOutput::default();
@@ -2989,7 +2989,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_u32_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, u32ArrayNew, u32ArraySet, u32ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(16); let values = u32ArrayNew(buffer, 0, 4); u32ArraySet(values, 2, 16909060); return u32ArrayGet(values, 2) as u64; }",
+            "import { bufferNew, u32ArrayNew, u32ArraySet, u32ArrayGet } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(16); let values = u32ArrayNew(buffer, 0, 4); u32ArraySet(values, 2, 16909060); return u32ArrayGet(values, 2) as u64; }",
         )
         .expect("compile typed-array intrinsics");
         let mut output = CaptureOutput::default();
@@ -3000,7 +3000,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_u8_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, u8ArrayNew, u8ArraySet, u8ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = u8ArrayNew(buffer, 0, 4); u8ArraySet(values, 1, 255); return u8ArrayGet(values, 1) as u64; }",
+            "import { bufferNew, u8ArrayNew, u8ArraySet, u8ArrayGet } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(4); let values = u8ArrayNew(buffer, 0, 4); u8ArraySet(values, 1, 255); return u8ArrayGet(values, 1) as u64; }",
         )
         .expect("compile Uint8Array intrinsics");
         let mut output = CaptureOutput::default();
@@ -3011,7 +3011,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_f64_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, f64ArrayNew, f64ArraySet, f64ArrayGet } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); let values = f64ArrayNew(buffer, 0, 2); f64ArraySet(values, 1, 2.5); return f64ArrayGet(values, 1); }",
+            "import { bufferNew, f64ArrayNew, f64ArraySet, f64ArrayGet } from \"zun:core\"; function main(): number { let buffer = bufferNew(16); let values = f64ArrayNew(buffer, 0, 2); f64ArraySet(values, 1, 2.5); return f64ArrayGet(values, 1); }",
         )
         .expect("compile Float64Array intrinsics");
         let mut output = CaptureOutput::default();
@@ -3022,7 +3022,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_u16_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, u16ArrayNew, u16ArraySet, u16ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let values = u16ArrayNew(buffer, 0, 4); u16ArraySet(values, 2, 4660); return u16ArrayGet(values, 2) as u64; }",
+            "import { bufferNew, u16ArrayNew, u16ArraySet, u16ArrayGet } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(8); let values = u16ArrayNew(buffer, 0, 4); u16ArraySet(values, 2, 4660); return u16ArrayGet(values, 2) as u64; }",
         )
         .expect("compile Uint16Array intrinsics");
         let mut output = CaptureOutput::default();
@@ -3033,7 +3033,7 @@ mod method_tests {
     #[test]
     fn constructs_typed_array_views_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, u8ArraySet, u8ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); u8ArraySet(values, 1, 255); return u8ArrayGet(values, 1) as u64; }",
+            "import { bufferNew, u8ArraySet, u8ArrayGet } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); u8ArraySet(values, 1, 255); return u8ArrayGet(values, 1) as u64; }",
         )
         .expect("compile typed-array constructor");
         let mut output = CaptureOutput::default();
@@ -3044,7 +3044,7 @@ mod method_tests {
     #[test]
     fn typed_array_views_expose_instance_accessors() {
         let module = zun_compiler::compile(
-            "import { bufferNew } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); values.set(1, 255); return values.get(1) as u64; }",
+            "import { bufferNew } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); values.set(1, 255); return values.get(1) as u64; }",
         )
         .expect("compile typed-array instance accessors");
         let mut output = CaptureOutput::default();
@@ -3055,7 +3055,7 @@ mod method_tests {
     #[test]
     fn constructs_data_views_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, dataViewSetU32, dataViewGetU32 } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let view = new DataView(buffer, 0, 8); dataViewSetU32(view, 0, 16909060, true); return dataViewGetU32(view, 0, true) as u64; }",
+            "import { bufferNew, dataViewSetU32, dataViewGetU32 } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(8); let view = new DataView(buffer, 0, 8); dataViewSetU32(view, 0, 16909060, true); return dataViewGetU32(view, 0, true) as u64; }",
         )
         .expect("compile DataView constructor");
         let mut output = CaptureOutput::default();
@@ -3066,7 +3066,7 @@ mod method_tests {
     #[test]
     fn data_views_expose_instance_accessors() {
         let module = zun_compiler::compile(
-            "import { bufferNew } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let view = new DataView(buffer, 0, 8); view.setUint32(0, 16909060, true); return view.getUint32(0, true) as u64; }",
+            "import { bufferNew } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(8); let view = new DataView(buffer, 0, 8); view.setUint32(0, 16909060, true); return view.getUint32(0, true) as u64; }",
         )
         .expect("compile DataView instance accessors");
         let mut output = CaptureOutput::default();
@@ -3077,7 +3077,7 @@ mod method_tests {
     #[test]
     fn constructs_array_buffers_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferLength } from \"zun:buffer\"; function main(): u64 { let buffer = new ArrayBuffer(4); return bufferLength(buffer); }",
+            "import { bufferLength } from \"zun:core\"; function main(): u64 { let buffer = new ArrayBuffer(4); return bufferLength(buffer); }",
         )
         .expect("compile ArrayBuffer constructor");
         let mut output = CaptureOutput::default();
@@ -3088,7 +3088,7 @@ mod method_tests {
     #[test]
     fn exposes_array_iterator_handles_to_source() {
         let module = zun_compiler::compile(
-            "import { arrayIteratorNew, arrayIteratorNext } from \"zun:buffer\"; function main(): any { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; let iterator = arrayIteratorNew(values); print(arrayIteratorNext(iterator)); print(arrayIteratorNext(iterator)); return arrayIteratorNext(iterator); }",
+            "import { arrayIteratorNew, arrayIteratorNext } from \"zun:core\"; function main(): any { let values = new Array(2); values[0] = 7.0; values[1] = 9.0; let iterator = arrayIteratorNew(values); print(arrayIteratorNext(iterator)); print(arrayIteratorNext(iterator)); return arrayIteratorNext(iterator); }",
         )
         .expect("compile array iterator intrinsics");
         let mut output = CaptureOutput::default();
@@ -3100,7 +3100,7 @@ mod method_tests {
     #[test]
     fn exposes_set_iterator_handles_to_source() {
         let module = zun_compiler::compile(
-            "import { setIteratorNew, setIteratorNext } from \"zun:buffer\"; function main(): any { let values = new Set(); values.add(7.0); values.add(9.0); let iterator = setIteratorNew(values); print(setIteratorNext(iterator)); print(setIteratorNext(iterator)); return setIteratorNext(iterator); }",
+            "import { setIteratorNew, setIteratorNext } from \"zun:core\"; function main(): any { let values = new Set(); values.add(7.0); values.add(9.0); let iterator = setIteratorNew(values); print(setIteratorNext(iterator)); print(setIteratorNext(iterator)); return setIteratorNext(iterator); }",
         )
         .expect("compile set iterator intrinsics");
         let mut output = CaptureOutput::default();
@@ -3112,7 +3112,7 @@ mod method_tests {
     #[test]
     fn exposes_map_iterator_entry_pairs_to_source() {
         let module = zun_compiler::compile(
-            "import { mapIteratorNew, mapIteratorNext } from \"zun:buffer\"; function main(): any { let values = new Map(); values.set(7.0, 70.0); values.set(9.0, 90.0); let iterator = mapIteratorNew(values); print(mapIteratorNext(iterator)); return mapIteratorNext(iterator); }",
+            "import { mapIteratorNew, mapIteratorNext } from \"zun:core\"; function main(): any { let values = new Map(); values.set(7.0, 70.0); values.set(9.0, 90.0); let iterator = mapIteratorNew(values); print(mapIteratorNext(iterator)); return mapIteratorNext(iterator); }",
         )
         .expect("compile map iterator intrinsics");
         let mut output = CaptureOutput::default();
@@ -3124,7 +3124,7 @@ mod method_tests {
     #[test]
     fn uses_runtime_backed_map_and_set_intrinsics() {
         let module = zun_compiler::compile(
-            "import { mapNew, mapSet, mapHas, mapSize, setNew, setAdd, setHas, setSize } from \"zun:collections\"; function main(): any { let map = mapNew(); mapSet(map, 7.0, 42.0); let set = setNew(); setAdd(set, 7.0); if (mapHas(map, 7.0)) { if (setHas(set, 7.0)) { return mapSize(map) + setSize(set); } } return 0.0; }",
+            "import { mapNew, mapSet, mapHas, mapSize, setNew, setAdd, setHas, setSize } from \"zun:core\"; function main(): any { let map = mapNew(); mapSet(map, 7.0, 42.0); let set = setNew(); setAdd(set, 7.0); if (mapHas(map, 7.0)) { if (setHas(set, 7.0)) { return mapSize(map) + setSize(set); } } return 0.0; }",
         )
         .expect("compile collection intrinsics");
         let mut output = CaptureOutput::default();
@@ -3135,7 +3135,7 @@ mod method_tests {
     #[test]
     fn constructs_managed_collections_from_source() {
         let module = zun_compiler::compile(
-            "import { mapSet, mapHas, setAdd, setHas, weakMapSet, weakMapHas } from \"zun:collections\"; class Key {} function main(): int { let map = new Map(); mapSet(map, 1.0, 2.0); let set = new Set(); setAdd(set, 1.0); let key = new Key(); let value = new Key(); let weak = new WeakMap(); weakMapSet(weak, key, value); if (mapHas(map, 1.0)) { if (setHas(set, 1.0)) { if (weakMapHas(weak, key)) { return 1; } } } return 0; }",
+            "import { mapSet, mapHas, setAdd, setHas, weakMapSet, weakMapHas } from \"zun:core\"; class Key {} function main(): int { let map = new Map(); mapSet(map, 1.0, 2.0); let set = new Set(); setAdd(set, 1.0); let key = new Key(); let value = new Key(); let weak = new WeakMap(); weakMapSet(weak, key, value); if (mapHas(map, 1.0)) { if (setHas(set, 1.0)) { if (weakMapHas(weak, key)) { return 1; } } } return 0; }",
         )
         .expect("compile managed collection constructors");
         let mut output = CaptureOutput::default();
@@ -3157,7 +3157,7 @@ mod method_tests {
     #[test]
     fn removes_and_clears_runtime_backed_collections() {
         let module = zun_compiler::compile(
-            "import { mapNew, mapSet, mapHas, mapDelete, mapClear, setNew, setAdd, setHas, setDelete, setClear } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 1.0, 2.0); mapDelete(map, 1.0); if (mapHas(map, 1.0)) { return 1; } mapSet(map, 1.0, 2.0); mapClear(map); let set = setNew(); setAdd(set, 1.0); setDelete(set, 1.0); if (setHas(set, 1.0)) { return 2; } setAdd(set, 1.0); setClear(set); if (setHas(set, 1.0)) { return 3; } return 0; }",
+            "import { mapNew, mapSet, mapHas, mapDelete, mapClear, setNew, setAdd, setHas, setDelete, setClear } from \"zun:core\"; function main(): int { let map = mapNew(); mapSet(map, 1.0, 2.0); mapDelete(map, 1.0); if (mapHas(map, 1.0)) { return 1; } mapSet(map, 1.0, 2.0); mapClear(map); let set = setNew(); setAdd(set, 1.0); setDelete(set, 1.0); if (setHas(set, 1.0)) { return 2; } setAdd(set, 1.0); setClear(set); if (setHas(set, 1.0)) { return 3; } return 0; }",
         )
         .expect("compile collection removal intrinsics");
         let mut output = CaptureOutput::default();
@@ -3168,7 +3168,7 @@ mod method_tests {
     #[test]
     fn uses_gc_backed_weak_map_handles() {
         let module = zun_compiler::compile(
-            "import { weakMapNew, weakMapSet, weakMapHas } from \"zun:collections\"; class Key {} function main(): int { let key = new Key(); let value = new Key(); let key2 = new Key(); let value2 = new Key(); let map = weakMapNew(); weakMapSet(map, key, value); weakMapSet(map, key2, value2); if (weakMapHas(map, key)) { if (weakMapHas(map, key2)) { return 1; } } return 0; }",
+            "import { weakMapNew, weakMapSet, weakMapHas } from \"zun:core\"; class Key {} function main(): int { let key = new Key(); let value = new Key(); let key2 = new Key(); let value2 = new Key(); let map = weakMapNew(); weakMapSet(map, key, value); weakMapSet(map, key2, value2); if (weakMapHas(map, key)) { if (weakMapHas(map, key2)) { return 1; } } return 0; }",
         )
         .expect("compile weak map intrinsics");
         let mut output = CaptureOutput::default();
@@ -3230,7 +3230,7 @@ mod method_tests {
     #[test]
     fn executes_extern_method_with_receiver() {
         let module = zun_compiler::compile(
-            "import { receiverValue } from \"zun:math\";\n\
+            "import { receiverValue } from \"zun:core\";\n\
              class Service { extern receiverValue(value: number): number; }\n\
              function main(): number { let service = new Service(); return service.receiverValue(7.5); }",
         )
@@ -3803,7 +3803,7 @@ mod method_tests {
     #[test]
     fn executes_string_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
-            "import { length, contains } from \"zun:string\";\n\
+            "import { length, contains } from \"zun:core\";\n\
              class String { extern length(): u64; extern contains(needle: string): boolean; }\n\
              function main(): boolean { let value: string = \"zun\"; if (value.length() == 3) { return value.contains(\"u\"); } return false; }",
         )
@@ -3816,7 +3816,7 @@ mod method_tests {
     #[test]
     fn executes_string_includes_method() {
         let module = zun_compiler::compile(
-            "import { includes } from \"zun:string\";\n\
+            "import { includes } from \"zun:core\";\n\
              class String { extern includes(needle: string): boolean; }\n\
              function main(): boolean { let value: string = \"zun runtime\"; return value.includes(\"runtime\"); }",
         )
@@ -3829,7 +3829,7 @@ mod method_tests {
     #[test]
     fn executes_string_index_of_with_utf16_indices() {
         let module = zun_compiler::compile(
-            "import { indexOf } from \"zun:string\";\n\
+            "import { indexOf } from \"zun:core\";\n\
              class String { extern indexOf(needle: string): int; }\n\
              function main(): int { let value: string = \"😀zun\"; return value.indexOf(\"zun\"); }",
         )
@@ -3842,7 +3842,7 @@ mod method_tests {
     #[test]
     fn executes_string_last_index_of() {
         let module = zun_compiler::compile(
-            "import { lastIndexOf } from \"zun:string\";\n\
+            "import { lastIndexOf } from \"zun:core\";\n\
              class String { extern lastIndexOf(needle: string): int; }\n\
              function main(): int { let value: string = \"zunzun\"; return value.lastIndexOf(\"zun\"); }",
         )
@@ -3855,7 +3855,7 @@ mod method_tests {
     #[test]
     fn executes_string_replace_primitive_method() {
         let module = zun_compiler::compile(
-            "import { replace } from \"zun:string\";\n\
+            "import { replace } from \"zun:core\";\n\
              class String { extern replace(needle: string, replacement: string): string; }\n\
              function main(): string { let value: string = \"zun vm\"; return value.replace(\"vm\", \"runtime\"); }",
         )
@@ -3868,7 +3868,7 @@ mod method_tests {
     #[test]
     fn executes_string_substring_with_utf16_indices() {
         let module = zun_compiler::compile(
-            "import { substring } from \"zun:string\";\n\
+            "import { substring } from \"zun:core\";\n\
              class String { extern substring(start: u64, end: u64): string; }\n\
              function main(): string { let value: string = \"😀zun\"; return value.substring(2, 5); }",
         )
@@ -3881,7 +3881,7 @@ mod method_tests {
     #[test]
     fn executes_string_pad_start_primitive_method() {
         let module = zun_compiler::compile(
-            "import { padStart } from \"zun:string\";\n\
+            "import { padStart } from \"zun:core\";\n\
              class String { extern padStart(targetLength: u64, fill: string): string; }\n\
              function main(): string { let value: string = \"zun\"; return value.padStart(5, \"0\"); }",
         )
@@ -3894,7 +3894,7 @@ mod method_tests {
     #[test]
     fn executes_string_pad_end_primitive_method() {
         let module = zun_compiler::compile(
-            "import { padEnd } from \"zun:string\";\n\
+            "import { padEnd } from \"zun:core\";\n\
              class String { extern padEnd(targetLength: u64, fill: string): string; }\n\
              function main(): string { let value: string = \"zun\"; return value.padEnd(5, \"0\"); }",
         )
@@ -3907,7 +3907,7 @@ mod method_tests {
     #[test]
     fn executes_string_case_conversion_methods() {
         let module = zun_compiler::compile(
-            "import { toLowerCase, toUpperCase } from \"zun:string\";\n\
+            "import { toLowerCase, toUpperCase } from \"zun:core\";\n\
              class String { extern toLowerCase(): string; extern toUpperCase(): string; }\n\
              function main(): string { let value: string = \"ZuN\"; return value.toLowerCase() + value.toUpperCase(); }",
         )
@@ -3920,7 +3920,7 @@ mod method_tests {
     #[test]
     fn executes_string_trim_boundary_methods() {
         let module = zun_compiler::compile(
-            "import { trimStart, trimEnd } from \"zun:string\";\n\
+            "import { trimStart, trimEnd } from \"zun:core\";\n\
              class String { extern trimStart(): string; extern trimEnd(): string; }\n\
              function main(): string { let value: string = \"  zun  \"; return value.trimStart().trimEnd(); }",
         )
@@ -3933,7 +3933,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_blank_source_method() {
         let module = zun_compiler::compile(
-            "import { trim, length } from \"zun:string\";\n\
+            "import { trim, length } from \"zun:core\";\n\
              class String { extern trim(): string; extern length(): u64; isEmpty(): boolean { return this.length() == 0; } isBlank(): boolean { return this.trim().isEmpty(); } }\n\
              function main(): boolean { let value: string = \"   \"; return value.isBlank(); }",
         )
@@ -3946,7 +3946,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_not_empty_source_method() {
         let module = zun_compiler::compile(
-            "import { length } from \"zun:string\";\n\
+            "import { length } from \"zun:core\";\n\
              class String { extern length(): u64; isNotEmpty(): boolean { return this.length() != 0; } }\n\
              function main(): boolean { let value: string = \"zun\"; return value.isNotEmpty(); }",
         )
@@ -3959,7 +3959,7 @@ mod method_tests {
     #[test]
     fn executes_string_reverse_native_method() {
         let module = zun_compiler::compile(
-            "import { reverse } from \"zun:string\";\n\
+            "import { reverse } from \"zun:core\";\n\
              class String { extern reverse(): string; }\n\
              function main(): string { let value: string = \"zun\"; return value.reverse(); }",
         )
@@ -3972,7 +3972,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_ascii_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\";\n\
+            "import { length, charCodeAt } from \"zun:core\";\n\
              class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAscii(): boolean { let index: u64 = 0; while (index < this.length()) { if (this.charCodeAt(index) > 127) { return false; } index = index + 1; } return true; } }\n\
              function main(): boolean { let value: string = \"zun\"; return value.isAscii(); }",
         )
@@ -3985,7 +3985,7 @@ mod method_tests {
     #[test]
     fn executes_string_count_native_method() {
         let module = zun_compiler::compile(
-            "import { count } from \"zun:string\";\n\
+            "import { count } from \"zun:core\";\n\
              class String { extern count(needle: string): int; }\n\
              function main(): int { let value: string = \"aaaa\"; return value.count(\"aa\"); }",
         )
@@ -3998,7 +3998,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_numeric_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\";\n\
+            "import { length, charCodeAt } from \"zun:core\";\n\
              class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isNumeric(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } }\n\
              function main(): boolean { let value: string = \"12345\"; return value.isNumeric(); }",
         )
@@ -4011,7 +4011,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_digit_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"2048\"; return value.isDigit(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"2048\"; return value.isDigit(); }",
         )
         .expect("compile String isDigit");
         let mut output = CaptureOutput::default();
@@ -4022,7 +4022,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_vowel_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isVowel(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let vowel: boolean = false; if (code == 65) { vowel = true; } if (code == 69) { vowel = true; } if (code == 73) { vowel = true; } if (code == 79) { vowel = true; } if (code == 85) { vowel = true; } if (code == 97) { vowel = true; } if (code == 101) { vowel = true; } if (code == 105) { vowel = true; } if (code == 111) { vowel = true; } if (code == 117) { vowel = true; } if (!vowel) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"AeIOu\"; return value.isVowel(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isVowel(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let vowel: boolean = false; if (code == 65) { vowel = true; } if (code == 69) { vowel = true; } if (code == 73) { vowel = true; } if (code == 79) { vowel = true; } if (code == 85) { vowel = true; } if (code == 97) { vowel = true; } if (code == 101) { vowel = true; } if (code == 105) { vowel = true; } if (code == 111) { vowel = true; } if (code == 117) { vowel = true; } if (!vowel) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"AeIOu\"; return value.isVowel(); }",
         )
         .expect("compile String isVowel");
         let mut output = CaptureOutput::default();
@@ -4033,7 +4033,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_consonant_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAlpha(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } isConsonant(): boolean { if (!this.isAlpha()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 65) { return false; } if (code == 69) { return false; } if (code == 73) { return false; } if (code == 79) { return false; } if (code == 85) { return false; } if (code == 97) { return false; } if (code == 101) { return false; } if (code == 105) { return false; } if (code == 111) { return false; } if (code == 117) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Rhythm\"; return value.isConsonant(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAlpha(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } isConsonant(): boolean { if (!this.isAlpha()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 65) { return false; } if (code == 69) { return false; } if (code == 73) { return false; } if (code == 79) { return false; } if (code == 85) { return false; } if (code == 97) { return false; } if (code == 101) { return false; } if (code == 105) { return false; } if (code == 111) { return false; } if (code == 117) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Rhythm\"; return value.isConsonant(); }",
         )
         .expect("compile String isConsonant");
         let mut output = CaptureOutput::default();
@@ -4044,7 +4044,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_quoted_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
         )
         .expect("compile String isQuoted");
         let mut output = CaptureOutput::default();
@@ -4055,7 +4055,7 @@ mod method_tests {
     #[test]
     fn executes_string_unquote_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt, substring } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
+            "import { length, charCodeAt, substring } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
         )
         .expect("compile String unquote");
         let mut output = CaptureOutput::default();
@@ -4066,7 +4066,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_wrapped_by_source_method() {
         let module = zun_compiler::compile(
-            "import { startsWith, endsWith } from \"zun:string\"; class String { extern startsWith(prefix: string): boolean; extern endsWith(suffix: string): boolean; isWrappedBy(prefix: string, suffix: string): boolean { if (!this.startsWith(prefix)) { return false; } return this.endsWith(suffix); } } function main(): boolean { let value: string = \"<zun>\"; return value.isWrappedBy(\"<\", \">\"); }",
+            "import { startsWith, endsWith } from \"zun:core\"; class String { extern startsWith(prefix: string): boolean; extern endsWith(suffix: string): boolean; isWrappedBy(prefix: string, suffix: string): boolean { if (!this.startsWith(prefix)) { return false; } return this.endsWith(suffix); } } function main(): boolean { let value: string = \"<zun>\"; return value.isWrappedBy(\"<\", \">\"); }",
         )
         .expect("compile String isWrappedBy");
         let mut output = CaptureOutput::default();
@@ -4088,7 +4088,7 @@ mod method_tests {
     #[test]
     fn executes_string_compare_native_method() {
         let module = zun_compiler::compile(
-            "import { compare } from \"zun:string\";\n\
+            "import { compare } from \"zun:core\";\n\
              class String { extern compare(other: string): int; }\n\
              function main(): int { let value: string = \"abc\"; return value.compare(\"abd\"); }",
         )
@@ -4101,7 +4101,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_whitespace_source_method() {
         let module = zun_compiler::compile(
-            "import { length, trim } from \"zun:string\";\n\
+            "import { length, trim } from \"zun:core\";\n\
              class String { extern length(): u64; extern trim(): string; isEmpty(): boolean { return this.length() == 0; } isWhitespace(): boolean { if (this.isEmpty()) { return false; } return this.trim().isEmpty(); } }\n\
              function main(): boolean { let value: string = \"   \"; return value.isWhitespace(); }",
         )
@@ -4114,7 +4114,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_alpha_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\";\n\
+            "import { length, charCodeAt } from \"zun:core\";\n\
              class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isAlpha(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } }\n\
              function main(): boolean { let value: string = \"ZunRuntime\"; return value.isAlpha(); }",
         )
@@ -4127,7 +4127,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_alphanumeric_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\";\n\
+            "import { length, charCodeAt } from \"zun:core\";\n\
              class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isAlphanumeric(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } } index = index + 1; } return true; } }\n\
              function main(): boolean { let value: string = \"Zun2026\"; return value.isAlphanumeric(); }",
         )
@@ -4140,7 +4140,7 @@ mod method_tests {
     #[test]
     fn executes_string_case_predicates_source_methods() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\";\n\
+            "import { length, charCodeAt } from \"zun:core\";\n\
              class String { extern length(): u64; extern charCodeAt(index: u64): u32; isLowerCase(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code >= 65) { if (code <= 90) { return false; } if (code >= 97) { if (code <= 122) { hasLetter = true; } } } index = index + 1; } return hasLetter; } isUpperCase(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code >= 97) { if (code <= 122) { return false; } } if (code >= 65) { if (code <= 90) { hasLetter = true; } } index = index + 1; } return hasLetter; } }\n\
              function main(): boolean { let lower: string = \"hello\"; let upper: string = \"WORLD\"; if (!lower.isLowerCase()) { return false; } return upper.isUpperCase(); }",
         )
@@ -4153,7 +4153,7 @@ mod method_tests {
     #[test]
     fn executes_string_to_int_native_method() {
         let module = zun_compiler::compile(
-            "import { toInt } from \"zun:string\";\n\
+            "import { toInt } from \"zun:core\";\n\
              class String { extern toInt(): int; }\n\
              function main(): int { let value: string = \" -42 \"; return value.toInt(); }",
         )
@@ -4166,7 +4166,7 @@ mod method_tests {
     #[test]
     fn executes_string_to_float_native_method() {
         let module = zun_compiler::compile(
-            "import { toFloat } from \"zun:string\";\n\
+            "import { toFloat } from \"zun:core\";\n\
              class String { extern toFloat(): number; }\n\
              function main(): number { let value: string = \" 3.5 \"; return value.toFloat(); }",
         )
@@ -4179,7 +4179,7 @@ mod method_tests {
     #[test]
     fn executes_string_to_boolean_native_method() {
         let module = zun_compiler::compile(
-            "import { toBoolean } from \"zun:string\";\n\
+            "import { toBoolean } from \"zun:core\";\n\
              class String { extern toBoolean(): boolean; }\n\
              function main(): boolean { let value: string = \" true \"; return value.toBoolean(); }",
         )
@@ -4192,7 +4192,7 @@ mod method_tests {
     #[test]
     fn executes_number_primitive_methods_through_static_class_binding() {
         let module = zun_compiler::compile(
-            "import { toFixed } from \"zun:number\";\n\
+            "import { toFixed } from \"zun:core\";\n\
              class Number { extern toFixed(digits: int): string; }\n\
              function main(): string { let value: number = 12.5; return value.toFixed(1); }",
         )
@@ -4305,7 +4305,7 @@ mod method_tests {
     #[test]
     fn executes_math_power_intrinsic() {
         let module = zun_compiler::compile(
-            "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
+            "import { powNumber } from \"zun:core\"; function main(): number { return powNumber(2.0, 3.0); }",
         )
         .expect("compile math power");
         let mut output = CaptureOutput::default();
@@ -4316,7 +4316,7 @@ mod method_tests {
     #[test]
     fn executes_math_trigonometry_intrinsics() {
         let module = zun_compiler::compile(
-            "import { sinNumber, cosNumber } from \"zun:math\"; function main(): number { return sinNumber(0.0) + cosNumber(0.0); }",
+            "import { sinNumber, cosNumber } from \"zun:core\"; function main(): number { return sinNumber(0.0) + cosNumber(0.0); }",
         )
         .expect("compile math trigonometry");
         let mut output = CaptureOutput::default();
@@ -4327,7 +4327,7 @@ mod method_tests {
     #[test]
     fn executes_math_exponential_and_logarithm_intrinsics() {
         let module = zun_compiler::compile(
-            "import { expNumber, logNumber } from \"zun:math\"; function main(): number { return expNumber(0.0) + logNumber(1.0); }",
+            "import { expNumber, logNumber } from \"zun:core\"; function main(): number { return expNumber(0.0) + logNumber(1.0); }",
         )
         .expect("compile math exponential and logarithm");
         let mut output = CaptureOutput::default();
@@ -4338,7 +4338,7 @@ mod method_tests {
     #[test]
     fn executes_math_tangent_and_atan2_intrinsics() {
         let module = zun_compiler::compile(
-            "import { tanNumber, atan2Number } from \"zun:math\"; function main(): number { return tanNumber(0.0) + atan2Number(0.0, 1.0); }",
+            "import { tanNumber, atan2Number } from \"zun:core\"; function main(): number { return tanNumber(0.0) + atan2Number(0.0, 1.0); }",
         )
         .expect("compile math tangent and atan2");
         let mut output = CaptureOutput::default();
@@ -4349,7 +4349,7 @@ mod method_tests {
     #[test]
     fn executes_math_hypot_intrinsic() {
         let module = zun_compiler::compile(
-            "import { hypotNumber } from \"zun:math\"; function main(): number { return hypotNumber(3.0, 4.0); }",
+            "import { hypotNumber } from \"zun:core\"; function main(): number { return hypotNumber(3.0, 4.0); }",
         )
         .expect("compile math hypot");
         let mut output = CaptureOutput::default();
@@ -4420,7 +4420,7 @@ mod method_tests {
     #[test]
     fn executes_number_to_string_primitive_method() {
         let module = zun_compiler::compile(
-            "import { toString } from \"zun:number\";\n\
+            "import { toString } from \"zun:core\";\n\
              class Number { extern toString(): string; }\n\
              function main(): string { let value: number = 12.5; return value.toString(); }",
         )
@@ -4503,7 +4503,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_empty_source_method() {
         let module = zun_compiler::compile(
-            "import { length } from \"zun:string\";\n\
+            "import { length } from \"zun:core\";\n\
              class String { extern length(): u64; isEmpty(): boolean { return this.length() == 0; } }\n\
              function main(): boolean { let value: string = \"\"; return value.isEmpty(); }",
         )
@@ -4516,7 +4516,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_palindrome_source_method() {
         let module = zun_compiler::compile(
-            "import { reverse } from \"zun:string\"; class String { extern reverse(): string; isPalindrome(): boolean { return this == this.reverse(); } } function main(): boolean { let value: string = \"level\"; return value.isPalindrome(); }",
+            "import { reverse } from \"zun:core\"; class String { extern reverse(): string; isPalindrome(): boolean { return this == this.reverse(); } } function main(): boolean { let value: string = \"level\"; return value.isPalindrome(); }",
         )
         .expect("compile String isPalindrome");
         let mut output = CaptureOutput::default();
@@ -4527,7 +4527,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_hexadecimal_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexadecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { if (code < 65) { return false; } if (code > 70) { if (code < 97) { return false; } if (code > 102) { return false; } } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"a1F0\"; return value.isHexadecimal(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexadecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { if (code < 65) { return false; } if (code > 70) { if (code < 97) { return false; } if (code > 102) { return false; } } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"a1F0\"; return value.isHexadecimal(); }",
         )
         .expect("compile String isHexadecimal");
         let mut output = CaptureOutput::default();
@@ -4538,7 +4538,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_hex_digit_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 70) { valid = true; } } if (code >= 97) { if (code <= 102) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"aF09\"; return value.isHexDigit(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 70) { valid = true; } } if (code >= 97) { if (code <= 102) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"aF09\"; return value.isHexDigit(); }",
         )
         .expect("compile String isHexDigit");
         let mut output = CaptureOutput::default();
@@ -4549,7 +4549,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_binary_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isBinary(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 49) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"101001\"; return value.isBinary(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isBinary(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 49) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"101001\"; return value.isBinary(); }",
         )
         .expect("compile String isBinary");
         let mut output = CaptureOutput::default();
@@ -4560,7 +4560,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_octal_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isOctal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 55) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"701234\"; return value.isOctal(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isOctal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 55) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"701234\"; return value.isOctal(); }",
         )
         .expect("compile String isOctal");
         let mut output = CaptureOutput::default();
@@ -4571,7 +4571,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_printable_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPrintable(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 32) { return false; } if (code > 126) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Zun 2026!\"; return value.isPrintable(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPrintable(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 32) { return false; } if (code > 126) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Zun 2026!\"; return value.isPrintable(); }",
         )
         .expect("compile String isPrintable");
         let mut output = CaptureOutput::default();
@@ -4582,7 +4582,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_punctuation_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPunctuation(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let punctuation: boolean = false; if (code >= 33) { if (code <= 47) { punctuation = true; } } if (code >= 58) { if (code <= 64) { punctuation = true; } } if (code >= 91) { if (code <= 96) { punctuation = true; } } if (code >= 123) { if (code <= 126) { punctuation = true; } } if (!punctuation) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"!?.,\"; return value.isPunctuation(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPunctuation(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let punctuation: boolean = false; if (code >= 33) { if (code <= 47) { punctuation = true; } } if (code >= 58) { if (code <= 64) { punctuation = true; } } if (code >= 91) { if (code <= 96) { punctuation = true; } } if (code >= 123) { if (code <= 126) { punctuation = true; } } if (!punctuation) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"!?.,\"; return value.isPunctuation(); }",
         )
         .expect("compile String isPunctuation");
         let mut output = CaptureOutput::default();
@@ -4593,7 +4593,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_control_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isControl(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code > 31) { if (code != 127) { return false; } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"\\n\\t\"; return value.isControl(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isControl(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code > 31) { if (code != 127) { return false; } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"\\n\\t\"; return value.isControl(); }",
         )
         .expect("compile String isControl");
         let mut output = CaptureOutput::default();
@@ -4604,7 +4604,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_signed_integer_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
         )
         .expect("compile String isSignedInteger");
         let mut output = CaptureOutput::default();
@@ -4615,7 +4615,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_signed_decimal_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedDecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let digits: u64 = 0; let dots: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { index = 1; } if (first == 45) { index = 1; } while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 46) { dots = dots + 1; if (dots > 1) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } digits = digits + 1; } index = index + 1; } return digits > 0; } } function main(): boolean { let value: string = \"-12.50\"; return value.isSignedDecimal(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedDecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let digits: u64 = 0; let dots: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { index = 1; } if (first == 45) { index = 1; } while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 46) { dots = dots + 1; if (dots > 1) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } digits = digits + 1; } index = index + 1; } return digits > 0; } } function main(): boolean { let value: string = \"-12.50\"; return value.isSignedDecimal(); }",
         )
         .expect("compile String isSignedDecimal");
         let mut output = CaptureOutput::default();
@@ -4626,7 +4626,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_identifier_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isIdentifier(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code == 95) { valid = true; } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (index > 0) { if (code >= 48) { if (code <= 57) { valid = true; } } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zun_core2\"; return value.isIdentifier(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isIdentifier(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code == 95) { valid = true; } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (index > 0) { if (code >= 48) { if (code <= 57) { valid = true; } } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zun_core2\"; return value.isIdentifier(); }",
         )
         .expect("compile String isIdentifier");
         let mut output = CaptureOutput::default();
@@ -4637,7 +4637,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_title_case_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isTitleCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let expectUpper: boolean = true; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 32) { expectUpper = true; } else { if (expectUpper) { if (code < 65) { return false; } if (code > 90) { return false; } expectUpper = false; hasLetter = true; } else { if (code >= 65) { if (code <= 90) { return false; } } if (code < 97) { return false; } if (code > 122) { return false; } } } index = index + 1; } if (!hasLetter) { return false; } return !expectUpper; } } function main(): boolean { let value: string = \"Hello World\"; return value.isTitleCase(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isTitleCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let expectUpper: boolean = true; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 32) { expectUpper = true; } else { if (expectUpper) { if (code < 65) { return false; } if (code > 90) { return false; } expectUpper = false; hasLetter = true; } else { if (code >= 65) { if (code <= 90) { return false; } } if (code < 97) { return false; } if (code > 122) { return false; } } } index = index + 1; } if (!hasLetter) { return false; } return !expectUpper; } } function main(): boolean { let value: string = \"Hello World\"; return value.isTitleCase(); }",
         )
         .expect("compile String isTitleCase");
         let mut output = CaptureOutput::default();
@@ -4648,7 +4648,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_snake_case_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSnakeCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 95) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun_runtime2\"; return value.isSnakeCase(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSnakeCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 95) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun_runtime2\"; return value.isSnakeCase(); }",
         )
         .expect("compile String isSnakeCase");
         let mut output = CaptureOutput::default();
@@ -4659,7 +4659,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_kebab_case_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isKebabCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 45) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun-runtime2\"; return value.isKebabCase(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isKebabCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 45) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun-runtime2\"; return value.isKebabCase(); }",
         )
         .expect("compile String isKebabCase");
         let mut output = CaptureOutput::default();
@@ -4670,7 +4670,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_camel_case_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
         )
         .expect("compile String isCamelCase");
         let mut output = CaptureOutput::default();
@@ -4681,7 +4681,7 @@ mod method_tests {
     #[test]
     fn executes_string_is_pascal_case_source_method() {
         let module = zun_compiler::compile(
-            "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPascalCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 65) { return false; } if (first > 90) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"ZunRuntime2\"; return value.isPascalCase(); }",
+            "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPascalCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 65) { return false; } if (first > 90) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"ZunRuntime2\"; return value.isPascalCase(); }",
         )
         .expect("compile String isPascalCase");
         let mut output = CaptureOutput::default();
@@ -4935,7 +4935,7 @@ mod method_tests {
         ));
         // string/string replace is unchanged.
         assert!(run_regexp_bool(
-            "import { replace } from \"zun:string\";\n\
+            "import { replace } from \"zun:core\";\n\
              class String { extern replace(needle: string, replacement: string): string; }\n\
              function main(): boolean { let r: string = \"aXa\".replace(\"X\", \"-\"); return r == \"a-a\"; }"
         ));

@@ -84,7 +84,7 @@ fn global_this_boolean_resolves() {
     // `Boolean` is a realm global; reading it through `globalThis` yields its
     // class descriptor (a stable token), proving the binding resolves.
     let out = run_source(
-        r#"import { classDescriptorToken } from "zun:collections";
+        r#"import { classDescriptorToken } from "zun:core";
         function main() {
             let token: number = classDescriptorToken(dynamic_get(globalThis, "Boolean"));
             if (token >= 0.0) { print("boolean-resolves"); }
@@ -676,7 +676,7 @@ fn realm_map_descriptor_registers_as_readonly_and_reads_back() {
     assert_eq!(
         run_source(
             r#"import { global } from "zun:core";
-            import { classDescriptorToken } from "zun:collections";
+            import { classDescriptorToken } from "zun:core";
             function main() {
                 global.set("Map", Map, true);
                 print(classDescriptorToken(dynamic_get(globalThis, "Map")));
@@ -695,7 +695,7 @@ fn realm_map_is_auto_seeded_by_the_module_initializer() {
     // `globalThis.Map` and observes the Map class descriptor (token 0).
     assert_eq!(
         run_source(
-            r#"import { classDescriptorToken } from "zun:collections";
+            r#"import { classDescriptorToken } from "zun:core";
             function main() {
                 print(classDescriptorToken(dynamic_get(globalThis, "Map")));
             }"#,
@@ -710,7 +710,7 @@ fn realm_map_new_and_annotation_resolve_through_the_registry() {
     // lower to the same frozen managed-collection representation as before.
     assert_eq!(
         run_source(
-            r#"import { mapSet, mapSize } from "zun:collections";
+            r#"import { mapSet, mapSize } from "zun:core";
             function main() {
                 let m: Map = new Map();
                 mapSet(m, 1.0, 2.0);

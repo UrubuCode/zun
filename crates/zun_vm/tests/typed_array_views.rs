@@ -105,7 +105,7 @@ fn symbol_iterator_is_present_and_drives_iteration() {
     // The explicit `[Symbol.iterator]()` form mints an iterator whose
     // `next` yields the elements, the same one `for...of` desugars to.
     let out = run_source(
-        "import { arrayIteratorNext } from \"zun:buffer\";
+        "import { arrayIteratorNext } from \"zun:core\";
          function main() {
             let b = new ArrayBuffer(8);
             let a = new Uint8Array(b, 0, 2);

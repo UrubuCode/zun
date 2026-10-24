@@ -36,7 +36,7 @@ fn every_mapped_native_still_exists_in_zun_math() {
     // substitution and quietly cost performance with nothing failing to
     // build. This is the test that turns that into a failure.
     for &(name, op) in MATH_MACHINE_OPS {
-        let (_, native) = zun_natives::resolve("zun:math", name)
+        let (_, native) = zun_natives::resolve("math", name)
             .unwrap_or_else(|| panic!("`zun:math` no longer exports `{name}`"));
         let StackEffect::Fixed { pops, .. } = op.stack_effect() else {
             panic!("{} must have a fixed stack effect", op.mnemonic());

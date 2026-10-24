@@ -12,7 +12,7 @@ fn now_millis(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
 
 /// The `zun:time` module.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:time",
+    name: "time",
     functions: &[NativeFn {
         name: "nowMillis",
         params: &[],

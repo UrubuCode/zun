@@ -569,7 +569,7 @@
 
     #[test]
     fn namespace_import_member_call_lowers_to_static_native_call() {
-        let source = "import * as math from 'zun:math'; function main(): number { return math.sqrt(9.0); }";
+        let source = "import { math } from 'zun:core'; function main(): number { return math.sqrt(9.0); }";
         let mut diagnostics = Vec::new();
         let ast = parse_subset(source, true).unwrap();
         let hir = check_with_externals(source, &ast, &mut diagnostics, &[]);
@@ -577,7 +577,7 @@
         let hir::Stmt::Return(Some(expr)) = &hir.functions[0].body[0] else {
             panic!("expected return statement")
         };
-        assert!(matches!(expr.kind, hir::ExprKind::CallBuiltin { id, .. } if id == zun_natives::resolve("zun:math", "sqrt").unwrap().0));
+        assert!(matches!(expr.kind, hir::ExprKind::CallBuiltin { id, .. } if id == zun_natives::resolve("math", "sqrt").unwrap().0));
         assert_eq!(expr.ty, Ty::F64);
     }
 

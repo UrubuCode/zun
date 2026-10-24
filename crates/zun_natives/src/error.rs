@@ -19,7 +19,7 @@ fn capture_stack_trace(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
 
 /// The runtime side of the `Error` surface.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:error",
+    name: "error",
     functions: &[NativeFn {
         // Capture the current call stack as the frame lines of a `.stack`
         // string (one `    at <fn> (<span>)` per active frame, innermost

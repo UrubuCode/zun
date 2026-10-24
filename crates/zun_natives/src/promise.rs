@@ -7,7 +7,7 @@ fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
 }
 
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:promise",
+    name: "promise",
     functions: &[
         NativeFn { name: "promiseNew", params: &[], ret: Promise, imp: unavailable },
         NativeFn {

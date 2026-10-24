@@ -10,7 +10,7 @@ fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
 /// heap context; these declarations keep module resolution and type checking
 /// independent of the GC crate.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:collections",
+    name: "collections",
     functions: &[
         NativeFn {
             name: "mapNew",

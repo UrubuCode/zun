@@ -51,7 +51,7 @@ fn to_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
 
 /// The `Boolean` wrapper surface.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:boolean",
+    name: "boolean",
     functions: &[
         NativeFn {
             // Accepts any value (an `Opaque` parameter is never coerced at the

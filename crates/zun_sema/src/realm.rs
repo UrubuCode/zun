@@ -93,13 +93,13 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
     if let Some(facets) = crate::typed_arrays::constructor(name) {
         return Some(facets);
     }
-    let collection0 = |native, ty| CtorLowering::Intrinsic0 { module: "zun:collections", native, ty };
+    let collection0 = |native, ty| CtorLowering::Intrinsic0 { module: "collections", native, ty };
     Some(match name {
         // Managed collections with an optional iterable constructor argument.
         "Map" => (
             Ty::Map,
             CtorLowering::CollectionFrom {
-                module: "zun:collections",
+                module: "collections",
                 empty: "mapNew",
                 from: "mapFrom",
                 ty: Ty::Map,
@@ -108,7 +108,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "Set" => (
             Ty::Set,
             CtorLowering::CollectionFrom {
-                module: "zun:collections",
+                module: "collections",
                 empty: "setNew",
                 from: "setFrom",
                 ty: Ty::Set,
@@ -120,7 +120,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "WeakRef" => (
             Ty::WeakRef,
             CtorLowering::IntrinsicN {
-                module: "zun:collections",
+                module: "collections",
                 native: "weakRefNew",
                 ty: Ty::WeakRef,
                 min_args: 1,
@@ -131,7 +131,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "FinalizationRegistry" => (
             Ty::FinalizationRegistry,
             CtorLowering::IntrinsicN {
-                module: "zun:collections",
+                module: "collections",
                 native: "finalizationRegistryNew",
                 ty: Ty::FinalizationRegistry,
                 min_args: 1,
@@ -141,13 +141,13 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         ),
         "Promise" => (
             Ty::Promise,
-            CtorLowering::Intrinsic0 { module: "zun:promise", native: "promiseNew", ty: Ty::Promise },
+            CtorLowering::Intrinsic0 { module: "promise", native: "promiseNew", ty: Ty::Promise },
         ),
         // Argument-taking intrinsics.
         "RegExp" => (
             Ty::RegExp,
             CtorLowering::IntrinsicN {
-                module: "zun:collections",
+                module: "collections",
                 native: "regexpNew",
                 ty: Ty::RegExp,
                 min_args: 1,
@@ -158,7 +158,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "BigInt" => (
             Ty::BigInt,
             CtorLowering::IntrinsicN {
-                module: "zun:collections",
+                module: "collections",
                 native: "bigIntNew",
                 ty: Ty::BigInt,
                 min_args: 1,

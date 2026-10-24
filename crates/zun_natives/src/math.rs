@@ -185,7 +185,7 @@ fn hypot(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
 
 /// The runtime-backed numeric portion of the standard library.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:math",
+    name: "math",
     functions: &[
         NativeFn {
             name: "abs",

@@ -254,7 +254,7 @@ impl Checker<'_> {
     /// realm binding's `token` (PLAN §3.1). Lowers to the `realmDescriptor`
     /// intrinsic over the token, boxed as an `Any`.
     fn realm_descriptor_expr(&self, token: u32, span: Span) -> hir::Expr {
-        let (id, _) = zun_natives::resolve("zun:collections", "realmDescriptor")
+        let (id, _) = zun_natives::resolve("collections", "realmDescriptor")
             .expect("realmDescriptor intrinsic must exist");
         hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
@@ -288,7 +288,7 @@ impl Checker<'_> {
             return None;
         }
         let span = Span::new(0, 0);
-        let (set_id, _) = zun_natives::resolve("zun:collections", "globalSet")
+        let (set_id, _) = zun_natives::resolve("collections", "globalSet")
             .expect("globalSet intrinsic must exist");
         let body = registry
             .into_iter()
@@ -880,15 +880,15 @@ impl Checker<'_> {
                     }
                 };
                 let span = iterable_expr.span;
-                let Some((new_id, _)) = zun_natives::resolve("zun:buffer", new_name) else {
+                let Some((new_id, _)) = zun_natives::resolve("buffer", new_name) else {
                     self.error(span, "missing iterator constructor intrinsic");
                     return hir::Stmt::Expr(self.poison(span));
                 };
-                let Some((done_id, _)) = zun_natives::resolve("zun:buffer", done_name) else {
+                let Some((done_id, _)) = zun_natives::resolve("buffer", done_name) else {
                     self.error(span, "missing iterator completion intrinsic");
                     return hir::Stmt::Expr(self.poison(span));
                 };
-                let Some((next_id, _)) = zun_natives::resolve("zun:buffer", next_name) else {
+                let Some((next_id, _)) = zun_natives::resolve("buffer", next_name) else {
                     self.error(span, "missing iterator next intrinsic");
                     return hir::Stmt::Expr(self.poison(span));
                 };
@@ -1064,7 +1064,7 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let intrinsic = |name: &str| {
-            zun_natives::resolve("zun:collections", name).map(|(id, _)| id)
+            zun_natives::resolve("collections", name).map(|(id, _)| id)
         };
         let builtin = |checker: &mut Self, name: &str, checked: Vec<hir::Expr>, ty: Ty| {
             let Some(id) = intrinsic(name) else {
@@ -1143,7 +1143,7 @@ impl Checker<'_> {
         if !key.ty.is_error() && key.ty != Ty::String {
             self.error(key.span, "a proxy property key must be a string");
         }
-        let Some((id, _)) = zun_natives::resolve("zun:collections", "proxyGet") else {
+        let Some((id, _)) = zun_natives::resolve("collections", "proxyGet") else {
             self.error(span, "missing `proxyGet` intrinsic");
             return self.poison(span);
         };
@@ -1176,7 +1176,7 @@ impl Checker<'_> {
                 ty: Ty::Any,
             }
         };
-        let Some((id, _)) = zun_natives::resolve("zun:collections", "proxySet") else {
+        let Some((id, _)) = zun_natives::resolve("collections", "proxySet") else {
             self.error(span, "missing `proxySet` intrinsic");
             return self.poison(span);
         };
@@ -1235,7 +1235,7 @@ impl Checker<'_> {
             self.error(checked[0].span, "`Reflect` target must be an object");
         }
         let builtin = |checker: &mut Self, name: &str, checked: Vec<hir::Expr>, ty: Ty| {
-            let Some((id, _)) = zun_natives::resolve("zun:collections", name) else {
+            let Some((id, _)) = zun_natives::resolve("collections", name) else {
                 checker.error(span, format!("missing Reflect intrinsic `{name}`"));
                 return checker.poison(span);
             };
@@ -1296,7 +1296,7 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let resolve = |checker: &mut Self, native: &str| {
-            match zun_natives::resolve("zun:number", native) {
+            match zun_natives::resolve("number", native) {
                 Some((id, _)) => Some(id),
                 None => {
                     checker.error(span, format!("missing Number intrinsic `{native}`"));
@@ -1385,11 +1385,11 @@ impl Checker<'_> {
                 return self.poison(span);
             }
         };
-        let Some((single_id, _)) = zun_natives::resolve("zun:string", single_native) else {
+        let Some((single_id, _)) = zun_natives::resolve("string", single_native) else {
             self.error(span, format!("missing String intrinsic `{single_native}`"));
             return self.poison(span);
         };
-        let Some((concat_id, _)) = zun_natives::resolve("zun:string", "concat") else {
+        let Some((concat_id, _)) = zun_natives::resolve("string", "concat") else {
             self.error(span, "missing String intrinsic `concat`");
             return self.poison(span);
         };
@@ -1466,7 +1466,7 @@ impl Checker<'_> {
                 };
             }
         }
-        let Some((id, _)) = zun_natives::resolve("zun:promise", native) else {
+        let Some((id, _)) = zun_natives::resolve("promise", native) else {
             self.error(span, format!("missing Promise intrinsic `{native}`"));
             return self.poison(span);
         };
@@ -1582,7 +1582,7 @@ impl Checker<'_> {
                 span,
             },
             ast::Expr::BigInt { value, .. } => {
-                let Some((id, native)) = zun_natives::resolve("zun:collections", "bigIntNew") else {
+                let Some((id, native)) = zun_natives::resolve("collections", "bigIntNew") else {
                     self.error(span, "BigInt literal intrinsic is unavailable");
                     return self.poison(span);
                 };
@@ -1606,7 +1606,7 @@ impl Checker<'_> {
             },
             ast::Expr::RegexLiteral { pattern, flags, .. } => {
                 // Same lowering as `new RegExp(pattern, flags)`.
-                let Some((id, _)) = zun_natives::resolve("zun:collections", "regexpNew") else {
+                let Some((id, _)) = zun_natives::resolve("collections", "regexpNew") else {
                     self.error(span, "missing collection intrinsic `regexpNew`");
                     return self.poison(span);
                 };
@@ -1640,7 +1640,7 @@ impl Checker<'_> {
                         ast::TemplatePart::Expr(expression) => {
                             let value = self.check_expr(cx, expression);
                             if value.ty == Ty::F64 {
-                                if let Some((id, _)) = zun_natives::resolve("zun:number", "toString") {
+                                if let Some((id, _)) = zun_natives::resolve("number", "toString") {
                                     hir::Expr {
                                         kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
                                         ty: Ty::String,
@@ -1811,7 +1811,7 @@ impl Checker<'_> {
                         _ => None,
                     };
                     if let Some(name) = intrinsic {
-                        if let Some((id, native)) = zun_natives::resolve("zun:collections", name) {
+                        if let Some((id, native)) = zun_natives::resolve("collections", name) {
                             return hir::Expr {
                                 kind: hir::ExprKind::CallBuiltin {
                                     id,
@@ -1880,7 +1880,7 @@ impl Checker<'_> {
                 }
                 let operand = self.check_expr(cx, operand);
                 if *op == ast::UnaryOp::Neg && operand.ty == Ty::BigInt {
-                    if let Some((id, native)) = zun_natives::resolve("zun:collections", "bigIntNeg") {
+                    if let Some((id, native)) = zun_natives::resolve("collections", "bigIntNeg") {
                         return hir::Expr {
                             kind: hir::ExprKind::CallBuiltin {
                                 id,
@@ -1983,7 +1983,7 @@ impl Checker<'_> {
                         self.error(arg.span, "`BigInt` expects a string or number argument");
                         return self.poison(span);
                     };
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -2011,7 +2011,7 @@ impl Checker<'_> {
                     if arg.ty == Ty::Boolean {
                         return arg;
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:boolean", "booleanCoerce") else {
+                    let Some((id, _)) = zun_natives::resolve("boolean", "booleanCoerce") else {
                         self.error(span, "missing Boolean intrinsic `booleanCoerce`");
                         return self.poison(span);
                     };
@@ -2024,7 +2024,7 @@ impl Checker<'_> {
 
                 if let Some(&func) = self.by_name.get(&name) {
                     if self.signatures[func as usize].is_generator {
-                        let Some((native_id, _)) = zun_natives::resolve("zun:buffer", "generatorIteratorNewArgs") else {
+                        let Some((native_id, _)) = zun_natives::resolve("buffer", "generatorIteratorNewArgs") else {
                             self.error(span, "missing generator iterator intrinsic");
                             return self.poison(span);
                         };
@@ -2180,7 +2180,7 @@ impl Checker<'_> {
                         self.error(span, "dynamicSetFunction expects an object, name, and function");
                         return self.poison(span);
                     }
-                    let Some((id, native)) = zun_natives::resolve("zun:collections", &name) else {
+                    let Some((id, native)) = zun_natives::resolve("collections", &name) else {
                         return self.poison(span);
                     };
                     if args[0].ty != Ty::DynamicObject
@@ -2228,7 +2228,7 @@ impl Checker<'_> {
                         self.error(span, "`Symbol` takes an optional description argument");
                         return self.poison(span);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", "symbolNew") else {
+                    let Some((id, _)) = zun_natives::resolve("collections", "symbolNew") else {
                         self.error(span, "missing `symbolNew` intrinsic");
                         return self.poison(span);
                     };
@@ -2598,7 +2598,7 @@ impl Checker<'_> {
                             self.error(span, format!("`Symbol.{member}` expects one argument"));
                             return self.poison(span);
                         }
-                        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+                        let Some((id, _)) = zun_natives::resolve("collections", native) else {
                             self.error(span, format!("missing `{native}` intrinsic"));
                             return self.poison(span);
                         };
@@ -2630,7 +2630,7 @@ impl Checker<'_> {
                             self.error(span, format!("`BigInt.{member}` expects two arguments"));
                             return self.poison(span);
                         }
-                        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+                        let Some((id, _)) = zun_natives::resolve("collections", native) else {
                             self.error(span, format!("missing `{native}` intrinsic"));
                             return self.poison(span);
                         };
@@ -2673,7 +2673,7 @@ impl Checker<'_> {
                             self.error(span, "`ArrayBuffer.isView` expects one argument".to_string());
                             return self.poison(span);
                         }
-                        let Some((id, _)) = zun_natives::resolve("zun:buffer", "isView") else {
+                        let Some((id, _)) = zun_natives::resolve("buffer", "isView") else {
                             self.error(span, "missing `isView` intrinsic".to_string());
                             return self.poison(span);
                         };
@@ -2833,7 +2833,7 @@ impl Checker<'_> {
                     } else {
                         ("objectIsPrototypeOf", Ty::Boolean)
                     };
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", name) else {
+                    let Some((id, _)) = zun_natives::resolve("collections", name) else {
                         self.error(span, format!("missing Object intrinsic `{name}`"));
                         return self.poison(span);
                     };
@@ -2922,7 +2922,7 @@ impl Checker<'_> {
                         }
                         call_args.push(value);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -2980,7 +2980,7 @@ impl Checker<'_> {
                             }),
                         }
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:promise", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("promise", native_name) else {
                         self.error(span, format!("missing Promise intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -2994,7 +2994,7 @@ impl Checker<'_> {
                     // Dynamic member call on an `any` receiver (e.g. a namespace from
                     // `import()`): dispatched by name at run time.
                     let native_name = ["dynamicCall0", "dynamicCall1", "dynamicCall2"][args.len()];
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -3015,7 +3015,7 @@ impl Checker<'_> {
                 // chain of the two-argument string `concat` native; zero
                 // arguments return the receiver (as `"x".concat() === "x"`).
                 if receiver.ty == Ty::String && mname == "concat" {
-                    let Some((id, _)) = zun_natives::resolve("zun:string", "concat") else {
+                    let Some((id, _)) = zun_natives::resolve("string", "concat") else {
                         self.error(span, "missing String intrinsic `concat`");
                         return self.poison(span);
                     };
@@ -3042,7 +3042,7 @@ impl Checker<'_> {
                         self.error(span, "`slice` expects at most 2 arguments");
                         return self.poison(span);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:string", "slice") else {
+                    let Some((id, _)) = zun_natives::resolve("string", "slice") else {
                         self.error(span, "missing String intrinsic `slice`");
                         return self.poison(span);
                     };
@@ -3083,7 +3083,7 @@ impl Checker<'_> {
                             self.error(span, "`split` with a RegExp does not accept a limit");
                             return self.poison(span);
                         }
-                        let Some((id, _)) = zun_natives::resolve("zun:collections", "regexpSplit") else {
+                        let Some((id, _)) = zun_natives::resolve("collections", "regexpSplit") else {
                             self.error(span, "missing collection intrinsic `regexpSplit`");
                             return self.poison(span);
                         };
@@ -3113,7 +3113,7 @@ impl Checker<'_> {
                             span,
                         },
                     };
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", "stringSplit") else {
+                    let Some((id, _)) = zun_natives::resolve("collections", "stringSplit") else {
                         self.error(span, "missing collection intrinsic `stringSplit`");
                         return self.poison(span);
                     };
@@ -3138,7 +3138,7 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                     if first.ty == Ty::RegExp {
-                        let Some((id, _)) = zun_natives::resolve("zun:collections", "regexpReplace") else {
+                        let Some((id, _)) = zun_natives::resolve("collections", "regexpReplace") else {
                             self.error(span, "missing collection intrinsic `regexpReplace`");
                             return self.poison(span);
                         };
@@ -3152,7 +3152,7 @@ impl Checker<'_> {
                         self.error(first.span, "`replace` expects a string or RegExp search");
                         return self.poison(span);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:string", "replace") else {
+                    let Some((id, _)) = zun_natives::resolve("string", "replace") else {
                         self.error(span, "missing String intrinsic `replace`");
                         return self.poison(span);
                     };
@@ -3183,7 +3183,7 @@ impl Checker<'_> {
                             };
                             let call_args = vec![first, receiver];
                             let Some((id, _)) =
-                                zun_natives::resolve("zun:collections", native_name)
+                                zun_natives::resolve("collections", native_name)
                             else {
                                 self.error(
                                     span,
@@ -3237,7 +3237,7 @@ impl Checker<'_> {
                             None => null_sentinel(span),
                         };
                         let Some((id, _)) =
-                            zun_natives::resolve("zun:collections", "finalizationRegister")
+                            zun_natives::resolve("collections", "finalizationRegister")
                         else {
                             self.error(span, "missing intrinsic `finalizationRegister`");
                             return self.poison(span);
@@ -3261,7 +3261,7 @@ impl Checker<'_> {
                     }
                     let token = self.check_expr(cx, &args[0]);
                     let Some((id, _)) =
-                        zun_natives::resolve("zun:collections", "finalizationUnregister")
+                        zun_natives::resolve("collections", "finalizationUnregister")
                     else {
                         self.error(span, "missing intrinsic `finalizationUnregister`");
                         return self.poison(span);
@@ -3561,7 +3561,7 @@ impl Checker<'_> {
                         call_args.push(value);
                     }
                     let module = if receiver_is_string {
-                        "zun:string"
+                        "string"
                     } else if native_name.starts_with("dataView")
                         || native_name.starts_with("buffer")
                         // The typed-array natives, by the prefixes the master
@@ -3575,11 +3575,11 @@ impl Checker<'_> {
                             .iter()
                             .any(|prefix| native_name.starts_with(prefix))
                     {
-                        "zun:buffer"
+                        "buffer"
                     } else if native_name.starts_with("promise") {
-                        "zun:promise"
+                        "promise"
                     } else {
-                        "zun:collections"
+                        "collections"
                     };
                     let Some((id, _)) = zun_natives::resolve(module, native_name) else {
                         self.error(
@@ -3607,7 +3607,7 @@ impl Checker<'_> {
                 // the no-arg extern `toString` for the radix form and the
                 // no-arg form alike.
                 if receiver.ty == Ty::F64 && mname == "toString" && args.len() <= 1 {
-                    let Some((id, _)) = zun_natives::resolve("zun:number", "toStringRadix") else {
+                    let Some((id, _)) = zun_natives::resolve("number", "toStringRadix") else {
                         self.error(span, "missing Number intrinsic `toStringRadix`");
                         return self.poison(span);
                     };
@@ -3638,7 +3638,7 @@ impl Checker<'_> {
                 // before class dispatch, like `number.toString(radix?)`, since
                 // the primitive `boolean` has no backing class.
                 if receiver.ty == Ty::Boolean && mname == "toString" && args.is_empty() {
-                    let Some((id, _)) = zun_natives::resolve("zun:boolean", "booleanToString") else {
+                    let Some((id, _)) = zun_natives::resolve("boolean", "booleanToString") else {
                         self.error(span, "missing Boolean intrinsic `booleanToString`");
                         return self.poison(span);
                     };
@@ -4091,7 +4091,7 @@ impl Checker<'_> {
                             if !length.ty.is_int() {
                                 self.error(length.span, "ArrayBuffer length must be an integer");
                             }
-                            let Some((id, _)) = zun_natives::resolve("zun:buffer", "bufferNew") else {
+                            let Some((id, _)) = zun_natives::resolve("buffer", "bufferNew") else {
                                 self.error(span, "missing ArrayBuffer intrinsic");
                                 return self.poison(span);
                             };
@@ -4111,7 +4111,7 @@ impl Checker<'_> {
                             for arg in call_args.iter_mut().skip(1) {
                                 coerce_numeric_literal(arg, Ty::INT);
                             }
-                            let Some((id, _)) = zun_natives::resolve("zun:buffer", native) else {
+                            let Some((id, _)) = zun_natives::resolve("buffer", native) else {
                                 self.error(span, format!("missing buffer-view intrinsic `{native}`"));
                                 return self.poison(span);
                             };
@@ -4143,7 +4143,7 @@ impl Checker<'_> {
                     if !length.ty.is_int() {
                         self.error(length.span, "ArrayBuffer length must be an integer");
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:buffer", "bufferNew") else {
+                    let Some((id, _)) = zun_natives::resolve("buffer", "bufferNew") else {
                         self.error(span, "missing ArrayBuffer intrinsic");
                         return self.poison(span);
                     };
@@ -4166,7 +4166,7 @@ impl Checker<'_> {
                     for arg in call_args.iter_mut().skip(1) {
                         coerce_numeric_literal(arg, Ty::INT);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:buffer", "dataViewNew") else {
+                    let Some((id, _)) = zun_natives::resolve("buffer", "dataViewNew") else {
                         self.error(span, "missing DataView intrinsic");
                         return self.poison(span);
                     };
@@ -4189,7 +4189,7 @@ impl Checker<'_> {
                     for arg in call_args.iter_mut().skip(1) {
                         coerce_numeric_literal(arg, Ty::INT);
                     }
-                    let Some((id, _)) = zun_natives::resolve("zun:buffer", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("buffer", native_name) else {
                         self.error(
                             span,
                             format!("missing typed-array intrinsic `{native_name}`"),
@@ -4231,7 +4231,7 @@ impl Checker<'_> {
                         self.error(arg.span, "`BigInt` expects a string or number argument");
                         return self.poison(span);
                     };
-                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -4265,9 +4265,9 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                     let module = if name == "Promise" {
-                        "zun:promise"
+                        "promise"
                     } else {
-                        "zun:collections"
+                        "collections"
                     };
                     let Some((id, _)) = zun_natives::resolve(module, native_name) else {
                         self.error(
@@ -4429,7 +4429,7 @@ impl Checker<'_> {
                         };
                         if let Some(well_known_id) = well_known_id {
                             let Some((id, _)) =
-                                zun_natives::resolve("zun:collections", "symbolWellKnown")
+                                zun_natives::resolve("collections", "symbolWellKnown")
                             else {
                                 self.error(span, "missing `symbolWellKnown` intrinsic");
                                 return self.poison(span);
@@ -4453,7 +4453,7 @@ impl Checker<'_> {
                 // `symbol.description` — the creation description or `undefined`.
                 if object.ty == Ty::Symbol && fname == "description" {
                     let Some((id, _)) =
-                        zun_natives::resolve("zun:collections", "symbolDescription")
+                        zun_natives::resolve("collections", "symbolDescription")
                     else {
                         self.error(span, "missing `symbolDescription` intrinsic");
                         return self.poison(span);
@@ -4672,9 +4672,9 @@ impl Checker<'_> {
                     return self.poison(span);
                 }
                 let module = if native_name.starts_with("promise") {
-                    "zun:promise"
+                    "promise"
                 } else {
-                    "zun:collections"
+                    "collections"
                 };
                 let Some((id, _)) = zun_natives::resolve(module, native_name) else {
                     self.error(span, format!("missing collection intrinsic `{native_name}`"));
@@ -4976,7 +4976,7 @@ impl Checker<'_> {
                             return self.poison(span);
                         }
                     };
-                    let Some((id, _)) = zun_natives::resolve("zun:buffer", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("buffer", native_name) else {
                         self.error(span, "missing Symbol.iterator intrinsic");
                         return self.poison(span);
                     };
@@ -5137,7 +5137,7 @@ impl Checker<'_> {
                 return self.poison(span);
             }
         };
-        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+        let Some((id, _)) = zun_natives::resolve("collections", native) else {
             self.error(span, format!("missing `{native}` intrinsic"));
             return self.poison(span);
         };
@@ -5196,7 +5196,7 @@ impl Checker<'_> {
                 return self.poison(span);
             }
         };
-        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+        let Some((id, _)) = zun_natives::resolve("collections", native) else {
             self.error(span, format!("missing `{native}` intrinsic"));
             return self.poison(span);
         };

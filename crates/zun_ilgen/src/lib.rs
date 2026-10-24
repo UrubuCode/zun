@@ -72,7 +72,7 @@ fn math_machine_op(id: u32, argc: usize) -> Option<Opcode> {
     let (_, op) = MATH_MACHINE_OPS
         .iter()
         .find(|(name, _)| *name == native.name)?;
-    if zun_natives::resolve("zun:math", native.name)?.0 != id {
+    if zun_natives::resolve("math", native.name)?.0 != id {
         return None;
     }
     let zun_il::StackEffect::Fixed { pops, .. } = op.stack_effect() else {

@@ -151,7 +151,7 @@ fn from_utc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
 }
 
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:date",
+    name: "date",
     functions: &[
         NativeFn {
             name: "isValid",

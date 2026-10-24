@@ -11,8 +11,8 @@ use zun_regex::Regex;
 
 fn natives() -> StringNatives {
     StringNatives {
-        length: zun_natives::resolve("zun:string", "length").unwrap().0,
-        char_code_at: zun_natives::resolve("zun:string", "charCodeAt").unwrap().0,
+        length: zun_natives::resolve("string", "length").unwrap().0,
+        char_code_at: zun_natives::resolve("string", "charCodeAt").unwrap().0,
     }
 }
 
@@ -104,11 +104,11 @@ use zun_regex::zil::{compile_backtracking, unpack_result, CompiledMatcher, Match
 
 fn matcher_natives() -> MatcherNatives {
     MatcherNatives {
-        length: zun_natives::resolve("zun:string", "length").unwrap().0,
-        char_code_at: zun_natives::resolve("zun:string", "charCodeAt").unwrap().0,
-        buffer_read_u32: zun_natives::resolve("zun:buffer", "bufferReadU32").unwrap().0,
-        buffer_write_u32: zun_natives::resolve("zun:buffer", "bufferWriteU32").unwrap().0,
-        buffer_new: zun_natives::resolve("zun:buffer", "bufferNew").unwrap().0,
+        length: zun_natives::resolve("string", "length").unwrap().0,
+        char_code_at: zun_natives::resolve("string", "charCodeAt").unwrap().0,
+        buffer_read_u32: zun_natives::resolve("buffer", "bufferReadU32").unwrap().0,
+        buffer_write_u32: zun_natives::resolve("buffer", "bufferWriteU32").unwrap().0,
+        buffer_new: zun_natives::resolve("buffer", "bufferNew").unwrap().0,
     }
 }
 

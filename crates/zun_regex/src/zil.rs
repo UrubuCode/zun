@@ -17,7 +17,7 @@
 //!
 //! The string builtins are addressed by native id. Ids are assigned by
 //! `zun_natives`; to keep this crate free of that dependency the caller
-//! resolves them (`zun_natives::resolve("zun:string", "length")`, ...) and
+//! resolves them (`zun_natives::resolve("string", "length")`, ...) and
 //! passes them in via [`StringNatives`].
 
 use zun_il::{encode, Instruction, JitKind, NumKind, Opcode, Operand};

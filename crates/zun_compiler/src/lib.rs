@@ -1149,7 +1149,7 @@ mod tests {
     #[test]
     fn compiles_extern_method_to_builtin_call() {
         let module = compile(
-            "import { receiverValue } from \"zun:math\";\n\
+            "import { receiverValue } from \"zun:core\";\n\
              class Service { extern receiverValue(value: number): number; }\n\
              function main(): number { return 0.0; }",
         )

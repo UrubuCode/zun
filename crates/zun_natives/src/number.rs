@@ -277,7 +277,7 @@ fn is_safe_integer(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, 
 
 /// Runtime-backed numeric conversion functions.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:number",
+    name: "number",
     functions: &[
         NativeFn {
             name: "parseFloat",

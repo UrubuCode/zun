@@ -36,7 +36,7 @@ fn interp_ns_per_iteration(src: &str, iterations: usize) -> f64 {
 
 fn benchmark_i32_map_loop() {
     let src = format!(
-        "import {{ mapNew, mapSetI32, mapGetI32Or }} from \"zun:collections\";\n\
+        "import {{ mapNew, mapSetI32, mapGetI32Or }} from \"zun:core\";\n\
          function fill(value: Map, n: i32): i32 {{ let i: i32 = 0; while (i < n) {{ mapSetI32(value, i, i); i = i + 1; }} return mapGetI32Or(value, n - 1, -1); }}\n\
          function main(): i32 {{ let value = mapNew(); return fill(value, {COLLECTION_N}); }}"
     );

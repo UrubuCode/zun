@@ -188,8 +188,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "symbolDescription",
         "stringSplit",
     ] {
-        if zun_natives::resolve("zun:collections", name)
-            .or_else(|| zun_natives::resolve("zun:promise", name))
+        if zun_natives::resolve("collections", name)
+            .or_else(|| zun_natives::resolve("promise", name))
             .map(|(candidate, _)| candidate)
             == Some(id)
         {
@@ -201,7 +201,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 
 pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
     for name in ["typeofAny", "instanceofClass"] {
-        if zun_natives::resolve("zun:typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
+        if zun_natives::resolve("typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }
@@ -212,7 +212,7 @@ pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
 /// its managed floor (the live frame-stack capture behind `Error.stack`).
 pub(crate) fn managed_error_builtin(id: u32) -> Option<&'static str> {
     for name in ["captureStackTrace"] {
-        if zun_natives::resolve("zun:error", name).map(|(candidate, _)| candidate) == Some(id) {
+        if zun_natives::resolve("error", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }
@@ -276,7 +276,7 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
     // cannot be callable from compiled code but unknown here.
     .chain(crate::typed_arrays::NATIVES.iter().copied())
     {
-        if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
+        if zun_natives::resolve("buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }

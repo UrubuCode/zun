@@ -46,7 +46,7 @@ fn instanceof_class(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
 
 /// Runtime type reflection for `any`/dynamic operands.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:typeinfo",
+    name: "typeinfo",
     functions: &[
         NativeFn {
             // `typeof value` when `value`'s static type is `any`. Returns the

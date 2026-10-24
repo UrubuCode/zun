@@ -108,7 +108,7 @@ impl<'a> Checker<'a> {
                     self.error(array.span, "`apply` expects an Array of arguments");
                     return self.poison(span);
                 }
-                let Some((id, _)) = zun_natives::resolve("zun:collections", "functionApply") else {
+                let Some((id, _)) = zun_natives::resolve("collections", "functionApply") else {
                     self.error(span, "missing `functionApply` intrinsic");
                     return self.poison(span);
                 };
@@ -128,7 +128,7 @@ impl<'a> Checker<'a> {
                 }
                 let prepended: Vec<hir::Expr> =
                     args.iter().map(|arg| self.check_expr(cx, arg)).collect();
-                let Some((id, _)) = zun_natives::resolve("zun:collections", "functionBind") else {
+                let Some((id, _)) = zun_natives::resolve("collections", "functionBind") else {
                     self.error(span, "missing `functionBind` intrinsic");
                     return self.poison(span);
                 };

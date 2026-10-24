@@ -30,7 +30,7 @@ fn realm_global_binding_remains_on_the_tier0_fallback() {
 #[test]
 fn typed_string_receiver_call_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        r#"import { length } from "zun:string";
+        r#"import { length } from "zun:core";
         class String {
             extern length(): u64;
             isShort(): boolean { return this.length() < 4; }
@@ -56,7 +56,7 @@ fn typed_string_receiver_call_is_jit_equivalent() {
 #[test]
 fn typed_string_receiver_chain_preserves_managed_result() {
     let module = zun_compiler::compile(
-        r#"import { trim, length } from "zun:string";
+        r#"import { trim, length } from "zun:core";
         class String {
             extern trim(): string;
             extern length(): u64;
@@ -82,7 +82,7 @@ fn typed_string_receiver_chain_preserves_managed_result() {
 
 #[test]
 fn collection_allocation_ids_only_apply_to_call_builtins() {
-    let (map_new, _) = zun_natives::resolve("zun:collections", "mapNew").expect("mapNew intrinsic");
+    let (map_new, _) = zun_natives::resolve("collections", "mapNew").expect("mapNew intrinsic");
     let source = format!(
         "function main(): i32 {{ return {map_new} as i32; }}"
     );
@@ -148,7 +148,7 @@ fn array_for_of_preserves_interpreter_fallback_boundary() {
 #[test]
 fn generic_set_has_preserves_interpreter_fallback_boundary() {
     let module = compile(
-        "import { setHas } from \"zun:collections\";\n\
+        "import { setHas } from \"zun:core\";\n\
          function contains(set: Set, value: any): boolean { return setHas(set, value); }\n\
          function main(): boolean { let set = new Set(); set.add(7); return contains(set, 7); }",
     );
@@ -167,7 +167,7 @@ fn generic_set_has_preserves_interpreter_fallback_boundary() {
 #[test]
 fn generic_map_has_preserves_interpreter_fallback_boundary() {
     let module = compile(
-        "import { mapHas } from \"zun:collections\";\n\
+        "import { mapHas } from \"zun:core\";\n\
          function contains(map: Map, key: any): boolean { return mapHas(map, key); }\n\
          function main(): boolean { let map = new Map(); map.set(7, 42); return contains(map, 7); }",
     );
@@ -203,7 +203,7 @@ fn checked_string_array_unbox_preserves_tier0_fallback_boundary() {
 #[test]
 fn interned_string_length_uses_the_typed_jit_abi() {
     let module = compile(
-        "import { length } from \"zun:string\"; function measure(value: string): u64 { return length(value); } function main(): u64 { return 0; }",
+        "import { length } from \"zun:core\"; function measure(value: string): u64 { return length(value); } function main(): u64 { return 0; }",
     );
     let rid = module
         .tables
@@ -226,7 +226,7 @@ fn interned_string_length_uses_the_typed_jit_abi() {
 #[test]
 fn aliased_intrinsic_import_uses_the_local_binding() {
     let module = compile(
-        "import { length as stringLength } from \"zun:string\"; function measure(value: string): u64 { return stringLength(value); } function main(): u64 { return 0; }",
+        "import { length as stringLength } from \"zun:core\"; function measure(value: string): u64 { return stringLength(value); } function main(): u64 { return 0; }",
     );
     let rid = module
         .tables
@@ -245,7 +245,7 @@ fn aliased_intrinsic_import_uses_the_local_binding() {
 #[test]
 fn primitive_string_length_callvirt_uses_the_direct_handle_path() {
     let module = compile(
-        "import { length } from \"zun:string\"; class String { extern length(): u64; } function measure(value: string): u64 { return value.length(); } function main(): u64 { return 0; }",
+        "import { length } from \"zun:core\"; class String { extern length(): u64; } function measure(value: string): u64 { return value.length(); } function main(): u64 { return 0; }",
     );
     let rid = module
         .tables
@@ -268,7 +268,7 @@ fn primitive_string_length_callvirt_uses_the_direct_handle_path() {
 #[test]
 fn string_literal_callvirt_uses_the_runtime_literal_abi() {
     let module = compile(
-        "import { contains } from \"zun:string\"; class String { extern contains(needle: string): boolean; } function main(): boolean { return \"zun\".contains(\"u\"); }",
+        "import { contains } from \"zun:core\"; class String { extern contains(needle: string): boolean; } function main(): boolean { return \"zun\".contains(\"u\"); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
@@ -284,7 +284,7 @@ fn string_literal_callvirt_uses_the_runtime_literal_abi() {
 #[test]
 fn primitive_string_contains_uses_the_managed_string_abi() {
     let module = compile(
-        "import { contains } from \"zun:string\"; class String { extern contains(needle: string): boolean; } function measure(value: string, needle: string): boolean { return value.contains(needle); } function main(): boolean { return false; }",
+        "import { contains } from \"zun:core\"; class String { extern contains(needle: string): boolean; } function measure(value: string, needle: string): boolean { return value.contains(needle); } function main(): boolean { return false; }",
     );
     let rid = module
         .tables
@@ -308,7 +308,7 @@ fn primitive_string_contains_uses_the_managed_string_abi() {
 #[test]
 fn managed_string_result_remains_rooted_across_a_following_helper() {
     let module = compile(
-        "import { concat, contains } from \"zun:string\"; class String { extern concat(other: string): string; extern contains(needle: string): boolean; } function measure(value: string, suffix: string, needle: string): boolean { return value.concat(suffix).contains(needle); } function main(): boolean { return false; }",
+        "import { concat, contains } from \"zun:core\"; class String { extern concat(other: string): string; extern contains(needle: string): boolean; } function measure(value: string, suffix: string, needle: string): boolean { return value.concat(suffix).contains(needle); } function main(): boolean { return false; }",
     );
     let rid = module
         .tables
@@ -337,7 +337,7 @@ fn managed_string_result_remains_rooted_across_a_following_helper() {
 #[test]
 fn primitive_string_char_code_at_uses_the_managed_string_abi() {
     let module = compile(
-        "import { charCodeAt } from \"zun:string\"; class String { extern charCodeAt(index: u64): u32; } function measure(value: string, index: u64): u32 { return value.charCodeAt(index); } function main(): u32 { return 0; }",
+        "import { charCodeAt } from \"zun:core\"; class String { extern charCodeAt(index: u64): u32; } function measure(value: string, index: u64): u32 { return value.charCodeAt(index); } function main(): u32 { return 0; }",
     );
     let rid = module
         .tables
@@ -360,7 +360,7 @@ fn primitive_string_char_code_at_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_prefix_uses_the_managed_string_abi() {
     let module = compile(
-        "import { startsWith } from \"zun:string\"; class String { extern startsWith(prefix: string): boolean; } function measure(value: string, prefix: string): boolean { return value.startsWith(prefix); } function main(): boolean { return false; }",
+        "import { startsWith } from \"zun:core\"; class String { extern startsWith(prefix: string): boolean; } function measure(value: string, prefix: string): boolean { return value.startsWith(prefix); } function main(): boolean { return false; }",
     );
     let rid = module
         .tables
@@ -384,7 +384,7 @@ fn primitive_string_prefix_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_suffix_uses_the_managed_string_abi() {
     let module = compile(
-        "import { endsWith } from \"zun:string\"; class String { extern endsWith(suffix: string): boolean; } function measure(value: string, suffix: string): boolean { return value.endsWith(suffix); } function main(): boolean { return false; }",
+        "import { endsWith } from \"zun:core\"; class String { extern endsWith(suffix: string): boolean; } function measure(value: string, suffix: string): boolean { return value.endsWith(suffix); } function main(): boolean { return false; }",
     );
     let rid = module
         .tables
@@ -408,7 +408,7 @@ fn primitive_string_suffix_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_index_of_uses_the_managed_string_abi() {
     let module = compile(
-        "import { indexOf } from \"zun:string\"; class String { extern indexOf(needle: string): int; } function measure(value: string, needle: string): int { return value.indexOf(needle); } function main(): int { return 0; }",
+        "import { indexOf } from \"zun:core\"; class String { extern indexOf(needle: string): int; } function measure(value: string, needle: string): int { return value.indexOf(needle); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -432,7 +432,7 @@ fn primitive_string_index_of_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_last_index_of_uses_the_managed_string_abi() {
     let module = compile(
-        "import { lastIndexOf } from \"zun:string\"; class String { extern lastIndexOf(needle: string): int; } function measure(value: string, needle: string): int { return value.lastIndexOf(needle); } function main(): int { return 0; }",
+        "import { lastIndexOf } from \"zun:core\"; class String { extern lastIndexOf(needle: string): int; } function measure(value: string, needle: string): int { return value.lastIndexOf(needle); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -456,7 +456,7 @@ fn primitive_string_last_index_of_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_count_uses_the_managed_string_abi() {
     let module = compile(
-        "import { count } from \"zun:string\"; class String { extern count(needle: string): int; } function measure(value: string, needle: string): int { return value.count(needle); } function main(): int { return 0; }",
+        "import { count } from \"zun:core\"; class String { extern count(needle: string): int; } function measure(value: string, needle: string): int { return value.count(needle); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -480,7 +480,7 @@ fn primitive_string_count_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_compare_uses_the_managed_string_abi() {
     let module = compile(
-        "import { compare } from \"zun:string\"; class String { extern compare(other: string): int; } function measure(value: string, other: string): int { return value.compare(other); } function main(): int { return 0; }",
+        "import { compare } from \"zun:core\"; class String { extern compare(other: string): int; } function measure(value: string, other: string): int { return value.compare(other); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -504,7 +504,7 @@ fn primitive_string_compare_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_concat_uses_the_managed_string_abi() {
     let module = compile(
-        "import { concat } from \"zun:string\"; class String { extern concat(other: string): string; } function measure(value: string, other: string): string { return value.concat(other); } function main(): int { return 0; }",
+        "import { concat } from \"zun:core\"; class String { extern concat(other: string): string; } function measure(value: string, other: string): string { return value.concat(other); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -528,7 +528,7 @@ fn primitive_string_concat_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_substring_uses_the_managed_string_abi() {
     let module = compile(
-        "import { substring } from \"zun:string\"; class String { extern substring(start: u64, end: u64): string; } function measure(value: string): string { return value.substring(1, 4); } function main(): int { return 0; }",
+        "import { substring } from \"zun:core\"; class String { extern substring(start: u64, end: u64): string; } function measure(value: string): string { return value.substring(1, 4); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -551,7 +551,7 @@ fn primitive_string_substring_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_trim_uses_the_managed_string_abi() {
     let module = compile(
-        "import { trim } from \"zun:string\"; class String { extern trim(): string; } function measure(value: string): string { return value.trim(); } function main(): int { return 0; }",
+        "import { trim } from \"zun:core\"; class String { extern trim(): string; } function measure(value: string): string { return value.trim(); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -574,7 +574,7 @@ fn primitive_string_trim_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_trim_boundaries_use_the_managed_string_abi() {
     let module = compile(
-        "import { trimStart, trimEnd } from \"zun:string\"; class String { extern trimStart(): string; extern trimEnd(): string; } function measure(value: string): string { return value.trimStart().trimEnd(); } function main(): int { return 0; }",
+        "import { trimStart, trimEnd } from \"zun:core\"; class String { extern trimStart(): string; extern trimEnd(): string; } function measure(value: string): string { return value.trimStart().trimEnd(); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -597,7 +597,7 @@ fn primitive_string_trim_boundaries_use_the_managed_string_abi() {
 #[test]
 fn primitive_string_case_conversion_uses_the_managed_string_abi() {
     let module = compile(
-        "import { toLowerCase, toUpperCase } from \"zun:string\"; class String { extern toLowerCase(): string; extern toUpperCase(): string; } function lower(value: string): string { return value.toLowerCase(); } function upper(value: string): string { return value.toUpperCase(); } function main(): int { return 0; }",
+        "import { toLowerCase, toUpperCase } from \"zun:core\"; class String { extern toLowerCase(): string; extern toUpperCase(): string; } function lower(value: string): string { return value.toLowerCase(); } function upper(value: string): string { return value.toUpperCase(); } function main(): int { return 0; }",
     );
     let lower_rid = module
         .tables
@@ -626,7 +626,7 @@ fn primitive_string_case_conversion_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_repeat_uses_the_managed_string_abi() {
     let module = compile(
-        "import { repeat } from \"zun:string\"; class String { extern repeat(count: u64): string; } function measure(value: string): string { return value.repeat(3); } function main(): int { return 0; }",
+        "import { repeat } from \"zun:core\"; class String { extern repeat(count: u64): string; } function measure(value: string): string { return value.repeat(3); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -649,7 +649,7 @@ fn primitive_string_repeat_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_reverse_uses_the_managed_string_abi() {
     let module = compile(
-        "import { reverse } from \"zun:string\"; class String { extern reverse(): string; } function measure(value: string): string { return value.reverse(); } function main(): int { return 0; }",
+        "import { reverse } from \"zun:core\"; class String { extern reverse(): string; } function measure(value: string): string { return value.reverse(); } function main(): int { return 0; }",
     );
     let rid = module
         .tables
@@ -672,7 +672,7 @@ fn primitive_string_reverse_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_padding_uses_the_managed_string_abi() {
     let module = compile(
-        "import { padStart, padEnd } from \"zun:string\"; class String { extern padStart(target: u64, fill: string): string; extern padEnd(target: u64, fill: string): string; } function left(value: string, fill: string): string { return value.padStart(5, fill); } function right(value: string, fill: string): string { return value.padEnd(5, fill); } function main(): int { return 0; }",
+        "import { padStart, padEnd } from \"zun:core\"; class String { extern padStart(target: u64, fill: string): string; extern padEnd(target: u64, fill: string): string; } function left(value: string, fill: string): string { return value.padStart(5, fill); } function right(value: string, fill: string): string { return value.padEnd(5, fill); } function main(): int { return 0; }",
     );
     let left_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "left").expect("left method") as u32 + 1;
     let right_rid = left_rid + 1;
@@ -693,7 +693,7 @@ fn primitive_string_padding_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_replace_uses_the_managed_string_abi() {
     let module = compile(
-        "import { replace } from \"zun:string\"; class String { extern replace(needle: string, replacement: string): string; } function measure(value: string, needle: string, replacement: string): string { return value.replace(needle, replacement); } function main(): int { return 0; }",
+        "import { replace } from \"zun:core\"; class String { extern replace(needle: string, replacement: string): string; } function measure(value: string, needle: string, replacement: string): string { return value.replace(needle, replacement); } function main(): int { return 0; }",
     );
     let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "measure").expect("measure method") as u32 + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
@@ -710,7 +710,7 @@ fn primitive_string_replace_uses_the_managed_string_abi() {
 #[test]
 fn primitive_string_builtin_conversions_use_the_managed_string_abi() {
     let module = compile(
-        "import { toInt, toFloat, toBoolean } from \"zun:string\"; function asInt(value: string): int { return toInt(value); } function asFloat(value: string): number { return toFloat(value); } function asBool(value: string): boolean { return toBoolean(value); } function main(): int { return 0; }",
+        "import { toInt, toFloat, toBoolean } from \"zun:core\"; function asInt(value: string): int { return toInt(value); } function asFloat(value: string): number { return toFloat(value); } function asBool(value: string): boolean { return toBoolean(value); } function main(): int { return 0; }",
     );
     let rid = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("method") as u32 + 1;
     let int_rid = rid("asInt");
@@ -733,7 +733,7 @@ fn primitive_string_builtin_conversions_use_the_managed_string_abi() {
 #[test]
 fn primitive_string_method_conversions_bind_to_builtins() {
     let module = compile(
-        "import { toInt, toFloat, toBoolean } from \"zun:string\"; class String { extern toInt(): int; extern toFloat(): number; extern toBoolean(): boolean; } function asInt(value: string): int { return value.toInt(); } function asFloat(value: string): number { return value.toFloat(); } function asBool(value: string): boolean { return value.toBoolean(); } function main(): int { return 0; }",
+        "import { toInt, toFloat, toBoolean } from \"zun:core\"; class String { extern toInt(): int; extern toFloat(): number; extern toBoolean(): boolean; } function asInt(value: string): int { return value.toInt(); } function asFloat(value: string): number { return value.toFloat(); } function asBool(value: string): boolean { return value.toBoolean(); } function main(): int { return 0; }",
     );
     let rid = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("method") as u32 + 1;
     let int_rid = rid("asInt");
@@ -848,7 +848,7 @@ fn jit_stores_and_reloads_managed_object_references() {
 #[test]
 fn managed_collections_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "import { mapNew, mapSet, mapHas } from \"zun:collections\"; function main(): int { let map = mapNew(); mapSet(map, 7.0, 42.0); if (mapHas(map, 7.0)) { return 1; } return 0; }",
+        "import { mapNew, mapSet, mapHas } from \"zun:core\"; function main(): int { let map = mapNew(); mapSet(map, 7.0, 42.0); if (mapHas(map, 7.0)) { return 1; } return 0; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -900,7 +900,7 @@ fn managed_map_and_set_size_methods_use_typed_object_receivers() {
 #[test]
 fn numeric_map_and_set_has_use_typed_jit_abis() {
     let module = compile(
-        "import { mapHasF64, setHasF64, setAddF64, mapDeleteF64, setDeleteF64, mapSetF64, mapGetF64Or, mapHasI64, setHasI64, setAddI64, mapDeleteI64, setDeleteI64, mapSetI64, mapGetI64Or } from \"zun:collections\"; function mapContains(value: Map, key: number): boolean { return mapHasF64(value, key); } function setContains(value: Set, key: number): boolean { return setHasF64(value, key); } function setInsert(value: Set, key: number): boolean { return setAddF64(value, key); } function mapRemove(value: Map, key: number): boolean { return mapDeleteF64(value, key); } function setRemove(value: Set, key: number): boolean { return setDeleteF64(value, key); } function mapInsert(value: Map, key: number, item: number): boolean { return mapSetF64(value, key, item); } function mapRead(value: Map, key: number, fallback: number): number { return mapGetF64Or(value, key, fallback); } function mapContainsI64(value: Map, key: i64): boolean { return mapHasI64(value, key); } function setContainsI64(value: Set, key: i64): boolean { return setHasI64(value, key); } function setInsertI64(value: Set, key: i64): boolean { return setAddI64(value, key); } function mapRemoveI64(value: Map, key: i64): boolean { return mapDeleteI64(value, key); } function setRemoveI64(value: Set, key: i64): boolean { return setDeleteI64(value, key); } function mapInsertI64(value: Map, key: i64, item: i64): boolean { return mapSetI64(value, key, item); } function mapReadI64(value: Map, key: i64, fallback: i64): i64 { return mapGetI64Or(value, key, fallback); } function main(): u64 { return 0; }",
+        "import { mapHasF64, setHasF64, setAddF64, mapDeleteF64, setDeleteF64, mapSetF64, mapGetF64Or, mapHasI64, setHasI64, setAddI64, mapDeleteI64, setDeleteI64, mapSetI64, mapGetI64Or } from \"zun:core\"; function mapContains(value: Map, key: number): boolean { return mapHasF64(value, key); } function setContains(value: Set, key: number): boolean { return setHasF64(value, key); } function setInsert(value: Set, key: number): boolean { return setAddF64(value, key); } function mapRemove(value: Map, key: number): boolean { return mapDeleteF64(value, key); } function setRemove(value: Set, key: number): boolean { return setDeleteF64(value, key); } function mapInsert(value: Map, key: number, item: number): boolean { return mapSetF64(value, key, item); } function mapRead(value: Map, key: number, fallback: number): number { return mapGetF64Or(value, key, fallback); } function mapContainsI64(value: Map, key: i64): boolean { return mapHasI64(value, key); } function setContainsI64(value: Set, key: i64): boolean { return setHasI64(value, key); } function setInsertI64(value: Set, key: i64): boolean { return setAddI64(value, key); } function mapRemoveI64(value: Map, key: i64): boolean { return mapDeleteI64(value, key); } function setRemoveI64(value: Set, key: i64): boolean { return setDeleteI64(value, key); } function mapInsertI64(value: Map, key: i64, item: i64): boolean { return mapSetI64(value, key, item); } function mapReadI64(value: Map, key: i64, fallback: i64): i64 { return mapGetI64Or(value, key, fallback); } function main(): u64 { return 0; }",
     );
     let map_rid = module
         .tables
@@ -1009,7 +1009,7 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
 #[test]
 fn array_buffer_length_uses_the_managed_object_abi() {
     let module = compile(
-        "import { bufferLength } from \"zun:buffer\"; function bufferSize(value: ArrayBuffer): u64 { return bufferLength(value); } function main(): u64 { return 0; }",
+        "import { bufferLength } from \"zun:core\"; function bufferSize(value: ArrayBuffer): u64 { return bufferLength(value); } function main(): u64 { return 0; }",
     );
     let rid = module
         .tables
@@ -1031,7 +1031,7 @@ fn array_buffer_length_uses_the_managed_object_abi() {
 #[test]
 fn managed_view_lengths_use_typed_object_abis() {
     let module = compile(
-        "import { dataViewLength, dataViewByteLength, u8ArrayLength, u8ArrayByteLength, u16ArrayLength, u16ArrayByteLength, u32ArrayLength, u32ArrayByteLength, f64ArrayLength, f64ArrayByteLength } from \"zun:buffer\"; function data(view: DataView): u64 { return dataViewLength(view); } function dataBytes(view: DataView): u64 { return dataViewByteLength(view); } function u8(view: Uint8Array): u64 { return u8ArrayLength(view); } function u8Bytes(view: Uint8Array): u64 { return u8ArrayByteLength(view); } function u16(view: Uint16Array): u64 { return u16ArrayLength(view); } function u16Bytes(view: Uint16Array): u64 { return u16ArrayByteLength(view); } function u32(view: Uint32Array): u64 { return u32ArrayLength(view); } function u32Bytes(view: Uint32Array): u64 { return u32ArrayByteLength(view); } function f64(view: Float64Array): u64 { return f64ArrayLength(view); } function f64Bytes(view: Float64Array): u64 { return f64ArrayByteLength(view); } function main(): u64 { return 0; }",
+        "import { dataViewLength, dataViewByteLength, u8ArrayLength, u8ArrayByteLength, u16ArrayLength, u16ArrayByteLength, u32ArrayLength, u32ArrayByteLength, f64ArrayLength, f64ArrayByteLength } from \"zun:core\"; function data(view: DataView): u64 { return dataViewLength(view); } function dataBytes(view: DataView): u64 { return dataViewByteLength(view); } function u8(view: Uint8Array): u64 { return u8ArrayLength(view); } function u8Bytes(view: Uint8Array): u64 { return u8ArrayByteLength(view); } function u16(view: Uint16Array): u64 { return u16ArrayLength(view); } function u16Bytes(view: Uint16Array): u64 { return u16ArrayByteLength(view); } function u32(view: Uint32Array): u64 { return u32ArrayLength(view); } function u32Bytes(view: Uint32Array): u64 { return u32ArrayByteLength(view); } function f64(view: Float64Array): u64 { return f64ArrayLength(view); } function f64Bytes(view: Float64Array): u64 { return f64ArrayByteLength(view); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| {
         module
@@ -1085,7 +1085,7 @@ fn managed_view_lengths_use_typed_object_abis() {
 #[test]
 fn array_buffer_u8_read_uses_the_scalar_managed_abi() {
     let module = compile(
-        "import { bufferGetU8 } from \"zun:buffer\"; function read(buffer: ArrayBuffer, index: u64): u8 { return bufferGetU8(buffer, index); } function main(): u64 { return 0; }",
+        "import { bufferGetU8 } from \"zun:core\"; function read(buffer: ArrayBuffer, index: u64): u8 { return bufferGetU8(buffer, index); } function main(): u64 { return 0; }",
     );
     let rid = module
         .tables
@@ -1108,7 +1108,7 @@ fn array_buffer_u8_read_uses_the_scalar_managed_abi() {
 #[test]
 fn array_buffer_numeric_reads_use_width_specific_managed_abis() {
     let module = compile(
-        "import { bufferReadU32, bufferReadF64 } from \"zun:buffer\"; function readU32(buffer: ArrayBuffer, offset: u64): u32 { return bufferReadU32(buffer, offset); } function readF64(buffer: ArrayBuffer, offset: u64): number { return bufferReadF64(buffer, offset); } function main(): u64 { return 0; }",
+        "import { bufferReadU32, bufferReadF64 } from \"zun:core\"; function readU32(buffer: ArrayBuffer, offset: u64): u32 { return bufferReadU32(buffer, offset); } function readF64(buffer: ArrayBuffer, offset: u64): number { return bufferReadF64(buffer, offset); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| {
         module
@@ -1141,7 +1141,7 @@ fn array_buffer_numeric_reads_use_width_specific_managed_abis() {
 #[test]
 fn array_buffer_numeric_writes_use_scalar_managed_abis() {
     let module = compile(
-        "import { bufferSetU8, bufferWriteU32, bufferWriteF64 } from \"zun:buffer\"; function setU8(buffer: ArrayBuffer, index: u64, value: u8): boolean { return bufferSetU8(buffer, index, value); } function writeU32(buffer: ArrayBuffer, offset: u64, value: u32): boolean { return bufferWriteU32(buffer, offset, value); } function writeF64(buffer: ArrayBuffer, offset: u64, value: number): boolean { return bufferWriteF64(buffer, offset, value); } function main(): u64 { return 0; }",
+        "import { bufferSetU8, bufferWriteU32, bufferWriteF64 } from \"zun:core\"; function setU8(buffer: ArrayBuffer, index: u64, value: u8): boolean { return bufferSetU8(buffer, index, value); } function writeU32(buffer: ArrayBuffer, offset: u64, value: u32): boolean { return bufferWriteU32(buffer, offset, value); } function writeF64(buffer: ArrayBuffer, offset: u64, value: number): boolean { return bufferWriteF64(buffer, offset, value); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| {
         module
@@ -1181,7 +1181,7 @@ fn array_buffer_numeric_writes_use_scalar_managed_abis() {
 #[test]
 fn data_view_u32_read_uses_the_typed_view_abi() {
     let module = compile(
-        "import { dataViewGetU32 } from \"zun:buffer\"; function read(view: DataView, offset: u64, little: boolean): u32 { return dataViewGetU32(view, offset, little); } function main(): u64 { return 0; }",
+        "import { dataViewGetU32 } from \"zun:core\"; function read(view: DataView, offset: u64, little: boolean): u32 { return dataViewGetU32(view, offset, little); } function main(): u64 { return 0; }",
     );
     let rid = module
         .tables
@@ -1205,7 +1205,7 @@ fn data_view_u32_read_uses_the_typed_view_abi() {
 #[test]
 fn data_view_u16_and_f64_reads_use_width_specific_abis() {
     let module = compile(
-        "import { dataViewGetU16, dataViewGetF64 } from \"zun:buffer\"; function readU16(view: DataView, offset: u64, little: boolean): u16 { return dataViewGetU16(view, offset, little); } function readF64(view: DataView, offset: u64, little: boolean): number { return dataViewGetF64(view, offset, little); } function main(): u64 { return 0; }",
+        "import { dataViewGetU16, dataViewGetF64 } from \"zun:core\"; function readU16(view: DataView, offset: u64, little: boolean): u16 { return dataViewGetU16(view, offset, little); } function readF64(view: DataView, offset: u64, little: boolean): number { return dataViewGetF64(view, offset, little); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| {
         module
@@ -1239,7 +1239,7 @@ fn data_view_u16_and_f64_reads_use_width_specific_abis() {
 #[test]
 fn data_view_scalar_writes_use_width_specific_abis() {
     let module = compile(
-        "import { dataViewSetU32, dataViewSetU16, dataViewSetF64 } from \"zun:buffer\"; function setU32(view: DataView, offset: u64, value: u32, little: boolean): boolean { return dataViewSetU32(view, offset, value, little); } function setU16(view: DataView, offset: u64, value: u16, little: boolean): boolean { return dataViewSetU16(view, offset, value, little); } function setF64(view: DataView, offset: u64, value: number, little: boolean): boolean { return dataViewSetF64(view, offset, value, little); } function main(): u64 { return 0; }",
+        "import { dataViewSetU32, dataViewSetU16, dataViewSetF64 } from \"zun:core\"; function setU32(view: DataView, offset: u64, value: u32, little: boolean): boolean { return dataViewSetU32(view, offset, value, little); } function setU16(view: DataView, offset: u64, value: u16, little: boolean): boolean { return dataViewSetU16(view, offset, value, little); } function setF64(view: DataView, offset: u64, value: number, little: boolean): boolean { return dataViewSetF64(view, offset, value, little); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| {
         module
@@ -1271,7 +1271,7 @@ fn data_view_scalar_writes_use_width_specific_abis() {
 #[test]
 fn u8_array_access_uses_the_typed_view_abi() {
     let module = compile(
-        "import { u8ArrayGet, u8ArraySet } from \"zun:buffer\"; function read(view: Uint8Array, index: u64): u8 { return u8ArrayGet(view, index); } function write(view: Uint8Array, index: u64, value: u8): boolean { return u8ArraySet(view, index, value); } function main(): u64 { return 0; }",
+        "import { u8ArrayGet, u8ArraySet } from \"zun:core\"; function read(view: Uint8Array, index: u64): u8 { return u8ArrayGet(view, index); } function write(view: Uint8Array, index: u64, value: u8): boolean { return u8ArraySet(view, index, value); } function main(): u64 { return 0; }",
     );
     let read_rid = module
         .tables
@@ -1300,7 +1300,7 @@ fn u8_array_access_uses_the_typed_view_abi() {
 #[test]
 fn u16_array_access_uses_the_typed_view_abi() {
     let module = compile(
-        "import { u16ArrayGet, u16ArraySet } from \"zun:buffer\"; function read(view: Uint16Array, index: u64): u16 { return u16ArrayGet(view, index); } function write(view: Uint16Array, index: u64, value: u16): boolean { return u16ArraySet(view, index, value); } function main(): u64 { return 0; }",
+        "import { u16ArrayGet, u16ArraySet } from \"zun:core\"; function read(view: Uint16Array, index: u64): u16 { return u16ArrayGet(view, index); } function write(view: Uint16Array, index: u64, value: u16): boolean { return u16ArraySet(view, index, value); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("u16 method") as u32 + 1;
     let read_rid = find("read");
@@ -1319,7 +1319,7 @@ fn u16_array_access_uses_the_typed_view_abi() {
 #[test]
 fn u32_and_f64_array_access_use_typed_view_abis() {
     let module = compile(
-        "import { u32ArrayGet, u32ArraySet, f64ArrayGet, f64ArraySet } from \"zun:buffer\"; function readU32(view: Uint32Array, index: u64): u32 { return u32ArrayGet(view, index); } function writeU32(view: Uint32Array, index: u64, value: u32): boolean { return u32ArraySet(view, index, value); } function readF64(view: Float64Array, index: u64): number { return f64ArrayGet(view, index); } function writeF64(view: Float64Array, index: u64, value: number): boolean { return f64ArraySet(view, index, value); } function main(): u64 { return 0; }",
+        "import { u32ArrayGet, u32ArraySet, f64ArrayGet, f64ArraySet } from \"zun:core\"; function readU32(view: Uint32Array, index: u64): u32 { return u32ArrayGet(view, index); } function writeU32(view: Uint32Array, index: u64, value: u32): boolean { return u32ArraySet(view, index, value); } function readF64(view: Float64Array, index: u64): number { return f64ArrayGet(view, index); } function writeF64(view: Float64Array, index: u64, value: number): boolean { return f64ArraySet(view, index, value); } function main(): u64 { return 0; }",
     );
     let find = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("typed array method") as u32 + 1;
     let read_u32 = find("readU32");
@@ -1369,7 +1369,7 @@ fn managed_collection_constructors_preserve_interpreter_fallback_boundary() {
 #[test]
 fn managed_promise_intrinsics_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "import { promiseNew, promiseResolve, promiseState } from \"zun:promise\"; function main(): int { let promise = promiseNew(); if (promiseState(promise) != 0) { return 1; } promiseResolve(promise, 42.0); if (promiseState(promise) == 1) { return 0; } return 2; }",
+        "import { promiseNew, promiseResolve, promiseState } from \"zun:core\"; function main(): int { let promise = promiseNew(); if (promiseState(promise) != 0) { return 1; } promiseResolve(promise, 42.0); if (promiseState(promise) == 1) { return 0; } return 2; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1593,7 +1593,7 @@ fn proxy_construction_preserves_interpreter_fallback_boundary() {
 #[test]
 fn proxy_get_preserves_interpreter_fallback_boundary() {
     let module = compile(
-        "import { proxyGet } from \"zun:collections\"; function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+        "import { proxyGet } from \"zun:core\"; function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1604,7 +1604,7 @@ fn proxy_get_preserves_interpreter_fallback_boundary() {
 #[test]
 fn proxy_set_preserves_interpreter_fallback_boundary() {
     let module = compile(
-        "import { proxySet, proxyGet } from \"zun:collections\"; function main(): any { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyGet(proxy, \"answer\"); }",
+        "import { proxySet, proxyGet } from \"zun:core\"; function main(): any { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyGet(proxy, \"answer\"); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1615,7 +1615,7 @@ fn proxy_set_preserves_interpreter_fallback_boundary() {
 #[test]
 fn proxy_has_and_delete_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "import { proxyHas, proxySet, proxyDelete } from \"zun:collections\"; function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\") && !proxyHas(proxy, \"answer\"); }",
+        "import { proxyHas, proxySet, proxyDelete } from \"zun:core\"; function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxySet(proxy, \"answer\", box_any(41)); return proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\") && !proxyHas(proxy, \"answer\"); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1626,7 +1626,7 @@ fn proxy_has_and_delete_preserve_interpreter_fallback_boundary() {
 #[test]
 fn proxy_get_trap_preserves_interpreter_fallback_boundary() {
     let module = compile(
-        "import { dynamicSetFunction, proxyGet } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
+        "import { dynamicSetFunction, proxyGet } from \"zun:core\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxyGet(proxy, \"answer\"); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1637,7 +1637,7 @@ fn proxy_get_trap_preserves_interpreter_fallback_boundary() {
 #[test]
 fn proxy_property_traps_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "import { dynamicSetFunction, proxySet, proxyHas, proxyDelete } from \"zun:collections\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function hasTrap(target: any, key: string): boolean { return true; } function deleteTrap(target: any, key: string): boolean { return true; } function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); dynamicSetFunction(handler, \"has\", hasTrap); dynamicSetFunction(handler, \"deleteProperty\", deleteTrap); let proxy = new Proxy(target, handler); return proxySet(proxy, \"answer\", box_any(41)) && proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\"); }",
+        "import { dynamicSetFunction, proxySet, proxyHas, proxyDelete } from \"zun:core\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function hasTrap(target: any, key: string): boolean { return true; } function deleteTrap(target: any, key: string): boolean { return true; } function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); dynamicSetFunction(handler, \"has\", hasTrap); dynamicSetFunction(handler, \"deleteProperty\", deleteTrap); let proxy = new Proxy(target, handler); return proxySet(proxy, \"answer\", box_any(41)) && proxyHas(proxy, \"answer\") && proxyDelete(proxy, \"answer\"); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1662,7 +1662,7 @@ fn map_and_set_for_of_preserve_interpreter_fallback_boundary() {
 #[test]
 fn symbol_iterator_calls_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "import { arrayIteratorNext } from \"zun:buffer\"; function main(): number { let values = new Array(1); values[0] = 42.0; let iterator = values[Symbol.iterator](); return arrayIteratorNext(iterator) as number; }",
+        "import { arrayIteratorNext } from \"zun:core\"; function main(): number { let values = new Array(1); values[0] = 42.0; let iterator = values[Symbol.iterator](); return arrayIteratorNext(iterator) as number; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1676,7 +1676,7 @@ fn symbol_iterator_calls_preserve_interpreter_fallback_boundary() {
 #[test]
 fn typed_view_instance_accessors_preserve_interpreter_fallback_boundary() {
     let module = compile(
-        "import { bufferNew } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); values.set(1, 255); return values.get(1) as u64; }",
+        "import { bufferNew } from \"zun:core\"; function main(): u64 { let buffer = bufferNew(4); let values = new Uint8Array(buffer, 0, 4); values.set(1, 255); return values.get(1) as u64; }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1934,7 +1934,7 @@ fn virtual_override_dispatch_is_jit_equivalent() {
 #[test]
 fn date_surface_decomposes_utc_timestamps() {
     let module = compile(
-        "import { year, month, day } from \"zun:date\";\n\
+        "import { year, month, day } from \"zun:core\";\n\
          class Date { millis: i64; utcYear(): i32 { return year(this.millis); } utcMonth(): i32 { return month(this.millis); } utcDay(): i32 { return day(this.millis); } }\n\
          function main(): int { let value: Date = new Date(0); if (value.utcYear() == 1970) { if (value.utcMonth() == 1) { if (value.utcDay() == 1) { return 1; } } } return 0; }",
     );
@@ -1953,14 +1953,14 @@ fn date_surface_decomposes_utc_timestamps() {
 #[test]
 fn date_validity_is_jit_equivalent() {
     assert_equivalent(
-        "import { isValid } from \"zun:date\"; function main(): boolean { return isValid(0); }",
+        "import { isValid } from \"zun:core\"; function main(): boolean { return isValid(0); }",
     );
 }
 
 #[test]
 fn date_numeric_intrinsics_are_equivalent_in_jit() {
     let module = compile(
-        "import { year, month, day, hour, minute, second, millisecond, weekday, dayOfYear } from \"zun:date\";\n\
+        "import { year, month, day, hour, minute, second, millisecond, weekday, dayOfYear } from \"zun:core\";\n\
          class Date { millis: i64; all(): int { return year(this.millis) + month(this.millis) + day(this.millis) + hour(this.millis) + minute(this.millis) + second(this.millis) + millisecond(this.millis) + weekday(this.millis) + dayOfYear(this.millis); } }\n\
          function main(): int { return new Date(3723004).all(); }",
     );
@@ -1978,7 +1978,7 @@ fn date_numeric_intrinsics_are_equivalent_in_jit() {
 #[test]
 fn date_numeric_intrinsics_handle_pre_epoch_timestamps() {
     let module = compile(
-        "import { year, month, day, hour, minute, second, millisecond } from \"zun:date\";\n\
+        "import { year, month, day, hour, minute, second, millisecond } from \"zun:core\";\n\
          class Date { millis: i64; signature(): int { return year(this.millis) + month(this.millis) + day(this.millis) + hour(this.millis) + minute(this.millis) + second(this.millis) + millisecond(this.millis); } }\n\
          function main(): int { return new Date(-1).signature(); }",
     );
@@ -1996,7 +1996,7 @@ fn date_numeric_intrinsics_handle_pre_epoch_timestamps() {
 #[test]
 fn date_surface_exposes_time_components_and_string_form() {
     let module = compile(
-        "import { hour, minute, second, millisecond, isoDateTime } from \"zun:date\";\n\
+        "import { hour, minute, second, millisecond, isoDateTime } from \"zun:core\";\n\
          class Date { millis: i64; utcHour(): i32 { return hour(this.millis); } utcMinute(): i32 { return minute(this.millis); } utcSecond(): i32 { return second(this.millis); } utcMillisecond(): i32 { return millisecond(this.millis); } isoDateTime(): string { return isoDateTime(this.millis); } toString(): string { return this.isoDateTime(); } }\n\
          function main(): int { let value: Date = new Date(3723004); if (value.utcHour() == 1) { if (value.utcMinute() == 2) { if (value.utcSecond() == 3) { if (value.utcMillisecond() == 4) { if (value.toString() == \"1970-01-01T01:02:03.004Z\") { return 1; } } } } } return 0; }",
     );
@@ -2048,7 +2048,7 @@ fn date_surface_supports_time_aliases_and_comparisons() {
 #[test]
 fn date_surface_exposes_ecmascript_utc_aliases() {
     let module = compile(
-        "import { year, month, day, hour, minute, second, millisecond, isoDateTime } from \"zun:date\";\n\
+        "import { year, month, day, hour, minute, second, millisecond, isoDateTime } from \"zun:core\";\n\
          class Date { millis: i64; utcYear(): i32 { return year(this.millis); } utcMonth(): i32 { return month(this.millis); } utcDay(): i32 { return day(this.millis); } utcHour(): i32 { return hour(this.millis); } utcMinute(): i32 { return minute(this.millis); } utcSecond(): i32 { return second(this.millis); } utcMillisecond(): i32 { return millisecond(this.millis); } isoDateTime(): string { return isoDateTime(this.millis); } getUTCFullYear(): i32 { return this.utcYear(); } getUTCMonth(): i32 { return this.utcMonth(); } getUTCDate(): i32 { return this.utcDay(); } getUTCHours(): i32 { return this.utcHour(); } getUTCMinutes(): i32 { return this.utcMinute(); } getUTCSeconds(): i32 { return this.utcSecond(); } getUTCMilliseconds(): i32 { return this.utcMillisecond(); } toISOString(): string { return this.isoDateTime(); } }\n\
          function main(): int { let value: Date = new Date(3723004); if (value.getUTCFullYear() == 1970) { if (value.getUTCMonth() == 1) { if (value.getUTCDate() == 1) { if (value.getUTCHours() == 1) { if (value.getUTCMinutes() == 2) { if (value.getUTCSeconds() == 3) { if (value.getUTCMilliseconds() == 4) { if (value.toISOString() == \"1970-01-01T01:02:03.004Z\") { return 1; } } } } } } } } return 0; }",
     );
@@ -2084,7 +2084,7 @@ fn date_surface_provides_timestamp_factories() {
 #[test]
 fn date_surface_parses_iso_datetime_values() {
     let module = compile(
-        "import { parseIsoDateTime } from \"zun:date\";\n\
+        "import { parseIsoDateTime } from \"zun:core\";\n\
          class Date { millis: i64; valueOf(): i64 { return this.millis; } }\n\
          function dateParse(value: string): Date { return new Date(parseIsoDateTime(value)); }\n\
          function main(): int { let value: Date = dateParse(\"1970-01-01T00:00:00.042Z\"); if (value.valueOf() == 42) { return 1; } return 0; }",
@@ -2101,7 +2101,7 @@ fn date_surface_parses_iso_datetime_values() {
 #[test]
 fn date_surface_json_representation_matches_iso() {
     let module = compile(
-        "import { isoDateTime } from \"zun:date\";\n\
+        "import { isoDateTime } from \"zun:core\";\n\
          class Date { millis: i64; isoDateTime(): string { return isoDateTime(this.millis); } toISOString(): string { return this.isoDateTime(); } toJSON(): string { return this.toISOString(); } }\n\
          function main(): int { let value: Date = new Date(42); if (value.toJSON() == \"1970-01-01T00:00:00.042Z\") { return 1; } return 0; }",
     );
@@ -2117,7 +2117,7 @@ fn date_surface_json_representation_matches_iso() {
 #[test]
 fn date_surface_exposes_utc_weekday_alias() {
     let module = compile(
-        "import { weekday } from \"zun:date\";\n\
+        "import { weekday } from \"zun:core\";\n\
          class Date { millis: i64; utcWeekday(): i32 { return weekday(this.millis); } getUTCWeekday(): i32 { return this.utcWeekday(); } }\n\
          function main(): int { let value: Date = new Date(0); if (value.getUTCWeekday() == 4) { return 1; } return 0; }",
     );
@@ -2135,7 +2135,7 @@ fn date_surface_exposes_utc_weekday_alias() {
 #[test]
 fn date_surface_converts_iso_weekday_to_ecmascript_day() {
     let module = compile(
-        "import { weekday } from \"zun:date\";\n\
+        "import { weekday } from \"zun:core\";\n\
          class Date { millis: i64; utcWeekday(): i32 { return weekday(this.millis); } getUTCDay(): i32 { return this.utcWeekday(); } }\n\
          function main(): int { let value: Date = new Date(0); if (value.getUTCDay() == 4) { return 1; } return 0; }",
     );
@@ -2169,7 +2169,7 @@ fn int_recursion() {
 #[test]
 fn extern_method_uses_interpreter_fallback_until_native_jit_lowering_exists() {
     let module = zun_compiler::compile(
-        "import { receiverValue } from \"zun:math\";\n\
+        "import { receiverValue } from \"zun:core\";\n\
          class Service { extern receiverValue(value: number): number; }\n\
          function main(): number { let service = new Service(); return service.receiverValue(7.5); }",
     )
@@ -2186,7 +2186,7 @@ fn extern_method_uses_interpreter_fallback_until_native_jit_lowering_exists() {
 #[test]
 fn string_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
-        "import { length, contains } from \"zun:string\";\n\
+        "import { length, contains } from \"zun:core\";\n\
          class String { extern length(): u64; extern contains(needle: string): boolean; }\n\
          function main(): boolean { let value: string = \"zun\"; if (value.length() == 3) { return value.contains(\"u\"); } return false; }",
     )
@@ -2203,7 +2203,7 @@ fn string_primitive_methods_use_static_class_binding() {
 #[test]
 fn string_includes_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { includes } from \"zun:string\";\n\
+        "import { includes } from \"zun:core\";\n\
          class String { extern includes(needle: string): boolean; }\n\
          function main(): boolean { let value: string = \"zun runtime\"; return value.includes(\"runtime\"); }",
     )
@@ -2217,7 +2217,7 @@ fn string_includes_uses_interpreter_fallback() {
 #[test]
 fn string_index_of_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { indexOf } from \"zun:string\";\n\
+        "import { indexOf } from \"zun:core\";\n\
          class String { extern indexOf(needle: string): int; }\n\
          function main(): int { let value: string = \"😀zun\"; return value.indexOf(\"zun\"); }",
     )
@@ -2234,7 +2234,7 @@ fn string_index_of_uses_interpreter_fallback() {
 #[test]
 fn string_last_index_of_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { lastIndexOf } from \"zun:string\";\n\
+        "import { lastIndexOf } from \"zun:core\";\n\
          class String { extern lastIndexOf(needle: string): int; }\n\
          function main(): int { let value: string = \"zunzun\"; return value.lastIndexOf(\"zun\"); }",
     )
@@ -2251,7 +2251,7 @@ fn string_last_index_of_uses_interpreter_fallback() {
 #[test]
 fn string_replace_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { replace } from \"zun:string\";\n\
+        "import { replace } from \"zun:core\";\n\
          class String { extern replace(needle: string, replacement: string): string; }\n\
          function main(): string { let value: string = \"zun vm\"; return value.replace(\"vm\", \"runtime\"); }",
     )
@@ -2265,7 +2265,7 @@ fn string_replace_uses_interpreter_fallback() {
 #[test]
 fn string_substring_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { substring } from \"zun:string\";\n\
+        "import { substring } from \"zun:core\";\n\
          class String { extern substring(start: u64, end: u64): string; }\n\
          function main(): string { let value: string = \"😀zun\"; return value.substring(2, 5); }",
     )
@@ -2279,7 +2279,7 @@ fn string_substring_uses_interpreter_fallback() {
 #[test]
 fn string_pad_start_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { padStart } from \"zun:string\";\n\
+        "import { padStart } from \"zun:core\";\n\
          class String { extern padStart(targetLength: u64, fill: string): string; }\n\
          function main(): string { let value: string = \"zun\"; return value.padStart(5, \"0\"); }",
     )
@@ -2293,7 +2293,7 @@ fn string_pad_start_uses_interpreter_fallback() {
 #[test]
 fn string_pad_end_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { padEnd } from \"zun:string\";\n\
+        "import { padEnd } from \"zun:core\";\n\
          class String { extern padEnd(targetLength: u64, fill: string): string; }\n\
          function main(): string { let value: string = \"zun\"; return value.padEnd(5, \"0\"); }",
     )
@@ -2307,7 +2307,7 @@ fn string_pad_end_uses_interpreter_fallback() {
 #[test]
 fn string_case_methods_use_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { toLowerCase, toUpperCase } from \"zun:string\";\n\
+        "import { toLowerCase, toUpperCase } from \"zun:core\";\n\
          class String { extern toLowerCase(): string; extern toUpperCase(): string; }\n\
          function main(): string { let value: string = \"ZuN\"; return value.toLowerCase() + value.toUpperCase(); }",
     )
@@ -2321,7 +2321,7 @@ fn string_case_methods_use_interpreter_fallback() {
 #[test]
 fn string_trim_boundary_methods_use_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { trimStart, trimEnd } from \"zun:string\";\n\
+        "import { trimStart, trimEnd } from \"zun:core\";\n\
          class String { extern trimStart(): string; extern trimEnd(): string; }\n\
          function main(): string { let value: string = \"  zun  \"; return value.trimStart().trimEnd(); }",
     )
@@ -2335,7 +2335,7 @@ fn string_trim_boundary_methods_use_interpreter_fallback() {
 #[test]
 fn string_is_blank_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { trim, length } from \"zun:string\";\n\
+        "import { trim, length } from \"zun:core\";\n\
          class String { extern trim(): string; extern length(): u64; isEmpty(): boolean { return this.length() == 0; } isBlank(): boolean { return this.trim().isEmpty(); } }\n\
          function main(): boolean { let value: string = \"   \"; return value.isBlank(); }",
     )
@@ -2349,7 +2349,7 @@ fn string_is_blank_uses_interpreter_fallback() {
 #[test]
 fn string_is_not_empty_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length } from \"zun:string\";\n\
+        "import { length } from \"zun:core\";\n\
          class String { extern length(): u64; isNotEmpty(): boolean { return this.length() != 0; } }\n\
          function main(): boolean { let value: string = \"zun\"; return value.isNotEmpty(); }",
     )
@@ -2363,7 +2363,7 @@ fn string_is_not_empty_uses_interpreter_fallback() {
 #[test]
 fn string_reverse_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { reverse } from \"zun:string\";\n\
+        "import { reverse } from \"zun:core\";\n\
          class String { extern reverse(): string; }\n\
          function main(): string { let value: string = \"zun\"; return value.reverse(); }",
     )
@@ -2377,7 +2377,7 @@ fn string_reverse_uses_interpreter_fallback() {
 #[test]
 fn string_receiver_loop_method_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\";\n\
+        "import { length, charCodeAt } from \"zun:core\";\n\
          class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAscii(): boolean { let index: u64 = 0; while (index < this.length()) { if (this.charCodeAt(index) > 127) { return false; } index = index + 1; } return true; } }\n\
          function main(): boolean { let value: string = \"zun\"; return value.isAscii(); }",
     )
@@ -2402,7 +2402,7 @@ fn string_receiver_loop_method_is_jit_equivalent() {
 #[test]
 fn string_includes_with_managed_parameters_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { includes } from \"zun:string\";\n\
+        "import { includes } from \"zun:core\";\n\
          class String { extern includes(needle: string): boolean; }\n\
          function contains(value: string, needle: string): boolean { return value.includes(needle); }\n\
          function main(): boolean { return true; }",
@@ -2431,7 +2431,7 @@ fn string_includes_with_managed_parameters_is_jit_equivalent() {
 #[test]
 fn string_index_of_with_managed_parameters_preserves_utf16_indices() {
     let module = zun_compiler::compile(
-        "import { indexOf } from \"zun:string\";\n\
+        "import { indexOf } from \"zun:core\";\n\
          class String { extern indexOf(needle: string): int; }\n\
          function locate(value: string, needle: string): int { return value.indexOf(needle); }\n\
          function main(): int { return 0; }",
@@ -2460,7 +2460,7 @@ fn string_index_of_with_managed_parameters_preserves_utf16_indices() {
 #[test]
 fn string_prefix_helpers_with_managed_parameters_are_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { startsWith } from \"zun:string\";\n\
+        "import { startsWith } from \"zun:core\";\n\
          class String { extern startsWith(needle: string): boolean; }\n\
          function check(value: string, prefix: string): boolean { return value.startsWith(prefix); }\n\
          function main(): boolean { return true; }",
@@ -2489,7 +2489,7 @@ fn string_prefix_helpers_with_managed_parameters_are_jit_equivalent() {
 #[test]
 fn string_suffix_helper_with_managed_parameters_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { endsWith } from \"zun:string\";\n\
+        "import { endsWith } from \"zun:core\";\n\
          class String { extern endsWith(needle: string): boolean; }\n\
          function check(value: string, suffix: string): boolean { return value.endsWith(suffix); }\n\
          function main(): boolean { return true; }",
@@ -2518,7 +2518,7 @@ fn string_suffix_helper_with_managed_parameters_is_jit_equivalent() {
 #[test]
 fn string_count_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { count } from \"zun:string\";\n\
+        "import { count } from \"zun:core\";\n\
          class String { extern count(needle: string): int; }\n\
          function main(): int { let value: string = \"aaaa\"; return value.count(\"aa\"); }",
     )
@@ -2532,7 +2532,7 @@ fn string_count_uses_interpreter_fallback() {
 #[test]
 fn string_is_numeric_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\";\n\
+        "import { length, charCodeAt } from \"zun:core\";\n\
          class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isNumeric(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } }\n\
          function main(): boolean { let value: string = \"12345\"; return value.isNumeric(); }",
     )
@@ -2546,7 +2546,7 @@ fn string_is_numeric_uses_interpreter_fallback() {
 #[test]
 fn string_compare_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { compare } from \"zun:string\";\n\
+        "import { compare } from \"zun:core\";\n\
          class String { extern compare(other: string): int; }\n\
          function main(): int { let value: string = \"abc\"; return value.compare(\"abd\"); }",
     )
@@ -2560,7 +2560,7 @@ fn string_compare_uses_interpreter_fallback() {
 #[test]
 fn string_is_whitespace_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, trim } from \"zun:string\";\n\
+        "import { length, trim } from \"zun:core\";\n\
          class String { extern length(): u64; extern trim(): string; isEmpty(): boolean { return this.length() == 0; } isWhitespace(): boolean { if (this.isEmpty()) { return false; } return this.trim().isEmpty(); } }\n\
          function main(): boolean { let value: string = \"   \"; return value.isWhitespace(); }",
     )
@@ -2574,7 +2574,7 @@ fn string_is_whitespace_uses_interpreter_fallback() {
 #[test]
 fn string_is_alpha_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\";\n\
+        "import { length, charCodeAt } from \"zun:core\";\n\
          class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isAlpha(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } }\n\
          function main(): boolean { let value: string = \"ZunRuntime\"; return value.isAlpha(); }",
     )
@@ -2588,7 +2588,7 @@ fn string_is_alpha_uses_interpreter_fallback() {
 #[test]
 fn string_is_alphanumeric_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\";\n\
+        "import { length, charCodeAt } from \"zun:core\";\n\
          class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isAlphanumeric(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } } index = index + 1; } return true; } }\n\
          function main(): boolean { let value: string = \"Zun2026\"; return value.isAlphanumeric(); }",
     )
@@ -2602,7 +2602,7 @@ fn string_is_alphanumeric_uses_interpreter_fallback() {
 #[test]
 fn string_case_predicates_use_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\";\n\
+        "import { length, charCodeAt } from \"zun:core\";\n\
          class String { extern length(): u64; extern charCodeAt(index: u64): u32; isLowerCase(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code >= 65) { if (code <= 90) { return false; } if (code >= 97) { if (code <= 122) { hasLetter = true; } } } index = index + 1; } return hasLetter; } isUpperCase(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code >= 97) { if (code <= 122) { return false; } } if (code >= 65) { if (code <= 90) { hasLetter = true; } } index = index + 1; } return hasLetter; } }\n\
          function main(): boolean { let lower: string = \"hello\"; let upper: string = \"WORLD\"; if (!lower.isLowerCase()) { return false; } return upper.isUpperCase(); }",
     )
@@ -2616,7 +2616,7 @@ fn string_case_predicates_use_interpreter_fallback() {
 #[test]
 fn string_to_int_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { toInt } from \"zun:string\";\n\
+        "import { toInt } from \"zun:core\";\n\
          class String { extern toInt(): int; }\n\
          function main(): int { let value: string = \" -42 \"; return value.toInt(); }",
     )
@@ -2630,7 +2630,7 @@ fn string_to_int_uses_interpreter_fallback() {
 #[test]
 fn string_to_float_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { toFloat } from \"zun:string\";\n\
+        "import { toFloat } from \"zun:core\";\n\
          class String { extern toFloat(): number; }\n\
          function main(): number { let value: string = \" 3.5 \"; return value.toFloat(); }",
     )
@@ -2644,7 +2644,7 @@ fn string_to_float_uses_interpreter_fallback() {
 #[test]
 fn string_to_boolean_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { toBoolean } from \"zun:string\";\n\
+        "import { toBoolean } from \"zun:core\";\n\
          class String { extern toBoolean(): boolean; }\n\
          function main(): boolean { let value: string = \" true \"; return value.toBoolean(); }",
     )
@@ -2658,7 +2658,7 @@ fn string_to_boolean_uses_interpreter_fallback() {
 #[test]
 fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
     let module = zun_compiler::compile(
-        "import { toInt, toFloat, toBoolean } from \"zun:string\";\n\
+        "import { toInt, toFloat, toBoolean } from \"zun:core\";\n\
          class String { extern toInt(): int; extern toFloat(): number; extern toBoolean(): boolean; }\n\
          function convertInt(value: string): int { return value.toInt(); }\n\
          function convertFloat(value: string): number { return value.toFloat(); }\n\
@@ -2723,7 +2723,7 @@ fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
 #[test]
 fn number_primitive_methods_use_static_class_binding() {
     let module = zun_compiler::compile(
-        "import { toFixed } from \"zun:number\";\n\
+        "import { toFixed } from \"zun:core\";\n\
          class Number { extern toFixed(digits: int): string; }\n\
          function main(): string { let value: number = 12.5; return value.toFixed(1); }",
     )
@@ -2818,7 +2818,7 @@ fn number_to_boolean_uses_interpreter_fallback() {
 #[test]
 fn number_to_string_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { toString } from \"zun:number\";\n\
+        "import { toString } from \"zun:core\";\n\
          class Number { extern toString(): string; }\n\
          function main(): string { let value: number = 12.5; return value.toString(); }",
     )
@@ -2905,7 +2905,7 @@ fn string_source_methods_use_interpreter_fallback() {
 #[test]
 fn string_is_empty_uses_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length } from \"zun:string\";\n\
+        "import { length } from \"zun:core\";\n\
          class String { extern length(): u64; isEmpty(): boolean { return this.length() == 0; } }\n\
          function main(): boolean { let value: string = \"\"; return value.isEmpty(); }",
     )
@@ -3301,7 +3301,7 @@ fn array_product_keeps_interpreter_fallback() {
 #[test]
 fn string_is_palindrome_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { reverse } from \"zun:string\"; class String { extern reverse(): string; isPalindrome(): boolean { return this == this.reverse(); } } function main(): boolean { let value: string = \"level\"; return value.isPalindrome(); }",
+        "import { reverse } from \"zun:core\"; class String { extern reverse(): string; isPalindrome(): boolean { return this == this.reverse(); } } function main(): boolean { let value: string = \"level\"; return value.isPalindrome(); }",
     )
     .expect("compile String isPalindrome");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3313,7 +3313,7 @@ fn string_is_palindrome_keeps_interpreter_fallback() {
 #[test]
 fn string_is_hexadecimal_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexadecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { if (code < 65) { return false; } if (code > 70) { if (code < 97) { return false; } if (code > 102) { return false; } } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"a1F0\"; return value.isHexadecimal(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexadecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { if (code < 65) { return false; } if (code > 70) { if (code < 97) { return false; } if (code > 102) { return false; } } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"a1F0\"; return value.isHexadecimal(); }",
     )
     .expect("compile String isHexadecimal");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3325,7 +3325,7 @@ fn string_is_hexadecimal_keeps_interpreter_fallback() {
 #[test]
 fn string_is_hex_digit_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 70) { valid = true; } } if (code >= 97) { if (code <= 102) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"aF09\"; return value.isHexDigit(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isHexDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 70) { valid = true; } } if (code >= 97) { if (code <= 102) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"aF09\"; return value.isHexDigit(); }",
     )
     .expect("compile String isHexDigit");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3337,7 +3337,7 @@ fn string_is_hex_digit_keeps_interpreter_fallback() {
 #[test]
 fn string_is_binary_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isBinary(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 49) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"101001\"; return value.isBinary(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isBinary(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 49) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"101001\"; return value.isBinary(); }",
     )
     .expect("compile String isBinary");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3349,7 +3349,7 @@ fn string_is_binary_keeps_interpreter_fallback() {
 #[test]
 fn string_is_octal_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isOctal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 55) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"701234\"; return value.isOctal(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isOctal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 55) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"701234\"; return value.isOctal(); }",
     )
     .expect("compile String isOctal");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3361,7 +3361,7 @@ fn string_is_octal_keeps_interpreter_fallback() {
 #[test]
 fn string_is_printable_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPrintable(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 32) { return false; } if (code > 126) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Zun 2026!\"; return value.isPrintable(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPrintable(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 32) { return false; } if (code > 126) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Zun 2026!\"; return value.isPrintable(); }",
     )
     .expect("compile String isPrintable");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3373,7 +3373,7 @@ fn string_is_printable_keeps_interpreter_fallback() {
 #[test]
 fn string_is_punctuation_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPunctuation(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let punctuation: boolean = false; if (code >= 33) { if (code <= 47) { punctuation = true; } } if (code >= 58) { if (code <= 64) { punctuation = true; } } if (code >= 91) { if (code <= 96) { punctuation = true; } } if (code >= 123) { if (code <= 126) { punctuation = true; } } if (!punctuation) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"!?.,\"; return value.isPunctuation(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPunctuation(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let punctuation: boolean = false; if (code >= 33) { if (code <= 47) { punctuation = true; } } if (code >= 58) { if (code <= 64) { punctuation = true; } } if (code >= 91) { if (code <= 96) { punctuation = true; } } if (code >= 123) { if (code <= 126) { punctuation = true; } } if (!punctuation) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"!?.,\"; return value.isPunctuation(); }",
     )
     .expect("compile String isPunctuation");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3385,7 +3385,7 @@ fn string_is_punctuation_keeps_interpreter_fallback() {
 #[test]
 fn string_is_digit_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"2048\"; return value.isDigit(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isDigit(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"2048\"; return value.isDigit(); }",
     )
     .expect("compile String isDigit");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3397,7 +3397,7 @@ fn string_is_digit_keeps_interpreter_fallback() {
 #[test]
 fn string_is_vowel_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isVowel(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let vowel: boolean = false; if (code == 65) { vowel = true; } if (code == 69) { vowel = true; } if (code == 73) { vowel = true; } if (code == 79) { vowel = true; } if (code == 85) { vowel = true; } if (code == 97) { vowel = true; } if (code == 101) { vowel = true; } if (code == 105) { vowel = true; } if (code == 111) { vowel = true; } if (code == 117) { vowel = true; } if (!vowel) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"AeIOu\"; return value.isVowel(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isVowel(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let vowel: boolean = false; if (code == 65) { vowel = true; } if (code == 69) { vowel = true; } if (code == 73) { vowel = true; } if (code == 79) { vowel = true; } if (code == 85) { vowel = true; } if (code == 97) { vowel = true; } if (code == 101) { vowel = true; } if (code == 105) { vowel = true; } if (code == 111) { vowel = true; } if (code == 117) { vowel = true; } if (!vowel) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"AeIOu\"; return value.isVowel(); }",
     )
     .expect("compile String isVowel");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3409,7 +3409,7 @@ fn string_is_vowel_keeps_interpreter_fallback() {
 #[test]
 fn string_is_consonant_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAlpha(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } isConsonant(): boolean { if (!this.isAlpha()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 65) { return false; } if (code == 69) { return false; } if (code == 73) { return false; } if (code == 79) { return false; } if (code == 85) { return false; } if (code == 97) { return false; } if (code == 101) { return false; } if (code == 105) { return false; } if (code == 111) { return false; } if (code == 117) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Rhythm\"; return value.isConsonant(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isAlpha(): boolean { if (this.length() == 0) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 65) { return false; } if (code > 90) { if (code < 97) { return false; } if (code > 122) { return false; } } index = index + 1; } return true; } isConsonant(): boolean { if (!this.isAlpha()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 65) { return false; } if (code == 69) { return false; } if (code == 73) { return false; } if (code == 79) { return false; } if (code == 85) { return false; } if (code == 97) { return false; } if (code == 101) { return false; } if (code == 105) { return false; } if (code == 111) { return false; } if (code == 117) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"Rhythm\"; return value.isConsonant(); }",
     )
     .expect("compile String isConsonant");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3421,7 +3421,7 @@ fn string_is_consonant_keeps_interpreter_fallback() {
 #[test]
 fn string_is_quoted_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
     )
     .expect("compile String isQuoted");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3433,7 +3433,7 @@ fn string_is_quoted_keeps_interpreter_fallback() {
 #[test]
 fn string_unquote_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt, substring } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
+        "import { length, charCodeAt, substring } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
     )
     .expect("compile String unquote");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3445,7 +3445,7 @@ fn string_unquote_keeps_interpreter_fallback() {
 #[test]
 fn string_is_wrapped_by_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { startsWith, endsWith } from \"zun:string\"; class String { extern startsWith(prefix: string): boolean; extern endsWith(suffix: string): boolean; isWrappedBy(prefix: string, suffix: string): boolean { if (!this.startsWith(prefix)) { return false; } return this.endsWith(suffix); } } function main(): boolean { let value: string = \"<zun>\"; return value.isWrappedBy(\"<\", \">\"); }",
+        "import { startsWith, endsWith } from \"zun:core\"; class String { extern startsWith(prefix: string): boolean; extern endsWith(suffix: string): boolean; isWrappedBy(prefix: string, suffix: string): boolean { if (!this.startsWith(prefix)) { return false; } return this.endsWith(suffix); } } function main(): boolean { let value: string = \"<zun>\"; return value.isWrappedBy(\"<\", \">\"); }",
     )
     .expect("compile String isWrappedBy");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3469,7 +3469,7 @@ fn string_quote_keeps_interpreter_fallback() {
 #[test]
 fn string_is_control_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isControl(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code > 31) { if (code != 127) { return false; } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"\\n\\t\"; return value.isControl(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isControl(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code > 31) { if (code != 127) { return false; } } index = index + 1; } return true; } } function main(): boolean { let value: string = \"\\n\\t\"; return value.isControl(); }",
     )
     .expect("compile String isControl");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3481,7 +3481,7 @@ fn string_is_control_keeps_interpreter_fallback() {
 #[test]
 fn string_is_signed_integer_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
     )
     .expect("compile String isSignedInteger");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3493,7 +3493,7 @@ fn string_is_signed_integer_keeps_interpreter_fallback() {
 #[test]
 fn string_is_signed_decimal_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedDecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let digits: u64 = 0; let dots: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { index = 1; } if (first == 45) { index = 1; } while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 46) { dots = dots + 1; if (dots > 1) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } digits = digits + 1; } index = index + 1; } return digits > 0; } } function main(): boolean { let value: string = \"-12.50\"; return value.isSignedDecimal(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedDecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let digits: u64 = 0; let dots: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { index = 1; } if (first == 45) { index = 1; } while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 46) { dots = dots + 1; if (dots > 1) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } digits = digits + 1; } index = index + 1; } return digits > 0; } } function main(): boolean { let value: string = \"-12.50\"; return value.isSignedDecimal(); }",
     )
     .expect("compile String isSignedDecimal");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3505,7 +3505,7 @@ fn string_is_signed_decimal_keeps_interpreter_fallback() {
 #[test]
 fn string_is_identifier_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isIdentifier(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code == 95) { valid = true; } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (index > 0) { if (code >= 48) { if (code <= 57) { valid = true; } } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zun_core2\"; return value.isIdentifier(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isIdentifier(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code == 95) { valid = true; } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (index > 0) { if (code >= 48) { if (code <= 57) { valid = true; } } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zun_core2\"; return value.isIdentifier(); }",
     )
     .expect("compile String isIdentifier");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3517,7 +3517,7 @@ fn string_is_identifier_keeps_interpreter_fallback() {
 #[test]
 fn string_is_title_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isTitleCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let expectUpper: boolean = true; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 32) { expectUpper = true; } else { if (expectUpper) { if (code < 65) { return false; } if (code > 90) { return false; } expectUpper = false; hasLetter = true; } else { if (code >= 65) { if (code <= 90) { return false; } } if (code < 97) { return false; } if (code > 122) { return false; } } } index = index + 1; } if (!hasLetter) { return false; } return !expectUpper; } } function main(): boolean { let value: string = \"Hello World\"; return value.isTitleCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isTitleCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let expectUpper: boolean = true; let hasLetter: boolean = false; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 32) { expectUpper = true; } else { if (expectUpper) { if (code < 65) { return false; } if (code > 90) { return false; } expectUpper = false; hasLetter = true; } else { if (code >= 65) { if (code <= 90) { return false; } } if (code < 97) { return false; } if (code > 122) { return false; } } } index = index + 1; } if (!hasLetter) { return false; } return !expectUpper; } } function main(): boolean { let value: string = \"Hello World\"; return value.isTitleCase(); }",
     )
     .expect("compile String isTitleCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3529,7 +3529,7 @@ fn string_is_title_case_keeps_interpreter_fallback() {
 #[test]
 fn string_is_snake_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSnakeCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 95) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun_runtime2\"; return value.isSnakeCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSnakeCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 95) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun_runtime2\"; return value.isSnakeCase(); }",
     )
     .expect("compile String isSnakeCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3541,7 +3541,7 @@ fn string_is_snake_case_keeps_interpreter_fallback() {
 #[test]
 fn string_is_kebab_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isKebabCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 45) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun-runtime2\"; return value.isKebabCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isKebabCase(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let previousSeparator: boolean = true; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 45) { if (previousSeparator) { return false; } previousSeparator = true; } else { if (code >= 97) { if (code > 122) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } } previousSeparator = false; } index = index + 1; } return !previousSeparator; } } function main(): boolean { let value: string = \"zun-runtime2\"; return value.isKebabCase(); }",
     )
     .expect("compile String isKebabCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3553,7 +3553,7 @@ fn string_is_kebab_case_keeps_interpreter_fallback() {
 #[test]
 fn string_is_camel_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
     )
     .expect("compile String isCamelCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3565,7 +3565,7 @@ fn string_is_camel_case_keeps_interpreter_fallback() {
 #[test]
 fn string_is_pascal_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:string\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPascalCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 65) { return false; } if (first > 90) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"ZunRuntime2\"; return value.isPascalCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPascalCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 65) { return false; } if (first > 90) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"ZunRuntime2\"; return value.isPascalCase(); }",
     )
     .expect("compile String isPascalCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3697,28 +3697,28 @@ fn number_remap_keeps_interpreter_fallback() {
 #[test]
 fn number_finiteness_and_safe_integer_predicates_are_equivalent() {
     assert_equivalent(
-        "import { isFinite, isNaN } from \"zun:number\"; function main(): int { let value: number = 9007199254740991.0; if (!isFinite(value)) { return 0; } if (isNaN(value)) { return 0; } if ((value as int) as number != value) { return 0; } if (value < -9007199254740991.0) { return 0; } if (value > 9007199254740991.0) { return 0; } return 1; }",
+        "import { isFinite, isNaN } from \"zun:core\"; function main(): int { let value: number = 9007199254740991.0; if (!isFinite(value)) { return 0; } if (isNaN(value)) { return 0; } if ((value as int) as number != value) { return 0; } if (value < -9007199254740991.0) { return 0; } if (value > 9007199254740991.0) { return 0; } return 1; }",
     );
 }
 
 #[test]
 fn number_negative_zero_predicate_is_jit_equivalent() {
     assert_equivalent(
-        "import { isNegativeZero } from \"zun:number\"; function main(): boolean { return isNegativeZero(-0.0); }",
+        "import { isNegativeZero } from \"zun:core\"; function main(): boolean { return isNegativeZero(-0.0); }",
     );
 }
 
 #[test]
 fn number_safe_integer_intrinsic_is_jit_equivalent() {
     assert_equivalent(
-        "import { isSafeInteger } from \"zun:number\"; function main(): boolean { return isSafeInteger(9007199254740991.0); }",
+        "import { isSafeInteger } from \"zun:core\"; function main(): boolean { return isSafeInteger(9007199254740991.0); }",
     );
 }
 
 #[test]
 fn math_power_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { powNumber } from \"zun:math\"; function main(): number { return powNumber(2.0, 3.0); }",
+        "import { powNumber } from \"zun:core\"; function main(): number { return powNumber(2.0, 3.0); }",
     )
     .expect("compile math power");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3733,7 +3733,7 @@ fn math_power_is_jit_equivalent() {
 #[test]
 fn math_trigonometry_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { sinNumber, cosNumber } from \"zun:math\"; function main(): number { return sinNumber(0.0) + cosNumber(0.0); }",
+        "import { sinNumber, cosNumber } from \"zun:core\"; function main(): number { return sinNumber(0.0) + cosNumber(0.0); }",
     )
     .expect("compile math trigonometry");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3748,7 +3748,7 @@ fn math_trigonometry_is_jit_equivalent() {
 #[test]
 fn math_exponential_and_logarithm_are_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { expNumber, logNumber } from \"zun:math\"; function main(): number { return expNumber(0.0) + logNumber(1.0); }",
+        "import { expNumber, logNumber } from \"zun:core\"; function main(): number { return expNumber(0.0) + logNumber(1.0); }",
     )
     .expect("compile math exponential and logarithm");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3763,7 +3763,7 @@ fn math_exponential_and_logarithm_are_jit_equivalent() {
 #[test]
 fn math_tangent_and_atan2_are_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { tanNumber, atan2Number } from \"zun:math\"; function main(): number { return tanNumber(0.0) + atan2Number(0.0, 1.0); }",
+        "import { tanNumber, atan2Number } from \"zun:core\"; function main(): number { return tanNumber(0.0) + atan2Number(0.0, 1.0); }",
     )
     .expect("compile math tangent and atan2");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3778,7 +3778,7 @@ fn math_tangent_and_atan2_are_jit_equivalent() {
 #[test]
 fn math_hypot_is_jit_equivalent() {
     let module = zun_compiler::compile(
-        "import { hypotNumber } from \"zun:math\"; function main(): number { return hypotNumber(3.0, 4.0); }",
+        "import { hypotNumber } from \"zun:core\"; function main(): number { return hypotNumber(3.0, 4.0); }",
     )
     .expect("compile math hypot");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3793,7 +3793,7 @@ fn math_hypot_is_jit_equivalent() {
 #[test]
 fn math_scalar_aliases_are_jit_equivalent() {
     let module = compile(
-        "import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from \"zun:math\"; function main(): number { return sqrtNumber(9.0) + minNumber(2.0, 5.0) + maxNumber(2.0, 5.0) + floorNumber(2.9) + ceilNumber(2.1) + roundNumber(2.6); }",
+        "import { sqrtNumber, minNumber, maxNumber, floorNumber, ceilNumber, roundNumber } from \"zun:core\"; function main(): number { return sqrtNumber(9.0) + minNumber(2.0, 5.0) + maxNumber(2.0, 5.0) + floorNumber(2.9) + ceilNumber(2.1) + roundNumber(2.6); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with scalar math");
@@ -3807,44 +3807,44 @@ fn math_scalar_aliases_are_jit_equivalent() {
 #[test]
 fn math_sign_preserves_zero_sign_in_jit() {
     assert_equivalent(
-        "import { signNumber } from \"zun:math\"; function main(): number { return signNumber(-0.0); }",
+        "import { signNumber } from \"zun:core\"; function main(): number { return signNumber(-0.0); }",
     );
 }
 
 #[test]
 fn math_trunc_is_jit_equivalent_for_both_signs() {
     assert_equivalent(
-        "import { truncNumber } from \"zun:math\"; function main(): number { return truncNumber(-2.9) + truncNumber(2.9); }",
+        "import { truncNumber } from \"zun:core\"; function main(): number { return truncNumber(-2.9) + truncNumber(2.9); }",
     );
 }
 
 #[test]
 fn math_log_bases_are_jit_equivalent() {
     assert_equivalent(
-        "import { log10Number, log2Number } from \"zun:math\"; function main(): number { return log10Number(100.0) + log2Number(8.0); }",
+        "import { log10Number, log2Number } from \"zun:core\"; function main(): number { return log10Number(100.0) + log2Number(8.0); }",
     );
 }
 
 #[test]
 fn math_cbrt_is_jit_equivalent() {
     assert_equivalent(
-        "import { cbrtNumber } from \"zun:math\"; function main(): number { return cbrtNumber(27.0); }",
+        "import { cbrtNumber } from \"zun:core\"; function main(): number { return cbrtNumber(27.0); }",
     );
 }
 
 #[test]
 fn math_expm1_and_log1p_are_jit_equivalent() {
-    assert_equivalent("import { expm1Number, log1pNumber } from \"zun:math\"; function main(): number { return expm1Number(log1pNumber(2.0)); }");
+    assert_equivalent("import { expm1Number, log1pNumber } from \"zun:core\"; function main(): number { return expm1Number(log1pNumber(2.0)); }");
 }
 
 #[test]
 fn math_hyperbolic_functions_are_jit_equivalent() {
-    assert_equivalent("import { sinhNumber, coshNumber, tanhNumber } from \"zun:math\"; function main(): number { return sinhNumber(1.0) + coshNumber(1.0) + tanhNumber(1.0); }");
+    assert_equivalent("import { sinhNumber, coshNumber, tanhNumber } from \"zun:core\"; function main(): number { return sinhNumber(1.0) + coshNumber(1.0) + tanhNumber(1.0); }");
 }
 
 #[test]
 fn math_inverse_hyperbolic_functions_are_jit_equivalent() {
-    assert_equivalent("import { asinhNumber, acoshNumber, atanhNumber } from \"zun:math\"; function main(): number { return asinhNumber(1.0) + acoshNumber(2.0) + atanhNumber(0.5); }");
+    assert_equivalent("import { asinhNumber, acoshNumber, atanhNumber } from \"zun:core\"; function main(): number { return asinhNumber(1.0) + acoshNumber(2.0) + atanhNumber(0.5); }");
 }
 
 #[test]
@@ -4880,7 +4880,7 @@ fn direct_any_virtual_call_preserves_the_carrier() {
 #[test]
 fn generic_map_get_preserves_the_two_word_carrier() {
     let module = compile(
-        "import { mapGet } from \"zun:collections\";\n\
+        "import { mapGet } from \"zun:core\";\n\
          function read(map: Map, key: any): any { return mapGet(map, key); }\n\
          function main(): u64 { return 0; }",
     );
@@ -4942,7 +4942,7 @@ fn generic_map_get_preserves_the_two_word_carrier() {
     assert_eq!(result.into_any(), Some(zun_core::Any::string(string_value)));
 
     let interpreter_module = compile(
-        "import { mapGet } from \"zun:collections\";\n\
+        "import { mapGet } from \"zun:core\";\n\
          function main(): any { let map = new Map(); return mapGet(map, box_any(99)); }",
     );
     assert!(matches!(interp_entry(&interpreter_module), Value::Void));
@@ -5155,7 +5155,7 @@ fn i64_array_loop_is_jit_equivalent() {
 
 #[test]
 fn numeric_i32_map_and_set_has_use_typed_jit_abis() {
-    let src = "import { mapHasI32, setHasI32 } from \"zun:collections\"; function mapContains(value: Map, key: i32): boolean { return mapHasI32(value, key); } function setContains(value: Set, key: i32): boolean { return setHasI32(value, key); } function main(): boolean { return true; }";
+    let src = "import { mapHasI32, setHasI32 } from \"zun:core\"; function mapContains(value: Map, key: i32): boolean { return mapHasI32(value, key); } function setContains(value: Set, key: i32): boolean { return setHasI32(value, key); } function main(): boolean { return true; }";
     let module = compile(src);
     let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "mapContains").map(|index| index as u32 + 1).expect("map method");
     let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "setContains").map(|index| index as u32 + 1).expect("set method");
@@ -5173,7 +5173,7 @@ fn numeric_i32_map_and_set_has_use_typed_jit_abis() {
 
 #[test]
 fn numeric_i32_map_get_uses_typed_jit_abi() {
-    let src = "import { mapGetI32Or } from \"zun:collections\"; function read(value: Map, key: i32, fallback: i32): i32 { return mapGetI32Or(value, key, fallback); } function main(): i32 { return 0; }";
+    let src = "import { mapGetI32Or } from \"zun:core\"; function read(value: Map, key: i32, fallback: i32): i32 { return mapGetI32Or(value, key, fallback); } function main(): i32 { return 0; }";
     let module = compile(src);
     let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "read").map(|index| index as u32 + 1).expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i32 map get");
@@ -5187,7 +5187,7 @@ fn numeric_i32_map_get_uses_typed_jit_abi() {
 
 #[test]
 fn numeric_i32_map_and_set_mutations_use_typed_jit_abis() {
-    let src = "import { mapSetI32, setAddI32 } from \"zun:collections\"; function put(value: Map, key: i32, item: i32): boolean { return mapSetI32(value, key, item); } function add(value: Set, item: i32): boolean { return setAddI32(value, item); } function main(): boolean { return true; }";
+    let src = "import { mapSetI32, setAddI32 } from \"zun:core\"; function put(value: Map, key: i32, item: i32): boolean { return mapSetI32(value, key, item); } function add(value: Set, item: i32): boolean { return setAddI32(value, item); } function main(): boolean { return true; }";
     let module = compile(src);
     let put_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "put").map(|index| index as u32 + 1).expect("map put method");
     let add_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "add").map(|index| index as u32 + 1).expect("set add method");
@@ -5207,7 +5207,7 @@ fn numeric_i32_map_and_set_mutations_use_typed_jit_abis() {
 
 #[test]
 fn numeric_i32_map_and_set_deletions_use_typed_jit_abis() {
-    let src = "import { mapSetI32, setAddI32, mapDeleteI32, setDeleteI32 } from \"zun:collections\"; function removeMap(value: Map, key: i32): boolean { return mapDeleteI32(value, key); } function removeSet(value: Set, item: i32): boolean { return setDeleteI32(value, item); } function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 7, 1); setAddI32(set, 7); return mapDeleteI32(map, 7) && setDeleteI32(set, 7); }";
+    let src = "import { mapSetI32, setAddI32, mapDeleteI32, setDeleteI32 } from \"zun:core\"; function removeMap(value: Map, key: i32): boolean { return mapDeleteI32(value, key); } function removeSet(value: Set, item: i32): boolean { return setDeleteI32(value, item); } function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 7, 1); setAddI32(set, 7); return mapDeleteI32(map, 7) && setDeleteI32(set, 7); }";
     let module = compile(src);
     let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "removeMap").map(|index| index as u32 + 1).expect("map delete method");
     let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "removeSet").map(|index| index as u32 + 1).expect("set delete method");
@@ -5228,7 +5228,7 @@ fn numeric_i32_map_and_set_deletions_use_typed_jit_abis() {
 
 #[test]
 fn numeric_i32_map_mutation_loop_is_jit_equivalent() {
-    let src = "import { mapSetI32, mapGetI32Or } from \"zun:collections\"; function fill(value: Map): i32 { let index: i32 = 0; while (index < 4) { mapSetI32(value, index, index * 10); index = index + 1; } return mapGetI32Or(value, 3, -1); } function main(): i32 { let value = new Map(); return fill(value); }";
+    let src = "import { mapSetI32, mapGetI32Or } from \"zun:core\"; function fill(value: Map): i32 { let index: i32 = 0; while (index < 4) { mapSetI32(value, index, index * 10); index = index + 1; } return mapGetI32Or(value, 3, -1); } function main(): i32 { let value = new Map(); return fill(value); }";
     let module = compile(src);
     let fill_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "fill").map(|index| index as u32 + 1).expect("fill method");
     assert!(matches!(interp_entry(&module), Value::Int(30, _)));
@@ -5242,7 +5242,7 @@ fn numeric_i32_map_mutation_loop_is_jit_equivalent() {
 
 #[test]
 fn numeric_i32_set_mutation_loop_is_jit_equivalent() {
-    let src = "import { setAddI32, setHasI32 } from \"zun:collections\"; function fill(value: Set): boolean { let index: i32 = 0; while (index < 4) { setAddI32(value, index); index = index + 1; } return setHasI32(value, 3); } function main(): boolean { let value = new Set(); return fill(value); }";
+    let src = "import { setAddI32, setHasI32 } from \"zun:core\"; function fill(value: Set): boolean { let index: i32 = 0; while (index < 4) { setAddI32(value, index); index = index + 1; } return setHasI32(value, 3); } function main(): boolean { let value = new Set(); return fill(value); }";
     let module = compile(src);
     let fill_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "fill").map(|index| index as u32 + 1).expect("fill method");
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
@@ -5255,7 +5255,7 @@ fn numeric_i32_set_mutation_loop_is_jit_equivalent() {
 
 #[test]
 fn numeric_i64_collection_intrinsics_are_tier0_jit_equivalent() {
-    let src = "import { mapSetI64, mapGetI64Or, setAddI64, mapDeleteI64, setDeleteI64 } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI64(map, 7, 42); setAddI64(set, 7); return mapGetI64Or(map, 7, -1) == 42 && mapDeleteI64(map, 7) && setDeleteI64(set, 7); }";
+    let src = "import { mapSetI64, mapGetI64Or, setAddI64, mapDeleteI64, setDeleteI64 } from \"zun:core\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI64(map, 7, 42); setAddI64(set, 7); return mapGetI64Or(map, 7, -1) == 42 && mapDeleteI64(map, 7) && setDeleteI64(set, 7); }";
     let module = compile(src);
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles i64 collection intrinsics");
@@ -5265,7 +5265,7 @@ fn numeric_i64_collection_intrinsics_are_tier0_jit_equivalent() {
 
 #[test]
 fn numeric_f64_collection_intrinsics_are_tier0_jit_equivalent() {
-    let src = "import { mapSetF64, mapGetF64Or, setAddF64, mapDeleteF64, setDeleteF64 } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetF64(map, 7.5, 42.5); setAddF64(set, 7.5); return mapGetF64Or(map, 7.5, -1.0) == 42.5 && mapDeleteF64(map, 7.5) && setDeleteF64(set, 7.5); }";
+    let src = "import { mapSetF64, mapGetF64Or, setAddF64, mapDeleteF64, setDeleteF64 } from \"zun:core\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetF64(map, 7.5, 42.5); setAddF64(set, 7.5); return mapGetF64Or(map, 7.5, -1.0) == 42.5 && mapDeleteF64(map, 7.5) && setDeleteF64(set, 7.5); }";
     let module = compile(src);
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles f64 collection intrinsics");
@@ -5275,8 +5275,8 @@ fn numeric_f64_collection_intrinsics_are_tier0_jit_equivalent() {
 
 #[test]
 fn managed_collection_clear_is_jit_equivalent() {
-    let src = "import { mapClear, mapSize, setClear, setSize } from \"zun:collections\"; function clearMap(value: Map): u64 { mapClear(value); return mapSize(value); } function clearSet(value: Set): u64 { setClear(value); return setSize(value); } function main(): boolean { return true; }";
-    let interp_module = compile("import { mapSetI32, mapClear, mapSize, setAddI32, setClear, setSize } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 1, 2); setAddI32(set, 1); mapClear(map); setClear(set); if (mapSize(map) == 0) { return setSize(set) == 0; } return false; }");
+    let src = "import { mapClear, mapSize, setClear, setSize } from \"zun:core\"; function clearMap(value: Map): u64 { mapClear(value); return mapSize(value); } function clearSet(value: Set): u64 { setClear(value); return setSize(value); } function main(): boolean { return true; }";
+    let interp_module = compile("import { mapSetI32, mapClear, mapSize, setAddI32, setClear, setSize } from \"zun:core\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 1, 2); setAddI32(set, 1); mapClear(map); setClear(set); if (mapSize(map) == 0) { return setSize(set) == 0; } return false; }");
     let module = compile(src);
     let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "clearMap").map(|index| index as u32 + 1).expect("map clear method");
     let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "clearSet").map(|index| index as u32 + 1).expect("set clear method");
@@ -5295,7 +5295,7 @@ fn managed_collection_clear_is_jit_equivalent() {
 
 #[test]
 fn managed_map_values_uses_the_managed_array_abi() {
-    let src = "import { mapValues } from \"zun:collections\"; function values(value: Map): Array { return mapValues(value); } function main(): boolean { return true; }";
+    let src = "import { mapValues } from \"zun:core\"; function values(value: Map): Array { return mapValues(value); } function main(): boolean { return true; }";
     let module = compile(src);
     let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "values").map(|index| index as u32 + 1).expect("map values method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles map values");
@@ -5313,7 +5313,7 @@ fn managed_map_values_uses_the_managed_array_abi() {
 
 #[test]
 fn managed_map_keys_uses_the_managed_array_abi() {
-    let src = "import { mapKeys } from \"zun:collections\"; function keys(value: Map): Array { return mapKeys(value); } function main(): boolean { return true; }";
+    let src = "import { mapKeys } from \"zun:core\"; function keys(value: Map): Array { return mapKeys(value); } function main(): boolean { return true; }";
     let module = compile(src);
     let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "keys").map(|index| index as u32 + 1).expect("map keys method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles map keys");
@@ -5331,7 +5331,7 @@ fn managed_map_keys_uses_the_managed_array_abi() {
 
 #[test]
 fn managed_map_entries_uses_nested_managed_arrays() {
-    let src = "import { mapEntries } from \"zun:collections\"; function entries(value: Map): Array { return mapEntries(value); } function main(): boolean { return true; }";
+    let src = "import { mapEntries } from \"zun:core\"; function entries(value: Map): Array { return mapEntries(value); } function main(): boolean { return true; }";
     let module = compile(src);
     let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "entries").map(|index| index as u32 + 1).expect("map entries method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles map entries");
@@ -5349,7 +5349,7 @@ fn managed_map_entries_uses_nested_managed_arrays() {
 
 #[test]
 fn managed_set_values_and_entries_use_managed_arrays() {
-    let src = "import { setValues, setEntries } from \"zun:collections\"; function values(value: Set): Array { return setValues(value); } function entries(value: Set): Array { return setEntries(value); } function main(): boolean { return true; }";
+    let src = "import { setValues, setEntries } from \"zun:core\"; function values(value: Set): Array { return setValues(value); } function entries(value: Set): Array { return setEntries(value); } function main(): boolean { return true; }";
     let module = compile(src);
     let values_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "values").map(|index| index as u32 + 1).expect("set values method");
     let entries_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "entries").map(|index| index as u32 + 1).expect("set entries method");
@@ -5371,7 +5371,7 @@ fn managed_set_values_and_entries_use_managed_arrays() {
 
 #[test]
 fn managed_collection_constructors_keep_the_tier0_fallback() {
-    let src = "import { mapSetI32, setAddI32 } from \"zun:collections\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 1, 2); setAddI32(set, 1); return true; }";
+    let src = "import { mapSetI32, setAddI32 } from \"zun:core\"; function main(): boolean { let map = new Map(); let set = new Set(); mapSetI32(map, 1, 2); setAddI32(set, 1); return true; }";
     let module = compile(src);
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
     let entry = module.entry_point.expect("entry point").rid();
@@ -5381,7 +5381,7 @@ fn managed_collection_constructors_keep_the_tier0_fallback() {
 
 #[test]
 fn managed_collection_constructor_return_can_use_object_jit_abi() {
-    let src = "import { mapNew, setNew } from \"zun:collections\"; function makeMap(): Map { return mapNew(); } function makeSet(): Set { return setNew(); } function main(): boolean { return true; }";
+    let src = "import { mapNew, setNew } from \"zun:core\"; function makeMap(): Map { return mapNew(); } function makeSet(): Set { return setNew(); } function main(): boolean { return true; }";
     let module = compile(src);
     let map_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "makeMap").map(|index| index as u32 + 1).expect("map constructor method");
     let set_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "makeSet").map(|index| index as u32 + 1).expect("set constructor method");
@@ -5819,7 +5819,7 @@ fn interned_string_field_read_is_jit_equivalent() {
 
 #[test]
 fn string_field_length_uses_the_typed_jit_builtin() {
-    let src = "import { length } from \"zun:string\";\n\
+    let src = "import { length } from \"zun:core\";\n\
                class Named { tag: string; }\n\
                function measure(n: Named): u64 { return length(n.tag); }\n\
                function main(): u64 { return 1; }";
@@ -6102,7 +6102,7 @@ fn in_operator_on_plain_object() {
 #[test]
 fn in_operator_routes_through_proxy_has_trap() {
     let module = compile(
-        "import { dynamicSetFunction } from \"zun:collections\"; \
+        "import { dynamicSetFunction } from \"zun:core\"; \
          function hasTrap(target: any, key: string): boolean { return true; } \
          function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); \
          dynamicSetFunction(handler, \"has\", hasTrap); let proxy = new Proxy(target, handler); \
@@ -6123,7 +6123,7 @@ fn delete_operator_removes_plain_property() {
 #[test]
 fn delete_operator_routes_through_proxy_delete_trap() {
     let module = compile(
-        "import { dynamicSetFunction } from \"zun:collections\"; \
+        "import { dynamicSetFunction } from \"zun:core\"; \
          function delTrap(target: any, key: string): boolean { return true; } \
          function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); \
          dynamicSetFunction(handler, \"deleteProperty\", delTrap); let proxy = new Proxy(target, handler); \

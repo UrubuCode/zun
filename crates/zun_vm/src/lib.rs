@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn collection_size_builtins_match_interpreter_and_jit() {
-        let source = "import { mapNew, mapSet, mapSize, setNew, setAdd, setSize } from \"zun:collections\"; function map_size(map: Map): u64 { return mapSize(map); } function set_size(set: Set): u64 { return setSize(set); } function main(): u64 { let map = mapNew(); mapSet(map, 1.0, 2.0); let set = setNew(); setAdd(set, 3.0); return map_size(map) + set_size(set); }";
+        let source = "import { mapNew, mapSet, mapSize, setNew, setAdd, setSize } from \"zun:core\"; function map_size(map: Map): u64 { return mapSize(map); } function set_size(set: Set): u64 { return setSize(set); } function main(): u64 { let map = mapNew(); mapSet(map, 1.0, 2.0); let set = setNew(); setAdd(set, 3.0); return map_size(map) + set_size(set); }";
         let bytes = zun_compiler::compile(source).unwrap().write();
         let module = load(&bytes).expect("load collection-size module");
         let map_size_rid = module

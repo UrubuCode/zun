@@ -2143,7 +2143,7 @@ mod tests {
 
     #[test]
     fn converts_namespace_imports() {
-        let program = parse_subset("import * as math from 'zun:math'; function main() {}", true).unwrap();
+        let program = parse_subset("import * as math from 'zun:core'; function main() {}", true).unwrap();
         let binding = &program.imports[0].names[0];
         assert!(binding.is_namespace);
         assert!(!binding.is_default);

@@ -519,7 +519,7 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
 
 /// The machine-facing string primitives used by `zun:core`.
 pub const MODULE: crate::Module = crate::Module {
-    name: "zun:string",
+    name: "string",
     functions: &[
         NativeFn {
             name: "length",

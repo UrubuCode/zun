@@ -163,7 +163,7 @@ fn time_ns_per_op(label: &str, op: &[Instruction]) -> f64 {
 
 /// The native id behind `zun:math`'s `name`, as `call.builtin` takes it.
 fn native(name: &str) -> Instruction {
-    let (id, _) = zun_natives::resolve("zun:math", name)
+    let (id, _) = zun_natives::resolve("math", name)
         .unwrap_or_else(|| panic!("`zun:math` exports `{name}`"));
     Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32))
 }

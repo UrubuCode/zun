@@ -22,7 +22,7 @@ macro_rules! buffer_module {
         get: $get:ident, set: $set:ident
     }),+ $(,)?) => {
     pub const MODULE: crate::Module = crate::Module {
-        name: "zun:buffer",
+        name: "buffer",
         functions: &[
             NativeFn {
                 name: "bufferNew",
