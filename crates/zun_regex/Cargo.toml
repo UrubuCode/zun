@@ -10,6 +10,7 @@ description = "Engine B: a standalone backtracking ECMAScript regex engine (back
 zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
+memchr = "2"
 
 [lints]
 workspace = true

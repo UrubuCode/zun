@@ -21,9 +21,24 @@ pub(crate) struct Vm<'a> {
     pub input: &'a [char],
     pub steps: u64,
     pub limit: u64,
+    /// Backtrack stack, reused across start positions and reentrant runs.
+    stack: Vec<Bt>,
+    /// Capture snapshots for lookaround, used as a reusable stack of slices
+    /// (avoids a fresh `Vec` allocation per lookaround evaluation).
+    snap: Vec<usize>,
 }
 
-impl Vm<'_> {
+impl<'a> Vm<'a> {
+    pub fn new(prog: &'a Program, input: &'a [char], limit: u64) -> Vm<'a> {
+        Vm { prog, input, steps: 0, limit, stack: Vec::new(), snap: Vec::new() }
+    }
+
+    /// Resets per-attempt scratch (counters stay; buffers keep their capacity).
+    pub fn reset(&mut self) {
+        self.stack.clear();
+        self.snap.clear();
+    }
+
     fn eq(&self, a: char, b: char) -> bool {
         if self.prog.icase {
             canonicalize(a) == b
@@ -47,7 +62,8 @@ impl Vm<'_> {
     ) -> Result<Option<usize>, RegexError> {
         let prog = self.prog;
         let n = self.input.len();
-        let mut stack: Vec<Bt> = Vec::new();
+        // Base of this (possibly reentrant) run's region on the shared stack.
+        let base = self.stack.len();
         loop {
             self.steps += 1;
             if self.steps > self.limit {
@@ -94,7 +110,7 @@ impl Vm<'_> {
                     }
                 }
                 Inst::Split { first, second } => {
-                    stack.push(Bt::Branch { pc: *second, pos });
+                    self.stack.push(Bt::Branch { pc: *second, pos });
                     pc = *first;
                     true
                 }
@@ -103,7 +119,7 @@ impl Vm<'_> {
                     true
                 }
                 Inst::Save(slot) => {
-                    stack.push(Bt::Cap { slot: *slot, old: caps[*slot] });
+                    self.stack.push(Bt::Cap { slot: *slot, old: caps[*slot] });
                     caps[*slot] = pos;
                     pc += 1;
                     true
@@ -153,32 +169,51 @@ impl Vm<'_> {
                     }
                 }
                 Inst::Look { negate, end } => {
-                    let snapshot = caps.to_vec();
+                    // Snapshot captures onto the reusable `snap` buffer instead
+                    // of a fresh Vec. The recursive run pushes/pops its own
+                    // region above `snap_base`, leaving ours intact.
+                    let snap_base = self.snap.len();
+                    self.snap.extend_from_slice(caps);
                     let sub = self.run(pc + 1, pos, caps, regs)?;
-                    match (sub.is_some(), *negate) {
+                    let matched = sub.is_some();
+                    let result = match (matched, *negate) {
                         (true, false) => {
-                            for (slot, &old) in snapshot.iter().enumerate() {
+                            // Keep the lookahead's captures; record undo entries.
+                            for slot in 0..caps.len() {
+                                let old = self.snap[snap_base + slot];
                                 if caps[slot] != old {
-                                    stack.push(Bt::Cap { slot, old });
+                                    self.stack.push(Bt::Cap { slot, old });
                                 }
                             }
                             pc = *end;
                             true
                         }
                         (false, true) => {
+                            // Sub failed: it already rolled captures back to the
+                            // snapshot via its own backtracking.
                             pc = *end;
                             true
                         }
                         (true, true) => {
-                            caps.copy_from_slice(&snapshot);
+                            // Negative lookahead matched: undo its captures.
+                            for slot in 0..caps.len() {
+                                caps[slot] = self.snap[snap_base + slot];
+                            }
                             false
                         }
                         (false, false) => false,
-                    }
+                    };
+                    self.snap.truncate(snap_base);
+                    result
                 }
-                Inst::LookEnd | Inst::Match => return Ok(Some(pos)),
+                Inst::LookEnd | Inst::Match => {
+                    // Success: drop any leftover branch points from this run's
+                    // region (captures stay as the match result).
+                    self.stack.truncate(base);
+                    return Ok(Some(pos));
+                }
                 Inst::LoopInit { ctr } => {
-                    stack.push(Bt::Reg { idx: *ctr, old: regs[*ctr] });
+                    self.stack.push(Bt::Reg { idx: *ctr, old: regs[*ctr] });
                     regs[*ctr] = 0;
                     pc += 1;
                     true
@@ -190,21 +225,21 @@ impl Vm<'_> {
                     } else if count >= *max as u64 {
                         pc = *exit;
                     } else if *greedy {
-                        stack.push(Bt::Branch { pc: *exit, pos });
+                        self.stack.push(Bt::Branch { pc: *exit, pos });
                         pc += 1;
                     } else {
-                        stack.push(Bt::Branch { pc: pc + 1, pos });
+                        self.stack.push(Bt::Branch { pc: pc + 1, pos });
                         pc = *exit;
                     }
                     true
                 }
                 Inst::LoopBody { pos_reg, clear } => {
-                    stack.push(Bt::Reg { idx: *pos_reg, old: regs[*pos_reg] });
+                    self.stack.push(Bt::Reg { idx: *pos_reg, old: regs[*pos_reg] });
                     regs[*pos_reg] = pos;
                     if let Some((lo, hi)) = clear {
                         for (k, cell) in caps[2 * lo..2 * hi + 2].iter_mut().enumerate() {
                             if *cell != NONE {
-                                stack.push(Bt::Cap { slot: 2 * lo + k, old: *cell });
+                                self.stack.push(Bt::Cap { slot: 2 * lo + k, old: *cell });
                                 *cell = NONE;
                             }
                         }
@@ -217,7 +252,7 @@ impl Vm<'_> {
                     if pos == regs[*pos_reg] && count as u64 >= *min as u64 {
                         false // empty iteration beyond the minimum is rejected
                     } else {
-                        stack.push(Bt::Reg { idx: *ctr, old: count });
+                        self.stack.push(Bt::Reg { idx: *ctr, old: count });
                         regs[*ctr] = count + 1;
                         pc = *test;
                         true
@@ -228,11 +263,15 @@ impl Vm<'_> {
                 continue;
             }
             loop {
-                match stack.pop() {
-                    None => return Ok(None),
-                    Some(Bt::Cap { slot, old }) => caps[slot] = old,
-                    Some(Bt::Reg { idx, old }) => regs[idx] = old,
-                    Some(Bt::Branch { pc: p, pos: q }) => {
+                if self.stack.len() == base {
+                    // Exhausted this run's region: all state above `base` has
+                    // been rolled back; captures are restored to run entry.
+                    return Ok(None);
+                }
+                match self.stack.pop().unwrap() {
+                    Bt::Cap { slot, old } => caps[slot] = old,
+                    Bt::Reg { idx, old } => regs[idx] = old,
+                    Bt::Branch { pc: p, pos: q } => {
                         pc = p;
                         pos = q;
                         break;

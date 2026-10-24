@@ -38,6 +38,8 @@ pub use error::{RegexError, RegexParseError};
 pub use flags::Flags;
 pub use parser::{parse, ParsedPattern};
 
+use std::rc::Rc;
+
 use compile::Program;
 use matcher::{Vm, NONE};
 
@@ -49,7 +51,7 @@ pub const DEFAULT_STEP_LIMIT: u64 = 10_000_000;
 pub struct Regex {
     program: Program,
     flags: Flags,
-    names: Vec<(String, usize)>,
+    names: Rc<Vec<(String, usize)>>,
     step_limit: u64,
     source: String,
 }
@@ -58,7 +60,7 @@ pub struct Regex {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Match {
     groups: Vec<Option<(usize, usize)>>,
-    names: Vec<(String, usize)>,
+    names: Rc<Vec<(String, usize)>>,
 }
 
 impl Match {
@@ -117,7 +119,7 @@ impl Regex {
         Ok(Regex {
             program,
             flags,
-            names: parsed.names,
+            names: Rc::new(parsed.names),
             step_limit: DEFAULT_STEP_LIMIT,
             source: pattern.to_string(),
         })
@@ -167,13 +169,45 @@ impl Regex {
 
     /// Like [`Regex::find`] over a pre-decoded char slice.
     pub fn find_chars(&self, input: &[char], start: usize) -> Result<Option<Match>, RegexError> {
-        let mut vm = Vm { prog: &self.program, input, steps: 0, limit: self.step_limit };
-        for s in start..=input.len() {
-            if let Some(m) = self.try_at(&mut vm, s)? {
+        self.find_chars_impl(input, start, true)
+    }
+
+    /// Shared body of [`Regex::find_chars`]. When `use_prefilter` is false, every
+    /// position is tried (the pre-prefilter behavior) — used only to prove the
+    /// prefilter never changes results.
+    fn find_chars_impl(
+        &self,
+        input: &[char],
+        start: usize,
+        use_prefilter: bool,
+    ) -> Result<Option<Match>, RegexError> {
+        let mut vm = Vm::new(&self.program, input, self.step_limit);
+        // Allocated once per call and reused across every start position.
+        let mut caps = vec![NONE; 2 * (self.program.group_count + 1)];
+        let mut regs = vec![0usize; self.program.reg_count];
+        let mut s = start;
+        loop {
+            let cand = if use_prefilter {
+                self.program.prefilter.next(input, s)
+            } else {
+                (s <= input.len()).then_some(s)
+            };
+            let Some(cand) = cand else { return Ok(None) };
+            if let Some(m) = self.try_at(&mut vm, cand, &mut caps, &mut regs)? {
                 return Ok(Some(m));
             }
+            s = cand + 1;
         }
-        Ok(None)
+    }
+
+    /// Test-only naive scan (prefilter disabled) for equivalence checking.
+    #[cfg(test)]
+    pub(crate) fn find_chars_naive(
+        &self,
+        input: &[char],
+        start: usize,
+    ) -> Result<Option<Match>, RegexError> {
+        self.find_chars_impl(input, start, false)
     }
 
     /// Anchored match attempt at exactly `pos` (sticky semantics).
@@ -181,8 +215,10 @@ impl Regex {
         if pos > input.len() {
             return Ok(None);
         }
-        let mut vm = Vm { prog: &self.program, input, steps: 0, limit: self.step_limit };
-        self.try_at(&mut vm, pos)
+        let mut vm = Vm::new(&self.program, input, self.step_limit);
+        let mut caps = vec![NONE; 2 * (self.program.group_count + 1)];
+        let mut regs = vec![0usize; self.program.reg_count];
+        self.try_at(&mut vm, pos, &mut caps, &mut regs)
     }
 
     /// Whether the pattern matches anywhere in `input`.
@@ -190,10 +226,18 @@ impl Regex {
         Ok(self.find(input, 0)?.is_some())
     }
 
-    fn try_at(&self, vm: &mut Vm<'_>, start: usize) -> Result<Option<Match>, RegexError> {
-        let mut caps = vec![NONE; 2 * (self.program.group_count + 1)];
-        let mut regs = vec![0usize; self.program.reg_count];
-        match vm.run(0, start, &mut caps, &mut regs)? {
+    fn try_at(
+        &self,
+        vm: &mut Vm<'_>,
+        start: usize,
+        caps: &mut [usize],
+        regs: &mut [usize],
+    ) -> Result<Option<Match>, RegexError> {
+        // Reset reused buffers for this attempt.
+        caps.iter_mut().for_each(|c| *c = NONE);
+        regs.iter_mut().for_each(|r| *r = 0);
+        vm.reset();
+        match vm.run(0, start, caps, regs)? {
             None => Ok(None),
             Some(end) => {
                 caps[0] = start;

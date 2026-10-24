@@ -409,6 +409,109 @@ fn step_limit_is_per_call_and_benign_inputs_pass() {
     assert_eq!(tiny.is_match("aaaaaaaaaaaaaaa"), Err(RegexError::StepLimitExceeded));
 }
 
+// ---- prefilter equivalence ----
+
+/// For a corpus of patterns over several inputs, the prefilter-driven scan must
+/// return exactly the same result as the naive "try every position" scan.
+#[test]
+fn prefilter_matches_naive_scan() {
+    let patterns: &[(&str, &str)] = &[
+        // literals
+        ("hello", ""),
+        ("hello", "i"),
+        ("abc", ""),
+        // classes
+        ("[a-z]+", ""),
+        ("[a-z]+", "i"),
+        ("[^a-c]+", ""),
+        ("\\d{3,}", ""),
+        ("\\w+@\\w+\\.\\w+", ""),
+        ("\\s+", ""),
+        ("[A-Z]", "i"),
+        // quantifiers (incl. empty-match)
+        ("a*", ""),
+        ("a+", ""),
+        ("a?", ""),
+        ("a{2,3}", ""),
+        ("(?:)", ""),
+        ("a*b", ""),
+        ("x*y", ""),
+        // anchors
+        ("^abc", ""),
+        ("^abc$", ""),
+        ("abc$", ""),
+        ("^$", ""),
+        ("$", ""),
+        ("^b$", "m"),
+        ("^a", "m"),
+        ("a$", "m"),
+        // alternation
+        ("cat|dog|bird|fish", ""),
+        ("a|ab", ""),
+        ("^a|b", ""),
+        ("foo|", ""),
+        // word boundary (leading zero-width then literal)
+        ("\\bfoo\\b", ""),
+        ("\\Boo", ""),
+        // lookaround
+        ("foo(?=bar)", ""),
+        ("foo(?!bar)", ""),
+        ("(?=a)a", ""),
+        ("(?<=\\$)\\d+", ""),
+        ("(?<!a)b", ""),
+        ("^(?!.*x).*$", ""),
+        // backrefs
+        ("(a+)\\1", ""),
+        ("(\\w)\\1", ""),
+        ("\\1(a)", ""),
+        // dotAll / any
+        (".+", "s"),
+        (".+", ""),
+        ("a.b", "s"),
+        // non-ascii
+        ("é", "i"),
+        ("(?<=é)x", ""),
+        ("\\u{1F600}", ""),
+    ];
+    let inputs: &[&str] = &[
+        "",
+        "a",
+        "b",
+        "hello",
+        "say hello to HELLO",
+        "The quick brown fox. cat dog bird fish!",
+        "foobar foobaz foobar",
+        "cost $42 and 17 more 1234",
+        "user@example.com",
+        "aaa\nbbb\nccc",
+        "a\r\nb\u{2028}c",
+        "éxésé 😀 end",
+        "abcabcabd",
+        "   \t spaces \n here",
+        "aaaaaaaaaaaaaab",
+        "xxxxxyyyy",
+    ];
+    for (pat, flags) in patterns {
+        // Skip patterns that are invalid under a given flag set gracefully.
+        let re = match Regex::new(pat, flags) {
+            Ok(re) => re,
+            Err(e) => panic!("compile {pat:?}/{flags:?}: {e}"),
+        };
+        for input in inputs {
+            let chars: Vec<char> = input.chars().collect();
+            for start in 0..=chars.len() {
+                let with = re.find_chars(&chars, start);
+                let naive = re.find_chars_naive(&chars, start);
+                assert_eq!(
+                    with.as_ref().map(|o| o.as_ref().map(Match::groups)),
+                    naive.as_ref().map(|o| o.as_ref().map(Match::groups)),
+                    "prefilter mismatch for pattern {pat:?} flags {flags:?} input {input:?} start {start}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn nested_quantifier_alternation_blowup_is_bounded() {
     let re = Regex::new("(a|aa)+$", "").unwrap().with_step_limit(500_000);
