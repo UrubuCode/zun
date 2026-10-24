@@ -9,6 +9,8 @@ use zun_common::{Diagnostic, Severity};
 use zun_il::{decode_all, decode_all_with_offsets, Opcode, Operand};
 use zun_module::{read_body, Module};
 
+pub mod macros;
+
 /// Compute the conservative set of method RIDs reachable from a module entry.
 ///
 /// This is the analysis boundary for future trimming/AOT. Direct calls follow
@@ -451,6 +453,15 @@ fn compile_program_with_externals(
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
     }
+    // Compile-time macro expansion runs after parse and before sema/ilgen
+    // (PLAN §3.5): registered macro decorators transform their target, and the
+    // emitted code flows into the checker as ordinary source. The expanded
+    // source string carries interned spans for any generated identifiers.
+    let (source, ast) = macros::expand(source, ast, &mut diagnostics);
+    if diagnostics.iter().any(is_error) {
+        return Err(diagnostics);
+    }
+    let source = source.as_str();
     let hir = zun_sema::check_with_externals(source, &ast, &mut diagnostics, external_functions);
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
@@ -748,6 +759,70 @@ fn is_error(diagnostic: &Diagnostic) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn count_tostring(module: &Module) -> usize {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .filter(|method| module.strings.get(method.name) == "toString")
+            .count()
+    }
+
+    #[test]
+    fn auto_to_string_macro_generates_a_tostring_method() {
+        // The registered `@autoToString` macro runs at compile time and adds a
+        // `toString` method to the class; an undecorated class does not get it.
+        // The prelude's own classes contribute `toString` methods, so the proof
+        // is that the decorated program has exactly one *more* than the
+        // undecorated one.
+        let decorated = compile(
+            "@autoToString\nclass Widget { size: number; }\n\
+             function main(): string { return new Widget(1.0).toString(); }",
+        )
+        .expect("decorated class should compile");
+        let undecorated = compile(
+            "class Widget { size: number; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("undecorated class should compile");
+        assert_eq!(
+            count_tostring(&decorated),
+            count_tostring(&undecorated) + 1,
+            "the macro must have generated exactly one toString method"
+        );
+    }
+
+    #[test]
+    fn an_unregistered_decorator_stays_inert() {
+        // Phase-1 behavior: a decorator with no registered macro compiles and
+        // runs exactly as if undecorated, generating no extra members.
+        let decorated = compile(
+            "@sealed\nclass Counter { value: number; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("unregistered decorator must stay inert");
+        let plain = compile(
+            "class Counter { value: number; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("plain class should compile");
+        assert_eq!(count_tostring(&decorated), count_tostring(&plain));
+    }
+
+    #[test]
+    fn a_failing_macro_emits_a_diagnostic_without_crashing() {
+        // `@autoToString` on a class that already declares `toString` fails
+        // cleanly: a diagnostic, no panic, no silent miscompile.
+        let diagnostics = compile(
+            "@autoToString\nclass Widget { toString(): string { return \"x\"; } }\n\
+             function main(): int { return 0; }",
+        )
+        .expect_err("a macro error must surface as a diagnostic");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "MACRO0001"));
+    }
 
     #[test]
     fn compiles_a_minimal_entry_point() {
