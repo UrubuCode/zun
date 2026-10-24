@@ -5079,9 +5079,10 @@ impl Checker<'_> {
         }
     }
 
-    /// Lower `typeof x` to a constant JS type string over the operand's static
-    /// type. Every non-`any` value has a statically known type in Zun, so this
-    /// fold is exact; `typeof` over `any` (runtime tag inspection) is deferred.
+    /// Lower `typeof x`. A statically-typed operand folds to a constant JS type
+    /// string (every non-`any` value has a known type in Zun, so the fold is
+    /// exact). An `any` operand has no static type, so it is lowered to the
+    /// `typeofAny` intrinsic, which inspects the runtime tag/heap value.
     fn check_typeof_operator(
         &mut self,
         cx: &mut FunctionCx,
@@ -5098,12 +5099,18 @@ impl Checker<'_> {
             Ty::Symbol => "symbol",
             Ty::Function(_) => "function",
             Ty::Void => "undefined",
+            // An `any` operand carries no static type, so inspect its runtime
+            // tag with the `typeofAny` intrinsic instead of folding.
             Ty::Any => {
-                self.error(
+                let Some((id, _)) = zun_natives::resolve_name("typeofAny") else {
+                    self.error(span, "missing `typeofAny` intrinsic".to_string());
+                    return self.poison(span);
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![operand] },
+                    ty: Ty::String,
                     span,
-                    "`typeof` on a dynamically-typed (`any`) value is not supported yet",
-                );
-                return self.poison(span);
+                };
             }
             // Arrays, maps, sets, proxies, instances, buffers, null → "object".
             _ => "object",
@@ -5115,10 +5122,20 @@ impl Checker<'_> {
         }
     }
 
-    /// Lower `x instanceof C` for the common typed case: a class-hierarchy
-    /// membership test folded to a boolean constant. `Symbol.hasInstance`
-    /// customization and runtime prototype-chain walking for dynamic objects
-    /// are deferred (an `any`/dynamic receiver yields `false`).
+    /// Lower `x instanceof C`. A statically-known instance that is provably in
+    /// `C`'s hierarchy folds to constant `true`, and a value whose static type
+    /// can never be an instance folds to `false`. Otherwise — an `any`/dynamic
+    /// operand, or a base-typed operand that may hold a `C` subclass at runtime
+    /// — it lowers to the `instanceofClass` intrinsic, which walks the operand's
+    /// actual class hierarchy against `C`'s metadata rid.
+    ///
+    /// Scope of the runtime walk: it matches typed class instances (including
+    /// ones upcast through `any`/a base type) by their runtime `type_rid`. A
+    /// plain dynamic object built with `Object.create` has no class identity, so
+    /// it answers `false` (never a false positive); matching such objects
+    /// against a class `prototype`, and `Symbol.hasInstance` customization, stay
+    /// deferred — both need a class↔prototype-object model that does not exist
+    /// yet.
     fn check_instanceof_operator(
         &mut self,
         cx: &mut FunctionCx,
@@ -5136,10 +5153,37 @@ impl Checker<'_> {
             self.error(class_name.span, format!("unknown class `{name}`"));
             return self.poison(span);
         };
-        let result = match value.ty {
-            Ty::Instance(c) => self.class_is_a(c, target),
+        // Decide between a constant fold and a runtime class-hierarchy walk.
+        // `None` means "check at runtime": an upcast base-typed operand that may
+        // hold a `target` subclass, or an `any`/dynamic operand with no static
+        // class. (The old code folded these to an unsound constant `false`.)
+        let folded = match value.ty {
             Ty::Error => return self.poison(span),
-            _ => false,
+            // A statically-known instance provably in `target`'s hierarchy.
+            Ty::Instance(c) if self.class_is_a(c, target) => Some(true),
+            Ty::Instance(_) | Ty::Any | Ty::DynamicObject => None,
+            // A primitive value is never an instance of a class.
+            _ => Some(false),
+        };
+        let Some(result) = folded else {
+            // Runtime check against `target`'s metadata TypeDef rid. The rid is
+            // `target + 1`: `emit_types` in `zun_ilgen` emits one TypeDef per
+            // class in order, so class index `i` owns rid `i + 1` (asserted
+            // there).
+            let Some((id, _)) = zun_natives::resolve_name("instanceofClass") else {
+                self.error(span, "missing `instanceofClass` intrinsic".to_string());
+                return self.poison(span);
+            };
+            let class_rid = hir::Expr {
+                kind: hir::ExprKind::Number((target + 1) as f64),
+                ty: Ty::Int(IntKind::U32),
+                span,
+            };
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![value, class_rid] },
+                ty: Ty::Boolean,
+                span,
+            };
         };
         hir::Expr {
             kind: hir::ExprKind::Boolean(result),

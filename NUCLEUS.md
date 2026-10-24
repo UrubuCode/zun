@@ -65,20 +65,31 @@ hand parser (prefix unary for `typeof`/`delete`; relational-precedence binary fo
 is preserved: `obj.in`, `obj.typeof`, a `delete(...)` method, etc. still parse
 (class member names and `.member` access accept keywords).
 
-- `typeof x` → a constant JS type string folded over the operand's **static**
-  type (`number/string/boolean/bigint/symbol/function/object`; arrays, maps,
-  instances, proxies, null → `"object"`). Exact for every non-`any` value;
-  `typeof` over an `any` value (runtime tag inspection) is **deferred** (sema
-  error) — no native was added, so dispatch ids are unchanged.
+- `typeof x` → for a **statically-typed** operand, a constant JS type string
+  folded over its static type (`number/string/boolean/bigint/symbol/function/
+  object`; arrays, maps, instances, proxies, null → `"object"`) — exact and
+  unchanged. For an **`any`** operand it now lowers to the `typeofAny` intrinsic,
+  which inspects the runtime value at Tier 0 (heap-refined): number/string/
+  boolean/symbol/function/undefined/object, plus `bigint` (BigInt payload probed
+  on the heap) and `typeof null === "object"`. The native lives in a new
+  `zun:typeinfo` module appended **last** in the registry, so existing dispatch
+  ids are unchanged. Functions using it stay Tier 0 (not in the JIT allowlist).
 - `x in obj` → `boolean` via `reflectHas` (plain object / `any`) or the Proxy
   `has` trap (`proxyHas`). Key must be a string; symbol keys deferred.
 - `delete obj.k` / `delete obj[k]` → `boolean` via `reflectDelete` / the Proxy
   `deleteProperty` trap. Always yields `true` on success (no configurable-property
   descriptor model yet). A non-member `delete` operand is a sema error.
-- `x instanceof C` → compile-time class-hierarchy membership folded to a boolean
-  (walks the receiver's static `Ty::Instance` class and its bases). `Symbol.hasInstance`
-  customization, a runtime prototype-chain walk for dynamic objects, and the
-  upcast case (base-typed variable holding a derived instance) are **deferred**.
+- `x instanceof C` → folds to a constant when the static type decides it (a
+  provable `Ty::Instance` subclass → `true`; a value that can never be an
+  instance → `false`). Otherwise — an **`any`/dynamic** operand, or the **upcast**
+  case (base-typed variable that may hold a derived instance) — it now lowers to
+  the `instanceofClass` intrinsic (same new `zun:typeinfo` module), which walks
+  the operand's **runtime** class hierarchy via `TypeSystem::is_assignable` over
+  its `type_rid` against `C`'s metadata TypeDef rid (`class index + 1`). This
+  closed the previously-unsound upcast fold (it answered `false`). **Still
+  deferred (need a class↔prototype-object model that does not exist):** matching a
+  plain `Object.create` dynamic object against a class (it answers `false`, never
+  a false positive), and `Symbol.hasInstance` customization.
 - `void x` is **deferred** (left as an identifier/type name — `void` is a common
   return-type annotation; no `undefined` value representation exists yet). The
   `for (k in obj)` statement form is also out of scope (this is only the `in`

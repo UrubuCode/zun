@@ -11,7 +11,10 @@ pub(super) fn call_builtin(
 ) -> Result<(), RunError> {
     let id = id as u32;
     let args = pop_n(stack, zun_natives::param_count(id))?;
-    if let Some(name) = managed_collection_builtin(id).or_else(|| managed_buffer_builtin(id)) {
+    if let Some(name) = managed_collection_builtin(id)
+        .or_else(|| managed_buffer_builtin(id))
+        .or_else(|| managed_typeinfo_builtin(id))
+    {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
     }
@@ -189,6 +192,15 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
             .map(|(candidate, _)| candidate)
             == Some(id)
         {
+            return Some(name);
+        }
+    }
+    None
+}
+
+pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
+    for name in ["typeofAny", "instanceofClass"] {
+        if zun_natives::resolve("zun:typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }
