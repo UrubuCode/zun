@@ -49,10 +49,10 @@ read.
 | 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
-| 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
+| 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 10 · partial 10 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 10 · partial 11 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -1080,9 +1080,40 @@ typed `Ty::DynamicObject` — the per-realm singleton of §3.1.
 types with saturating coercions per the Cranelift rules. (Per MEMORY: JIT currently
 f64-everything is scaffolding; the *type surface* is present.)
 
-## 25. Decorators — missing
-Listed in A ("language feature + macro"). No parser/sema/lowering support found. Needs
-decorator syntax, evaluation order, and the metadata/macro mechanism.
+## 25. Decorators — partial
+Listed in A ("language feature + macro"). **Stage 1 (syntax)** and **Stage 2 (the
+compile-time macro-expansion hook)** are landed; **Stage 3 (runtime TC39 decorators)**
+is deferred.
+
+**Stage 1 — syntax (done).** Lexer `@`, parser accepts `@expr` / `@expr(args)` on
+classes and class members, AST nodes carry the decorator list, and sema lowers them to
+an inert `hir::Decorator` carry (`crates/zun_sema/src/classes.rs`).
+
+**Stage 2 — macro-expansion hook (done).** The .NET/Roslyn source-generator model
+(PLAN §3.5): `crates/zun_compiler/src/macros.rs`. A `class_macro(name)` registry maps a
+decorator name to a built-in `ClassMacro` (the single extension point for future
+macros). `macros::expand` runs in the driver **after parse, before sema/ilgen**
+(`compile_program_with_externals`): for each decorated class it builds a value-model
+(`ClassModel`/`FieldModel`, free of AST/compilation references per the Parser/Emitter
+discipline), looks the decorator up in the registry, and — if registered — runs the
+macro to an emit-model (`MacroExpansion` / `GeneratedMethod`). The pass lowers the
+emit-model to AST by interning generated identifiers into a source suffix so every
+emitted span resolves in the returned source (clean AST re-emission — **no HIR/module
+injection**, so the method-emitting flavor is handled without the codegen-injection
+machinery). A decorator with no registered macro stays inert (Stage-1 behavior, never an
+error). **Failure contract:** a macro that cannot transform its target returns a
+`Diagnostic` (`MACRO0001`); the pass records it and leaves the target unchanged — never a
+panic, never a silent miscompile. **Proving macro:** `@autoToString` generates a
+`toString()` returning the class name, observable end-to-end at run time
+(`crates/zun_vm/tests/decorator_macros.rs`).
+
+**Deferred.** Stage 3 runtime TC39 `(value, context)` decorators; in-language /
+user-defined macros (the registry is Rust-only for v1); field- and method-level built-in
+macros (the pass walks those decorator lists but no built-in is registered); incremental
+caching of the pipeline; and a `@sealed`-style **in-place flag with runtime enforcement**
+— a class-level flag that lowering honors so instances reject new dynamic properties
+needs a TypeDef/metadata-format flag + verifier fixtures + runtime enforcement, a
+separate piece of work from the expansion hook proven here.
 
 ## 26. ZIL math opcodes — done
 Fifteen machine ops covering all of PLAN §3 criterion (d).
