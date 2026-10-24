@@ -178,6 +178,20 @@ impl Heap {
                 }
             }
         }
+        // A registry's cleanup callback is a strong runtime-owned callable: its
+        // captured environment must survive as long as the registry is reachable,
+        // even before the first `register` copies it into a registration.
+        for cleanup in self.finalization_registries.values() {
+            let Some(environment) = cleanup.environment() else {
+                continue;
+            };
+            if let Some(&idx) = self.by_addr.get(&environment) {
+                if !self.records[idx].marked {
+                    self.records[idx].marked = true;
+                    work.push(idx);
+                }
+            }
+        }
         while let Some(idx) = work.pop() {
             let obj = Obj(self.records[idx].addr);
             for slot in ref_slots(obj.type_rid()) {

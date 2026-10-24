@@ -1581,32 +1581,58 @@ impl<'a> Interp<'a> {
                 Ok(Value::Str(source.into()))
             }
             "finalizationRegistryNew" => {
-                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc(0, 0));
-                Ok(Value::Object(object))
-            }
-            "finalizationRegister" => {
-                let _registry = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let target = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let callback = match args.get(2).ok_or(RunError::BadToken)? {
+                let cleanup = match args.first().ok_or(RunError::BadToken)? {
                     Value::Function(callback) => *callback,
                     _ => return Err(RunError::BadToken),
                 };
-                let id = zun_gc::with_current_heap_mut(|heap| {
-                    heap.finalization_register_with_function(target, 0, callback)
+                let object = zun_gc::with_current_heap_mut(|heap| {
+                    let registry = heap.alloc(0, 0);
+                    heap.finalization_registry_set_cleanup(registry, cleanup);
+                    registry
                 });
-                Ok(Value::Int(id.get() as i64, zun_il::NumKind::U64))
+                Ok(Value::Object(object))
+            }
+            "finalizationRegister" => {
+                let registry = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let target = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let held = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u64,
+                    _ => return Err(RunError::BadToken),
+                };
+                // The unregister token is an object identity. A non-object
+                // value (the surface's sentinel for an omitted token) leaves
+                // the registration permanently un-unregisterable, per spec.
+                let unregister_token = args
+                    .get(3)
+                    .and_then(|value| object(value))
+                    .map(|token| token.addr() as usize)
+                    .unwrap_or(0);
+                zun_gc::with_current_heap_mut(|heap| {
+                    let cleanup = heap
+                        .finalization_registry_cleanup(registry)
+                        .ok_or(RunError::BadToken)?;
+                    heap.finalization_register_with_function_and_token(
+                        target,
+                        held,
+                        cleanup,
+                        unregister_token,
+                    );
+                    Ok::<(), RunError>(())
+                })?;
+                Ok(Value::Void)
             }
             "finalizationUnregister" => {
                 let _registry = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                let id = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Int(id, _) if *id >= 0 => *id as u32,
-                    _ => return Err(RunError::BadToken),
-                };
+                let unregister_token = args
+                    .get(1)
+                    .and_then(|value| object(value))
+                    .map(|token| token.addr() as usize)
+                    .unwrap_or(0);
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
-                    heap.finalization_unregister(zun_gc::FinalizationId::from_raw(id))
+                    heap.finalization_unregister_by_token(unregister_token)
                 })))
             }
             "reflectHas" => {

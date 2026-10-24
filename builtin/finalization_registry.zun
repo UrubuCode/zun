@@ -1,12 +1,21 @@
 // Thin source wrapper over the GC finalization queue.
+//
+// The live surface is lowered directly by the checker against the builtin
+// `FinalizationRegistry` type (see `zun_sema::check`): `new
+// FinalizationRegistry(cleanup)` seeds the cleanup callback, `register(target,
+// heldValue, unregisterToken?)` enrolls a target, and `unregister(token)`
+// removes every registration made with that unregister-token object identity.
+// This class mirrors that surface so the module type-checks; the unregister
+// token is required here because the core-namespace call has fixed arity,
+// while the optional form is handled by the checker's hand-lowering.
 import { finalizationRegistry } from "zun:core";
 
 class FinalizationRegistry {
-    register(target: any, callback: Function): u64 {
-        return finalizationRegistry.register(this, target, callback);
+    register(target: any, heldValue: u64, unregisterToken: any): void {
+        finalizationRegistry.register(this, target, heldValue, unregisterToken);
     }
 
-    unregister(id: u64): boolean {
-        return finalizationRegistry.unregister(this, id);
+    unregister(unregisterToken: any): boolean {
+        return finalizationRegistry.unregister(this, unregisterToken);
     }
 }

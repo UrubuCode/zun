@@ -130,7 +130,14 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         ),
         "FinalizationRegistry" => (
             Ty::FinalizationRegistry,
-            collection0("finalizationRegistryNew", Ty::FinalizationRegistry),
+            CtorLowering::IntrinsicN {
+                module: "zun:collections",
+                native: "finalizationRegistryNew",
+                ty: Ty::FinalizationRegistry,
+                min_args: 1,
+                max_args: 1,
+                pad_empty_flags: false,
+            },
         ),
         "Promise" => (
             Ty::Promise,

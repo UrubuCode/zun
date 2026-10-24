@@ -14,6 +14,11 @@ pub(super) struct FinalizerEntry {
     pub(super) token: u64,
     pub(super) callback_id: u64,
     pub(super) callback: Option<zun_core::FunctionHandle>,
+    /// Address identity of the unregister token object, or `0` when the
+    /// registration was made without one. Spec: registrations without an
+    /// unregister token can never be removed. Held weakly — the token address
+    /// is rewritten on compaction but does not keep the token object alive.
+    pub(super) unregister_token: usize,
     pub(super) queued: bool,
 }
 

@@ -3202,6 +3202,79 @@ impl Checker<'_> {
                 // `length`/`byteLength`/`get`/`set` on a typed-array view come
                 // from the master table in `zun_core`, so every kind the
                 // language accepts has the same reachable method surface.
+                // `FinalizationRegistry.register(target, heldValue, unregisterToken?)`
+                // and `unregister(unregisterToken)`. Hand-lowered rather than
+                // routed through the fixed-arity `managed_method` table because
+                // `register`'s unregister token is optional: when omitted, a
+                // `null` sentinel is synthesized so the registration carries no
+                // token and can never be unregistered (per the ECMAScript spec).
+                if receiver.ty == Ty::FinalizationRegistry
+                    && (mname == "register" || mname == "unregister")
+                {
+                    let null_sentinel = |span| hir::Expr {
+                        kind: hir::ExprKind::Null,
+                        ty: Ty::Any,
+                        span,
+                    };
+                    if mname == "register" {
+                        if args.len() != 2 && args.len() != 3 {
+                            self.error(
+                                span,
+                                format!("`register` expects 2 or 3 argument(s), found {}", args.len()),
+                            );
+                            return self.poison(span);
+                        }
+                        let target = self.check_expr(cx, &args[0]);
+                        let mut held = self.check_expr(cx, &args[1]);
+                        coerce_numeric_literal(&mut held, Ty::Int(IntKind::U64));
+                        if !held.ty.is_error()
+                            && !self.is_assignable(held.ty, Ty::Int(IntKind::U64))
+                        {
+                            self.error(held.span, "`register` held value must be a u64");
+                        }
+                        let token = match args.get(2) {
+                            Some(arg) => self.check_expr(cx, arg),
+                            None => null_sentinel(span),
+                        };
+                        let Some((id, _)) =
+                            zun_natives::resolve("zun:collections", "finalizationRegister")
+                        else {
+                            self.error(span, "missing intrinsic `finalizationRegister`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![receiver, target, held, token],
+                            },
+                            ty: Ty::Void,
+                            span,
+                        };
+                    }
+                    // `unregister(unregisterToken)`.
+                    if args.len() != 1 {
+                        self.error(
+                            span,
+                            format!("`unregister` expects 1 argument, found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let token = self.check_expr(cx, &args[0]);
+                    let Some((id, _)) =
+                        zun_natives::resolve("zun:collections", "finalizationUnregister")
+                    else {
+                        self.error(span, "missing intrinsic `finalizationUnregister`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![receiver, token],
+                        },
+                        ty: Ty::Boolean,
+                        span,
+                    };
+                }
                 let typed_array_method = match receiver.ty {
                     Ty::BufferView(kind) => crate::typed_arrays::method(kind, mname.as_str()),
                     _ => None,
@@ -3301,16 +3374,6 @@ impl Checker<'_> {
                     (Ty::BigInt, "shr") => Some(("bigIntShr", Ty::BigInt, vec![Ty::BigInt])),
                     (Ty::BigInt, "compare") => Some(("bigIntCompare", Ty::Int(IntKind::I32), vec![Ty::BigInt])),
                     (Ty::BigInt, "toString") => Some(("bigIntToString", Ty::String, vec![])),
-                    (Ty::FinalizationRegistry, "register") => Some((
-                        "finalizationRegister",
-                        Ty::Int(IntKind::U64),
-                        vec![Ty::Any, Ty::Function(hir::DYNAMIC_FUNCTION)],
-                    )),
-                    (Ty::FinalizationRegistry, "unregister") => Some((
-                        "finalizationUnregister",
-                        Ty::Boolean,
-                        vec![Ty::Int(IntKind::U64)],
-                    )),
                     (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
                     (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
                     (Ty::Promise, "isReady") => Some(("promiseIsReady", Ty::Boolean, vec![])),

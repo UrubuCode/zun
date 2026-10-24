@@ -1560,7 +1560,7 @@ fn weak_map_class_methods_preserve_interpreter_fallback_boundary() {
 #[test]
 fn finalization_registry_preserves_interpreter_fallback_boundary() {
     let module = compile(
-        "function cleanup(value: any): void { } class Key {} function main(): boolean { let registry = new FinalizationRegistry(); let key = new Key(); let id = registry.register(key, cleanup); return registry.unregister(id); }",
+        "function cleanup(value: any): void { } class Key {} function main(): boolean { let registry = new FinalizationRegistry(cleanup); let key = new Key(); let token = new Key(); registry.register(key, 7, token); return registry.unregister(token); }",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");

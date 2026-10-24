@@ -277,6 +277,7 @@ impl Heap {
             token,
             callback_id,
             callback: None,
+            unregister_token: 0,
             queued: false,
         });
         id
@@ -290,15 +291,52 @@ impl Heap {
         token: u64,
         callback: zun_core::FunctionHandle,
     ) -> FinalizationId {
+        self.finalization_register_with_function_and_token(target, token, callback, 0)
+    }
+
+    /// Register a closure callback together with an unregister-token object
+    /// identity. `unregister_token` is the address of the token object, or `0`
+    /// when the registration was made without one (and so can never be
+    /// unregistered, per the ECMAScript spec). The token is held weakly.
+    pub fn finalization_register_with_function_and_token(
+        &mut self,
+        target: Obj,
+        token: u64,
+        callback: zun_core::FunctionHandle,
+        unregister_token: usize,
+    ) -> FinalizationId {
         let id = FinalizationId(self.finalizers.len() as u32);
         self.finalizers.push(FinalizerEntry {
             target: target.addr() as usize,
             token,
             callback_id: callback.method_rid() as u64,
             callback: Some(callback),
+            unregister_token,
             queued: false,
         });
         id
+    }
+
+    /// Record the cleanup callback a `FinalizationRegistry` object was
+    /// constructed with, keyed by the registry object's address identity.
+    /// `register` later copies this callback into each registration.
+    pub fn finalization_registry_set_cleanup(
+        &mut self,
+        registry: Obj,
+        cleanup: zun_core::FunctionHandle,
+    ) {
+        self.finalization_registries
+            .insert(registry.addr() as usize, cleanup);
+    }
+
+    /// The cleanup callback a registry object was constructed with, if any.
+    pub fn finalization_registry_cleanup(
+        &self,
+        registry: Obj,
+    ) -> Option<zun_core::FunctionHandle> {
+        self.finalization_registries
+            .get(&(registry.addr() as usize))
+            .copied()
     }
 
     /// Cancel a finalization registration before its target is queued.
@@ -315,5 +353,23 @@ impl Heap {
         }
         entry.target = 0;
         true
+    }
+
+    /// Remove every live registration whose unregister token matches the given
+    /// token object address identity. Returns `true` when at least one
+    /// registration was removed. A zero address never matches, so registrations
+    /// made without an unregister token are never affected.
+    pub fn finalization_unregister_by_token(&mut self, unregister_token: usize) -> bool {
+        if unregister_token == 0 {
+            return false;
+        }
+        let mut removed = false;
+        for entry in &mut self.finalizers {
+            if entry.unregister_token == unregister_token && entry.target != 0 && !entry.queued {
+                entry.target = 0;
+                removed = true;
+            }
+        }
+        removed
     }
 }

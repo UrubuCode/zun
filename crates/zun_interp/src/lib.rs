@@ -2454,16 +2454,46 @@ mod method_tests {
     }
 
     #[test]
-    fn finalization_registry_registers_and_unregisters_a_callback() {
+    fn finalization_registry_unregisters_by_token_identity() {
+        // `unregister(token)` removes the registration made with that token
+        // object and returns true; an unknown token returns false.
         let module = zun_compiler::compile(
             "function cleanup(value: any): void { }\n\
              class Target {}\n\
-             function main(): boolean { let registry = new FinalizationRegistry(); let target = new Target(); let id = registry.register(target, cleanup); return registry.unregister(id); }",
+             function main(): boolean { \
+                let registry = new FinalizationRegistry(cleanup); \
+                let target = new Target(); \
+                let token = new Target(); \
+                registry.register(target, 7, token); \
+                let removed = registry.unregister(token); \
+                let other = new Target(); \
+                let missing = registry.unregister(other); \
+                return removed && !missing; }",
         )
         .expect("compile finalization registry");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run finalization registry");
         assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
+    fn finalization_registry_without_token_cannot_be_unregistered() {
+        // A registration made without an unregister token can never be removed,
+        // per the ECMAScript spec.
+        let module = zun_compiler::compile(
+            "function cleanup(value: any): void { }\n\
+             class Target {}\n\
+             function main(): boolean { \
+                let registry = new FinalizationRegistry(cleanup); \
+                let target = new Target(); \
+                let token = new Target(); \
+                registry.register(target, 7); \
+                return registry.unregister(token); }",
+        )
+        .expect("compile finalization registry");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run finalization registry");
+        assert!(matches!(result, Value::Bool(false)));
     }
 
     #[test]

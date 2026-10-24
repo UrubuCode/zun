@@ -40,7 +40,7 @@ read.
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
-| 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
+| 16 | FinalizationRegistry | mostly | Spec-shaped `new FinalizationRegistry(cleanup)` / `register(target, heldValue, unregisterToken?)` / `unregister(unregisterToken)`; `unregister` keyed by unregister-token object identity (weak key); cleanup callback delivered on collection. Deferred: `heldValue` is a `u64`, not an arbitrary value |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, and the static `isView(x)`. Missing resizable buffers (deferred) |
 | 18 | DataView | partial | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints |
 | 19 | TypedArrays | partial | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs arity overloading first — plus `slice`/`copyWithin`, functional methods, `from/of`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 3 · partial 16 · missing 2 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 4 · partial 15 · missing 2 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -575,12 +575,32 @@ reclaims the target).
   `undefined` once collected). Registered declaratively.
 - **Missing:** nothing material.
 
-## 16. FinalizationRegistry — partial
-`std/finalization_registry.zun` → GC finalization queue.
-- **Present:** `register(target,cb) unregister(id)`.
-- **Notes/verify:** `register` returns a `u64` id and `unregister` takes that id;
-  ECMAScript uses an **unregister token object** and `register(target,heldValue
-  [,token])`. Signature diverges from spec — flag as semantic gap.
+## 16. FinalizationRegistry — mostly
+`builtin/finalization_registry.zun` → GC finalization queue.
+- **Present (spec-shaped):** `new FinalizationRegistry(cleanup)`,
+  `register(target, heldValue, unregisterToken?)`, `unregister(unregisterToken)`.
+  `unregister` is now keyed by the **unregister-token object identity** (the same
+  address-identity mechanism WeakMap/WeakRef use for weak keys), not by a numeric
+  id. It returns `true` when at least one registration made with that token object
+  was removed, `false` otherwise (including an unknown token). A registration made
+  **without** an unregister token can never be removed, per spec; the checker
+  synthesizes a `null` sentinel for the omitted slot and the runtime stores a `0`
+  token address that never matches. The unregister token is held **weakly** (its
+  address is rewritten on compaction but it is not kept alive).
+- **Cleanup callback — wired.** The callback passed to `new
+  FinalizationRegistry(cleanup)` is stored per-registry (keyed by the registry
+  object address) and copied into each registration. When the GC sweeps a
+  registered target, its registration is pushed onto the finalization queue and
+  `Interp::deliver_finalization_callbacks` invokes the cleanup callback with the
+  held value at the next safepoint. Callback environments are strong GC roots (both
+  the per-registry callback and the per-registration copy); targets and unregister
+  tokens are weak.
+- **Scoping note:** `heldValue` is currently a `u64` (it reuses the existing
+  `token: u64` held-value slot threaded through the GC `FinalizerEntry` /
+  `FinalizationRecord`); arbitrary-value held values would require widening that
+  slot to a boxed `Value` and are deferred. The vestigial `builtin/*.zun` class
+  mirrors the surface so the module type-checks but is not the dispatch path — the
+  checker lowers `FinalizationRegistry` methods directly against the builtin type.
 
 ## 17. ArrayBuffer — partial
 `Ty::Buffer` is what the realm registers under the name `ArrayBuffer`; the byte

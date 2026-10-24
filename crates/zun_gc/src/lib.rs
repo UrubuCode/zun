@@ -160,6 +160,10 @@ pub struct Heap {
     /// Finalizers are queued after sweep and never run during collection.
     finalizers: Vec<FinalizerEntry>,
     finalization_queue: Vec<FinalizationRecord>,
+    /// Cleanup callback per `FinalizationRegistry` object, keyed by the
+    /// registry object's address identity. Seeded when the registry is
+    /// constructed and copied into each registration at `register` time.
+    finalization_registries: HashMap<usize, zun_core::FunctionHandle>,
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Reference-field layouts published by the active module/JIT boundary.
@@ -710,6 +714,13 @@ impl Heap {
         for finalizer in &mut self.finalizers {
             let mapped = map(finalizer.target);
             if mapped != finalizer.target { rewritten += 1; finalizer.target = mapped; }
+            if finalizer.unregister_token != 0 {
+                let mapped_token = map(finalizer.unregister_token);
+                if mapped_token != finalizer.unregister_token {
+                    rewritten += 1;
+                    finalizer.unregister_token = mapped_token;
+                }
+            }
             if let Some(callback) = finalizer.callback {
                 if let Some(environment) = callback.environment() {
                     let mapped_environment = map(environment);
@@ -735,6 +746,23 @@ impl Heap {
                 }
             }
         }
+        let registries = std::mem::take(&mut self.finalization_registries);
+        let mut mapped_registries = HashMap::with_capacity(registries.len());
+        for (owner, mut cleanup) in registries {
+            let mapped_owner = map(owner);
+            if mapped_owner != owner { rewritten += 1; }
+            if let Some(environment) = cleanup.environment() {
+                let mapped_environment = map(environment);
+                if mapped_environment != environment {
+                    rewritten += 1;
+                    cleanup = zun_core::FunctionHandle::new(
+                        cleanup.method_rid(), Some(mapped_environment),
+                    );
+                }
+            }
+            mapped_registries.insert(mapped_owner, cleanup);
+        }
+        self.finalization_registries = mapped_registries;
         rewritten
     }
 

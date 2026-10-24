@@ -179,19 +179,23 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "finalizationRegistryNew",
-            params: &[],
+            params: &[Function],
             ret: FinalizationRegistry,
             imp: unavailable,
         },
         NativeFn {
+            // `(registry, target, heldValue, unregisterToken)`. The unregister
+            // token is an opaque object identity; a non-object value (the
+            // sentinel the surface synthesizes when the caller omits the token)
+            // means the registration can never be unregistered.
             name: "finalizationRegister",
-            params: &[FinalizationRegistry, Opaque, Function],
-            ret: U64,
+            params: &[FinalizationRegistry, Opaque, U64, Opaque],
+            ret: Void,
             imp: unavailable,
         },
         NativeFn {
             name: "finalizationUnregister",
-            params: &[FinalizationRegistry, U64],
+            params: &[FinalizationRegistry, Opaque],
             ret: Bool,
             imp: unavailable,
         },
