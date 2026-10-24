@@ -95,6 +95,19 @@ impl Parser<'_> {
         let mut classes = Vec::new();
         let mut imports = Vec::new();
         while !self.at(TokenKind::Eof) {
+            // Decorators may precede a top-level `class` declaration. Phase 1
+            // only decorates classes and class members at the top level, so a
+            // decorator run here must be followed by a `class`.
+            if self.at(TokenKind::At) {
+                let decorators = self.decorators();
+                if self.at(TokenKind::KwClass) {
+                    classes.push(self.class_with_decorators(decorators));
+                } else {
+                    let t = self.peek();
+                    self.error_at(t.span, "decorators are only supported on classes and class members");
+                }
+                continue;
+            }
             match self.peek().kind {
                 TokenKind::KwImport => imports.push(self.import()),
                 TokenKind::KwFunction => functions.push(self.function(false, false)),
@@ -115,6 +128,7 @@ impl Parser<'_> {
                         && !self.at(TokenKind::KwFunction)
                         && !self.at(TokenKind::KwClass)
                         && !self.at(TokenKind::KwImport)
+                        && !self.at(TokenKind::At)
                     {
                         self.bump();
                     }
@@ -166,7 +180,51 @@ impl Parser<'_> {
         }
     }
 
+    /// Parse zero or more decorators (`@foo`, `@foo.bar`, `@foo(args)`),
+    /// returning them in source order. The cursor is left on the decorated
+    /// target (or on whatever follows the final decorator). Phase 1 is syntax
+    /// only: the returned list carries no semantics.
+    fn decorators(&mut self) -> Vec<Decorator> {
+        let mut decorators = Vec::new();
+        while self.at(TokenKind::At) {
+            let start = self.bump().span; // `@`
+            // The callee is an identifier optionally followed by a `.name`
+            // member chain (`@foo`, `@foo.bar.baz`). Computed member access and
+            // other expression forms are not part of the decorator grammar.
+            let name = self.name("a decorator name");
+            let mut callee = Expr::Ident(name);
+            while self.at(TokenKind::Dot) {
+                self.bump();
+                let field = self.member_name("a decorator member name");
+                let span = callee.span().to(field.span);
+                callee = Expr::Field {
+                    object: Box::new(callee),
+                    field,
+                    span,
+                };
+            }
+            // An immediate `(` makes this the call form `@foo(args)`.
+            let (args, end) = if self.at(TokenKind::LParen) {
+                self.bump();
+                let args = self.arguments();
+                (Some(args), self.tokens[self.pos - 1].span)
+            } else {
+                (None, callee.span())
+            };
+            decorators.push(Decorator {
+                callee,
+                args,
+                span: start.to(end),
+            });
+        }
+        decorators
+    }
+
     fn class(&mut self) -> Class {
+        self.class_with_decorators(Vec::new())
+    }
+
+    fn class_with_decorators(&mut self, decorators: Vec<Decorator>) -> Class {
         let start = self.bump().span; // `class`
         let name = self.name("a class name");
         let base = if self.eat(TokenKind::KwExtends) {
@@ -190,6 +248,10 @@ impl Parser<'_> {
             // around it still come through.
             // Keywords are valid member names (e.g. a `delete`/`in` method),
             // matching the ECMAScript rule, so any keyword may begin a member.
+            // Members may be preceded by decorators (`@foo method() {}`,
+            // `@foo field: T;`). Parse them first; they attach to the member
+            // that follows.
+            let member_decorators = self.decorators();
             if !matches!(
                 self.peek().kind,
                 TokenKind::Ident | TokenKind::Hash | TokenKind::KwStatic | TokenKind::KwExtern
@@ -214,7 +276,9 @@ impl Parser<'_> {
             // A `(` after the name starts a method; `:` starts a field.
             if self.at(TokenKind::LParen) {
                 let (accessor, name) = accessor.map_or((None, member_name), |(kind, name)| (Some(kind), name));
-                methods.push(self.method(name, is_extern, is_static, accessor));
+                let mut method = self.method(name, is_extern, is_static, accessor);
+                method.decorators = member_decorators;
+                methods.push(method);
             } else {
                 self.expect(TokenKind::Colon, "`:` (fields require a type)");
                 let ty = TypeAnnotation {
@@ -230,6 +294,7 @@ impl Parser<'_> {
                 self.expect(TokenKind::Semi, "`;`");
                 fields.push(ClassField {
                     name: member_name,
+                    decorators: member_decorators,
                     ty,
                     is_static,
                     is_private,
@@ -249,6 +314,7 @@ impl Parser<'_> {
         Class {
             name,
             base,
+            decorators,
             fields,
             methods,
             span: start.to(close),
@@ -296,6 +362,7 @@ impl Parser<'_> {
         let span = name.span.to(body.span);
         Function {
             name,
+            decorators: Vec::new(),
             params,
             return_type,
             is_extern,
@@ -357,6 +424,7 @@ impl Parser<'_> {
         let span = start.to(body.span);
         Function {
             name,
+            decorators: Vec::new(),
             params,
             return_type,
             is_extern,

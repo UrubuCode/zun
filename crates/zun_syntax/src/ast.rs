@@ -42,6 +42,25 @@ pub struct ImportName {
     pub is_namespace: bool,
 }
 
+/// A decorator applied to a decoratable target (`@foo`, `@foo.bar`,
+/// `@foo(1, "x")`).
+///
+/// Phase 1 is syntax only: decorators are parsed and attached to the target
+/// but carry no semantics (they are inert — a decorated target compiles and
+/// runs exactly as if undecorated). Phase 2 (PLAN §3.5) adds the
+/// macro-expansion hook that consumes this list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Decorator {
+    /// The decorator callee: an identifier (`@foo`) or member-access chain
+    /// (`@ns.dec`).
+    pub callee: Expr,
+    /// Call arguments, present iff the `@foo(...)` call form was used. An empty
+    /// `@foo()` yields `Some(vec![])`; a bare `@foo` yields `None`.
+    pub args: Option<Vec<Expr>>,
+    /// Span of the whole decorator, including the leading `@`.
+    pub span: Span,
+}
+
 /// `class Name { field: type; method(...) {...} ... }`. Fields are initialized
 /// positionally by `new`; methods receive an implicit `this`. Inheritance and
 /// virtual dispatch arrive in a later step.
@@ -51,6 +70,9 @@ pub struct Class {
     pub name: Name,
     /// Base class name, if the class `extends` another.
     pub base: Option<Name>,
+    /// Decorators applied to the class (`@foo class C {}`), in source order.
+    /// Inert in Phase 1 (syntax only).
+    pub decorators: Vec<Decorator>,
     /// Declared fields in source order; `new` initializes them positionally.
     pub fields: Vec<ClassField>,
     /// Declared methods in source order.
@@ -64,6 +86,8 @@ pub struct Class {
 pub struct ClassField {
     /// The field name.
     pub name: Name,
+    /// Decorators applied to the field, in source order. Inert in Phase 1.
+    pub decorators: Vec<Decorator>,
     /// The field's declared type.
     pub ty: TypeAnnotation,
     /// Whether the field was declared with the `static` modifier. Static
@@ -80,6 +104,11 @@ pub struct ClassField {
 pub struct Function {
     /// The function name.
     pub name: Name,
+    /// Decorators applied to this declaration, in source order. Populated for
+    /// decorated class methods (`@foo method() {}`); empty for top-level
+    /// functions (function decorators are not parsed in Phase 1). Inert in
+    /// Phase 1.
+    pub decorators: Vec<Decorator>,
     /// Parameters in declaration order.
     pub params: Vec<Param>,
     /// Declared return type, if annotated.

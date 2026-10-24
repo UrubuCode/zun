@@ -8,7 +8,7 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, ArrayExpressionElement, AssignmentOperator, AssignmentTarget, BinaryOperator,
-    BindingPattern, ChainElement,
+    BindingPattern, ChainElement, Decorator as OxcDecorator,
     ClassElement, Declaration, ExportDefaultDeclarationKind, Expression, ForStatementInit,
     ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind,
     ModuleExportName, ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
@@ -48,6 +48,32 @@ fn convert_type_annotation(
             span: Span::new(name_start as u32, (name_start + type_text.len()) as u32),
         },
     }))
+}
+
+/// Map an OXC decorator node to our [`crate::ast::Decorator`].
+///
+/// Phase 1 is syntax only. The callee is the decorator expression (an
+/// identifier or member-access chain); the `@foo(...)` call form carries its
+/// arguments, a bare `@foo` carries `None`. Unsupported callee/argument forms
+/// surface as an explicit error (no silent drop) because `convert_expression`
+/// and `convert_argument` reject what they cannot represent.
+fn convert_decorator(decorator: &OxcDecorator<'_>) -> Result<crate::ast::Decorator, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let (callee, args) = match &decorator.expression {
+        Expression::CallExpression(call) => {
+            let mut args = Vec::with_capacity(call.arguments.len());
+            for argument in &call.arguments {
+                args.push(convert_argument(argument)?);
+            }
+            (convert_expression(&call.callee)?, Some(args))
+        }
+        other => (convert_expression(other)?, None),
+    };
+    Ok(crate::ast::Decorator {
+        callee,
+        args,
+        span: span(decorator.span),
+    })
 }
 
 fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
@@ -1071,6 +1097,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         };
                         fields.push(crate::ast::ClassField {
                             name: Name { span: field_span },
+                            decorators: property
+                                .decorators
+                                .iter()
+                                .map(convert_decorator)
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|error| vec![error])?,
                             ty: type_annotation,
                             is_static: property.r#static,
                             is_private,
@@ -1290,6 +1322,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             name: Name {
                                 span: Span::new(identifier.span.start, identifier.span.end),
                             },
+                            decorators: method
+                                .decorators
+                                .iter()
+                                .map(convert_decorator)
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|error| vec![error])?,
                             params,
                             return_type: convert_type_annotation(
                                 source,
@@ -1325,6 +1363,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     span: Span::new(id.span.start, id.span.end),
                 },
                 base,
+                decorators: class_declaration
+                    .decorators
+                    .iter()
+                    .map(convert_decorator)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| vec![error])?,
                 fields,
                 methods,
                 span: Span::new(class_declaration.span.start, class_declaration.span.end),
@@ -1604,6 +1648,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             name: Name {
                 span: span(id.span),
             },
+            decorators: Vec::new(),
             params,
             return_type: convert_type_annotation(source, function.return_type.as_deref())
                 .map_err(|error| vec![error])?,
@@ -1675,6 +1720,28 @@ mod tests {
                 _ => panic!("unexpected converted literal"),
             }
         }
+    }
+
+    #[test]
+    fn converts_class_and_member_decorators() {
+        let program = parse_subset(
+            "@foo @bar(1) class C { @log x: number; @ns.dec m() { return 0; } }",
+            true,
+        )
+        .unwrap();
+        let class = &program.classes[0];
+        assert_eq!(class.decorators.len(), 2);
+        // `@foo` is a bare identifier form; `@bar(1)` is the call form.
+        assert!(class.decorators[0].args.is_none());
+        let bar_args = class.decorators[1].args.as_ref().expect("call form args");
+        assert_eq!(bar_args.len(), 1);
+        // Field and method decorators are carried through too.
+        assert_eq!(class.fields[0].decorators.len(), 1);
+        assert_eq!(class.methods[0].decorators.len(), 1);
+        assert!(matches!(
+            class.methods[0].decorators[0].callee,
+            crate::ast::Expr::Field { .. }
+        ));
     }
 
     #[test]

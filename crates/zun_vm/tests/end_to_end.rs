@@ -120,6 +120,36 @@ fn object_keys_values_entries_on_a_dynamic_object_follow_insertion_order() {
 }
 
 #[test]
+fn a_decorated_class_runs_identically_to_the_undecorated_version() {
+    // Phase 1 decorators are syntax only: they are parsed and carried into the
+    // AST/HIR but apply no semantics. A decorated class must compile and run
+    // exactly as if undecorated. Decorator callees (`sealed`, `trace`) need no
+    // definition because nothing resolves or executes them this phase.
+    let decorated = run_source(
+        "@sealed\n\
+         class Counter { value: number;\n\
+            @trace\n\
+            bump(): number { return this.value + 1.0; }\n\
+         }\n\
+         function main() {\n\
+            let c = new Counter(41.0);\n\
+            print(c.bump());\n\
+         }",
+    );
+    let undecorated = run_source(
+        "class Counter { value: number;\n\
+            bump(): number { return this.value + 1.0; }\n\
+         }\n\
+         function main() {\n\
+            let c = new Counter(41.0);\n\
+            print(c.bump());\n\
+         }",
+    );
+    assert_eq!(decorated, ["42"]);
+    assert_eq!(decorated, undecorated);
+}
+
+#[test]
 fn object_keys_and_values_on_a_typed_object_use_declared_fields() {
     let out = run_source(
         "class Point { x: number; y: number; }\n\

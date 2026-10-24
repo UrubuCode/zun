@@ -607,3 +607,62 @@
         };
         assert!(matches!(elements[0], Expr::ArrayLiteral { .. }));
     }
+
+    #[test]
+    fn parses_decorator_on_class() {
+        let src = "@foo class C {}";
+        let p = parse_ok(src);
+        let c = &p.classes[0];
+        assert_eq!(c.decorators.len(), 1);
+        let Expr::Ident(callee) = &c.decorators[0].callee else {
+            panic!("expected identifier decorator callee");
+        };
+        assert_eq!(ident_text(src, callee), "foo");
+        assert!(c.decorators[0].args.is_none());
+    }
+
+    #[test]
+    fn parses_decorator_call_form_with_args() {
+        let src = "@foo(1, \"x\") class C {}";
+        let p = parse_ok(src);
+        let dec = &p.classes[0].decorators[0];
+        let args = dec.args.as_ref().expect("call form carries args");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args[0], Expr::Number { .. }));
+        assert!(matches!(args[1], Expr::String { .. }));
+    }
+
+    #[test]
+    fn parses_multiple_class_decorators() {
+        let src = "@a @b class C {}";
+        let p = parse_ok(src);
+        let decorators = &p.classes[0].decorators;
+        assert_eq!(decorators.len(), 2);
+    }
+
+    #[test]
+    fn parses_member_decorators() {
+        let src = "class C { @ns.dec method() {} @log field: number; }";
+        let p = parse_ok(src);
+        let c = &p.classes[0];
+        assert_eq!(c.methods[0].decorators.len(), 1);
+        // The method decorator uses a member-access callee `ns.dec`.
+        let Expr::Field { field, .. } = &c.methods[0].decorators[0].callee else {
+            panic!("expected member-access decorator callee");
+        };
+        assert_eq!(ident_text(src, field), "dec");
+        assert_eq!(c.fields[0].decorators.len(), 1);
+        let Expr::Ident(callee) = &c.fields[0].decorators[0].callee else {
+            panic!("expected identifier field decorator callee");
+        };
+        assert_eq!(ident_text(src, callee), "log");
+    }
+
+    #[test]
+    fn undecorated_class_has_no_decorators() {
+        let p = parse_ok("class C { x: number; m() {} }");
+        let c = &p.classes[0];
+        assert!(c.decorators.is_empty());
+        assert!(c.fields[0].decorators.is_empty());
+        assert!(c.methods[0].decorators.is_empty());
+    }

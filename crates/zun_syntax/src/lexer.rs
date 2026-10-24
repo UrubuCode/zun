@@ -128,6 +128,8 @@ pub enum TokenKind {
     Dot,
     /// `#`, the private-member marker.
     Hash,
+    /// `@`, the decorator marker.
+    At,
 
     // Operators
     /// `+`
@@ -337,6 +339,7 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     b';' => TokenKind::Semi,
                     b':' => TokenKind::Colon,
                     b'#' => TokenKind::Hash,
+                    b'@' => TokenKind::At,
                     b'?' => {
                         if bytes.get(pos) == Some(&b'?') {
                             pos += 1;

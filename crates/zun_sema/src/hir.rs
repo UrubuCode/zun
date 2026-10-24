@@ -291,6 +291,23 @@ pub struct ClosureFunction {
     pub body: Vec<Stmt>,
 }
 
+/// A decorator carried from the AST. Inert in Phase 1 (syntax only).
+///
+/// This is the HIR-level carry of PLAN §3.5's decorator syntax. Phase 2 (the
+/// macro-expansion hook) reads decorators to drive compile-time transforms;
+/// `callee` is the decorator's source text (`foo`, `ns.dec`) and `args` is
+/// `Some` iff the `@foo(...)` call form was used, holding each argument's
+/// source text. See `check_classes` for where this is populated, and the AST
+/// (`ast::Class`/`ast::ClassField`/`ast::Function` `decorators`) for the
+/// field- and method-level lists that Phase 2 consumes before final sema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decorator {
+    /// The decorator callee as written in source (`foo`, `ns.dec`).
+    pub callee: String,
+    /// Argument source texts, present iff the `@foo(...)` call form was used.
+    pub args: Option<Vec<String>>,
+}
+
 /// A checked class: its base, full field layout, and methods.
 #[derive(Debug)]
 pub struct Class {
@@ -298,6 +315,8 @@ pub struct Class {
     pub name: String,
     /// Base class index, if this class `extends` another.
     pub base: Option<ClassIndex>,
+    /// Decorators applied to the class, carried from the AST. Inert in Phase 1.
+    pub decorators: Vec<Decorator>,
     /// The full field layout, inherited fields first then own, in slot order.
     pub fields: Vec<ClassField>,
     /// Global function indices of this class's own methods, in declaration

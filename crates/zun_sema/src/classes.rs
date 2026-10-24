@@ -1,5 +1,6 @@
 use super::{Checker, ClassInfo};
 use crate::hir;
+use zun_common::Span;
 use zun_syntax::ast;
 
 impl<'a> Checker<'a> {
@@ -72,10 +73,25 @@ impl<'a> Checker<'a> {
             out.push(hir::Class {
                 name: self.text(&c.name).to_string(),
                 base: self.classes[index].base,
+                decorators: c.decorators.iter().map(|d| self.lower_decorator(d)).collect(),
                 fields,
                 methods: Vec::new(), // filled after signatures assign indices
             });
         }
         out
+    }
+
+    /// Lower an AST decorator to its inert HIR carry (source text only). The
+    /// callee and argument spans are sliced from the original source so the
+    /// HIR owns its strings and does not reference the AST.
+    fn lower_decorator(&self, decorator: &ast::Decorator) -> hir::Decorator {
+        let slice = |span: Span| self.source[span.start as usize..span.end as usize].to_string();
+        hir::Decorator {
+            callee: slice(decorator.callee.span()),
+            args: decorator
+                .args
+                .as_ref()
+                .map(|args| args.iter().map(|arg| slice(arg.span())).collect()),
+        }
     }
 }
