@@ -20,6 +20,30 @@
 use super::*;
 
 impl<'a> Checker<'a> {
+    /// Wrap a function-valued expression in the `functionBox` intrinsic so it
+    /// can travel through an `Any`-boxing argument lane (functions deliberately
+    /// do not box into `Any`). A non-function expression is returned unchanged.
+    fn box_function_argument(&mut self, expr: hir::Expr) -> hir::Expr {
+        if !matches!(expr.ty, Ty::Function(_)) {
+            return expr;
+        }
+        let Some((id, _)) = zun_natives::resolve("collections", "functionBox") else {
+            self.error(expr.span, "missing `functionBox` intrinsic");
+            return expr;
+        };
+        let span = expr.span;
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![expr],
+            },
+            // The wrapper is an opaque dynamic object; it is only ever unwrapped
+            // again on the bound-call path, never observed as a value.
+            ty: Ty::Any,
+            span,
+        }
+    }
+
     pub(super) fn lower_function_reflective_call(
         &mut self,
         cx: &mut FunctionCx,
@@ -126,8 +150,17 @@ impl<'a> Checker<'a> {
                     self.error(span, "`bind` expects at least a `this` argument");
                     return self.poison(span);
                 }
-                let prepended: Vec<hir::Expr> =
-                    args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                let prepended: Vec<hir::Expr> = args
+                    .iter()
+                    .map(|arg| {
+                        let checked = self.check_expr(cx, arg);
+                        // A function-valued partial argument cannot be boxed
+                        // into the `Any`-typed `__args` lane; wrap it in a
+                        // GC-traced `functionBox` object that `resolve_call_target`
+                        // unwraps back to the callable before dispatch.
+                        self.box_function_argument(checked)
+                    })
+                    .collect();
                 let Some((id, _)) = zun_natives::resolve("collections", "functionBind") else {
                     self.error(span, "missing `functionBind` intrinsic");
                     return self.poison(span);

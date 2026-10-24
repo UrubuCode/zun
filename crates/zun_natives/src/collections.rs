@@ -422,5 +422,13 @@ pub const MODULE: crate::Module = crate::Module {
         // like `exec`'s result). Requires a global regexp (checked at runtime).
         // Appended last so existing dispatch ids stay stable.
         NativeFn { name: "stringMatchAll", params: &[RegExp, Str], ret: Array, imp: unavailable },
+        // `functionBox(function)` wraps a callable in a GC-traced object so a
+        // function-valued value can travel through an argument lane that boxes
+        // into `Any` (which deliberately rejects bare functions, keeping their
+        // captured environment visible to precise root handling). The bound-
+        // function record's `__args` lane uses it for function-typed partial
+        // arguments; `resolve_call_target` unwraps the box back to the callable.
+        // Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "functionBox", params: &[Function], ret: Opaque, imp: unavailable },
     ],
 };

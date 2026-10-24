@@ -921,6 +921,37 @@ fn bound_function_is_a_first_class_value() {
 }
 
 #[test]
+fn function_bind_accepts_a_function_valued_this_argument() {
+    // Binding a function as the leading (`this`) argument: `f` is a function
+    // parameter, so `apply1.bind(dbl)` fixes `f = dbl`. A function value cannot
+    // box into `Any`, so the bound record carries it in a `functionBox` wrapper.
+    let out = run_source(
+        "function apply1(f: Function, x: number): number { return (f(x)) as number; }\n\
+         function dbl(n: number): number { return n * 2.0; }\n\
+         function main() {\n\
+            let g = apply1.bind(dbl);\n\
+            print((g(5.0)) as number);\n\
+         }",
+    );
+    assert_eq!(out, ["10"]);
+}
+
+#[test]
+fn function_bind_preserves_a_function_valued_partial_argument_position() {
+    // A function in a non-leading partial slot keeps its order among the
+    // prepended arguments: `combine.bind(1.0, dbl)` fixes `a = 1`, `f = dbl`.
+    let out = run_source(
+        "function combine(a: number, f: Function, x: number): number { return a + ((f(x)) as number); }\n\
+         function dbl(n: number): number { return n * 2.0; }\n\
+         function main() {\n\
+            let g = combine.bind(1.0, dbl);\n\
+            print((g(5.0)) as number);\n\
+         }",
+    );
+    assert_eq!(out, ["11"]);
+}
+
+#[test]
 fn function_name_and_length_resolve_from_the_signature() {
     let out = run_source(
         "function add3(a: number, b: number, c: number): number { return a + b + c; }\n\

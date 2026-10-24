@@ -2097,6 +2097,22 @@ impl<'a> Interp<'a> {
                     record.addr() as usize,
                 )))
             }
+            "functionBox" => {
+                // Wrap a callable in a GC-traced object so it can ride through
+                // an `Any`-boxing argument lane. The function is stored in a
+                // function slot (its captured environment stays traced); the
+                // `__boxedFn` key is the sole marker `unbox_function_box` keys on.
+                let target = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let record = zun_gc::with_current_heap_mut(|heap| {
+                    let record = heap.alloc_dynamic();
+                    heap.dynamic_set_function(record, "__boxedFn", target);
+                    record
+                });
+                Ok(Value::Object(record))
+            }
             "arrayForEach" | "arrayMap" | "arrayFilter" | "arrayFind" | "arrayFindIndex"
             | "arraySome" | "arrayEvery" => {
                 let source =
@@ -3625,7 +3641,11 @@ impl<'a> Interp<'a> {
                 let mut prepended = Vec::with_capacity(length);
                 for index in 0..length {
                     let any = heap.array_get(array, index).ok_or(RunError::BadToken)?;
-                    prepended.push(Value::unbox_any(any, heap).ok_or(RunError::BadToken)?);
+                    let value = Value::unbox_any(any, heap).ok_or(RunError::BadToken)?;
+                    // A function-typed partial argument was stored as a
+                    // `functionBox` wrapper (functions do not box into `Any`);
+                    // restore the callable before it is threaded as an argument.
+                    prepended.push(unbox_function_box(value, heap));
                 }
                 Ok::<_, RunError>((target, prepended))
             })?;
@@ -4813,6 +4833,20 @@ fn as_object_ref(value: &Value) -> Option<zun_gc::Obj> {
             .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
         _ => None,
     }
+}
+
+/// Unwrap a `functionBox` wrapper back to its callable. Function values cannot
+/// be boxed into `Any`, so a function carried through an `Any`-boxing argument
+/// lane (the bound-function record's `__args` array) is wrapped in a dynamic
+/// object holding the callable in a `__boxedFn` function slot. A plain object
+/// without that slot, and every non-object value, passes through unchanged.
+fn unbox_function_box(value: Value, heap: &zun_gc::Heap) -> Value {
+    if let Value::Object(object) = value {
+        if let Some(handle) = heap.dynamic_get_function(object, "__boxedFn") {
+            return Value::Function(handle);
+        }
+    }
+    value
 }
 
 /// Render a thrown value / rejection reason as a Promise rejection message
