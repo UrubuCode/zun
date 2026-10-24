@@ -2994,6 +2994,49 @@ impl Checker<'_> {
                     (Ty::String, "replaceAll") => {
                         Some(("replaceAll", Ty::String, vec![Ty::String, Ty::String]))
                     }
+                    // Element count and byte size. The natives existed for
+                    // every kind; only `get`/`set` were ever reachable, so a
+                    // view could be read but not measured.
+                    (Ty::BufferView(hir::BufferViewKind::U8), "length") => Some((
+                        "u8ArrayLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U8), "byteLength") => Some((
+                        "u8ArrayByteLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U16), "length") => Some((
+                        "u16ArrayLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U16), "byteLength") => Some((
+                        "u16ArrayByteLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U32), "length") => Some((
+                        "u32ArrayLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::U32), "byteLength") => Some((
+                        "u32ArrayByteLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::F64), "length") => Some((
+                        "f64ArrayLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::F64), "byteLength") => Some((
+                        "f64ArrayByteLength",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
                     (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
                         "u8ArrayGet",
                         Ty::Int(IntKind::U8),
@@ -3187,8 +3230,14 @@ impl Checker<'_> {
                         "zun:string"
                     } else if native_name.starts_with("dataView")
                         || native_name.starts_with("buffer")
-                        || native_name.ends_with("ArrayGet")
-                        || native_name.ends_with("ArraySet")
+                        // The typed-array natives, by element prefix. Matching
+                        // the method suffix instead (`ArrayGet`, `ArraySet`)
+                        // missed `u32ArrayLength` and friends, which then
+                        // resolved against `zun:collections` and were
+                        // reported missing.
+                        || ["u8", "u16", "u32", "f64"]
+                            .iter()
+                            .any(|element| native_name.starts_with(&format!("{element}Array")))
                     {
                         "zun:buffer"
                     } else if native_name.starts_with("promise") {

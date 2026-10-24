@@ -1067,9 +1067,9 @@ fn managed_view_lengths_use_typed_object_abis() {
     let buffer = heap.alloc_buffer(32);
     let data_view = heap.alloc_data_view(buffer, 0, 12).expect("data view");
     let u8_view = heap.alloc_u8_array(buffer, 0, 5).expect("u8 view");
-    let u16_view = heap.alloc_u16_array(buffer, 0, 8).expect("u16 view");
-    let u32_view = heap.alloc_u32_array(buffer, 0, 8).expect("u32 view");
-    let f64_view = heap.alloc_f64_array(buffer, 0, 16).expect("f64 view");
+    let u16_view = heap.alloc_u16_array(buffer, 0, 4).expect("u16 view");
+    let u32_view = heap.alloc_u32_array(buffer, 0, 2).expect("u32 view");
+    let f64_view = heap.alloc_f64_array(buffer, 0, 2).expect("f64 view");
     assert!(matches!(jit.call_packed_with_heap(data, &[data_view.addr() as u64], &mut heap), Ok(12)));
     assert!(matches!(jit.call_packed_with_heap(data_bytes, &[data_view.addr() as u64], &mut heap), Ok(12)));
     assert!(matches!(jit.call_packed_with_heap(u8, &[u8_view.addr() as u64], &mut heap), Ok(5)));
@@ -1310,7 +1310,7 @@ fn u16_array_access_uses_the_typed_view_abi() {
     assert!(jit.is_compiled(write_rid));
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(4);
-    let view = heap.alloc_u16_array(buffer, 0, 4).expect("u16 view");
+    let view = heap.alloc_u16_array(buffer, 0, 2).expect("u16 view");
     let write_result = jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xbeef], &mut heap);
     assert!(matches!(write_result, Ok(1)), "write result: {write_result:?}");
     assert!(matches!(jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap), Ok(0xbeef)));
@@ -1333,8 +1333,8 @@ fn u32_and_f64_array_access_use_typed_view_abis() {
     assert!(jit.is_compiled(write_f64));
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(32);
-    let u32_view = heap.alloc_u32_array(buffer, 0, 8).expect("u32 view");
-    let f64_view = heap.alloc_f64_array(buffer, 16, 16).expect("f64 view");
+    let u32_view = heap.alloc_u32_array(buffer, 0, 2).expect("u32 view");
+    let f64_view = heap.alloc_f64_array(buffer, 16, 2).expect("f64 view");
     assert!(matches!(jit.call_packed_with_heap(write_u32, &[u32_view.addr() as u64, 1, 0xdead_beef], &mut heap), Ok(1)));
     assert!(matches!(jit.call_packed_with_heap(write_f64, &[f64_view.addr() as u64, 1, 3.25f64.to_bits()], &mut heap), Ok(1)));
     assert!(matches!(jit.call_packed_with_heap(read_u32, &[u32_view.addr() as u64, 1], &mut heap), Ok(0xdead_beef)));

@@ -294,8 +294,13 @@ mod tests {
         assert_eq!(typed.read_u32(6), Some(7));
         assert!(!view.write_u32(&mut typed, 5, 8));
         assert!(ByteView::new(typed.len(), 15, 2).is_none());
-        let array = TypedArrayView::new(typed.len(), 4, 8, TypedElement::U32).unwrap();
+        // Two u32 elements at byte offset 4 — the length counts elements,
+        // as it does in JS, so this is eight bytes rather than eight.
+        let array = TypedArrayView::new(typed.len(), 4, 2, TypedElement::U32).unwrap();
         assert_eq!(array.len(), 2);
+        assert_eq!(array.byte_len(), 8);
+        // Asking for more elements than the buffer can hold is rejected.
+        assert!(TypedArrayView::new(typed.len(), 4, 8, TypedElement::U32).is_none());
         assert!(array.write_u32(&mut typed, 1, 0xcafe));
         assert_eq!(array.read_u32(&typed, 1), Some(0xcafe));
         assert!(!array.write_u32(&mut typed, 2, 1));
@@ -307,7 +312,8 @@ mod tests {
         let shorts = TypedArrayView::new(typed.len(), 0, 4, TypedElement::U16).unwrap();
         assert!(shorts.write_u16(&mut typed, 1, 0xbeef));
         assert_eq!(shorts.read_u16(&typed, 1), Some(0xbeef));
-        let floats = TypedArrayView::new(typed.len(), 8, 8, TypedElement::F64).unwrap();
+        // One f64 element at byte offset 8: eight bytes, filling the rest.
+        let floats = TypedArrayView::new(typed.len(), 8, 1, TypedElement::F64).unwrap();
         assert!(floats.write_f64(&mut typed, 0, 1.25));
         assert_eq!(floats.read_f64(&typed, 0), Some(1.25));
         let data = DataView::new(typed.len(), 1, 10).unwrap();

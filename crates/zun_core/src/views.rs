@@ -361,15 +361,21 @@ impl DataView {
 }
 
 impl TypedArrayView {
+    /// `length` counts **elements**, as `new Uint32Array(buffer, offset,
+    /// length)` does in JS — so eight here is eight `u32`s, thirty-two bytes.
+    ///
+    /// It used to count bytes, which silently gave a quarter of the requested
+    /// `u32` array: `new Uint32Array(b, 0, 8)` had `length() == 2`. Ported
+    /// code read and wrote past the end of what it thought it had.
     pub fn new(
         buffer_length: usize,
         offset: usize,
         length: usize,
         element: TypedElement,
     ) -> Option<Self> {
-        let view = ByteView::new(buffer_length, offset, length)?;
-        (offset % element.size() == 0 && length % element.size() == 0)
-            .then_some(Self { view, element })
+        let byte_length = length.checked_mul(element.size())?;
+        let view = ByteView::new(buffer_length, offset, byte_length)?;
+        (offset % element.size() == 0).then_some(Self { view, element })
     }
 
     pub fn len(self) -> usize {
