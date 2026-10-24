@@ -5,6 +5,9 @@ class Map {
     set(key: any, value: any): void { map.set(this, key, value); }
     get(key: any): any { return map.get(this, key); }
     has(key: any): boolean { return map.has(this, key); }
+    // `size` is a PROPERTY (`map.size`), intercepted in sema on a `Map`
+    // receiver and lowered to the `map.size` native. This method body is kept
+    // only so the legacy call form `map.size()` keeps resolving.
     size(): u64 { return map.size(this); }
     delete(key: any): boolean { return map.delete(this, key); }
     clear(): void { map.clear(this); }

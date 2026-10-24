@@ -4678,11 +4678,13 @@ impl Checker<'_> {
                                 span,
                             };
                         }
-                        CtorLowering::CollectionFrom { module, empty, from, ty } => {
+                        CtorLowering::CollectionFrom { module, empty, from, from_iterable, ty } => {
                             // `new Map()`/`new Set()` → the empty allocator;
-                            // `new Map(iterable)`/`new Set(iterable)` → the
-                            // one-argument iterable constructor (array only for
-                            // now; arbitrary iterables are deferred).
+                            // `new Map(array)`/`new Set(array)` → the array fast
+                            // path (`from`); any other built-in iterable (another
+                            // Map/Set, a string, a typed array) → `from_iterable`,
+                            // which dispatches on the runtime kind. Arbitrary user
+                            // `[Symbol.iterator]` objects are deferred.
                             match args.len() {
                                 0 => {
                                     let Some((id, _)) = zun_natives::resolve(module, empty) else {
@@ -4696,23 +4698,31 @@ impl Checker<'_> {
                                     };
                                 }
                                 1 => {
-                                    let Some((id, _)) = zun_natives::resolve(module, from) else {
-                                        self.error(span, format!("missing intrinsic `{from}`"));
+                                    let argument = self.check_expr(cx, &args[0]);
+                                    // An array keeps the dedicated fast path; a
+                                    // known built-in iterable or an `any` value
+                                    // routes to the general native.
+                                    let native = if self.is_assignable(argument.ty, Ty::Array) {
+                                        from
+                                    } else if Self::is_iterable_ty(argument.ty) {
+                                        from_iterable
+                                    } else {
+                                        if !argument.ty.is_error() {
+                                            self.error(
+                                                argument.span,
+                                                format!(
+                                                    "`{name}` constructor argument must be iterable, \
+                                                     found {:?}",
+                                                    argument.ty
+                                                ),
+                                            );
+                                        }
+                                        from
+                                    };
+                                    let Some((id, _)) = zun_natives::resolve(module, native) else {
+                                        self.error(span, format!("missing intrinsic `{native}`"));
                                         return self.poison(span);
                                     };
-                                    let argument = self.check_expr(cx, &args[0]);
-                                    if !argument.ty.is_error()
-                                        && !self.is_assignable(argument.ty, Ty::Array)
-                                    {
-                                        self.error(
-                                            argument.span,
-                                            format!(
-                                                "`{name}` iterable constructor currently accepts \
-                                                 only an array argument, found {:?}",
-                                                argument.ty
-                                            ),
-                                        );
-                                    }
                                     return hir::Expr {
                                         kind: hir::ExprKind::CallBuiltin { id, args: vec![argument] },
                                         ty,
@@ -5177,6 +5187,30 @@ impl Checker<'_> {
                                 };
                             }
                         }
+                    }
+                }
+                // `map.size`/`set.size` as a PROPERTY (the spec form), lowering
+                // to the same `mapSize`/`setSize` native the method form used.
+                // Follows the `.length`-on-views/strings precedent above: a
+                // field name is intercepted on a known receiver type ahead of
+                // class dispatch, so the backing class need not be in scope. The
+                // method form `map.size()` still resolves via the method table.
+                if fname == "size" {
+                    let native = match object.ty {
+                        Ty::Map => Some("mapSize"),
+                        Ty::Set => Some("setSize"),
+                        _ => None,
+                    };
+                    if let Some(native) = native {
+                        let Some((id, _)) = zun_natives::resolve("collections", native) else {
+                            self.error(span, format!("missing intrinsic `{native}`"));
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                            ty: Ty::Int(IntKind::U64),
+                            span,
+                        };
                     }
                 }
                 // `Function.prototype.name`/`length` resolve from the compile-time

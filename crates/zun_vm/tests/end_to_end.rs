@@ -981,6 +981,70 @@ fn empty_map_and_set_constructors_still_work() {
 }
 
 #[test]
+fn map_and_set_size_are_properties() {
+    // `.size` is the spec PROPERTY form (`map.size`, not `map.size()`), usable
+    // directly and inside an expression.
+    let out = run_source(
+        r#"function main() {
+            let m: Map = new Map();
+            let s: Set = new Set();
+            m.set(box_any("x"), box_any(7.0));
+            m.set(box_any("y"), box_any(8.0));
+            s.add(box_any(1.0));
+            print(m.size);
+            print(s.size);
+            print(m.size + s.size);
+        }"#,
+    );
+    assert_eq!(out, ["2", "1", "3"]);
+}
+
+#[test]
+fn set_constructed_from_a_string_holds_its_code_points() {
+    // `new Set("abc")` drains the string by code point (iterable constructor).
+    let out = run_source(
+        r#"function main() {
+            let s: Set = new Set("abc");
+            print(s.size);
+            print(s.has(box_any("a")));
+            print(s.has(box_any("z")));
+        }"#,
+    );
+    assert_eq!(out, ["3", "true", "false"]);
+}
+
+#[test]
+fn set_constructed_from_another_set_copies_its_elements() {
+    let out = run_source(
+        r#"function main() {
+            let src: Set = new Set();
+            src.add(box_any(5.0)); src.add(box_any(6.0));
+            let copy: Set = new Set(src);
+            print(copy.size);
+            print(copy.has(box_any(5.0)));
+            print(copy.has(box_any(6.0)));
+        }"#,
+    );
+    assert_eq!(out, ["2", "true", "true"]);
+}
+
+#[test]
+fn map_constructed_from_another_map_copies_its_entries() {
+    let out = run_source(
+        r#"function main() {
+            let src: Map = new Map();
+            src.set(box_any("a"), box_any(1.0));
+            src.set(box_any("b"), box_any(2.0));
+            let copy: Map = new Map(src);
+            print(copy.size);
+            print(copy.get(box_any("a")) as number);
+            print(copy.get(box_any("b")) as number);
+        }"#,
+    );
+    assert_eq!(out, ["2", "1", "2"]);
+}
+
+#[test]
 fn bigint_constructor_arithmetic_and_formatting_use_the_managed_floor() {
     let out = run_source(
         r#"function main(): int {

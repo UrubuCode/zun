@@ -4,6 +4,9 @@ import { set } from "zun:core";
 class Set {
     add(value: any): boolean { return set.add(this, value); }
     has(value: any): boolean { return set.has(this, value); }
+    // `size` is a PROPERTY (`set.size`), intercepted in sema on a `Set`
+    // receiver and lowered to the `set.size` native. This method body is kept
+    // only so the legacy call form `set.size()` keeps resolving.
     size(): u64 { return set.size(this); }
     delete(value: any): boolean { return set.delete(this, value); }
     clear(): void { set.clear(this); }

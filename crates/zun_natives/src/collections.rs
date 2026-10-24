@@ -390,5 +390,11 @@ pub const MODULE: crate::Module = crate::Module {
         // objects are deferred.
         NativeFn { name: "mapFrom", params: &[Array], ret: Map, imp: unavailable },
         NativeFn { name: "setFrom", params: &[Array], ret: Set, imp: unavailable },
+        // General (non-array) iterable constructors: `new Map(iterable)` /
+        // `new Set(iterable)` where the argument is a built-in iterable
+        // (another Map/Set, a string, or an array). The raw value reaches the
+        // native un-coerced (`Opaque`) so it can dispatch on runtime kind.
+        NativeFn { name: "mapFromIterable", params: &[Opaque], ret: Map, imp: unavailable },
+        NativeFn { name: "setFromIterable", params: &[Opaque], ret: Set, imp: unavailable },
     ],
 };

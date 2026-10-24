@@ -38,15 +38,18 @@ pub(crate) enum CtorLowering {
         max_args: usize,
         pad_empty_flags: bool,
     },
-    /// A managed collection with both a zero-argument allocator (`empty`) and a
-    /// one-argument iterable constructor (`from`) in `module`, yielding `ty`.
-    /// `new Map()`/`new Set()` lower through `empty`; `new Map(iterable)`/
-    /// `new Set(iterable)` through `from`. The iterable is currently restricted
-    /// to an ARRAY argument; arbitrary iterator-protocol objects are deferred.
+    /// A managed collection with a zero-argument allocator (`empty`), an
+    /// array-argument constructor (`from`), and a general iterable constructor
+    /// (`from_iterable`) in `module`, yielding `ty`. `new Map()`/`new Set()`
+    /// lower through `empty`; `new Map(array)`/`new Set(array)` take the
+    /// `from` fast path; any other built-in iterable argument (another Map/Set,
+    /// a string) lowers through `from_iterable`, which dispatches on the
+    /// runtime kind. Arbitrary user `[Symbol.iterator]` objects are deferred.
     CollectionFrom {
         module: &'static str,
         empty: &'static str,
         from: &'static str,
+        from_iterable: &'static str,
         ty: Ty,
     },
     /// `new Array(len)` → an `ArrayNew` node (`Ty::Array`).
@@ -102,6 +105,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
                 module: "collections",
                 empty: "mapNew",
                 from: "mapFrom",
+                from_iterable: "mapFromIterable",
                 ty: Ty::Map,
             },
         ),
@@ -111,6 +115,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
                 module: "collections",
                 empty: "setNew",
                 from: "setFrom",
+                from_iterable: "setFromIterable",
                 ty: Ty::Set,
             },
         ),

@@ -35,8 +35,8 @@ read.
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). Remaining: `withResolvers`, AggregateError for `any`, unhandled-rejection-at-turn-end reporting |
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
-| 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Map([[k,v],…])`, array only); missing only `size` as property (is a method), general (non-array) iterable construction |
-| 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Set([…])`, array only); missing only `size` as property, general (non-array) iterable construction |
+| 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
+| 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
@@ -581,27 +581,41 @@ global calls in `zun_sema/src/check.rs` (like `print`, shadowable by a user symb
   `proxyDelete` natives, but **not** via the `in`/`delete` operators: those operator
   tokens are not in the lexer (a language-wide feature, like BigInt's `** & | ^`).
 
-## 11. Map — partial
+## 11. Map — mostly
 `std/map.zun` → `zun:collections` (`collections.rs`, `ordered_map.rs`). Ordered hash
 table. Iterator intrinsics present (`mapIterator*`).
-- **Present:** `set get has size() delete clear values keys entries` + `[Symbol.iterator]`
-  + `forEach(cb)` (`callback(value, key, map)`, insertion order; routed to the
-  `mapForEach` native via the sema managed-method path, reusing the Array callback
-  re-entry/rooting machinery) + iterable constructor `new Map(iterable)` (`mapFrom`).
-- **Missing:** `size` is a method, spec is a getter property. The iterable constructor
-  currently accepts only an ARRAY of `[key, value]` pairs; arbitrary iterator-protocol
-  objects are deferred (no general iterator consumption yet).
+- **Present:** `set get has delete clear values keys entries` + `size` as a **property**
+  (`map.size`) + `[Symbol.iterator]` + `forEach(cb)` (`callback(value, key, map)`,
+  insertion order; routed to the `mapForEach` native via the sema managed-method path,
+  reusing the Array callback re-entry/rooting machinery) + iterable constructor
+  `new Map(iterable)`.
+- **`size` as property:** `.size` is intercepted on a `Map` receiver in the sema `Field`
+  arm (like `.length` on views/strings) and lowered to the `mapSize` native → `u64`,
+  ahead of class dispatch. The `map.size()` method form still resolves via the method
+  table (kept as trivial backward-compat).
+- **Iterable constructor:** an ARRAY of `[key, value]` pairs keeps the dedicated `mapFrom`
+  fast path; any other built-in iterable (another Map — its entries; a Set of pair
+  arrays; an array for `any`-typed args) routes to `mapFromIterable`, which dispatches on
+  the runtime kind. A string is rejected (its elements are not pairs), matching JS.
+- **Missing / deferred:** iterator-object return for `keys/values/entries`; draining an
+  arbitrary user `[Symbol.iterator]` object (would need reentrant iterator-protocol calls
+  from a native).
 
-## 12. Set — partial
+## 12. Set — mostly
 `std/set.zun` → `zun:collections`.
-- **Present:** `add has size() delete clear values keys(→values) entries` + iterator
-  + `forEach(cb)` (`callback(value, value, set)` — the value twice per spec — insertion
-  order; routed to the `setForEach` native, reusing the Array callback machinery) +
-  iterable constructor `new Set(iterable)` (`setFrom`).
-- **Missing:** `size` as property; ES2024 set ops
-  (`union/intersection/difference/isSubsetOf/…`) — note Array has these as extras but
-  Set does not. The iterable constructor currently accepts only an ARRAY of elements;
-  arbitrary iterator-protocol objects are deferred.
+- **Present:** `add has delete clear values keys(→values) entries` + `size` as a
+  **property** (`set.size`) + iterator + `forEach(cb)` (`callback(value, value, set)` —
+  the value twice per spec — insertion order; routed to the `setForEach` native, reusing
+  the Array callback machinery) + iterable constructor `new Set(iterable)`.
+- **`size` as property:** same mechanism as Map — intercepted on a `Set` receiver in the
+  `Field` arm, lowered to `setSize` → `u64`; `set.size()` still resolves.
+- **Iterable constructor:** an ARRAY keeps the `setFrom` fast path; any other built-in
+  iterable routes to `setFromIterable`, which dispatches on runtime kind: a string
+  (iterated by Unicode **code point** — `new Set("abc")` → 3 elements), another Set (its
+  elements), another Map (its `[key, value]` entry pairs).
+- **Missing / deferred:** ES2024 set ops (`union/intersection/difference/isSubsetOf/…`) —
+  note Array has these as extras but Set does not; iterator-object return for
+  `keys/values/entries`; draining an arbitrary user `[Symbol.iterator]` object.
 
 ## 13. WeakMap — partial / effectively done
 `std/weak_map.zun`; ephemeron-backed GC floor.
@@ -1015,8 +1029,10 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      + constants, and `toString(radix)` — landed. Remaining: `toPrecision toExponential
      toLocaleString valueOf`.
    - Date (#20): setters, local-time getters, `Date.now/parse/UTC`, `getTimezoneOffset`.
-   - Map/Set (#11,#12): `forEach` and array-iterable construction landed. Remaining:
-     `size` as a property; general (non-array) iterable construction.
+   - Map/Set (#11,#12): ✅ `forEach`, array-iterable construction, `size` as a property,
+     and general built-in-iterable construction (string/Set/Map via
+     `setFromIterable`/`mapFromIterable`) landed. Remaining: iterator-object return for
+     `keys/values/entries`; draining arbitrary user `[Symbol.iterator]` objects.
    - Promise (#9): ✅ `then/catch/finally` (new-promise + Promise adoption) and statics
      `resolve/reject/all/allSettled/race/any` landed. Remaining: `withResolvers`,
      AggregateError for `any`, microtask deferral of a pending-source reaction.

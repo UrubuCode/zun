@@ -1112,6 +1112,167 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
             }
+            "setFromIterable" => {
+                // `new Set(iterable)` for a non-array built-in iterable: a
+                // string (iterated by Unicode code point), another Set (its
+                // elements), or another Map (its `[key, value]` entry pairs).
+                // An array argument takes the `setFrom` fast path in sema and
+                // does not reach here, but is handled too for `any` receivers.
+                // Arbitrary user `[Symbol.iterator]` objects are deferred.
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
+                // String: intern each code point and add it. Interned strings
+                // are referenced by a stable id, so no rooting dance is needed.
+                if let Value::Str(value) = arg {
+                    let points: Vec<String> =
+                        value.chars().map(|point| point.to_string()).collect();
+                    let roots = [target];
+                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    for point in points {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let id = heap.intern_string(point.as_str().into());
+                            heap.set_add(roots[0], zun_core::Any::string(id));
+                        });
+                    }
+                    return Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)));
+                }
+                let source = object(arg).ok_or(RunError::BadToken)?;
+                // Snapshot the source elements into a rooted array, then drain
+                // it into the target set (the mapForEach materialization idiom:
+                // a GC during `set_add` relocates the rooted array transparently).
+                let values: Vec<zun_core::Any> =
+                    if let Some(values) = zun_gc::with_current_heap(|heap| heap.set_values(source)) {
+                        values
+                    } else if let Some(entries) =
+                        zun_gc::with_current_heap(|heap| heap.map_entries(source))
+                    {
+                        // A Set built from a Map iterates `[key, value]` pairs.
+                        zun_gc::with_current_heap_mut(|heap| {
+                            entries
+                                .into_iter()
+                                .map(|(key, value)| {
+                                    let pair = heap.alloc_array(2);
+                                    let _ = heap.array_set(pair, 0, key);
+                                    let _ = heap.array_set(pair, 1, value);
+                                    zun_core::Any::object(pair.addr() as usize)
+                                })
+                                .collect()
+                        })
+                    } else if let Some(length) =
+                        zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    {
+                        (0..length)
+                            .map(|index| {
+                                zun_gc::with_current_heap(|heap| heap.array_get(source, index))
+                                    .ok_or(RunError::BadToken)
+                            })
+                            .collect::<Result<_, _>>()?
+                    } else {
+                        return Err(RunError::Native(
+                            "Set constructor argument is not a supported iterable".into(),
+                        ));
+                    };
+                let length = values.len();
+                let staged = zun_gc::with_current_heap_mut(|heap| {
+                    let staged = heap.alloc_array(length);
+                    for (index, value) in values.into_iter().enumerate() {
+                        heap.array_set(staged, index, value);
+                    }
+                    staged
+                });
+                let roots = [staged, target];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for index in 0..length {
+                    let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.set_add(roots[1], value));
+                }
+                Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+            }
+            "mapFromIterable" => {
+                // `new Map(iterable)` for a non-array built-in iterable: another
+                // Map (its `[key, value]` entries) or another Set whose elements
+                // are `[key, value]` pair arrays. An array argument takes the
+                // `mapFrom` fast path in sema; it is handled here too for `any`
+                // receivers. A string is not a valid map iterable (its elements
+                // are not pairs) and is rejected, matching JS's TypeError.
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                if matches!(arg, Value::Str(_)) {
+                    return Err(RunError::Native(
+                        "Map constructor requires an iterable of [key, value] pairs".into(),
+                    ));
+                }
+                let source = object(arg).ok_or(RunError::BadToken)?;
+                let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
+                // A Map source contributes its entries directly; snapshot them
+                // into rooted key/value arrays (the mapForEach idiom).
+                if let Some(entries) = zun_gc::with_current_heap(|heap| heap.map_entries(source)) {
+                    let length = entries.len();
+                    let (keys, values) = zun_gc::with_current_heap_mut(|heap| {
+                        let keys = heap.alloc_array(length);
+                        let values = heap.alloc_array(length);
+                        for (index, (key, value)) in entries.into_iter().enumerate() {
+                            heap.array_set(keys, index, key);
+                            heap.array_set(values, index, value);
+                        }
+                        (keys, values)
+                    });
+                    let roots = [keys, values, target];
+                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    for index in 0..length {
+                        let key = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                            .ok_or(RunError::BadToken)?;
+                        let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], index))
+                            .ok_or(RunError::BadToken)?;
+                        zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[2], key, value));
+                    }
+                    return Ok(Value::Any(zun_core::Any::object(roots[2].addr() as usize)));
+                }
+                // A Set source (or an array): each element must be a `[key,
+                // value]` pair array. Snapshot the elements into a rooted array
+                // and read each pair out of it.
+                let elements: Vec<zun_core::Any> =
+                    if let Some(values) = zun_gc::with_current_heap(|heap| heap.set_values(source)) {
+                        values
+                    } else if let Some(length) =
+                        zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    {
+                        (0..length)
+                            .map(|index| {
+                                zun_gc::with_current_heap(|heap| heap.array_get(source, index))
+                                    .ok_or(RunError::BadToken)
+                            })
+                            .collect::<Result<_, _>>()?
+                    } else {
+                        return Err(RunError::Native(
+                            "Map constructor argument is not a supported iterable".into(),
+                        ));
+                    };
+                let length = elements.len();
+                let staged = zun_gc::with_current_heap_mut(|heap| {
+                    let staged = heap.alloc_array(length);
+                    for (index, value) in elements.into_iter().enumerate() {
+                        heap.array_set(staged, index, value);
+                    }
+                    staged
+                });
+                let roots = [staged, target];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for index in 0..length {
+                    let entry = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                        .ok_or(RunError::BadToken)?;
+                    let pair = entry
+                        .as_object()
+                        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                        .ok_or(RunError::BadToken)?;
+                    let key = zun_gc::with_current_heap(|heap| heap.array_get(pair, 0))
+                        .ok_or(RunError::BadToken)?;
+                    let value = zun_gc::with_current_heap(|heap| heap.array_get(pair, 1))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[1], key, value));
+                }
+                Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+            }
             "setAdd" => {
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

@@ -48,6 +48,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "mapEntries",
         "mapForEach",
         "mapFrom",
+        "mapFromIterable",
+        "setFromIterable",
         "setForEach",
         "setFrom",
         "mapHasF64",
