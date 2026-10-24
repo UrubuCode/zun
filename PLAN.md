@@ -418,6 +418,32 @@ IC 3.8x (slot-vtable ≈ IC for monomorphic); `switch` jump-table 11.3x; symbol-
 slot 16.5x; scalar `Any` box/unbox ≈ 0 (escape analysis not worth it for scalars —
 heap allocation / the GC is).
 
+### 5.1 Async / Promise — machine-level scheduler (.NET/rts model, NOT V8 microtask-only)
+
+Promises are **machine-level, not a language feature** (the rts design, grounded in the
+.NET Task/continuation model): a VM **scheduler** owns a promise **state machine**, **waiter
+lists**, continuation queues, and adoption/cycle detection; the language layers only the
+settled **value** (a side table) and policy (unhandled-rejection timing). A promise is a
+`PromiseId` + `PromiseState{Pending, Settled(Fulfilled|Rejected)}` carrying no value; a
+`Waiter` is a **`Continuation`** (a parked frame) or another **`Promise`** (adoption,
+cycle-checked); attaching returns **`Parked`** or **`ReadyNow`**; a rejection resumes its
+waiter through the **unwinding** (exception) path, not by delivering a value.
+
+Deliberately **NOT the V8/ECMAScript model** (a language-level single microtask queue bound
+to a single-threaded event loop): that is treated as a V8 *limitation* to avoid, not a
+target. `await` parks a continuation on the promise; `then`/combinators attach reactions;
+settling wakes waiters via the scheduler queue; the host drains the queue to empty per turn.
+The **same scheduler owns the event loop** — microtasks AND macrotasks (timers §3.5-adjacent),
+one VM-owned loop. This replaces Zun's current *eager-at-settle* simplification (which can't
+drive a reaction whose source is still pending) with a real continuation scheduler.
+
+Staging: (1) the scheduler **core machine** (PromiseId table, states, waiter list, attach
+Parked/ReadyNow, adoption+cycle detection, continuation queue); (2) route `await` (park
+continuation / unwind on reject) + frame suspend-resume onto it; (3) route `then/catch/
+finally` + `all/allSettled/race/any` + the turn-drain onto it, retiring eager-at-settle;
+(4) unify micro+macrotask (timers) in the one loop. Behavior kept green against the existing
+Promise surface tests throughout.
+
 ## 6. Implementation phases
 
 - **Phase 0 — format:** `.zm`, metadata tables/tokens, master opcode table,
