@@ -28,7 +28,7 @@ read.
 | 1 | String | partial | Standard surface largely landed (`at/slice/concat/codePointAt/split/replaceAll`, string-vs-RegExp dispatch on `split`/`replace`, `[Symbol.iterator]`, statics `fromCharCode/fromCodePoint`); deferred `matchAll/normalize/localeCompare/toLocale*/String.raw` |
 | 2 | Number | partial | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants) and `toString(radix)`; remaining `toPrecision/toExponential/toLocaleString/valueOf` |
 | 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
-| 4 | BigInt | partial | Only `add/sub/mul/compare/toString`; missing `div/rem/pow/neg/bitwise/shift`, `BigInt()` coercion, `asIntN/asUintN`, operator integration |
+| 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
@@ -159,13 +159,31 @@ the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 fl
 No `std/boolean.zun`, no wrapper type; only primitive `Ty::Boolean`. No `Boolean()`
 coercion function, no object `.toString()/.valueOf()`. GOAL ranks this lowest.
 
-## 4. BigInt — partial
-`std/bigint.zun` (extern) + native (`collections.rs`, `zun_core/bigint.rs`).
+## 4. BigInt — mostly
+`builtin/bigint.zun` (extern) + native (`collections.rs`, `zun_core/bigint.rs`).
 
-- **Present:** `add sub mul compare toString`.
-- **Missing:** `div rem pow neg` and bitwise/shift (`and or xor not shl shr`),
-  `BigInt(value)` coercion, `BigInt.asIntN/asUintN`, `valueOf`, operator-level
-  integration (`+ - * / %` on bigint operands), literal `1n` → confirm lowering (verify).
+- **Present:**
+  - Arithmetic: `add sub mul div rem pow neg` (`div`/`rem` truncate toward zero,
+    remainder takes the dividend's sign; `pow` rejects a negative exponent;
+    division by zero is a runtime RangeError-style error).
+  - Bitwise/shift: `and or xor not shl shr`, implemented with correct infinite
+    two's-complement semantics for negative operands (`~5n == -6n`, `-8n >> 1n ==
+    -4n`, arithmetic/floor right shift).
+  - Comparison: `compare eq ne lt le gt ge`, `toString`.
+  - `BigInt(value)` coercion: from a `number` (integer-valued → bigint;
+    non-integer/non-finite → runtime error) and from a `string` (decimal plus the
+    `0x`/`0o`/`0b` radix prefixes). Works both as `BigInt(x)` and `new BigInt(x)`.
+  - `BigInt.asIntN(bits, x)` / `BigInt.asUintN(bits, x)`.
+  - Literal `1n` lowering verified (→ `bigIntNew` string parse; radix prefixes
+    accepted).
+  - Operator integration: `+ - * / %` and `== != < <= > >=` on two `Ty::BigInt`
+    operands route to the natives in sema. BigInt mixed with Number in an operator
+    does not type-check (TypeError-equivalent), per spec.
+- **Deferred / method-only:** the operator *tokens* `** & | ^ << >> ~` are not in
+  the lexer/parser at all (a language-wide operator feature affecting int types
+  too, outside BigInt's scope), so pow/bitwise/shift are reached through the
+  instance methods (`a.pow(b)`, `a.and(b)`, `a.shl(b)`, `a.not()`, …). Adding
+  those tokens is a separate language decision. Also deferred: `valueOf`.
 
 ## 5. Symbol — partial  *(HIGH priority — foundation landed)*
 The `SymbolRegistry` (`zun_core/src/symbols.rs`) is now surfaced to user code. A symbol

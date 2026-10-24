@@ -1,10 +1,20 @@
 // Thin source wrapper over the GC-owned BigInt runtime floor.
-import { bigIntAdd as add, bigIntSub as sub, bigIntMul as mul, bigIntCompare as compare, bigIntToString as toString } from "zun:core";
+import { bigIntAdd as add, bigIntSub as sub, bigIntMul as mul, bigIntDiv as div, bigIntRem as rem, bigIntPow as pow, bigIntNeg as neg, bigIntAnd as and, bigIntOr as or, bigIntXor as xor, bigIntNot as not, bigIntShl as shl, bigIntShr as shr, bigIntCompare as compare, bigIntToString as toString } from "zun:core";
 
 class BigInt {
     extern add(other: BigInt): BigInt;
     extern sub(other: BigInt): BigInt;
     extern mul(other: BigInt): BigInt;
+    extern div(other: BigInt): BigInt;
+    extern rem(other: BigInt): BigInt;
+    extern pow(other: BigInt): BigInt;
+    extern neg(): BigInt;
+    extern and(other: BigInt): BigInt;
+    extern or(other: BigInt): BigInt;
+    extern xor(other: BigInt): BigInt;
+    extern not(): BigInt;
+    extern shl(other: BigInt): BigInt;
+    extern shr(other: BigInt): BigInt;
     extern compare(other: BigInt): i32;
     extern toString(): string;
 }
