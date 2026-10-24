@@ -6053,3 +6053,98 @@ fn division_is_not_mistaken_for_regex() {
     assert_regex_program("let a = 100; let b = 5; let c = 2; if (a / b / c == 10) { return 1; } return 0;", 1);
     assert_regex_program("if (12 / 4 == 3) { return 1; } return 0;", 1);
 }
+
+// ---------------------------------------------------------------------------
+// Operator tokens: typeof / in / instanceof / delete (NUCLEUS operator gap).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typeof_folds_to_static_type_strings() {
+    let cases = [
+        ("function main(): string { return typeof 1; }", "number"),
+        ("function main(): string { return typeof 3.5; }", "number"),
+        ("function main(): string { return typeof \"a\"; }", "string"),
+        ("function main(): string { return typeof true; }", "boolean"),
+        ("function main(): string { return typeof 1n; }", "bigint"),
+        ("function main(): string { return typeof {}; }", "object"),
+    ];
+    for (src, expected) in cases {
+        let module = compile(src);
+        assert!(
+            matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == expected),
+            "typeof mismatch for `{src}`, expected {expected}"
+        );
+    }
+}
+
+#[test]
+fn typeof_symbol_and_function() {
+    let sym = compile("function main(): string { return typeof Symbol(); }");
+    assert!(matches!(interp_entry(&sym), Value::Str(value) if value.as_ref() == "symbol"));
+    let func = compile(
+        "function helper(): void { } function main(): string { return typeof helper; }",
+    );
+    assert!(matches!(interp_entry(&func), Value::Str(value) if value.as_ref() == "function"));
+}
+
+#[test]
+fn in_operator_on_plain_object() {
+    let present = compile(
+        "function main(): boolean { let obj = dynamic_new(); dynamic_set(obj, \"k\", box_any(1)); return \"k\" in obj; }",
+    );
+    assert!(matches!(interp_entry(&present), Value::Bool(true)));
+    let absent = compile(
+        "function main(): boolean { let obj = dynamic_new(); dynamic_set(obj, \"k\", box_any(1)); return \"missing\" in obj; }",
+    );
+    assert!(matches!(interp_entry(&absent), Value::Bool(false)));
+}
+
+#[test]
+fn in_operator_routes_through_proxy_has_trap() {
+    let module = compile(
+        "import { dynamicSetFunction } from \"zun:collections\"; \
+         function hasTrap(target: any, key: string): boolean { return true; } \
+         function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); \
+         dynamicSetFunction(handler, \"has\", hasTrap); let proxy = new Proxy(target, handler); \
+         return \"anything\" in proxy; }",
+    );
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
+fn delete_operator_removes_plain_property() {
+    let module = compile(
+        "function main(): boolean { let obj = dynamic_new(); dynamic_set(obj, \"k\", box_any(1)); \
+         let removed = delete obj.k; return removed && !(\"k\" in obj); }",
+    );
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
+fn delete_operator_routes_through_proxy_delete_trap() {
+    let module = compile(
+        "import { dynamicSetFunction } from \"zun:collections\"; \
+         function delTrap(target: any, key: string): boolean { return true; } \
+         function main(): boolean { let target = dynamic_new(); let handler = dynamic_new(); \
+         dynamicSetFunction(handler, \"deleteProperty\", delTrap); let proxy = new Proxy(target, handler); \
+         return delete proxy.k; }",
+    );
+    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+}
+
+#[test]
+fn instanceof_checks_class_hierarchy() {
+    let yes = compile(
+        "class Foo {} function main(): boolean { let f = new Foo(); return f instanceof Foo; }",
+    );
+    assert!(matches!(interp_entry(&yes), Value::Bool(true)));
+    let subclass = compile(
+        "class Base {} class Derived extends Base {} \
+         function main(): boolean { let d = new Derived(); return d instanceof Base; }",
+    );
+    assert!(matches!(interp_entry(&subclass), Value::Bool(true)));
+    let no = compile(
+        "class Foo {} class Bar {} function main(): boolean { let b = new Bar(); return b instanceof Foo; }",
+    );
+    assert!(matches!(interp_entry(&no), Value::Bool(false)));
+}

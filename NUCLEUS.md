@@ -34,7 +34,7 @@ read.
 | 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Remaining: `withResolvers`, microtask deferral of a *pending*-source reaction (eager-at-settle on Tier 0), AggregateError for `any` |
-| 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). Deferred: descriptor-dependent traps + `apply`/`construct`, and `in`/`delete` operators (not in the lexer) |
+| 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Map([[k,v],…])`, array only); missing only `size` as property (is a method), general (non-array) iterable construction |
 | 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Set([…])`, array only); missing only `size` as property, general (non-array) iterable construction |
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
@@ -56,6 +56,33 @@ read.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
+
+### Unary/binary operator tokens (`typeof` / `in` / `instanceof` / `delete`)
+
+Landed as real keywords in the lexer (`typeof`/`in`/`instanceof`/`delete`), the
+hand parser (prefix unary for `typeof`/`delete`; relational-precedence binary for
+`in`/`instanceof`), the OXC adapter, sema, and lowering. Keyword-as-property-name
+is preserved: `obj.in`, `obj.typeof`, a `delete(...)` method, etc. still parse
+(class member names and `.member` access accept keywords).
+
+- `typeof x` → a constant JS type string folded over the operand's **static**
+  type (`number/string/boolean/bigint/symbol/function/object`; arrays, maps,
+  instances, proxies, null → `"object"`). Exact for every non-`any` value;
+  `typeof` over an `any` value (runtime tag inspection) is **deferred** (sema
+  error) — no native was added, so dispatch ids are unchanged.
+- `x in obj` → `boolean` via `reflectHas` (plain object / `any`) or the Proxy
+  `has` trap (`proxyHas`). Key must be a string; symbol keys deferred.
+- `delete obj.k` / `delete obj[k]` → `boolean` via `reflectDelete` / the Proxy
+  `deleteProperty` trap. Always yields `true` on success (no configurable-property
+  descriptor model yet). A non-member `delete` operand is a sema error.
+- `x instanceof C` → compile-time class-hierarchy membership folded to a boolean
+  (walks the receiver's static `Ty::Instance` class and its bases). `Symbol.hasInstance`
+  customization, a runtime prototype-chain walk for dynamic objects, and the
+  upcast case (base-typed variable holding a derived instance) are **deferred**.
+- `void x` is **deferred** (left as an identifier/type name — `void` is a common
+  return-type annotation; no `undefined` value representation exists yet). The
+  `for (k in obj)` statement form is also out of scope (this is only the `in`
+  operator).
 
 ### Declarative realm-global registration (PLAN §3.1)
 

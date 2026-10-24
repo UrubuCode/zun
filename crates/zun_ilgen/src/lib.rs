@@ -983,6 +983,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish => {
                         unreachable!("logical operators lower through branches")
                     }
+                    BinaryOp::In | BinaryOp::Instanceof => {
+                        unreachable!("`in`/`instanceof` are lowered in sema")
+                    }
                 };
                 self.emit(Instruction::simple(opcode));
             }
@@ -1016,6 +1019,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.expr(operand);
                     self.emit(Instruction::simple(Opcode::ConstFalse));
                     self.emit(Instruction::simple(Opcode::CmpEq));
+                }
+                UnaryOp::Typeof | UnaryOp::Delete => {
+                    unreachable!("`typeof`/`delete` are lowered in sema")
                 }
             },
             ExprKind::Call { func, args } => {

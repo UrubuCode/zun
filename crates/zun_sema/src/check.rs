@@ -1771,6 +1771,12 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Binary { op, lhs, rhs, .. } => {
+                if let ast::BinaryOp::In = op {
+                    return self.check_in_operator(cx, lhs, rhs, span);
+                }
+                if let ast::BinaryOp::Instanceof = op {
+                    return self.check_instanceof_operator(cx, lhs, rhs, span);
+                }
                 let mut lhs = self.check_expr(cx, lhs);
                 let mut rhs = self.check_expr(cx, rhs);
                 // Let an integral number literal take on an Int sibling's type
@@ -1843,6 +1849,11 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Unary { op, operand, .. } => {
+                match op {
+                    ast::UnaryOp::Typeof => return self.check_typeof_operator(cx, operand, span),
+                    ast::UnaryOp::Delete => return self.check_delete_operator(cx, operand, span),
+                    ast::UnaryOp::Neg | ast::UnaryOp::Not => {}
+                }
                 // Fold `-<number literal>` into a single negative number literal
                 // so it stays coercible to an int context (e.g. `abs(-7)`).
                 if let ast::UnaryOp::Neg = op {
@@ -1875,6 +1886,9 @@ impl Checker<'_> {
                         Ty::Error
                     }
                     ast::UnaryOp::Not => self.expect_ty(&operand, Ty::Boolean),
+                    ast::UnaryOp::Typeof | ast::UnaryOp::Delete => {
+                        unreachable!("handled before operand type-checking")
+                    }
                 };
                 hir::Expr {
                     kind: hir::ExprKind::Unary {
@@ -4967,6 +4981,186 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower `key in object` to the dynamic `has` mechanism. A Proxy receiver
+    /// routes through its `has` trap (`proxyHas`); a plain object or `any`
+    /// receiver uses `reflectHas`. The key must be a string (symbol keys are
+    /// deferred).
+    fn check_in_operator(
+        &mut self,
+        cx: &mut FunctionCx,
+        key: &ast::Expr,
+        object: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let key = self.check_expr(cx, key);
+        let object = self.check_expr(cx, object);
+        if !key.ty.is_error() && key.ty != Ty::String {
+            self.error(key.span, "left operand of `in` must be a string key");
+        }
+        let native = match object.ty {
+            Ty::Proxy => "proxyHas",
+            Ty::DynamicObject | Ty::Any => "reflectHas",
+            Ty::Error => return self.poison(span),
+            other => {
+                self.error(
+                    object.span,
+                    format!("`in` requires an object receiver, found {other:?}"),
+                );
+                return self.poison(span);
+            }
+        };
+        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+            self.error(span, format!("missing `{native}` intrinsic"));
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+            ty: Ty::Boolean,
+            span,
+        }
+    }
+
+    /// Lower `delete obj.k` / `delete obj[k]` to the dynamic delete mechanism
+    /// (`reflectDelete`, or a Proxy's `deleteProperty` trap via `proxyDelete`).
+    /// A non-member operand is a semantic error. The configurable-property
+    /// descriptor model is deferred, so a successful delete always yields
+    /// `true`.
+    fn check_delete_operator(
+        &mut self,
+        cx: &mut FunctionCx,
+        operand: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let (object_ast, key) = match operand {
+            ast::Expr::Field { object, field, .. } => {
+                let key = hir::Expr {
+                    kind: hir::ExprKind::String(self.text(field).to_string()),
+                    ty: Ty::String,
+                    span: field.span,
+                };
+                (object.as_ref(), key)
+            }
+            ast::Expr::Index { object, index, .. } => {
+                let key = self.check_expr(cx, index);
+                if !key.ty.is_error() && key.ty != Ty::String {
+                    self.error(key.span, "`delete obj[k]` requires a string key");
+                }
+                (object.as_ref(), key)
+            }
+            _ => {
+                self.error(
+                    span,
+                    "`delete` requires a property reference (`obj.k` or `obj[k]`)",
+                );
+                return self.poison(span);
+            }
+        };
+        let object = self.check_expr(cx, object_ast);
+        let native = match object.ty {
+            Ty::Proxy => "proxyDelete",
+            Ty::DynamicObject | Ty::Any => "reflectDelete",
+            Ty::Error => return self.poison(span),
+            other => {
+                self.error(
+                    object.span,
+                    format!("`delete` requires an object receiver, found {other:?}"),
+                );
+                return self.poison(span);
+            }
+        };
+        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+            self.error(span, format!("missing `{native}` intrinsic"));
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+            ty: Ty::Boolean,
+            span,
+        }
+    }
+
+    /// Lower `typeof x` to a constant JS type string over the operand's static
+    /// type. Every non-`any` value has a statically known type in Zun, so this
+    /// fold is exact; `typeof` over `any` (runtime tag inspection) is deferred.
+    fn check_typeof_operator(
+        &mut self,
+        cx: &mut FunctionCx,
+        operand: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let operand = self.check_expr(cx, operand);
+        let type_string = match operand.ty {
+            Ty::Error => return self.poison(span),
+            Ty::Int(_) | Ty::Float(_) => "number",
+            Ty::String => "string",
+            Ty::Boolean => "boolean",
+            Ty::BigInt => "bigint",
+            Ty::Symbol => "symbol",
+            Ty::Function(_) => "function",
+            Ty::Void => "undefined",
+            Ty::Any => {
+                self.error(
+                    span,
+                    "`typeof` on a dynamically-typed (`any`) value is not supported yet",
+                );
+                return self.poison(span);
+            }
+            // Arrays, maps, sets, proxies, instances, buffers, null → "object".
+            _ => "object",
+        };
+        hir::Expr {
+            kind: hir::ExprKind::String(type_string.to_string()),
+            ty: Ty::String,
+            span,
+        }
+    }
+
+    /// Lower `x instanceof C` for the common typed case: a class-hierarchy
+    /// membership test folded to a boolean constant. `Symbol.hasInstance`
+    /// customization and runtime prototype-chain walking for dynamic objects
+    /// are deferred (an `any`/dynamic receiver yields `false`).
+    fn check_instanceof_operator(
+        &mut self,
+        cx: &mut FunctionCx,
+        value: &ast::Expr,
+        class: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.check_expr(cx, value);
+        let ast::Expr::Ident(class_name) = class else {
+            self.error(class.span(), "right operand of `instanceof` must be a class name");
+            return self.poison(span);
+        };
+        let name = self.text(class_name).to_string();
+        let Some(&target) = self.classes_by_name.get(&name) else {
+            self.error(class_name.span, format!("unknown class `{name}`"));
+            return self.poison(span);
+        };
+        let result = match value.ty {
+            Ty::Instance(c) => self.class_is_a(c, target),
+            Ty::Error => return self.poison(span),
+            _ => false,
+        };
+        hir::Expr {
+            kind: hir::ExprKind::Boolean(result),
+            ty: Ty::Boolean,
+            span,
+        }
+    }
+
+    /// Whether class `class_index` is `target` or a (transitive) subclass of it.
+    fn class_is_a(&self, mut class_index: u32, target: u32) -> bool {
+        loop {
+            if class_index == target {
+                return true;
+            }
+            match self.classes.get(class_index as usize).and_then(|c| c.base) {
+                Some(base) => class_index = base,
+                None => return false,
+            }
+        }
+    }
+
     /// The result type of a binary operation, diagnosing bad operand types.
     fn binary_result(
         &mut self,
@@ -5054,6 +5248,9 @@ impl Checker<'_> {
                     Ty::Error
                 }
             }
+            // `in`/`instanceof` are intercepted and lowered before reaching
+            // here; this arm only satisfies exhaustiveness.
+            In | Instanceof => Ty::Boolean,
         }
     }
 
