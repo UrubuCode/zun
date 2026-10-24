@@ -64,6 +64,15 @@ pub(crate) enum CtorLowering {
     /// for value types (`String`/`Number`/`Boolean`) and surface-only globals
     /// (`Object`/`Symbol`) that have no intrinsic constructor of their own.
     FallThrough,
+    /// A class-backed base type whose annotation is `Ty::Instance(<class
+    /// index>)`. The class index is program-assigned (these classes ship via
+    /// the prelude), so it cannot be named by a static facet; the checker
+    /// resolves the name through `classes_by_name` at check time, both for the
+    /// annotation type and for `new <Name>(...)` (which uses the ordinary
+    /// class-construction path). Used for `Error` and its subclasses. The
+    /// registry still owns the realm descriptor value, so `globalThis.<Name>`
+    /// resolves like every other base type.
+    ClassFallThrough,
 }
 
 /// A base type registered as a realm global.
@@ -196,6 +205,13 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         // `Buffer.from`/`alloc`/… statics are recognized by receiver name, so
         // there is no `new Buffer()` constructor lowering (deprecated in Node).
         "Buffer" => (Ty::BufferView(Bv::U8), CtorLowering::FallThrough),
+        // Class-backed base types (`Error` + subclasses). Their annotation type
+        // is resolved from `classes_by_name` at check time (the class index is
+        // program-assigned via the prelude), so the `Ty` here is a placeholder
+        // the checker never reads for a `ClassFallThrough` binding. The registry
+        // owns only the realm descriptor value so `globalThis.Error` resolves.
+        "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
+        | "TypeError" | "URIError" => (Ty::Error, CtorLowering::ClassFallThrough),
         _ => return None,
     })
 }

@@ -1214,8 +1214,7 @@ impl Interp<'_> {
                     let obj = zun_gc::with_current_heap_mut(|h| {
                         let obj = h.alloc(token.rid(), field_count);
                         for (i, arg) in args.iter().enumerate() {
-                            let raw = value::encode_field(kinds[i], arg, h);
-                            h.store_field(obj, i, raw, kinds[i] == value::FIELD_OBJECT);
+                            value::store_field(kinds[i], obj, i, arg, h);
                         }
                         obj
                     });
@@ -1231,7 +1230,7 @@ impl Interp<'_> {
                     let kind = field.kind;
                     let obj = pop(&mut stack)?.as_object();
                     let v = zun_gc::with_current_heap(|h| {
-                        value::decode_field(kind, obj.field(slot), h)
+                        value::load_field(kind, obj, slot, h)
                     });
                     stack.push(v);
                 }
@@ -1246,8 +1245,7 @@ impl Interp<'_> {
                     let value = pop(&mut stack)?;
                     let obj = pop(&mut stack)?.as_object();
                     zun_gc::with_current_heap_mut(|h| {
-                        let raw = value::encode_field(kind, &value, h);
-                        h.store_field(obj, slot, raw, kind == value::FIELD_OBJECT);
+                        value::store_field(kind, obj, slot, &value, h);
                     });
                     stack.push(value);
                 }

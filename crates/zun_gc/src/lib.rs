@@ -176,6 +176,12 @@ pub struct Heap {
     dynamic_objects: HashMap<usize, zun_core::DynamicObject>,
     /// Contiguous array storage associated with array objects.
     arrays: HashMap<usize, zun_core::ArrayStorage>,
+    /// Side storage for frozen-layout `any`-typed fields (PLAN §2: the dynamic
+    /// `Any` carrier is the explicit, costly exception). A field slot of kind
+    /// `FIELD_ANY` is 8 bytes but an `Any` is 16, so the value lives here keyed
+    /// by `(owner address, field slot)` — the exact analogue of `arrays` — and
+    /// is traced, relocated, swept, and write-barriered like array elements.
+    any_fields: HashMap<usize, HashMap<usize, zun_core::Any>>,
     /// Contiguous byte storage associated with ArrayBuffer objects.
     buffers: HashMap<usize, zun_core::ByteBuffer>,
     /// DataView descriptors associated with managed view objects.
@@ -581,6 +587,24 @@ impl Heap {
         }
         self.arrays = mapped_arrays;
 
+        let any_fields = std::mem::take(&mut self.any_fields);
+        let mut mapped_any_fields = HashMap::with_capacity(any_fields.len());
+        for (address, mut fields) in any_fields {
+            let mapped = map(address);
+            if mapped != address { rewritten += 1; }
+            for value in fields.values_mut() {
+                if let Some(old) = value.as_object() {
+                    let new = map(old);
+                    if new != old {
+                        *value = value.map_object_address(|_| new);
+                        rewritten += 1;
+                    }
+                }
+            }
+            mapped_any_fields.insert(mapped, fields);
+        }
+        self.any_fields = mapped_any_fields;
+
         let objects = std::mem::take(&mut self.dynamic_objects);
         let mut mapped_objects = HashMap::with_capacity(objects.len());
         for (address, mut object) in objects {
@@ -918,6 +942,28 @@ impl Heap {
         if is_reference {
             self.write_barrier(owner, value);
         }
+    }
+
+    /// Store an `Any` into a frozen-layout `any`-typed field slot. The value
+    /// lives in the `any_fields` side table (an `Any` does not fit the 8-byte
+    /// slot); the slot itself is left as a sentinel. An object-tagged payload is
+    /// write-barriered like any other old-to-young reference.
+    pub fn store_any_field(&mut self, owner: Obj, slot: usize, value: zun_core::Any) {
+        self.any_fields
+            .entry(owner.addr() as usize)
+            .or_default()
+            .insert(slot, value);
+        if let Some(child) = value.as_object() {
+            self.write_barrier(owner, child as u64);
+        }
+    }
+
+    /// Read an `Any` from a frozen-layout `any`-typed field slot. An absent
+    /// entry means the field was never assigned (JS `undefined`).
+    pub fn load_any_field(&self, owner: Obj, slot: usize) -> Option<zun_core::Any> {
+        self.any_fields
+            .get(&(owner.addr() as usize))
+            .and_then(|fields| fields.get(&slot).copied())
     }
 
     /// Apply the generational write barrier for a raw object reference.

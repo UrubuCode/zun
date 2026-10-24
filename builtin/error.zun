@@ -24,6 +24,15 @@ import { captureStackTrace } from "zun:core";
 class Error {
     message: string;
     stackFrames: string = captureStackTrace();
+    // ECMAScript `new Error(message, { cause })`. The field is `any` so it can
+    // carry a value of any type (via the frozen-layout `any`-field carrier) and
+    // is absent (JS `undefined`) when no `cause` is supplied. The `(message,
+    // options)` constructor shape does not fit Zun's one-arg-per-field model, so
+    // Error-family construction is lowered specially in sema (`check.rs`): the
+    // options object's `.cause` is read into this slot, or `undefined` when no
+    // options object is given. This field has no default initializer because
+    // every Error construction goes through that special lowering.
+    cause: any;
 
     get name(): string {
         return "Error";

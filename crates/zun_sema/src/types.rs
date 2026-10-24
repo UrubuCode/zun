@@ -13,9 +13,14 @@ impl<'a> Checker<'a> {
             return ty;
         }
         // Declarative realm globals (PLAN §3.1) take precedence; on a miss we
-        // fall through to the hardcoded base-type matches unchanged.
+        // fall through to the hardcoded base-type matches unchanged. A
+        // class-backed binding (`Error` + subclasses) has no static annotation
+        // type — the class index is program-assigned — so it is resolved
+        // through `classes_by_name` like any other class name below.
         if let Some(binding) = self.realm_globals.get(&text) {
-            return binding.ty;
+            if !matches!(binding.ctor, crate::realm::CtorLowering::ClassFallThrough) {
+                return binding.ty;
+            }
         }
         // The typed-array constructor names come from the master table, so an
         // annotation cannot name a kind the rest of the wiring lacks.

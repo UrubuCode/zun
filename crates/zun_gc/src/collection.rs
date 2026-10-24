@@ -256,6 +256,19 @@ impl Heap {
                     }
                 }
             }
+            if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
+                // Frozen-layout `any` fields can hold object-tagged Any values.
+                let any_children: Vec<usize> =
+                    fields.values().filter_map(|value| value.as_object()).collect();
+                for child in any_children {
+                    if let Some(&cidx) = self.by_addr.get(&child) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
             if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
                 for (key, value) in map.iter() {
                     for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
@@ -337,6 +350,18 @@ impl Heap {
                 }
                 if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
                     for child in array.object_references() {
+                        if let Some(&child_idx) = self.by_addr.get(&child) {
+                            if !self.records[child_idx].marked {
+                                self.records[child_idx].marked = true;
+                                work.push(child_idx);
+                            }
+                        }
+                    }
+                }
+                if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
+                    let any_children: Vec<usize> =
+                        fields.values().filter_map(|value| value.as_object()).collect();
+                    for child in any_children {
                         if let Some(&child_idx) = self.by_addr.get(&child) {
                             if !self.records[child_idx].marked {
                                 self.records[child_idx].marked = true;
@@ -470,6 +495,7 @@ impl Heap {
                 self.by_addr.remove(&(r.addr as usize));
                 self.dynamic_objects.remove(&(r.addr as usize));
                 self.arrays.remove(&(r.addr as usize));
+                self.any_fields.remove(&(r.addr as usize));
                 self.buffers.remove(&(r.addr as usize));
                 self.data_views.remove(&(r.addr as usize));
                 self.typed_views.remove(&(r.addr as usize));

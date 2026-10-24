@@ -1947,6 +1947,91 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower `new Error(message, { cause })` (and its subclasses) to a `New`
+    /// node, bridging the ECMAScript `(message, options)` constructor shape onto
+    /// Zun's one-argument-per-field object model. The arguments are rebuilt in
+    /// slot order: `message` from arg0 (empty string when omitted), `cause` from
+    /// the options object's `.cause` (`undefined` when no options object), and
+    /// every other field (e.g. `stackFrames`) from its declared initializer.
+    ///
+    /// The `cause` field is `any`, carried by the frozen-layout `any`-field
+    /// side table; absent and present are distinguished by `undefined` vs. the
+    /// read value. Construction allocates and reads a dynamic object, so it runs
+    /// on the Tier-0 interpreter (the `any` field keeps the method off the JIT
+    /// allowlist), matching the throwing/dynamic nature of Error values.
+    fn check_error_new(
+        &mut self,
+        cx: &mut FunctionCx,
+        class_idx: u32,
+        name: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        if args.len() > 2 {
+            self.error(
+                span,
+                format!("`{name}` expects at most a message and an options object, found {}", args.len()),
+            );
+            return self.poison(span);
+        }
+        // `message`: arg0, defaulting to the empty string (JS `new Error()`).
+        let mut message = match args.first() {
+            Some(arg) => self.check_expr(cx, arg),
+            None => hir::Expr { kind: hir::ExprKind::String(String::new()), ty: Ty::String, span },
+        };
+        coerce_numeric_literal(&mut message, Ty::String);
+        if !message.ty.is_error() && !self.is_assignable(message.ty, Ty::String) {
+            self.error(message.span, format!("`{name}` message must be a string"));
+        }
+        // The options object: arg1, or an empty dynamic object so the `.cause`
+        // read yields `undefined`.
+        let options = match args.get(1) {
+            Some(arg) => self.check_expr(cx, arg),
+            None => hir::Expr {
+                kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                ty: Ty::DynamicObject,
+                span,
+            },
+        };
+        if !matches!(options.ty, Ty::DynamicObject | Ty::Any) && !options.ty.is_error() {
+            self.error(options.span, format!("`{name}` options argument must be an object"));
+        }
+        // `cause` = `options.cause` (a missing key reads back as `undefined`).
+        let cause = hir::Expr {
+            kind: hir::ExprKind::DynamicGet { object: Box::new(options), name: "cause".to_string() },
+            ty: Ty::Any,
+            span,
+        };
+        // Assemble the constructor arguments in field-slot order.
+        let fields = self.full_fields(class_idx);
+        let initializers = self.full_initializers(class_idx);
+        let mut message = Some(message);
+        let mut cause = Some(cause);
+        let mut new_args: Vec<hir::Expr> = Vec::with_capacity(fields.len());
+        for (slot, (fname, _, _, _)) in fields.iter().enumerate() {
+            let arg = match fname.as_str() {
+                "message" => message.take().unwrap_or_else(|| self.poison(span)),
+                "cause" => cause.take().unwrap_or_else(|| self.poison(span)),
+                _ => match initializers.get(slot).and_then(|init| init.as_ref()) {
+                    Some(init) => {
+                        let init = init.clone();
+                        self.check_expr(cx, &init)
+                    }
+                    None => {
+                        self.error(span, format!("`{name}` field `{fname}` has no initializer"));
+                        self.poison(span)
+                    }
+                },
+            };
+            new_args.push(arg);
+        }
+        hir::Expr {
+            kind: hir::ExprKind::New { class: class_idx, args: new_args },
+            ty: Ty::Instance(class_idx),
+            span,
+        }
+    }
+
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
@@ -4888,7 +4973,9 @@ impl Checker<'_> {
                         }
                         // The registry owns this name's annotation and descriptor
                         // value; `new <Name>()` keeps using the existing path.
-                        CtorLowering::FallThrough => {}
+                        // `ClassFallThrough` (Error + subclasses) likewise falls
+                        // through to the class-construction path below.
+                        CtorLowering::FallThrough | CtorLowering::ClassFallThrough => {}
                     }
                 }
                 let typed_view = match name.as_str() {
@@ -5086,6 +5173,28 @@ impl Checker<'_> {
                     self.error(class.span, format!("unknown class `{name}`"));
                     return self.poison(span);
                 };
+                // ECMAScript Error construction: `new Error(message, { cause })`.
+                // The `(message, options)` shape does not fit Zun's one-arg-per-
+                // field model, so Error-family classes are built specially here:
+                // the message is arg0 (empty string when omitted), `stackFrames`
+                // comes from its declared initializer, and `cause` is read from
+                // the options object's `.cause` (or `undefined` when no options
+                // object is given). Applies to `Error` and its six subclasses,
+                // which all inherit the `message`/`stackFrames`/`cause` layout.
+                const ERROR_FAMILY: &[&str] = &[
+                    "Error",
+                    "EvalError",
+                    "RangeError",
+                    "ReferenceError",
+                    "SyntaxError",
+                    "TypeError",
+                    "URIError",
+                ];
+                if ERROR_FAMILY.contains(&name.as_str())
+                    && self.field_of(class_idx, "cause").map(|(_, ty)| ty) == Some(Ty::Any)
+                {
+                    return self.check_error_new(cx, class_idx, &name, args, span);
+                }
                 let field_tys: Vec<Ty> = self
                     .full_fields(class_idx)
                     .into_iter()

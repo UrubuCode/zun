@@ -57,3 +57,16 @@ global.set("Reflect", Reflect, true);
 // IS a Uint8Array in Node); its statics/instance methods are recognized by
 // receiver name. Appended last so every earlier descriptor token stays stable.
 global.set("Buffer", Buffer, true);
+
+// The managed error hierarchy. Class-backed base types: their annotation type
+// is resolved through the program's classes (they ship via the prelude), while
+// the realm registry owns their descriptor so `globalThis.Error` (and each
+// subclass) resolves like every other base type. Appended last so every earlier
+// descriptor token stays stable.
+global.set("Error", Error, true);
+global.set("EvalError", EvalError, true);
+global.set("RangeError", RangeError, true);
+global.set("ReferenceError", ReferenceError, true);
+global.set("SyntaxError", SyntaxError, true);
+global.set("TypeError", TypeError, true);
+global.set("URIError", URIError, true);

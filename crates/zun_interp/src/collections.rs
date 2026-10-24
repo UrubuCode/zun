@@ -3365,7 +3365,7 @@ impl<'a> Interp<'a> {
                 let name = self.module.strings.get(field.name).to_string();
                 let layout = self.types.get_field(field_rid).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| {
-                    super::value::decode_field(layout.kind, obj.field(layout.slot), heap)
+                    super::value::load_field(layout.kind, obj, layout.slot, heap)
                 });
                 out.push((name, value));
             }

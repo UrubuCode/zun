@@ -1,9 +1,9 @@
 //! The shipped `builtin/error.zun` hierarchy, exercised as a running program.
 //!
 //! The source is included from the real file rather than restated, so these
-//! test what actually ships. `Error` is not yet a realm global (the registry
-//! cannot name a class-backed base type — see NUCLEUS §22), so the hierarchy
-//! is compiled alongside the test program instead of imported.
+//! test what actually ships. These cases compile the hierarchy alongside the
+//! test program; `Error` is also a realm global now (NUCLEUS §22), exercised
+//! end-to-end in `end_to_end.rs`.
 
 use zun_interp::CaptureOutput;
 

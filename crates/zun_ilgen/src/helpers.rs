@@ -38,10 +38,13 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
     kind.to_byte()
 }
 
-/// The field value-type code uses a distinct string code for slot decoding.
+/// The field value-type code uses distinct codes for slot decoding: strings
+/// carry a handle (12) and `any` fields are carried out-of-line in the heap's
+/// `any_fields` side table (14), since an `Any` does not fit the 8-byte slot.
 pub(crate) fn field_kind_byte(ty: Ty) -> u8 {
     match ty {
         Ty::String => 12,
+        Ty::Any => 14,
         _ => jitkind_byte(ty),
     }
 }

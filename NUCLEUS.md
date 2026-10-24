@@ -46,13 +46,13 @@ read.
 | 19 | TypedArrays | partial | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs arity overloading first — plus `slice`/`copyWithin`, functional methods, `from/of`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters (== UTC, calendar is UTC-only). Missing `toLocale*`, local setters |
 | 21 | Buffer | partial | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`/`write`/`equals`/`copy`/`fill(value)` + common LE/BE 8/16/32/64 readers/writers. Encodings utf8/hex/base64/latin1. Deferred: ucs2/utf16le, base64url, 24-bit/float read*/write*, `swap16/32`, `indexOf`/`includes`, negative slice indices |
-| 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` now captured** at construction (frame walk + sequence points; byte-span frames, not line:col). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). Still not a realm global; `cause` deferred (needs `any` fields + object-literal syntax) |
+| 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 6 · partial 14 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 7 · partial 13 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -109,19 +109,26 @@ frozen runtime representation is unchanged — the registry only rebinds the nam
   `FinalizationRegistry`,
   `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
   `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
-  `Number`, `Boolean`, `Object`, `Symbol`, `Reflect`, `Buffer`. (`Map` keeps
-  token 0; `Reflect` and then `Buffer` are appended last to keep every earlier
-  token stable. `Buffer` denotes the `Uint8Array` byte view — see #21.)
-- **Not registrable yet:** `Date` and `Error` (+ subclasses
-  `EvalError/RangeError/ReferenceError/SyntaxError/TypeError/URIError`) — their
-  annotation would resolve to `Ty::Instance(<program-assigned class index>)`, which
-  a static `base_type_facets` entry cannot name; and `Proxy` (not in bucket A).
-  The hardcoded `new`/annotation matches remain for the lowercase aliases
-  (`map`, `array`, …) and `Proxy`, so those are not yet removable.
-  **Corrected 2026-10-23:** `Date` and `Error` are *not* on a hardcoded fallback,
-  as this previously said. They are absent from the checker entirely, so they are
-  unreachable as globals and a program must declare its own class. Letting the
-  registry name a class-backed base type is the open work, and it unblocks both.
+  `Number`, `Boolean`, `Object`, `Symbol`, `Reflect`, `Buffer`, and **`Error` +
+  6 subclasses** (`EvalError/RangeError/ReferenceError/SyntaxError/TypeError/
+  URIError`). (`Map` keeps token 0; `Reflect`, `Buffer`, then the Error family
+  are appended last to keep every earlier token stable. `Buffer` denotes the
+  `Uint8Array` byte view — see #21.)
+- **Class-backed binding (`ClassFallThrough`) landed.** `Error` + subclasses are
+  class-backed: their annotation is `Ty::Instance(<program-assigned class
+  index>)`, which a static `base_type_facets` entry cannot name, so the binding
+  carries a `ClassFallThrough` marker and the checker resolves the name through
+  `classes_by_name` at check time (both for the `: Error` annotation and for
+  `new Error(...)`, which uses the ordinary class-construction path). The
+  registry still owns the realm descriptor value, so `globalThis.Error` (and
+  each subclass) resolves like every other base type. These classes ship via the
+  prelude, so `new Error`/`throw new TypeError` already worked in-source; the
+  registry adds the `globalThis` resolution and the uniform realm path.
+- **Not registrable yet:** `Date` — its annotation would likewise resolve to
+  `Ty::Instance(<program-assigned class index>)`, now expressible via the same
+  `ClassFallThrough` mechanism (future work); and `Proxy` (not in bucket A). The
+  hardcoded `new`/annotation matches remain for the lowercase aliases (`map`,
+  `array`, …) and `Proxy`, so those are not yet removable.
 
 ---
 
@@ -951,7 +958,7 @@ There is no parallel `builtin/buffer.zun` class.
   bare `Uint8Array` too — the one visible consequence of the shared
   representation.
 
-## 22. Error (+ subclasses) — partial
+## 22. Error (+ subclasses) — mostly
 `builtin/error.zun` (module `zun:std:error`): `Error` + `EvalError RangeError
 ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
 
@@ -1001,10 +1008,16 @@ ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
   wrong answer, which is why the cheap inlining is the safe option and the linking
   work is a project of its own. It would also unblock **#20 Date** and the
   precompiled `zun:std` of PLAN §3.2.
-- **Still not a realm global** (`globalThis.Error`): a static `base_type_facets`
-  entry cannot denote `Ty::Instance(<program-assigned class index>)`. The class is
-  in scope by name, which is what user code needs; the realm binding waits on the
-  same type-identity work.
+- **Now a realm global** (`globalThis.Error`, + the 6 subclasses). A static
+  `base_type_facets` entry cannot denote `Ty::Instance(<program-assigned class
+  index>)`, so these use a new **`ClassFallThrough`** binding: the registry owns
+  only the realm descriptor value (seeded via `global.set(...)` in
+  `builtin/realm.zun`), while the checker resolves the name through
+  `classes_by_name` at check time for the `: Error` annotation
+  (`resolve_annotation`) and for `new Error(...)` (the ordinary class path). The
+  classes still ship via the prelude, so `new Error`/`throw new TypeError`
+  already worked in-source; this adds the `globalThis` resolution and the uniform
+  realm path, and generalizes to **#20 Date** (same mechanism, future work).
 - **`AggregateError(errors, message)` now lands**, carrying its `errors` array.
   It is declared **standalone, not `extends Error`**: construction fills fields
   inherited-first, so an `extends Error` subclass would force `message` ahead of
@@ -1014,11 +1027,43 @@ ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
   that `aggregate instanceof Error` is `false`, and the shared surface
   (`name`/`toString`/`get stack`) is duplicated rather than inherited. Reachable
   by name through the prelude like the other error classes.
-- **`cause` is still deferred**, on two independent blockers, not effort: (1)
-  `new Error(message, { cause })` needs an **options object literal**, and object
-  literals are not in the AST; (2) a `cause` field would be typed `any`, which the
-  construction/GC path still stores as zero (the documented `any`-field gap below).
-  Either alone blocks it; both must land first.
+- **`cause` landed.** `new Error(message, { cause })` sets `err.cause` to the
+  options object's `.cause` value (any type), and `err.cause` is `undefined` when
+  no options object / no `cause` key is given. The `(message, options)` shape
+  does not fit Zun's one-argument-per-field object model, so Error-family
+  construction is lowered specially (`check.rs::check_error_new`): `message` ←
+  arg0 (empty string when omitted), `stackFrames` ← its declared initializer, and
+  `cause` ← `options.cause` read via `DynamicGet` (an empty synthesized object
+  for the no-options case, so the read yields `undefined`). Applies to `Error`
+  and the 6 subclasses (they inherit the `message`/`stackFrames`/`cause` layout).
+  Construction allocates and reads a dynamic object, so it stays on the Tier-0
+  interpreter (the `any` field also keeps the method off the JIT allowlist),
+  matching the throwing/dynamic nature of Error values.
+  - **The `any`-field carrier (enabler) landed** — see the "frozen-layout `any`
+    fields" note below. `cause` is an `any` field; it now carries a boxed value
+    (number/string/object/…) through the heap side table instead of being stored
+    as zero, and absent-vs-present is a missing side-table entry (`undefined`)
+    vs. a stored `Any`.
+  - Remaining: no `err.cause = x` **dynamic set** on a typed instance (the field
+    is read-only through the typed path, like `name`); that is the same
+    dynamic-path concern as `e.name = "..."`.
+- **Frozen-layout `any` fields (the transversal enabler).** A class field is one
+  8-byte slot, but a runtime `Any` is 16 bytes (`zun_core::Any` = tag + payload),
+  so an `any`-typed field could not be carried: `field_kind_byte(Ty::Any)` mapped
+  to `JitKind::Other`, and `encode_field`/`decode_field` stored it as `0` and
+  read it back as `undefined` — the value was silently dropped. The fix (PLAN §2:
+  dynamic `Any` is the explicit, costly exception) adds a **`FIELD_ANY` kind
+  (byte 14, appended after the existing kinds so stored kind bytes stay stable)**
+  whose value lives **out of line in a heap side table** — `Heap.any_fields`,
+  keyed by `(owner address, field slot)`, the exact analogue of `Heap.arrays`.
+  `store_any_field`/`load_any_field` box/unbox the value; the GC traces,
+  relocates (compaction), sweeps, and write-barriers it exactly like array
+  elements (both mark passes, `rewrite_auxiliary_references`, the sweep removal).
+  Absent (no entry) reads as `Value::Void` (`undefined`); a present entry unboxes
+  to its concrete value. `NewObj`/`LoadField`/`StoreField` and the typed-object
+  enumerator route `FIELD_ANY` slots through `value::load_field`/`store_field`.
+  JIT: `FIELD_ANY` classifies as `JitKind::Other`, so `field_jit_ok` already
+  excludes any method touching an `any` field — it stays Tier 0, no codegen path.
 - **`Error.captureStackTrace` / `stackTraceLimit`** are V8 extensions rather than
   ECMAScript; worth a deliberate decision before implementing.
 - **Tests:** `zun_vm/tests/error_surface.rs` runs the shipped `builtin/error.zun`
@@ -1155,9 +1200,11 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      `set(source, offset)` (needs overload resolution), `slice/copyWithin`, the
      functional methods, `TypedArray.from/of`, real BigInt elements.
    - BigInt (#4): `div/rem/pow/neg`, bitwise/shift, `BigInt()` coercion, `asIntN/asUintN`.
-   - Error (#22): ✅ `.stack` capture and `AggregateError(errors, message)` landed.
-     Remaining: `cause` (blocked on object-literal syntax + `any` fields), realm
-     global, `aggregate instanceof Error`, `Promise.any` aggregate wiring.
+   - Error (#22): ✅ `.stack` capture, `AggregateError(errors, message)`,
+     **`cause` (via the frozen-layout `any`-field carrier)**, and **`Error` + 6
+     subclasses as realm globals** (`ClassFallThrough`) landed. Remaining:
+     `err.cause = x` dynamic set on a typed instance, `aggregate instanceof
+     Error`.
    - ArrayBuffer (#17): ✅ `byteLength slice isView` landed. Remaining (deferred):
      resizable buffers (`resize/maxByteLength`), `SharedArrayBuffer`.
    - Proxy/Reflect (#10): full trap set + `Reflect` global.

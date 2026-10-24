@@ -218,6 +218,39 @@ impl Value {
 pub const FIELD_OBJECT: u8 = 11;
 /// Field value-type code for a string reference.
 pub const FIELD_STRING: u8 = 12;
+/// Field value-type code for a dynamically-typed (`any`) field. An `Any` is 16
+/// bytes and does not fit the 8-byte field slot, so it is carried in the heap's
+/// `any_fields` side table (box/unbox), keyed by owner address and slot. The
+/// byte is appended after the existing kinds so stored kind bytes stay stable.
+pub const FIELD_ANY: u8 = 14;
+
+/// Read a field from an object, consulting the `any_fields` side table for
+/// `FIELD_ANY` slots and the inline slot otherwise. An absent `any` field is
+/// `undefined` (`Value::Void`); a stored `Any` is unboxed to its concrete value
+/// (mirroring array-element reads).
+pub fn load_field(kind: u8, obj: zun_gc::Obj, slot: usize, heap: &zun_gc::Heap) -> Value {
+    if kind == FIELD_ANY {
+        return match heap.load_any_field(obj, slot) {
+            Some(any) => Value::unbox_any(any, heap).unwrap_or(Value::Void),
+            None => Value::Void,
+        };
+    }
+    decode_field(kind, obj.field(slot), heap)
+}
+
+/// Store a value into an object field, routing `FIELD_ANY` slots through the
+/// `any_fields` side table (boxing the value to an `Any`) and other kinds
+/// through the inline slot with the usual reference write-barrier.
+pub fn store_field(kind: u8, obj: zun_gc::Obj, slot: usize, value: &Value, heap: &mut zun_gc::Heap) {
+    if kind == FIELD_ANY {
+        if let Some(any) = value.box_any(heap) {
+            heap.store_any_field(obj, slot, any);
+        }
+        return;
+    }
+    let raw = encode_field(kind, value, heap);
+    heap.store_field(obj, slot, raw, kind == FIELD_OBJECT);
+}
 
 /// Decode a raw field slot into a [`Value`], given the field's value-type code
 /// (from `FieldDef.kind`) and the heap (for string handles).

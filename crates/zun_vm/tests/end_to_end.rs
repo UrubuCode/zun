@@ -2111,3 +2111,97 @@ fn string_is_iterable_by_code_point() {
     );
     assert_eq!(out, ["a", "\u{1F600}", "b"]);
 }
+
+// --- Error.cause + any-field carrier + Error as a realm global (NUCLEUS #22) ---
+
+#[test]
+fn error_cause_carries_the_options_value() {
+    // `new Error(message, { cause })` records `cause`; a numeric cause reads
+    // back through the frozen-layout `any`-field carrier.
+    let out = run_with_std(
+        r#"function main() {
+            let e = new Error("boom", { cause: 42 });
+            print(e.message);
+            if ((e.cause as number) === 42) { print("cause-42"); }
+        }"#,
+    );
+    assert_eq!(out, ["boom", "cause-42"]);
+}
+
+#[test]
+fn error_cause_absent_is_undefined() {
+    // With no options object, `cause` is absent (JS `undefined`), distinct from
+    // a present value.
+    let out = run_with_std(
+        r#"function main() {
+            let e = new Error("boom");
+            print(e.cause);
+            print(typeof e.cause);
+        }"#,
+    );
+    assert_eq!(out, ["undefined", "undefined"]);
+}
+
+#[test]
+fn error_cause_carries_a_non_number() {
+    // The `any` carrier holds any type: a string cause and an object cause both
+    // round-trip (the object through its boxed reference).
+    let out = run_with_std(
+        r#"function main() {
+            let s = new Error("boom", { cause: "root" });
+            print(s.cause);
+            let inner = new Error("inner");
+            let o = new Error("outer", { cause: inner });
+            let c: any = o.cause;
+            print((c as Error).message);
+        }"#,
+    );
+    assert_eq!(out, ["root", "inner"]);
+}
+
+#[test]
+fn error_cause_on_a_subclass() {
+    // Subclasses inherit the `message`/`stackFrames`/`cause` layout, so the
+    // options-object cause works for them too.
+    let out = run_with_std(
+        r#"function main() {
+            let e = new TypeError("bad", { cause: 7 });
+            print(e.name);
+            if ((e.cause as number) === 7) { print("cause-7"); }
+        }"#,
+    );
+    assert_eq!(out, ["TypeError", "cause-7"]);
+}
+
+#[test]
+fn error_is_a_realm_global_and_throws() {
+    // `Error` resolves as a realm global: `throw new Error(...)` unwinds to the
+    // catch with the message intact, and `globalThis.Error` resolves to its
+    // descriptor.
+    let out = run_with_std(
+        r#"function main() {
+            try {
+                throw new Error("nope");
+            } catch (e: Error) {
+                print(e.message);
+            }
+            if (typeof globalThis.Error !== "undefined") { print("global-error"); }
+        }"#,
+    );
+    assert_eq!(out, ["nope", "global-error"]);
+}
+
+#[test]
+fn error_subclass_throws_as_realm_global() {
+    let out = run_with_std(
+        r#"function main() {
+            try {
+                throw new TypeError("wrong type");
+            } catch (e: TypeError) {
+                print(e.name);
+                print(e.message);
+            }
+        }"#,
+    );
+    assert_eq!(out, ["TypeError", "wrong type"]);
+}
