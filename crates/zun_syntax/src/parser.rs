@@ -188,10 +188,13 @@ impl Parser<'_> {
             // Skip what cannot begin a member instead of parsing it into a
             // field made entirely of error nodes, so the well-formed members
             // around it still come through.
+            // Keywords are valid member names (e.g. a `delete`/`in` method),
+            // matching the ECMAScript rule, so any keyword may begin a member.
             if !matches!(
                 self.peek().kind,
                 TokenKind::Ident | TokenKind::Hash | TokenKind::KwStatic | TokenKind::KwExtern
-            ) {
+            ) && !self.peek().kind.is_keyword()
+            {
                 let span = self.peek().span;
                 self.error_at(span, "expected a field or method name".to_string());
                 self.bump();
@@ -201,7 +204,7 @@ impl Parser<'_> {
             let is_private = self.eat(TokenKind::Hash);
             let is_static = self.eat(TokenKind::KwStatic);
             let is_extern = self.eat(TokenKind::KwExtern);
-            let member_name = self.name("a field or method name");
+            let member_name = self.member_name("a field or method name");
             let accessor = if !is_static && !is_extern && !self.at(TokenKind::LParen)
                 && (self.text(self.tokens[self.pos - 1]) == "get" || self.text(self.tokens[self.pos - 1]) == "set")
             {

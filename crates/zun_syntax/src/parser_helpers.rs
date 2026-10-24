@@ -140,6 +140,8 @@ fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
         TokenKind::LtEq => (BinaryOp::Le, 2),
         TokenKind::Gt => (BinaryOp::Gt, 2),
         TokenKind::GtEq => (BinaryOp::Ge, 2),
+        TokenKind::KwIn => (BinaryOp::In, 2),
+        TokenKind::KwInstanceof => (BinaryOp::Instanceof, 2),
         TokenKind::OrOr => (BinaryOp::Or, 0),
         TokenKind::Nullish => (BinaryOp::Nullish, 0),
         TokenKind::AndAnd => (BinaryOp::And, 1),
@@ -542,6 +544,8 @@ impl Parser<'_> {
         let op = match self.peek().kind {
             TokenKind::Minus => Some(UnaryOp::Neg),
             TokenKind::Bang => Some(UnaryOp::Not),
+            TokenKind::KwTypeof => Some(UnaryOp::Typeof),
+            TokenKind::KwDelete => Some(UnaryOp::Delete),
             _ => None,
         };
         if let Some(op) = op {

@@ -624,6 +624,8 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 BinaryOperator::Multiplication => BinaryOp::Mul,
                 BinaryOperator::Division => BinaryOp::Div,
                 BinaryOperator::Remainder => BinaryOp::Rem,
+                BinaryOperator::In => BinaryOp::In,
+                BinaryOperator::Instanceof => BinaryOp::Instanceof,
                 _ => return Err("OXC adapter does not support this binary operator yet".into()),
             };
             Ok(Expr::Binary {
@@ -656,6 +658,8 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             let op = match unary.operator {
                 UnaryOperator::UnaryNegation => crate::ast::UnaryOp::Neg,
                 UnaryOperator::LogicalNot => crate::ast::UnaryOp::Not,
+                UnaryOperator::Typeof => crate::ast::UnaryOp::Typeof,
+                UnaryOperator::Delete => crate::ast::UnaryOp::Delete,
                 _ => return Err("OXC adapter does not support this unary operator yet".into()),
             };
             Ok(Expr::Unary {

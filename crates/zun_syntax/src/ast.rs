@@ -390,6 +390,10 @@ pub enum BinaryOp {
     Or,
     /// `??`
     Nullish,
+    /// `in` — property membership test.
+    In,
+    /// `instanceof` — class/prototype membership test.
+    Instanceof,
 }
 
 /// A unary operator.
@@ -399,6 +403,10 @@ pub enum UnaryOp {
     Neg,
     /// `!`
     Not,
+    /// `typeof` — the JS runtime type-string operator.
+    Typeof,
+    /// `delete` — remove a property from an object; yields a boolean.
+    Delete,
 }
 
 /// An expression.

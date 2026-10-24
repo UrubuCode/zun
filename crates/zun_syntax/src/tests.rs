@@ -9,6 +9,25 @@
         &src[name.span.start as usize..name.span.end as usize]
     }
     #[test]
+    fn parses_operator_tokens_typeof_in_instanceof_delete() {
+        // The operator keywords parse in expression position.
+        parse_ok("function main(): string { return typeof x; }");
+        parse_ok("function main(): boolean { return k in obj; }");
+        parse_ok("function main(): boolean { return x instanceof C; }");
+        parse_ok("function main(): boolean { return delete obj.k; }");
+    }
+
+    #[test]
+    fn keyword_as_property_name_still_parses() {
+        // Making these operators keywords must not break member access that
+        // uses the same words as property names.
+        parse_ok("function main(): any { return obj.in; }");
+        parse_ok("function main(): any { return obj.typeof; }");
+        parse_ok("function main(): any { return obj.instanceof; }");
+        parse_ok("function main(): any { return obj.delete; }");
+    }
+
+    #[test]
     fn parses_function_with_params_and_return_type() {
         let src = "function add(a: number, b: number): number { return a + b; }";
         let p = parse_ok(src);

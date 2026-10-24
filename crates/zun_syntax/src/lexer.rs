@@ -88,6 +88,14 @@ pub enum TokenKind {
     KwExtern,
     /// `static`
     KwStatic,
+    /// `typeof`
+    KwTypeof,
+    /// `delete`
+    KwDelete,
+    /// `in`
+    KwIn,
+    /// `instanceof`
+    KwInstanceof,
 
     // Punctuation
     /// `(`
@@ -172,6 +180,7 @@ impl TokenKind {
                 | KwCase | KwDefault | KwWhile | KwDo | KwFor | KwOf | KwBreak | KwContinue
                 | KwReturn | KwThrow | KwTry | KwCatch | KwFinally | KwTrue | KwFalse | KwNull
                 | KwClass | KwNew | KwExtends | KwAs | KwImport | KwFrom | KwExtern | KwStatic
+                | KwTypeof | KwDelete | KwIn | KwInstanceof
         )
     }
 }
@@ -428,16 +437,19 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
 
 /// Division-vs-regex rule: a `/` starts a regex literal unless the previous
 /// token ends a value (identifier, number, string, template, `)`, `]`,
-/// `true`/`false`/`null`). Operator-like identifiers (`typeof`, `in`,
-/// `instanceof`, `void`, `delete`) allow a regex.
+/// `true`/`false`/`null`). Operator-like keywords (`typeof`, `in`,
+/// `instanceof`, `delete`) expect an expression next, so they allow a
+/// regex (the default `_ => true` arm covers them now that they are keywords).
 fn regex_allowed(source: &str, prev: Option<&Token>) -> bool {
+    let _ = source;
     let Some(prev) = prev else { return true };
     match prev.kind {
-        TokenKind::Ident => matches!(
-            &source[prev.span.start as usize..prev.span.end as usize],
-            "typeof" | "in" | "instanceof" | "void" | "delete"
-        ),
-        TokenKind::Number
+        // A `/` following any value-ending token is division, not a regex.
+        // Identifiers end a value; the operator keywords (`typeof`, `in`,
+        // `instanceof`, `delete`) are no longer identifiers, so they fall to
+        // the `_ => true` arm and correctly allow a following regex.
+        TokenKind::Ident
+        | TokenKind::Number
         | TokenKind::BigInt
         | TokenKind::String
         | TokenKind::Template
@@ -485,6 +497,10 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "from" => TokenKind::KwFrom,
         "extern" => TokenKind::KwExtern,
         "static" => TokenKind::KwStatic,
+        "typeof" => TokenKind::KwTypeof,
+        "delete" => TokenKind::KwDelete,
+        "in" => TokenKind::KwIn,
+        "instanceof" => TokenKind::KwInstanceof,
         _ => TokenKind::Ident,
     }
 }
@@ -585,8 +601,19 @@ mod tests {
         assert_eq!(kinds("x = /a/"), vec![Ident, Eq, Regex, Eof]);
         assert_eq!(kinds("f(/a/, /b/i)"), vec![Ident, LParen, Regex, Comma, Regex, RParen, Eof]);
         assert_eq!(kinds("return /a/"), vec![KwReturn, Regex, Eof]);
-        assert_eq!(kinds("typeof /a/"), vec![Ident, Regex, Eof]);
+        assert_eq!(kinds("typeof /a/"), vec![KwTypeof, Regex, Eof]);
         assert_eq!(kinds("a ? /x/ : /y/"), vec![Ident, Question, Regex, Colon, Regex, Eof]);
+    }
+
+    #[test]
+    fn operator_keywords_lex_as_keywords() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("typeof x in obj instanceof C delete y"),
+            vec![
+                KwTypeof, Ident, KwIn, Ident, KwInstanceof, Ident, KwDelete, Ident, Eof
+            ]
+        );
     }
 
     #[test]
