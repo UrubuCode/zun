@@ -327,6 +327,131 @@ fn object_create_sets_the_prototype_chain_for_is_prototype_of() {
 }
 
 #[test]
+fn object_define_property_data_descriptor_controls_enumerability() {
+    // A non-enumerable data property is readable and listed by
+    // getOwnPropertyNames, but skipped by Object.keys.
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(1));
+            dynamic_set(d, "enumerable", box_any(false));
+            Object.defineProperty(o, "x", d);
+            print(dynamic_get(o, "x") as number);
+            print(Object.keys(o).length);
+            print(Object.getOwnPropertyNames(o).length);
+            print(Object.getOwnPropertyNames(o)[0] as string);
+        }"#,
+    );
+    assert_eq!(out, ["1", "0", "1", "x"]);
+}
+
+#[test]
+fn object_define_property_enforces_writable_and_configurable() {
+    // Omitted flags default to false: the property is non-writable and
+    // non-configurable, so assignment, redefine, and delete are all rejected.
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(1));
+            Object.defineProperty(o, "x", d);
+            dynamic_set(o, "x", box_any(99));
+            print(dynamic_get(o, "x") as number);
+            let d2 = dynamic_new();
+            dynamic_set(d2, "value", box_any(2));
+            Object.defineProperty(o, "x", d2);
+            print(dynamic_get(o, "x") as number);
+            delete o.x;
+            print(Object.getOwnPropertyNames(o).length);
+        }"#,
+    );
+    assert_eq!(out, ["1", "1", "1"]);
+}
+
+#[test]
+fn object_get_own_property_descriptor_reports_attributes() {
+    // An ordinary assignment creates a writable + enumerable + configurable
+    // data property.
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "k", box_any(5));
+            let d: any = Object.getOwnPropertyDescriptor(o, "k");
+            print((d.value) as number);
+            print(Boolean(d.writable));
+            print(Boolean(d.enumerable));
+            print(Boolean(d.configurable));
+        }"#,
+    );
+    assert_eq!(out, ["5", "true", "true", "true"]);
+}
+
+#[test]
+fn object_seal_prevents_configuration_but_keeps_values_writable() {
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            Object.seal(o);
+            print(Object.isSealed(o));
+            print(Object.isExtensible(o));
+            dynamic_set(o, "b", box_any(2));
+            print(Object.getOwnPropertyNames(o).length);
+            dynamic_set(o, "a", box_any(9));
+            print(dynamic_get(o, "a") as number);
+        }"#,
+    );
+    assert_eq!(out, ["true", "false", "1", "9"]);
+}
+
+#[test]
+fn object_prevent_extensions_blocks_new_keys() {
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            print(Object.isExtensible(o));
+            Object.preventExtensions(o);
+            print(Object.isExtensible(o));
+            dynamic_set(o, "b", box_any(2));
+            print(Object.getOwnPropertyNames(o).length);
+        }"#,
+    );
+    assert_eq!(out, ["true", "false", "1"]);
+}
+
+#[test]
+fn ordinary_assignment_creates_enumerable_property() {
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "k", box_any(7));
+            print(Object.keys(o).length);
+            print(Object.keys(o)[0] as string);
+            print(o.propertyIsEnumerable("k"));
+        }"#,
+    );
+    assert_eq!(out, ["1", "k", "true"]);
+}
+
+#[test]
+fn object_define_property_accessor_getter_is_invoked_on_read() {
+    // An accessor descriptor stores its getter in the function slot
+    // (dynamicSetFunction); reading the property invokes the getter.
+    let out = run_source(
+        r#"function main() {
+            let o = dynamic_new();
+            let d = dynamic_new();
+            dynamicSetFunction(d, "get", () => 42.0);
+            Object.defineProperty(o, "y", d);
+            print(o.y as number);
+        }"#,
+    );
+    assert_eq!(out, ["42"]);
+}
+
+#[test]
 fn function_call_threads_this_as_the_leading_argument() {
     // `f.call(thisArg, x)` invokes `f` with `thisArg` bound to its first
     // parameter and `x` to the second.

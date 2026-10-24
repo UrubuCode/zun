@@ -1076,8 +1076,12 @@ impl Checker<'_> {
         // Expected argument count per static (`assign` is variadic: 1+).
         let fixed = match method {
             "keys" | "values" | "entries" | "freeze" | "isFrozen" | "create"
-            | "getPrototypeOf" | "fromEntries" => Some(1usize),
-            "setPrototypeOf" | "is" => Some(2usize),
+            | "getPrototypeOf" | "fromEntries" | "getOwnPropertyDescriptors"
+            | "getOwnPropertyNames" | "seal" | "isSealed" | "preventExtensions"
+            | "isExtensible" => Some(1usize),
+            "setPrototypeOf" | "is" | "getOwnPropertyDescriptor"
+            | "defineProperties" => Some(2usize),
+            "defineProperty" => Some(3usize),
             "assign" => None,
             _ => {
                 self.error(
@@ -1117,6 +1121,19 @@ impl Checker<'_> {
             "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),
             "fromEntries" => builtin(self, "objectFromEntries", checked, Ty::DynamicObject),
             "is" => builtin(self, "objectIs", checked, Ty::Boolean),
+            "defineProperty" => builtin(self, "objectDefineProperty", checked, Ty::Any),
+            "defineProperties" => builtin(self, "objectDefineProperties", checked, Ty::Any),
+            "getOwnPropertyDescriptor" => {
+                builtin(self, "objectGetOwnPropertyDescriptor", checked, Ty::Any)
+            }
+            "getOwnPropertyDescriptors" => {
+                builtin(self, "objectGetOwnPropertyDescriptors", checked, Ty::DynamicObject)
+            }
+            "getOwnPropertyNames" => builtin(self, "objectGetOwnPropertyNames", checked, Ty::Array),
+            "seal" => builtin(self, "objectSeal", checked, Ty::Any),
+            "isSealed" => builtin(self, "objectIsSealed", checked, Ty::Boolean),
+            "preventExtensions" => builtin(self, "objectPreventExtensions", checked, Ty::Any),
+            "isExtensible" => builtin(self, "objectIsExtensible", checked, Ty::Boolean),
             "assign" => {
                 let Some(id) = intrinsic("objectAssign") else {
                     self.error(span, "missing Object intrinsic `objectAssign`");
@@ -3404,7 +3421,9 @@ impl Checker<'_> {
                 // `Object.prototype` instance reflectors over typed, dynamic, or
                 // `any` receivers. Checked before the generic `any` member-call
                 // path so they are not swallowed by dynamic dispatch.
-                if (mname == "hasOwnProperty" || mname == "isPrototypeOf")
+                if (mname == "hasOwnProperty"
+                    || mname == "isPrototypeOf"
+                    || mname == "propertyIsEnumerable")
                     && args.len() == 1
                     && matches!(
                         receiver.ty,
@@ -3414,6 +3433,8 @@ impl Checker<'_> {
                     let argument = self.check_expr(cx, &args[0]);
                     let (name, ty) = if mname == "hasOwnProperty" {
                         ("objectHasOwn", Ty::Boolean)
+                    } else if mname == "propertyIsEnumerable" {
+                        ("objectPropertyIsEnumerable", Ty::Boolean)
                     } else {
                         ("objectIsPrototypeOf", Ty::Boolean)
                     };

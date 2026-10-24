@@ -382,13 +382,21 @@ impl Interp<'_> {
                     stack.push(Value::Object(object));
                 }
                 Opcode::LoadDynamic => {
-                    let name = self.dynamic_name(&instr.operand)?;
+                    let name = self.dynamic_name(&instr.operand)?.to_owned();
                     let object = pop(&mut stack)?.as_object();
-                    let value = zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_get(object, name)
-                            .map(Value::Any)
-                            .unwrap_or(Value::Void)
-                    });
+                    // An accessor property invokes its getter (NUCLEUS §6);
+                    // a data property (or an absent key) reads the value slot.
+                    let getter =
+                        zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, &name));
+                    let value = if let Some(getter) = getter {
+                        self.invoke_function_value(getter, Vec::new())?
+                    } else {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get(object, &name)
+                                .map(Value::Any)
+                                .unwrap_or(Value::Void)
+                        })
+                    };
                     stack.push(value);
                 }
                 Opcode::StoreDynamic => {
@@ -398,9 +406,26 @@ impl Interp<'_> {
                         return Err(RunError::BadToken);
                     };
                     let object = pop(&mut stack)?.as_object();
-                    zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set(object, name, any);
+                    // An accessor property invokes its setter; a data property
+                    // writes the value slot (rejected silently if non-writable).
+                    let setter = zun_gc::with_current_heap(|heap| {
+                        if heap.dynamic_is_accessor(object, &name) {
+                            heap.dynamic_accessor_setter(object, &name)
+                        } else {
+                            None
+                        }
                     });
+                    let is_accessor =
+                        zun_gc::with_current_heap(|heap| heap.dynamic_is_accessor(object, &name));
+                    if is_accessor {
+                        if let Some(setter) = setter {
+                            self.invoke_function_value(setter, vec![Value::Any(any)])?;
+                        }
+                    } else {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set(object, name, any);
+                        });
+                    }
                     stack.push(Value::Any(any));
                 }
                 Opcode::LoadDynamicValue => {

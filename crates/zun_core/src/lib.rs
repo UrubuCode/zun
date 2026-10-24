@@ -27,7 +27,7 @@ pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};
 pub use arrays::{ArrayIterator, ArrayStorage};
 pub use byte_buffer::ByteBuffer;
-pub use dynamic_object::DynamicObject;
+pub use dynamic_object::{DynamicObject, PropertyDescriptor};
 pub use error_value::ErrorValue;
 pub use date_value::DateValue;
 pub use ids::{CoreTypeId, IntrinsicId};

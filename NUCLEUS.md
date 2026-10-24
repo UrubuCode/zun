@@ -30,7 +30,7 @@ read.
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** now drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`). Remaining: `toPrimitive`/`toStringTag` dispatch (blocked on a missing coercion / object-stringification site), typed-class `hasInstance`. Object-literal computed symbol keys land (`{ [sym]: v }`); class computed symbol-key members still deferred |
-| 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
+| 6 | Object | mostly | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. Remaining: `getOwnPropertySymbols` |
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }` (resolve/reject callable via dynamic method call); `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. Remaining: `new Promise(executor)` constructor; destructuring the resolver functions (front-end gap, see §9) |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 5 · partial 15 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 6 · partial 14 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -323,7 +323,7 @@ in sync.
   - Other well-known symbols (`isConcatSpreadable match replace search split species
     unscopables`) — not seeded; add to `WellKnownSymbol` when a consumer needs them.
 
-## 6. Object — partial  *(HIGH priority — core surface landed)*
+## 6. Object — mostly  *(property-descriptor model landed)*
 The `Object` global is recognized in sema (`check.rs` `check_object_static` + the
 instance reflectors in the `MethodCall` arm) and lowered to `zun:collections`
 `object*` managed builtins implemented in the interpreter floor
@@ -331,41 +331,71 @@ instance reflectors in the `MethodCall` arm) and lowered to `zun:collections`
 objects and `DynamicObject`s.
 
 - **Present (statics):** `keys values entries assign freeze isFrozen create
-  getPrototypeOf setPrototypeOf fromEntries is`.
-- **Present (instance):** `hasOwnProperty isPrototypeOf`.
+  getPrototypeOf setPrototypeOf fromEntries is defineProperty defineProperties
+  getOwnPropertyDescriptor getOwnPropertyDescriptors getOwnPropertyNames seal isSealed
+  preventExtensions isExtensible`.
+- **Present (instance):** `hasOwnProperty isPrototypeOf propertyIsEnumerable`.
+
+### Property-descriptor model (NUCLEUS #6 — landed)
+`DynamicObject` (`zun_core/src/dynamic_object.rs`) now carries the full ECMAScript
+attribute set per own string key, extending the pre-existing `writable` bit with
+`enumerable` and `configurable` (stored as cleared-attribute sets, default-true) plus a
+`non_extensible` flag. A key is either a **data property** `{ value, writable,
+enumerable, configurable }` or an **accessor property** `{ get?, set?, enumerable,
+configurable }` whose get/set are `FunctionHandle`s held in dedicated accessor slots
+(function values do not box into `Any`; the GC traces their environments via
+`object_references`). Default attributes follow the creation path: an ordinary
+assignment (`obj.k = v`, `DynamicObject::set`) creates enumerable + writable +
+configurable; `Object.defineProperty` defaults each omitted flag to **false**.
+
+- **Enumerable semantics.** `DynamicObject::entries`/`enumerable_keys` skip
+  non-enumerable keys, so `Object.keys/values/entries` and `Object.assign` observe only
+  enumerable own string keys; `getOwnPropertyNames` (`keys()`) returns **all** own string
+  keys (enumerable or not, data or accessor). (Object spread / `for-in` do not exist in
+  the front-end yet, so there is no other enumeration site to filter.)
+- **Enforcement (silent, freeze-consistent — matching the existing `freeze` model).** A
+  non-writable data key rejects `obj.k = v`; a non-configurable key rejects re-
+  `defineProperty` and `delete`; a non-extensible object rejects adding a new key.
+  `preventExtensions` sets non-extensible; `seal` = non-extensible + every key
+  non-configurable (values stay writable); `freeze` = non-extensible + every data key
+  non-writable + every key non-configurable (reconciled with the pre-existing `frozen`
+  fast flag). `isSealed`/`isExtensible`/`isFrozen` are computed from this state; typed
+  fixed-layout objects report sealed + non-extensible (and `isFrozen` true).
+- **Statics plumbing.** The descriptor argument and the
+  `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors` return value are ordinary
+  `DynamicObject`s: `{value, writable, enumerable, configurable}` for data,
+  `{get, set, enumerable, configurable}` for accessors (get/set read from / written to
+  the string **function-slot** via `dynamicSetFunction`/`dynamic_get_function`; a missing
+  accessor shows as `undefined`). `defineProperties` applies each enumerable key of the
+  descriptors map. The new natives are appended **last** in the `collections` module so
+  existing dispatch ids stay stable, and are added to the interpreter's by-name
+  interception list (`builtins.rs`).
+- **Accessor invocation — WIRED.** Reading `obj.y` (`LoadDynamic`) invokes the stored
+  getter and assigning `obj.y = v` (`StoreDynamic`) invokes the setter, via
+  `invoke_function_value` (reusing the callback re-entry machinery, Tier 0 only). This is
+  reachable end-to-end today: a getter is attached to a descriptor with
+  `dynamicSetFunction(desc, "get", fn)` and `Object.defineProperty(o, "y", desc)`, then
+  `o.y` returns the getter's result (covered by a test). **Gap:** the *computed-key* paths
+  (`LoadDynamicValue`/`StoreDynamicValue`, `o[k]`) do not yet consult accessors — only the
+  named `.y` path does; wiring them is a follow-up.
+- **Typed-object (class instance) targets.** `defineProperty` and friends target
+  `DynamicObject`s; a typed frozen-layout instance keeps its fixed behavior
+  (`getOwnPropertyDescriptor` on a declared field reports a writable + enumerable +
+  non-configurable data descriptor; `defineProperty` cannot add fields to it).
 - **Key enumeration:** for a typed object, own keys = its declared instance fields in
   definition order, walking base classes first and excluding `static`/private (`#`)
   fields; for a `DynamicObject`, its dynamic **string** keys in insertion order
   (`DynamicObject` now keeps string properties in an insertion-ordered vector + index,
   replacing the previous sorted `BTreeMap`).
-- **Freeze semantics:** `freeze` sets a per-dynamic-object frozen flag; the dynamic
-  store path (`DynamicObject::set`/`remove`, hence `stdyn`/`dynamic_set`) then rejects
-  adds, overwrites, and deletes (non-throwing). Typed objects already have an immutable
-  fixed layout, so `freeze` is a no-op on them and `isFrozen` reports `true`.
 - **Prototype model:** `DynamicObject` carries an optional `[[Prototype]]` link;
   `create`/`getPrototypeOf`/`setPrototypeOf`/`isPrototypeOf` operate over it. Typed
   objects expose no reflective prototype (their `getPrototypeOf` is `null`).
 - **`Object.is`:** ECMAScript `SameValue` (NaN equals NaN; +0 distinct from −0;
   numbers compared by IEEE-754 bits after the NaN check; strings by content; objects by
   identity).
-- **Deferred (documented follow-up — need a property-descriptor model that Zun does not
-  have yet):** `defineProperty defineProperties getOwnPropertyDescriptor
-  getOwnPropertyDescriptors seal isSealed preventExtensions isExtensible
-  getOwnPropertyNames getOwnPropertySymbols`, and instance `propertyIsEnumerable`. These
-  require configurable/enumerable/writable attribute slots and a non-extensible flag that
-  is distinct from `freeze`. Implementing them soundly means first adding a descriptor
-  layer to `DynamicObject` (and deciding how it interacts with the frozen typed-object
-  floor) — a design decision left for the human. Not faked.
-  - **Writable attribute now exists (B1):** `DynamicObject` carries a general per-entry
-    **writable** bit (`non_writable` key set) with `define(name, value, writable)` /
-    `is_writable(name)` (core) and `Heap::dynamic_define` / `dynamic_is_writable` (gc).
-    The ordinary `set` path (`stdyn`/`dynamic_set`, string-literal and computed) rejects
-    reassigning a non-writable key, silently, exactly as `freeze` rejects — so these are
-    the freeze-consistent, non-throwing semantics. Introduced for `global.set(name,
-    value, readonly)` (the `global` namespace in `zun:core`, PLAN §3.1), but **not**
-    hard-coded to the realm global: it is a general attribute slot that the descriptor
-    statics above can build on (writable first; add `enumerable`/`configurable`
-    alongside it the same way).
+- **Still deferred:** `getOwnPropertySymbols` (symbol-keyed own properties are stored but
+  not yet enumerated); descriptor-dependent **Proxy** traps / **Reflect** statics
+  (§10) can now build on this model; computed-key accessor access (see above).
 - **Notes:** these builtins allocate/throw, so per the centralized JIT-eligibility rule
   (`zun_codegen/src/eligible.rs`) they are **not** in the Tier-1 allowlist and run on the
   always-correct Tier-0 interpreter; there is no separate JIT path to keep in sync.

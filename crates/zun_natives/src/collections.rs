@@ -404,5 +404,19 @@ pub const MODULE: crate::Module = crate::Module {
         // than the ordinary symbol-value slot. The symbol argument arrives as
         // an immediate `Any` (`AnyTag::Symbol`), hence `Opaque`.
         NativeFn { name: "dynamicSetSymbolFunction", params: &[DynamicObject, Opaque, Function], ret: Void, imp: unavailable },
+        // Property-descriptor model statics (NUCLEUS §6). Like the other
+        // `object*` reflectors these touch the managed heap and are intercepted
+        // by name; the signatures fix only the argument count the verifier
+        // pops. Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "objectDefineProperty", params: &[DynamicObject, Str, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectDefineProperties", params: &[DynamicObject, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectGetOwnPropertyDescriptor", params: &[Opaque, Str], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectGetOwnPropertyDescriptors", params: &[Opaque], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "objectGetOwnPropertyNames", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "objectSeal", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectIsSealed", params: &[Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "objectPreventExtensions", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectIsExtensible", params: &[Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "objectPropertyIsEnumerable", params: &[Opaque, Str], ret: Bool, imp: unavailable },
     ],
 };

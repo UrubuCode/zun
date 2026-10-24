@@ -48,6 +48,113 @@ impl Heap {
             .is_none_or(|properties| properties.is_writable(name))
     }
 
+    /// `Object.defineProperty` with a **data** descriptor: set `name` with the
+    /// given attributes, enforcing configurability/extensibility. Returns
+    /// `false` if `object` is not a dynamic object or the definition is
+    /// rejected.
+    pub fn dynamic_define_data(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        value: zun_core::Any,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> bool {
+        let ok = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|properties| properties.define_data(name, value, writable, enumerable, configurable));
+        if ok {
+            if let Some(child) = value.as_object() {
+                self.write_barrier(object, child as u64);
+            }
+        }
+        ok
+    }
+
+    /// `Object.defineProperty` with an **accessor** descriptor.
+    pub fn dynamic_define_accessor(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        get: Option<zun_core::FunctionHandle>,
+        set: Option<zun_core::FunctionHandle>,
+        enumerable: bool,
+        configurable: bool,
+    ) -> bool {
+        let ok = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|properties| properties.define_accessor(name, get, set, enumerable, configurable));
+        if ok {
+            for environment in [get, set].into_iter().flatten().filter_map(|f| f.environment()) {
+                self.write_barrier(object, environment as u64);
+            }
+        }
+        ok
+    }
+
+    /// The own property descriptor for `name`, or `None` if there is no own
+    /// property (or `object` is not dynamic).
+    pub fn dynamic_descriptor(&self, object: Obj, name: &str) -> Option<zun_core::PropertyDescriptor> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.descriptor(name))
+    }
+
+    pub fn dynamic_is_enumerable(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_enumerable(name))
+    }
+
+    pub fn dynamic_is_accessor(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_accessor(name))
+    }
+
+    pub fn dynamic_accessor_getter(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.accessor_getter(name))
+    }
+
+    pub fn dynamic_accessor_setter(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.accessor_setter(name))
+    }
+
+    /// `Object.seal`: non-extensible, every own key non-configurable.
+    pub fn dynamic_seal(&mut self, object: Obj) -> bool {
+        match self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            Some(properties) => { properties.seal(); true }
+            None => false,
+        }
+    }
+
+    pub fn dynamic_is_sealed(&self, object: Obj) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_sealed())
+    }
+
+    /// `Object.preventExtensions`.
+    pub fn dynamic_prevent_extensions(&mut self, object: Obj) -> bool {
+        match self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            Some(properties) => { properties.prevent_extensions(); true }
+            None => false,
+        }
+    }
+
+    pub fn dynamic_is_extensible(&self, object: Obj) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_extensible())
+    }
+
     pub fn dynamic_set_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId, value: zun_core::Any) -> Option<zun_core::Any> {
         let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol(symbol, value);
         if let Some(child) = value.as_object() {

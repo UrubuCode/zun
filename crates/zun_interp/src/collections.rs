@@ -3085,6 +3085,121 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Bool(found))
             }
+            "objectDefineProperty" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(key) => key.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let desc = object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                self.object_define_one(obj, &key, desc);
+                Ok(Value::Object(obj))
+            }
+            "objectDefineProperties" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let descs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // Each own enumerable key of `descs` maps a property name to a
+                // descriptor object.
+                let names = self.object_own_names(descs)?;
+                for name in names {
+                    if !zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(descs, &name)) {
+                        continue;
+                    }
+                    let desc_any = zun_gc::with_current_heap(|heap| heap.dynamic_get(descs, &name))
+                        .ok_or(RunError::BadToken)?;
+                    let desc = desc_any.as_object().ok_or(RunError::BadToken)?;
+                    let desc = unsafe { zun_gc::Obj::from_addr(desc as *mut u64) };
+                    self.object_define_one(obj, &name, desc);
+                }
+                Ok(Value::Object(obj))
+            }
+            "objectGetOwnPropertyDescriptor" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(key) => key.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                match self.build_descriptor(obj, &key)? {
+                    Some(descriptor) => Ok(Value::Object(descriptor)),
+                    None => Ok(Value::Void),
+                }
+            }
+            "objectGetOwnPropertyDescriptors" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let names = self.object_own_names(obj)?;
+                let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                for name in names {
+                    if let Some(descriptor) = self.build_descriptor(obj, &name)? {
+                        let boxed = zun_core::Any::object(descriptor.addr() as usize);
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set(out, name, boxed);
+                        });
+                    }
+                }
+                Ok(Value::Object(out))
+            }
+            "objectGetOwnPropertyNames" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let names = self.object_own_names(obj)?;
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(names.len());
+                    for (index, name) in names.iter().enumerate() {
+                        let item = Value::Str(name.clone().into())
+                            .box_any(heap)
+                            .unwrap_or_else(zun_core::Any::null);
+                        let _ = heap.array_set(array, index, item);
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
+            "objectSeal" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_seal(obj));
+                Ok(Value::Object(obj))
+            }
+            "objectIsSealed" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                let sealed = if is_dynamic {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_is_sealed(obj))
+                } else {
+                    // A fixed-layout typed object has an immutable shape.
+                    true
+                };
+                Ok(Value::Bool(sealed))
+            }
+            "objectPreventExtensions" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_prevent_extensions(obj));
+                Ok(Value::Object(obj))
+            }
+            "objectIsExtensible" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                let extensible = if is_dynamic {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_is_extensible(obj))
+                } else {
+                    // Typed objects cannot gain fields.
+                    false
+                };
+                Ok(Value::Bool(extensible))
+            }
+            "objectPropertyIsEnumerable" => {
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(key) => key.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                let enumerable = if is_dynamic {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(obj, &key))
+                } else {
+                    // Typed declared fields are enumerable own properties.
+                    self.object_own_entries(obj)?.iter().any(|(name, _)| name == &key)
+                };
+                Ok(Value::Bool(enumerable))
+            }
             "captureStackTrace" => {
                 // Runtime stack capture for `Error` construction (PLAN §3.1):
                 // walk the live activation chain, innermost first, rendering
@@ -3256,6 +3371,114 @@ impl<'a> Interp<'a> {
             }
         }
         Ok(out)
+    }
+
+    /// Read a boolean descriptor attribute (`writable`/`enumerable`/
+    /// `configurable`) from a descriptor object, defaulting to `false` when the
+    /// field is absent (the `Object.defineProperty` default).
+    fn descriptor_flag(desc: zun_gc::Obj, name: &str) -> bool {
+        zun_gc::with_current_heap(|heap| match heap.dynamic_get(desc, name) {
+            Some(any) => is_truthy(&Value::Any(any), heap),
+            None => false,
+        })
+    }
+
+    /// Apply one `{ value, writable, enumerable, configurable }` or
+    /// `{ get, set, enumerable, configurable }` descriptor object to `obj[key]`.
+    /// A data descriptor reads `value` from the value slot and the boolean
+    /// flags; an accessor descriptor reads `get`/`set` from the function slot
+    /// (function values do not box into `Any`). Rejection (non-configurable
+    /// redefine, or a new key on a non-extensible object) is silent and
+    /// freeze-consistent. Returns whether the definition took effect.
+    fn object_define_one(&self, obj: zun_gc::Obj, key: &str, desc: zun_gc::Obj) -> bool {
+        let get_fn = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(desc, "get"));
+        let set_fn = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(desc, "set"));
+        let enumerable = Self::descriptor_flag(desc, "enumerable");
+        let configurable = Self::descriptor_flag(desc, "configurable");
+        if get_fn.is_some() || set_fn.is_some() {
+            zun_gc::with_current_heap_mut(|heap| {
+                heap.dynamic_define_accessor(obj, key.to_owned(), get_fn, set_fn, enumerable, configurable)
+            })
+        } else {
+            let writable = Self::descriptor_flag(desc, "writable");
+            let value = zun_gc::with_current_heap(|heap| heap.dynamic_get(desc, "value"))
+                .unwrap_or_else(zun_core::Any::null);
+            zun_gc::with_current_heap_mut(|heap| {
+                heap.dynamic_define_data(obj, key.to_owned(), value, writable, enumerable, configurable)
+            })
+        }
+    }
+
+    /// Own string property names of `obj` (dynamic or typed), including
+    /// non-enumerable keys (`getOwnPropertyNames`).
+    fn object_own_names(&self, obj: zun_gc::Obj) -> Result<Vec<String>, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+            zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
+        } else {
+            Ok(self.object_own_entries(obj)?.into_iter().map(|(name, _)| name).collect())
+        }
+    }
+
+    /// Build a descriptor object `{ value, writable, enumerable, configurable }`
+    /// or `{ get, set, enumerable, configurable }` for `obj[key]`, or `None` if
+    /// there is no own property.
+    fn build_descriptor(&self, obj: zun_gc::Obj, key: &str) -> Result<Option<zun_gc::Obj>, RunError> {
+        let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+        if is_dynamic {
+            let Some(descriptor) = zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key)) else {
+                return Ok(None);
+            };
+            let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+            let set_bool = |name: &str, flag: bool| {
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_set(out, name.to_owned(), zun_core::Any::bool(flag));
+                });
+            };
+            match descriptor {
+                zun_core::PropertyDescriptor::Data { value, writable, enumerable, configurable } => {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(out, "value".to_owned(), value);
+                    });
+                    set_bool("writable", writable);
+                    set_bool("enumerable", enumerable);
+                    set_bool("configurable", configurable);
+                }
+                zun_core::PropertyDescriptor::Accessor { get, set, enumerable, configurable } => {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        if let Some(handle) = get {
+                            heap.dynamic_set_function(out, "get", handle);
+                        } else {
+                            heap.dynamic_set(out, "get".to_owned(), zun_core::Any::null());
+                        }
+                        if let Some(handle) = set {
+                            heap.dynamic_set_function(out, "set", handle);
+                        } else {
+                            heap.dynamic_set(out, "set".to_owned(), zun_core::Any::null());
+                        }
+                    });
+                    set_bool("enumerable", enumerable);
+                    set_bool("configurable", configurable);
+                }
+            }
+            Ok(Some(out))
+        } else {
+            // Typed object: a declared field is a writable, enumerable data
+            // property (the fixed layout is non-configurable).
+            let entries = self.object_own_entries(obj)?;
+            let Some((_, value)) = entries.into_iter().find(|(name, _)| name == key) else {
+                return Ok(None);
+            };
+            let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                .unwrap_or_else(zun_core::Any::null);
+            let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+            zun_gc::with_current_heap_mut(|heap| {
+                heap.dynamic_set(out, "value".to_owned(), boxed);
+                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(true));
+                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(true));
+                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(false));
+            });
+            Ok(Some(out))
+        }
     }
 
     /// Read every element of a managed array, unboxing each `Any` slot to its
