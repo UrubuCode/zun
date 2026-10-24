@@ -6,7 +6,7 @@ surface listed in `PLAN.md` §3.2 ("A — nucleus"). It is a living checklist: e
 below records its real state in the code — the method/property surface and semantics,
 not merely "a class exists".
 
-**Audit date:** 2026-10-23 · commit `2ae36bd` (clean `main`).
+**Audit date:** 2026-10-24 · commit `2d395aa2` (clean `main`).
 **Scope:** read-only audit of `std/*.zun`, `crates/zun_natives/src/*.rs`,
 `crates/zun_sema/src/{check.rs,native_types.rs,types.rs}`, `crates/zun_core/src/*.rs`,
 `crates/zun_il/src/opcode.rs`.
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 7 · partial 13 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 10 · partial 10 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
