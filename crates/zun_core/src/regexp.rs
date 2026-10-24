@@ -334,6 +334,40 @@ impl RegexValue {
         }
     }
 
+    /// All non-overlapping matches, each as a group vector (like `captures`).
+    /// Used by `String.prototype.matchAll`; an empty match advances one unit so
+    /// iteration terminates.
+    pub fn captures_all(&self, input: &str) -> Result<Vec<Vec<Option<String>>>, RegexError> {
+        let mut matches = Vec::new();
+        match &self.engine {
+            Engine::Re2(re) => {
+                for captures in re.captures_iter(input) {
+                    matches.push(
+                        captures
+                            .iter()
+                            .map(|group| group.map(|m| m.as_str().to_owned()))
+                            .collect(),
+                    );
+                }
+            }
+            Engine::Backtrack(re) => {
+                let chars: Vec<char> = input.chars().collect();
+                let mut pos = 0;
+                while pos <= chars.len() {
+                    let Some(m) = re.find_chars(&chars, pos)? else { break };
+                    let (start, end) = m.span();
+                    matches.push(
+                        (0..m.len())
+                            .map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b)))
+                            .collect(),
+                    );
+                    pos = if end == start { end + 1 } else { end };
+                }
+            }
+        }
+        Ok(matches)
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }

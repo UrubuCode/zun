@@ -204,6 +204,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectPreventExtensions",
         "objectIsExtensible",
         "objectPropertyIsEnumerable",
+        "stringMatchAll",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))

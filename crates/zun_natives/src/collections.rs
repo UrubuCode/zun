@@ -418,5 +418,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "objectPreventExtensions", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "objectIsExtensible", params: &[Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "objectPropertyIsEnumerable", params: &[Opaque, Str], ret: Bool, imp: unavailable },
+        // `String.prototype.matchAll(regexp)` — array of match arrays (each
+        // like `exec`'s result). Requires a global regexp (checked at runtime).
+        // Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "stringMatchAll", params: &[RegExp, Str], ret: Array, imp: unavailable },
     ],
 };

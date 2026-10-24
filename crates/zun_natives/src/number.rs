@@ -275,6 +275,108 @@ fn is_safe_integer(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, 
     ))
 }
 
+/// Rewrite a Rust exponential rendering (`"1.2345e3"`, `"-2e-7"`) into the JS
+/// shape, which always spells the exponent sign (`"1.2345e+3"`, `"-2e-7"`).
+fn js_exponent(text: String) -> String {
+    let Some(pos) = text.find('e') else {
+        return text;
+    };
+    let (mantissa, exponent) = text.split_at(pos);
+    let exponent = &exponent[1..];
+    match exponent.strip_prefix('-') {
+        Some(rest) => format!("{mantissa}e-{rest}"),
+        None => format!("{mantissa}e+{exponent}"),
+    }
+}
+
+/// Parse the decimal exponent Rust assigns to `value` when rendered with
+/// `fraction` fractional digits (e.g. `1.2e2` → `2`). Rust never emits a `+`,
+/// so a plain `parse` reads the sign.
+fn decimal_exponent(value: f64, fraction: usize) -> i32 {
+    let text = format!("{value:.fraction$e}");
+    let pos = text.find('e').expect("exponential rendering has an `e`");
+    text[pos + 1..]
+        .parse::<i32>()
+        .expect("exponent is an integer")
+}
+
+/// `(value).toExponential(fractionDigits?)` — JS exponential notation. With no
+/// argument the shortest round-tripping mantissa is used; otherwise exactly
+/// `fractionDigits` (0..=100) fraction digits. The sema intercept passes `-1`
+/// for the absent argument (outside the valid range, so unambiguous).
+fn to_exponential(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("toExponential: expected a number".to_string())),
+    };
+    if value.is_nan() {
+        return Ok(NativeValue::Str("NaN".to_string()));
+    }
+    if value.is_infinite() {
+        return Ok(NativeValue::Str(
+            if value < 0.0 { "-Infinity" } else { "Infinity" }.to_string(),
+        ));
+    }
+    let fraction = match args.get(1) {
+        Some(NativeArg::Int(-1)) | None => None,
+        Some(NativeArg::Int(digits)) if (0..=100).contains(digits) => Some(*digits as usize),
+        _ => {
+            return Err(NativeError(
+                "toExponential: fractionDigits must be from 0 through 100".to_string(),
+            ))
+        }
+    };
+    let rendered = match fraction {
+        Some(fraction) => format!("{value:.fraction$e}"),
+        None => format!("{value:e}"),
+    };
+    Ok(NativeValue::Str(js_exponent(rendered)))
+}
+
+/// `(value).toPrecision(precision?)` — significant-digit formatting. With no
+/// argument it behaves like the default `toString` (sema passes `0`, which is
+/// outside the valid 1..=100 range). Otherwise it renders `precision`
+/// significant digits, switching to exponential notation when the decimal
+/// exponent is `< -6` or `>= precision` (per ECMAScript Number::toPrecision).
+fn to_precision(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("toPrecision: expected a number".to_string())),
+    };
+    let precision = match args.get(1) {
+        // `0` is the absent-argument sentinel: behave like `toString`.
+        Some(NativeArg::Int(0)) | None => return Ok(NativeValue::Str(crate::format_float(value))),
+        Some(NativeArg::Int(precision)) if (1..=100).contains(precision) => *precision,
+        _ => {
+            return Err(NativeError(
+                "toPrecision: precision must be from 1 through 100".to_string(),
+            ))
+        }
+    };
+    if value.is_nan() {
+        return Ok(NativeValue::Str("NaN".to_string()));
+    }
+    if value.is_infinite() {
+        return Ok(NativeValue::Str(
+            if value < 0.0 { "-Infinity" } else { "Infinity" }.to_string(),
+        ));
+    }
+    let precision = precision as i32;
+    // `precision - 1` fraction digits give exactly `precision` significant
+    // digits in the exponential rendering; read the exponent back from it.
+    let exponent = decimal_exponent(value, (precision - 1) as usize);
+    if exponent < -6 || exponent >= precision {
+        let rendered = format!("{value:.*e}", (precision - 1) as usize);
+        return Ok(NativeValue::Str(js_exponent(rendered)));
+    }
+    // Fixed notation: the digits after the point fill the remaining
+    // significance below the units place (never negative here).
+    let fraction = (precision - 1 - exponent).max(0) as usize;
+    Ok(NativeValue::Str(format!("{value:.fraction$}")))
+}
+
 /// Runtime-backed numeric conversion functions.
 pub const MODULE: crate::Module = crate::Module {
     name: "number",
@@ -366,6 +468,22 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[F64, I32],
             ret: Str,
             imp: to_string_radix,
+        },
+        // Instance formatting (NUCLEUS #2). Appended last so existing dispatch
+        // ids stay stable. Both take the optional digit/precision count as a
+        // second `I32`; the sema intercept passes an out-of-range sentinel
+        // (`-1` for `toExponential`, `0` for `toPrecision`) for the absent arg.
+        NativeFn {
+            name: "toExponential",
+            params: &[F64, I32],
+            ret: Str,
+            imp: to_exponential,
+        },
+        NativeFn {
+            name: "toPrecision",
+            params: &[F64, I32],
+            ret: Str,
+            imp: to_precision,
         },
     ],
 };

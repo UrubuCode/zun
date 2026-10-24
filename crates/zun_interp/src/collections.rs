@@ -1562,6 +1562,30 @@ impl<'a> Interp<'a> {
                     None => Ok(Value::Null),
                 }
             }
+            "stringMatchAll" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let input = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(input) => input.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                // ECMAScript requires the `g` flag; V8/Node throw a TypeError
+                // otherwise. Surface it as a native error (project convention).
+                let global = zun_gc::with_current_heap(|heap| {
+                    heap.regex_flags(object).map(|flags| flags.contains('g'))
+                })
+                .ok_or(RunError::BadToken)?;
+                if !global {
+                    return Err(RunError::Native(
+                        "matchAll must be called with a global RegExp (the `g` flag)".into(),
+                    ));
+                }
+                let array =
+                    zun_gc::with_current_heap_mut(|heap| heap.regex_exec_all(object, &input))
+                        .ok_or(RunError::BadToken)?
+                        .map_err(|error| RunError::Native(error.to_string()))?;
+                Ok(Value::Object(array))
+            }
             "bigIntNew" => {
                 let text = match args.first().ok_or(RunError::BadToken)? {
                     Value::Str(text) => text,

@@ -18,6 +18,45 @@ impl Heap {
         Ok(object)
     }
 
+    /// JS-style flags string (`"gi"`, …), or `None` if not a regex.
+    pub fn regex_flags(&self, object: Obj) -> Option<&str> {
+        self.regexes
+            .get(&(object.addr() as usize))
+            .map(zun_core::RegexValue::flags)
+    }
+
+    /// `String.prototype.matchAll`: an array of match arrays (each shaped like
+    /// `regex_exec`'s result — index 0 the full match, 1.. the capture groups,
+    /// `undefined` for non-participating groups). `None` if `object` is not a
+    /// regex; an inner `Err` if the engine failed.
+    pub fn regex_exec_all(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Obj, zun_core::RegexError>> {
+        let matches = match self
+            .regexes
+            .get(&(object.addr() as usize))
+            .map(|regex| regex.captures_all(input))?
+        {
+            Ok(matches) => matches,
+            Err(error) => return Some(Err(error)),
+        };
+        let outer = self.alloc_array(matches.len());
+        for (index, groups) in matches.into_iter().enumerate() {
+            let inner = self.alloc_array(groups.len());
+            for (group_index, group) in groups.into_iter().enumerate() {
+                let value = match group {
+                    Some(text) => zun_core::Any::string(self.intern_string(text.into())),
+                    None => zun_core::Any::void(),
+                };
+                self.array_set(inner, group_index, value);
+            }
+            self.array_set(outer, index, zun_core::Any::object(inner.addr() as usize));
+        }
+        Some(Ok(outer))
+    }
+
     pub fn regex_source(&self, object: Obj) -> Option<&str> {
         self.regexes
             .get(&(object.addr() as usize))
@@ -198,6 +237,21 @@ mod tests {
         assert_eq!(&**heap.string(first), "AB");
         assert_eq!(heap.array_get(array, 2).unwrap().tag(), zun_core::AnyTag::Void);
         assert!(heap.regex_exec(regex, "zzz").unwrap().unwrap().is_none());
+    }
+
+    #[test]
+    fn exec_all_collects_every_match_with_groups() {
+        let mut heap = Heap::new();
+        let regex = heap.alloc_regex_with_flags(r"(\d)(\d)", "g").expect("valid regex");
+        assert_eq!(heap.regex_flags(regex), Some("g"));
+        let outer = heap.regex_exec_all(regex, "12 34 56").unwrap().unwrap();
+        assert_eq!(heap.array_len(outer), Some(3));
+        let first = heap.array_get(outer, 0).unwrap().as_object().unwrap();
+        let first = unsafe { super::Obj::from_addr(first as *mut u64) };
+        let whole = heap.array_get(first, 0).unwrap().as_string().unwrap();
+        assert_eq!(&**heap.string(whole), "12");
+        let group = heap.array_get(first, 2).unwrap().as_string().unwrap();
+        assert_eq!(&**heap.string(group), "2");
     }
 
     #[test]

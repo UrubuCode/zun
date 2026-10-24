@@ -25,8 +25,8 @@ read.
 
 | # | Item | Status | One-line gap |
 |---|------|--------|--------------|
-| 1 | String | partial | Standard surface largely landed (`at/slice/concat/codePointAt/split/replaceAll`, string-vs-RegExp dispatch on `split`/`replace`, `[Symbol.iterator]`, statics `fromCharCode/fromCodePoint`); deferred `matchAll/normalize/localeCompare/toLocale*/String.raw` |
-| 2 | Number | partial | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants) and `toString(radix)`; remaining `toPrecision/toExponential/toLocaleString/valueOf` |
+| 1 | String | mostly | Standard surface landed (`at/slice/concat/codePointAt/split/replaceAll/matchAll/valueOf`, string-vs-RegExp dispatch on `split`/`replace`, `[Symbol.iterator]`, statics `fromCharCode/fromCodePoint`); remaining all externally gated: `normalize` (Unicode tables), `localeCompare/toLocale*` (locale/ICU), `String.raw` (tagged-template syntax) |
+| 2 | Number | mostly | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants), instance `toString(radix)/toFixed/toExponential/toPrecision/valueOf`; only `toLocaleString` remains (locale/ICU — gated) |
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** now drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`). Remaining: `toPrimitive`/`toStringTag` dispatch (blocked on a missing coercion / object-stringification site), typed-class `hasInstance`. Object-literal computed symbol keys land (`{ [sym]: v }`); class computed symbol-key members still deferred |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 13 · partial 8 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 15 · partial 6 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -132,7 +132,7 @@ frozen runtime representation is unchanged — the registry only rebinds the nam
 
 ---
 
-## 1. String — partial  *(standard surface largely landed)*
+## 1. String — mostly  *(standard surface landed; only externally-gated methods remain)*
 Primitive-backed class, statically bound (`builtin/string.zun`, dispatch in
 `check.rs` `managed_method` + class fallback at `check.rs:2800+`; native impls
 `zun_natives/src/string.rs`, with array/iterator-building members in
@@ -166,16 +166,34 @@ the `fromCodePoint` static operate on Unicode code points (surrogate pairs kept 
   - Statics `String.fromCharCode(...codes)` / `String.fromCodePoint(...codes)` —
     recognized on the `String` receiver (`check_string_static`), variadic, folded via
     single-code natives `fromCharCode1`/`fromCodePoint1` + `concat`.
-- **Deferred (documented, not faked):** `matchAll` (needs global-regex iteration),
-  `normalize` (Unicode normalization), `localeCompare`/`toLocaleLowerCase`/
-  `toLocaleUpperCase` (needs a locale/ICU model), `String.raw` (template-tag mechanism),
-  `charAt` (superseded by `at`), `valueOf`. Replace-with-a-function replacer is also not
-  supported (replacement must be a string).
+  - `matchAll(regexp)` — all matches of a **global** regexp (the `g` flag is required;
+    without it a runtime error is raised, matching V8/Node's `TypeError` convention).
+    Intercepted on a `Ty::String` receiver with a `Ty::RegExp` argument (`check.rs`),
+    lowered to the `stringMatchAll` managed builtin (`zun:collections`), serviced in
+    `zun_interp/src/collections.rs` over `Heap::regex_exec_all` (which iterates every
+    non-overlapping match via `RegexValue::captures_all` on both regex engines). **Returns
+    an Array of match arrays** (each inner array is shaped exactly like `exec`'s result —
+    index 0 the whole match, 1.. the capture groups, `undefined` for non-participating
+    groups), **not** a distinct iterator object — the same pragmatic v1 choice as
+    `Array`/`Map`/`Set` `keys()/values()/entries()`. A proper iterator-protocol object is
+    the same cross-cutting follow-up as those.
+  - `valueOf()` — identity, returning the string primitive itself. No native: the sema
+    intercept returns the checked receiver expression directly (like `number.valueOf()`).
+- **Deferred — externally gated (documented, not faked):**
+  - `normalize(form?)` — needs Unicode normalization tables (a dependency such as
+    `unicode-normalization`). **Flagged as a dependency decision for the user**, not added
+    unilaterally.
+  - `localeCompare`/`toLocaleLowerCase`/`toLocaleUpperCase` — need a locale/ICU model Zun
+    does not have.
+  - `String.raw` — needs tagged-template literals in the front-end (a syntax feature not
+    yet lexed/parsed).
+  - `charAt` (superseded by `at`). Replace-with-a-function replacer is also not supported
+    (replacement must be a string).
 - **Notes:** the string-dispatched `split`/`replace`/`replaceAll`/`concat`/`slice`/`at`/
   `codePointAt` and the statics all allocate/branch only (Tier-0 floor), so they are not
   in the JIT allowlist — no second path to keep in sync.
 
-## 2. Number — partial  *(statics + radix landed)*
+## 2. Number — mostly  *(statics, radix, and instance formatting landed)*
 `std/number.zun`; native `number.rs`. Statics and constants are recognized in sema
 (`check.rs` `check_number_static` for `Number.<m>(...)` and the `Number.<CONST>` fold in
 the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 floor.
@@ -197,10 +215,24 @@ the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 fl
   `toStringRadix` native ahead of class dispatch (supersedes the no-arg extern
   `toString`). Plus the Zun math helpers (`abs clamp min max sign lerp …`). Free fns
   `numberParse/numberToFixed`.
-- **Missing / deferred:** instance `toPrecision toExponential valueOf`; `toLocaleString`
-  (locale — deferred, needs an ICU/locale model). `toPrecision`/`toExponential` were
-  deferred rather than faked: JS's precision/exponent formatting (significant-digit
-  rounding, exponent thresholds) is non-trivial and no consumer needs it yet.
+- **Present (instance formatting, new):**
+  - `toExponential(fractionDigits?)` — JS exponential notation (`e`±exponent, the sign
+    always spelled). With no argument the shortest round-tripping mantissa is used; with
+    `fractionDigits` (0..=100) exactly that many fraction digits. Non-finite values render
+    JS-style. `toExponential` native (`zun:number`); the sema intercept on an `F64`
+    receiver passes `-1` (out of range) as the absent-argument sentinel.
+  - `toPrecision(precision?)` — significant-digit formatting. No argument behaves like
+    `toString`; with `precision` (1..=100) it renders that many significant digits,
+    switching to exponential when the decimal exponent is `< -6` or `>= precision` (per
+    ECMAScript Number::toPrecision — the exponent is read back from a `precision-1`-digit
+    exponential rendering). `toPrecision` native; the sema intercept passes `0` (out of
+    range) as the absent-argument sentinel. **Rounding:** Rust's float formatting (round
+    half-to-even) is used; it matches V8/.NET observable output for the common cases
+    (covered by tests), differing only in rare exact-half ties.
+  - `valueOf()` — identity, returning the number itself. No native: the sema intercept
+    returns the checked receiver expression directly.
+- **Missing / deferred (externally gated):** `toLocaleString` — needs an ICU/locale model
+  Zun does not have.
 - **Notes:** the instance predicates (`x.isNaN()`) remain for Zun-style call sites; the
   new statics are the idiomatic `Number.isNaN(x)` surface. All of these allocate/branch
   only and are not JIT-lowered — Tier-0 only, no second path to keep in sync.

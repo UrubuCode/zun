@@ -276,6 +276,83 @@ fn number_to_string_radix() {
 }
 
 #[test]
+fn number_to_exponential() {
+    let out = run_source(
+        r#"function main() {
+            print((1234.5).toExponential());
+            print((1234.5).toExponential(2));
+            print((0.0).toExponential());
+            print((0.0).toExponential(2));
+            print((-1234.5).toExponential(2));
+            print((0.00001234).toExponential(2));
+        }"#,
+    );
+    assert_eq!(
+        out,
+        ["1.2345e+3", "1.23e+3", "0e+0", "0.00e+0", "-1.23e+3", "1.23e-5"]
+    );
+}
+
+#[test]
+fn number_to_precision() {
+    let out = run_source(
+        r#"function main() {
+            print((123.456).toPrecision(4));
+            print((123.456).toPrecision());
+            print((1234.5).toPrecision(2));
+            print((0.0001).toPrecision(2));
+            print((0.00000012).toPrecision(2));
+            print((123.0).toPrecision(5));
+        }"#,
+    );
+    assert_eq!(
+        out,
+        ["123.5", "123.456", "1.2e+3", "0.00010", "1.2e-7", "123.00"]
+    );
+}
+
+#[test]
+fn number_and_string_value_of_are_identity() {
+    let out = run_source(
+        r#"function main() {
+            print((42.5).valueOf());
+            print("hi".valueOf());
+        }"#,
+    );
+    assert_eq!(out, ["42.5", "hi"]);
+}
+
+#[test]
+fn string_match_all_global_regex() {
+    let out = run_source(
+        r#"function main() {
+            let all = "12 34 56".matchAll(/(\d)(\d)/g);
+            print(all.length);
+            print((all[0] as Array)[0] as string);
+            print((all[0] as Array)[1] as string);
+            print((all[0] as Array)[2] as string);
+            print((all[1] as Array)[0] as string);
+            print((all[2] as Array)[1] as string);
+        }"#,
+    );
+    assert_eq!(out, ["3", "12", "1", "2", "34", "5"]);
+}
+
+#[test]
+fn string_match_all_without_global_flag_errors() {
+    let error = run_source_expect_error(
+        r#"function main() {
+            let all = "12".matchAll(/\d/);
+            print(all.length);
+        }"#,
+    );
+    assert!(
+        error.contains("matchAll must be called with a global RegExp"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn object_from_entries_round_trips_object_entries() {
     let out = run_source(
         r#"function main() {

@@ -5126,6 +5126,82 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `number.toExponential(fractionDigits?)` /
+                // `number.toPrecision(precision?)` — instance formatting,
+                // intercepted before class dispatch like `toString(radix?)`.
+                // The optional count is lowered to an out-of-range sentinel for
+                // the native: `-1` ("absent") for `toExponential`, `0` for
+                // `toPrecision`.
+                if receiver.ty == Ty::F64
+                    && matches!(mname.as_str(), "toExponential" | "toPrecision")
+                    && args.len() <= 1
+                {
+                    let native = if mname == "toExponential" {
+                        "toExponential"
+                    } else {
+                        "toPrecision"
+                    };
+                    let sentinel = if mname == "toExponential" { -1.0 } else { 0.0 };
+                    let Some((id, _)) = zun_natives::resolve("number", native) else {
+                        self.error(span, format!("missing Number intrinsic `{native}`"));
+                        return self.poison(span);
+                    };
+                    let count = match args.first() {
+                        Some(arg) => {
+                            let mut count = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut count, Ty::Int(IntKind::I32));
+                            if !count.ty.is_error()
+                                && !self.is_assignable(count.ty, Ty::Int(IntKind::I32))
+                            {
+                                self.error(
+                                    count.span,
+                                    format!("`{mname}` argument must be an integer"),
+                                );
+                            }
+                            count
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(sentinel),
+                            ty: Ty::Int(IntKind::I32),
+                            span,
+                        },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, count] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+                // `number.valueOf()` / `string.valueOf()` — identity, returning
+                // the primitive itself. No native needed: the checked receiver
+                // expression already is the value.
+                if matches!(receiver.ty, Ty::F64 | Ty::String)
+                    && mname == "valueOf"
+                    && args.is_empty()
+                {
+                    return receiver;
+                }
+                // `String.prototype.matchAll(regexp)` — all matches of a global
+                // regexp as an array of match arrays (each like `exec`). The `g`
+                // flag is required (checked natively); the array-of-arrays shape
+                // is the same pragmatic choice as `keys()/values()/entries()`
+                // (no distinct iterator object yet).
+                if receiver.ty == Ty::String && mname == "matchAll" && args.len() == 1 {
+                    let first = self.check_expr(cx, &args[0]);
+                    if first.ty != Ty::RegExp && !first.ty.is_error() {
+                        self.error(first.span, "`matchAll` expects a RegExp argument");
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("collections", "stringMatchAll") else {
+                        self.error(span, "missing collection intrinsic `stringMatchAll`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
                 // `boolean.toString()` → `"true"` / `"false"`. Intercepted
                 // before class dispatch, like `number.toString(radix?)`, since
                 // the primitive `boolean` has no backing class.
