@@ -2,6 +2,7 @@ use super::{CallHook, Output, Value};
 use std::collections::HashMap;
 use zun_module::Module;
 use zun_gc::Obj;
+use zun_sched::{Continuation, ContinuationId, PromiseId, PromiseTable, Scheduler, Settlement};
 
 pub(super) struct Interp<'a> {
     pub(super) module: &'a Module,
@@ -26,6 +27,56 @@ pub(super) struct Interp<'a> {
     /// `Error`'s `.stack` capture (PLAN §3.1): a frame carries no managed
     /// references (just two `u32`s), so it needs no GC rooting or relocation.
     pub(super) call_stack: Vec<CallFrame>,
+    /// The machine-level async substrate for `await`: the scheduler, its promise
+    /// table, and the side table that owns parked interpreter frames keyed by
+    /// [`ContinuationId`]. See [`AsyncState`]. `then`/combinators still run on
+    /// the old eager-at-settle path (slice 3 migrates them).
+    pub(super) async_state: AsyncState,
+}
+
+/// The `await` substrate owned by one interpreter session.
+///
+/// A managed promise (a heap `Obj`) is bridged to a [`PromiseId`] on the
+/// scheduler via [`AsyncState::pid_by_obj`]; its settled *value* stays in the
+/// language-layer promise cell in `zun_gc` (read back by re-executing `await`),
+/// so this substrate holds control/ordering state only. Parked frames live in
+/// [`AsyncState::parked`], which is their GC-root owner.
+#[derive(Debug, Default)]
+pub(super) struct AsyncState {
+    pub(super) scheduler: Scheduler,
+    pub(super) promises: PromiseTable,
+    /// Heap promise address → its scheduler `PromiseId`. Keys are rewritten on a
+    /// moving collection so a promise relocated while a frame is parked keeps
+    /// its identity.
+    pub(super) pid_by_obj: HashMap<usize, PromiseId>,
+    /// Parked frames (the control/value state + GC roots), keyed by the id the
+    /// scheduler holds. This table is the root owner for a parked `await`.
+    pub(super) parked: HashMap<ContinuationId, ParkedFrame>,
+    pub(super) next_cont: u32,
+}
+
+/// A parked interpreter frame and the scheduler promise whose settlement wakes
+/// it.
+#[derive(Debug)]
+pub(super) struct ParkedFrame {
+    pub(super) frame: ExecutionFrame,
+    pub(super) pid: PromiseId,
+}
+
+impl AsyncState {
+    /// The scheduler `PromiseId` bridged to a managed promise `Obj`, creating it
+    /// on first use.
+    fn pid_for(&mut self, promise: Obj) -> PromiseId {
+        let addr = promise.addr() as usize;
+        match self.pid_by_obj.get(&addr) {
+            Some(pid) => *pid,
+            None => {
+                let pid = self.promises.create();
+                self.pid_by_obj.insert(addr, pid);
+                pid
+            }
+        }
+    }
 }
 
 /// One live interpreter activation, used for runtime stack capture.
@@ -55,7 +106,121 @@ impl<'a> Interp<'a> {
         if let Some(frame) = self.resume_frame.as_mut() {
             rewritten += frame.rewrite_managed_references(relocation);
         }
+        rewritten += self.rewrite_parked_frames(relocation);
         rewritten
+    }
+
+    /// Rewrite every parked `await` frame and the promise→id bridge after a
+    /// moving collection, so a frame that was parked across the collection and
+    /// the identity of the promise it waits on both survive relocation.
+    pub(super) fn rewrite_parked_frames(
+        &mut self,
+        relocation: &zun_gc::RelocationMap,
+    ) -> usize {
+        let mut rewritten = 0;
+        for parked in self.async_state.parked.values_mut() {
+            rewritten += parked.frame.rewrite_managed_references(relocation);
+        }
+        // Keys in the promise→id bridge are heap addresses, which move with the
+        // objects they name.
+        if !self.async_state.pid_by_obj.is_empty() {
+            let old: Vec<(usize, PromiseId)> = self.async_state.pid_by_obj.drain().collect();
+            for (addr, pid) in old {
+                let obj = unsafe { Obj::from_addr(addr as *mut u64) };
+                let relocated = relocation.relocate(obj).addr() as usize;
+                self.async_state.pid_by_obj.insert(relocated, pid);
+            }
+        }
+        rewritten
+    }
+
+    /// Append the GC roots held by every parked `await` frame. These frames are
+    /// owned by [`AsyncState::parked`] and are rooted from here while parked,
+    /// exactly as the actively suspended frame is.
+    pub(super) fn append_parked_roots(&self, roots: &mut Vec<Obj>) {
+        for parked in self.async_state.parked.values() {
+            parked.frame.append_managed_roots(roots);
+        }
+    }
+
+    /// Park an `await`-suspended frame on the scheduler and store it in the
+    /// frame side table, returning its continuation id. The scheduler holds only
+    /// the id; this table owns the frame (and its roots).
+    pub(super) fn park_suspended(
+        &mut self,
+        frame: ExecutionFrame,
+    ) -> Result<ContinuationId, super::RunError> {
+        let promise = match frame.state {
+            FrameState::Suspended { promise, .. } => promise,
+            FrameState::Runnable => {
+                return Err(super::RunError::Malformed(
+                    "parked a frame that is not awaiting a promise".into(),
+                ))
+            }
+        };
+        let pid = self.async_state.pid_for(promise);
+        let cid = ContinuationId(self.async_state.next_cont);
+        self.async_state.next_cont += 1;
+        let state = &mut self.async_state;
+        state
+            .scheduler
+            .park(&mut state.promises, Continuation::new(cid, pid));
+        state.parked.insert(cid, ParkedFrame { frame, pid });
+        Ok(cid)
+    }
+
+    /// Drive the scheduler from the current heap settlement of each parked
+    /// promise: a promise the host (or an earlier turn) settled on the heap now
+    /// settles its scheduler `PromiseId`, which wakes the parked continuation.
+    ///
+    /// This is the transitional bridge — the heap promise cell remains the
+    /// settlement source of truth (the old `then` path reads it too), and the
+    /// scheduler learns of a settlement here. Slice 3 routes settlement through
+    /// the scheduler directly.
+    pub(super) fn reconcile_settlements(&mut self) {
+        let mut to_settle: Vec<(PromiseId, Settlement)> = Vec::new();
+        for parked in self.async_state.parked.values() {
+            if let FrameState::Suspended { promise, .. } = parked.frame.state {
+                let settlement = zun_gc::with_current_heap(|heap| heap.promise_state(promise));
+                match settlement {
+                    Some(zun_core::ManagedPromiseState::Resolved) => {
+                        to_settle.push((parked.pid, Settlement::Fulfilled))
+                    }
+                    Some(zun_core::ManagedPromiseState::Rejected) => {
+                        to_settle.push((parked.pid, Settlement::Rejected))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let state = &mut self.async_state;
+        for (pid, settlement) in to_settle {
+            state.scheduler.settle(&mut state.promises, pid, settlement);
+        }
+    }
+
+    /// Take the next frame the scheduler reports runnable, removing it from the
+    /// parked side table. Returns `None` when nothing is runnable yet.
+    pub(super) fn next_runnable_frame(&mut self) -> Option<ExecutionFrame> {
+        while let Some(ran) = self.async_state.scheduler.next() {
+            if let zun_sched::Ran::Continuation(cid) = ran {
+                if let Some(parked) = self.async_state.parked.remove(&cid) {
+                    return Some(parked.frame);
+                }
+            }
+        }
+        None
+    }
+
+    /// The promise the single parked `await` frame is waiting on, if any.
+    pub(super) fn parked_awaited_promise(&self) -> Option<Obj> {
+        self.async_state
+            .parked
+            .values()
+            .find_map(|parked| match parked.frame.state {
+                FrameState::Suspended { promise, .. } => Some(promise),
+                FrameState::Runnable => None,
+            })
     }
 
     /// Compact the heap while suspended interpreter frames are owned and

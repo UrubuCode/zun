@@ -1,6 +1,6 @@
 use super::gc_policy::GC_INTERVAL;
 use super::{CallHook, Interp, Output, RunError, Value};
-use super::state::{ExecutionFrame, ExecutionOutcome};
+use super::state::{AsyncState, ExecutionFrame, ExecutionOutcome};
 use zun_il::{decode_one, Opcode};
 use zun_module::{read_body, Module};
 
@@ -72,6 +72,7 @@ impl<'a> OwnedGeneratorSession<'a> {
             static_fields: std::collections::HashMap::new(),
             active_frame: None,
             call_stack: Vec::new(),
+            async_state: AsyncState::default(),
         };
         let outcome = if let Some(frame) = self.pending.take() {
             interp.resume_suspended(frame)
@@ -154,6 +155,12 @@ pub struct ResumableSession<'a> {
     interp: Interp<'a>,
     method_rid: u32,
     args: Option<Vec<Value>>,
+    /// Whether the entry method has been dispatched once. After that, a poll
+    /// resumes a woken `await` continuation from the scheduler (or a yielded
+    /// frame via `pending`) rather than starting the body again.
+    started: bool,
+    /// Transport for a yield-style suspension (frame left `Runnable`). `await`
+    /// suspensions are parked on the interpreter's scheduler instead.
     pending: Option<ExecutionFrame>,
 }
 
@@ -386,9 +393,11 @@ impl<'a> ResumableSession<'a> {
                 static_fields: std::collections::HashMap::new(),
                 active_frame: None,
                 call_stack: Vec::new(),
+                async_state: AsyncState::default(),
             },
             method_rid,
             args: Some(args),
+            started: false,
             pending: None,
         })
     }
@@ -396,13 +405,24 @@ impl<'a> ResumableSession<'a> {
     pub fn poll(&mut self) -> Result<ResumeResult, RunError> {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut self.heap as *mut _) };
         let outcome = if let Some(frame) = self.pending.take() {
+            // A yield-style suspension resumes directly.
             self.interp.resume_suspended(frame)
-        } else {
+        } else if !self.started {
+            self.started = true;
             self.interp.dispatch_outcome(
                 self.method_rid,
                 self.args.take().unwrap_or_default(),
                 None,
             )
+        } else {
+            // Drive the scheduler: a promise the host settled on the heap wakes
+            // its parked `await` continuation, whose frame we then resume. If
+            // nothing is runnable yet, the session stays suspended.
+            self.interp.reconcile_settlements();
+            match self.interp.next_runnable_frame() {
+                Some(frame) => self.interp.resume_suspended(frame),
+                None => return Ok(ResumeResult::Suspended),
+            }
         };
         match outcome {
             ExecutionOutcome::Complete(value) => {
@@ -410,10 +430,13 @@ impl<'a> ResumableSession<'a> {
                 Ok(ResumeResult::Complete(value))
             }
             ExecutionOutcome::Suspended(frame) => {
-                self.pending = Some(frame);
                 if let Some(value) = self.interp.yielded.take() {
+                    // A yield: keep the frame on the direct-resume transport.
+                    self.pending = Some(frame);
                     Ok(ResumeResult::Yielded(value))
                 } else {
+                    // An `await` on a pending promise: park on the scheduler.
+                    self.interp.park_suspended(frame)?;
                     Ok(ResumeResult::Suspended)
                 }
             }
@@ -426,17 +449,28 @@ impl<'a> ResumableSession<'a> {
         &mut self.heap
     }
 
-    /// Collect unreachable objects and compact the owned async frame between
-    /// poll steps.
+    /// Collect unreachable objects and compact the owned async frame(s) between
+    /// poll steps. The parked `await` frames (root owner) and any yield-style
+    /// `pending` frame are rooted and rewritten together.
     pub fn collect_and_compact_pending_frame(
         &mut self,
     ) -> Option<zun_gc::CollectionCompactionResult> {
-        let mut frame = self.pending.take()?;
         let mut roots = Vec::new();
-        frame.append_managed_roots(&mut roots);
+        self.interp.append_parked_roots(&mut roots);
+        if let Some(frame) = self.pending.as_ref() {
+            frame.append_managed_roots(&mut roots);
+        }
+        if roots.is_empty() {
+            return None;
+        }
         let types = self.interp.types.clone();
+        let interp = &mut self.interp;
+        let pending = &mut self.pending;
         let mut rewrite = |relocation: &zun_gc::RelocationMap| {
-            frame.rewrite_managed_references(relocation);
+            interp.rewrite_parked_frames(relocation);
+            if let Some(frame) = pending.as_mut() {
+                frame.rewrite_managed_references(relocation);
+            }
         };
         let result = unsafe {
             self.heap.collect_and_compact_with_relocation(
@@ -445,14 +479,15 @@ impl<'a> ResumableSession<'a> {
                 &mut rewrite,
             )
         };
-        self.pending = Some(frame);
         Some(result)
     }
 
     pub fn awaited_promise(&self) -> Option<zun_gc::Obj> {
-        self.pending.as_ref().and_then(|frame| match frame.state {
-            super::state::FrameState::Suspended { promise, .. } => Some(promise),
-            super::state::FrameState::Runnable => None,
+        self.interp.parked_awaited_promise().or_else(|| {
+            self.pending.as_ref().and_then(|frame| match frame.state {
+                super::state::FrameState::Suspended { promise, .. } => Some(promise),
+                super::state::FrameState::Runnable => None,
+            })
         })
     }
 }
@@ -483,6 +518,7 @@ pub(super) fn run_method_with(
         static_fields: std::collections::HashMap::new(),
         active_frame: None,
         call_stack: Vec::new(),
+        async_state: AsyncState::default(),
     };
     // Run the module initializer once before the entry point (PLAN §3.1, doc 02
     // area 10): it seeds the realm global on this same heap so `globalThis.Map`

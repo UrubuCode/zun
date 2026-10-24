@@ -1422,18 +1422,36 @@ impl Interp<'_> {
                 }
                 Opcode::Await => {
                     let promise = pop(&mut stack)?.as_object();
-                    let settled = settled_await_value(promise)?;
-                    let Some(value) = settled else {
-                        let await_pc = (*pc).saturating_sub(size);
-                        let mut suspended = ExecutionFrame::new(method_rid, locals.to_vec());
-                        suspended.stack = stack.to_vec();
-                        suspended.stack.push(Value::Object(promise));
-                        suspended.pc = await_pc;
-                        suspended.suspend(promise, await_pc);
-                        self.suspended = Some(suspended);
-                        return Err(RunError::Suspended);
-                    };
-                    stack.push(value);
+                    match settled_await_value(promise) {
+                        Ok(Some(value)) => stack.push(value),
+                        Ok(None) => {
+                            let await_pc = (*pc).saturating_sub(size);
+                            let mut suspended = ExecutionFrame::new(method_rid, locals.to_vec());
+                            suspended.stack = stack.to_vec();
+                            suspended.stack.push(Value::Object(promise));
+                            suspended.pc = await_pc;
+                            suspended.suspend(promise, await_pc);
+                            self.suspended = Some(suspended);
+                            return Err(RunError::Suspended);
+                        }
+                        // A rejected await resumes through the unwinding path:
+                        // route the rejection into this method's handler table
+                        // (finally / catch) exactly as `throw` does, rather than
+                        // escaping the body unconditionally.
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Opcode::Yield => {
                     let value = pop(&mut stack)?;
@@ -1864,6 +1882,85 @@ mod method_tests {
             session.poll(),
             Err(RunError::Thrown(Value::Str(_)))
         ));
+    }
+
+    #[test]
+    fn await_of_a_pending_promise_is_gated_by_the_scheduler() {
+        // The scheduler, not the host, decides when a parked `await` is
+        // runnable: polling again before the promise settles keeps the frame
+        // parked rather than resuming it against a still-pending promise.
+        let module = zun_compiler::compile(
+            "async function main(): Promise { let p = new Promise(); await p; return p; }",
+        )
+        .expect("compile async await function");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session =
+            ResumableSession::new(&module, entry.rid(), Vec::new(), &mut output, None, None)
+                .expect("create resumable session");
+        assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
+        // No settlement yet: the continuation stays parked, not resumed.
+        assert!(matches!(session.poll().expect("re-poll"), ResumeResult::Suspended));
+        let promise = session.awaited_promise().expect("still awaiting the promise");
+        let boxed = Value::Int(42, zun_il::NumKind::I32)
+            .box_any(session.heap_mut())
+            .expect("box result");
+        assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
+        assert!(matches!(
+            session.poll().expect("resumed poll"),
+            ResumeResult::Complete(Value::Object(_))
+        ));
+        // Once resumed and complete, nothing else is runnable.
+        assert!(matches!(session.poll().expect("drained poll"), ResumeResult::Suspended));
+    }
+
+    #[test]
+    fn await_pending_rejection_runs_an_in_body_finally_on_the_unwinding_path() {
+        // A rejection wakes the parked frame through the unwinding path, which
+        // now traverses the method's handler table: the `finally` around the
+        // `await` runs before the rejection escapes the body.
+        let module = zun_compiler::compile(
+            "async function main(): Promise { \
+                let p = new Promise(); \
+                try { await p; } finally { print(1.0); } \
+                return p; }",
+        )
+        .expect("compile async try/finally await");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session =
+            ResumableSession::new(&module, entry.rid(), Vec::new(), &mut output, None, None)
+                .expect("create resumable session");
+        assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
+        let promise = session.awaited_promise().expect("awaited promise");
+        assert_eq!(session.heap_mut().promise_reject(promise, "boom"), Some(true));
+        // The finally runs, then the rejection continues to escape the body.
+        assert!(matches!(session.poll(), Err(RunError::Thrown(Value::Str(_)))));
+        assert_eq!(output.lines, ["1"]);
+    }
+
+    #[test]
+    fn forced_gc_while_a_frame_is_parked_preserves_the_rejection_path() {
+        // A collection while the `await` frame is parked must relocate it (and
+        // the promise→id bridge) without corruption; the rejection still
+        // unwinds after the move.
+        let module = zun_compiler::compile(
+            "async function main(): Promise { let p = new Promise(); await p; return p; }",
+        )
+        .expect("compile async await function");
+        let entry = module.entry_point.expect("entry point");
+        let mut output = CaptureOutput::default();
+        let mut session =
+            ResumableSession::new(&module, entry.rid(), Vec::new(), &mut output, None, None)
+                .expect("create resumable session");
+        assert!(matches!(session.poll().expect("initial poll"), ResumeResult::Suspended));
+        let compacted = session
+            .collect_and_compact_pending_frame()
+            .expect("compact parked async frame");
+        assert_eq!(compacted.moved_objects, 1);
+        let promise = session.awaited_promise().expect("relocated awaited promise");
+        assert_eq!(session.heap_mut().promise_reject(promise, "late"), Some(true));
+        assert!(matches!(session.poll(), Err(RunError::Thrown(Value::Str(_)))));
     }
 
     #[test]
