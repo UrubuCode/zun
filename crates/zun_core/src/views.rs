@@ -368,6 +368,12 @@ impl TypedArrayView {
         self.view.len()
     }
 
+    /// The view's byte offset into its backing buffer — what JS exposes as
+    /// `typedArray.byteOffset`. The element index 0 sits here.
+    pub fn byte_offset(self) -> usize {
+        self.view.offset()
+    }
+
     pub fn element(self) -> TypedElement {
         self.element
     }

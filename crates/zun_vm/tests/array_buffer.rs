@@ -82,3 +82,39 @@ fn a_slice_can_be_sliced_again() {
     );
     assert_eq!(out, vec!["4"]);
 }
+
+/// Like the typed-array tests, `isView` needs the realm's view constructors,
+/// so its program is compiled with the prelude in place.
+fn run_with_prelude(user: &str) -> Vec<String> {
+    let src = zun_prelude::with_prelude(user);
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(&src, &mut diags);
+    assert!(diags.is_empty(), "parse errors: {diags:?}");
+    let hir = zun_sema::check(&src, &ast, &mut diags);
+    assert!(diags.is_empty(), "sema errors: {diags:?}");
+    let module = zun_ilgen::lower(&hir);
+    let bytes = module.write();
+    let mut out = CaptureOutput::default();
+    zun_vm::execute_with(&bytes, &mut out).expect("program should run");
+    out.lines
+}
+
+#[test]
+fn is_view_is_true_for_views_and_false_for_everything_else() {
+    let out = run_with_prelude(
+        r#"function main() {
+            let b = new ArrayBuffer(16);
+            let a = new Uint8Array(b, 0, 8);
+            let dv = new DataView(b, 0, 16);
+            print(ArrayBuffer.isView(a));
+            print(ArrayBuffer.isView(dv));
+            // A plain ArrayBuffer is not itself a view.
+            print(ArrayBuffer.isView(b));
+            // An object that is not a view, and a non-object value.
+            let other = new Array(2);
+            print(ArrayBuffer.isView(other));
+            print(ArrayBuffer.isView(42));
+        }"#,
+    );
+    assert_eq!(out, vec!["true", "true", "false", "false", "false"]);
+}

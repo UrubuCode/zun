@@ -112,6 +112,9 @@ macro_rules! typed_array_dispatch {
                 concat!($native, "Set"),
                 concat!($native, "Subarray"),
                 concat!($native, "Fill"),
+                concat!($native, "ByteOffset"),
+                concat!($native, "Buffer"),
+                concat!($native, "IteratorNew"),
             )+
         ];
 
@@ -126,6 +129,9 @@ macro_rules! typed_array_dispatch {
             }
             if let Some(child) = subarray(name, args) {
                 return Some(child);
+            }
+            if let Some(meta) = view_meta(name, args) {
+                return Some(meta);
             }
             match name {
                 $(
@@ -146,6 +152,31 @@ macro_rules! typed_array_dispatch {
                             heap.$set(view, index, value)
                         })?;
                         Some(Value::Bool(stored))
+                    })()
+                    .ok_or(RunError::BadToken)),
+                    concat!($native, "IteratorNew") => Some((|| {
+                        let view = object(args.first()?)?;
+                        // Read every element first (immutable borrow, no
+                        // allocation), then build the backing array and its
+                        // iterator — so the view handle is never held across
+                        // an allocation that could move it.
+                        let length = zun_gc::with_current_heap(|heap| heap.typed_array_len(view))?;
+                        let mut elements = Vec::with_capacity(length);
+                        for index in 0..length {
+                            let element =
+                                zun_gc::with_current_heap(|heap| heap.$get(view, index))?;
+                            elements.push(ElementValue::into_value(element));
+                        }
+                        let iterator = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(elements.len());
+                            for (index, value) in elements.iter().enumerate() {
+                                if let Some(boxed) = value.box_any(heap) {
+                                    heap.array_set(array, index, boxed);
+                                }
+                            }
+                            heap.alloc_array_iterator(array)
+                        })?;
+                        Some(Value::Object(iterator))
                     })()
                     .ok_or(RunError::BadToken)),
                     concat!($native, "Fill") => Some((|| {
@@ -182,6 +213,34 @@ macro_rules! typed_array_dispatch {
                     heap.typed_array_subarray(view, begin, end)
                 })?;
                 Some(Value::Object(child))
+            })()
+            .ok_or(RunError::BadToken))
+        }
+
+        /// `byteOffset`/`buffer` for any kind: the view carries its own byte
+        /// offset and backing-buffer handle, so one arm serves every kind.
+        fn view_meta(name: &str, args: &[Value]) -> Option<Result<Value, RunError>> {
+            enum Want { Offset, Buffer }
+            let want = match name {
+                $(concat!($native, "ByteOffset"))|+ => Want::Offset,
+                $(concat!($native, "Buffer"))|+ => Want::Buffer,
+                _ => return None,
+            };
+            Some((|| {
+                let view = object(args.first()?)?;
+                match want {
+                    Want::Offset => {
+                        let offset = zun_gc::with_current_heap(|heap| {
+                            heap.typed_array_byte_offset(view)
+                        })?;
+                        Some(Value::Int(offset as i64, NumKind::U64))
+                    }
+                    Want::Buffer => {
+                        let buffer =
+                            zun_gc::with_current_heap(|heap| heap.typed_array_buffer(view))?;
+                        Some(Value::Object(buffer))
+                    }
+                }
             })()
             .ok_or(RunError::BadToken))
         }

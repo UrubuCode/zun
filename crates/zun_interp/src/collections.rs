@@ -179,6 +179,24 @@ impl<'a> Interp<'a> {
                 let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_byte_len(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
             }
+            "dataViewByteOffset" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_byte_offset(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+            }
+            "dataViewBuffer" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let buffer = zun_gc::with_current_heap(|heap| heap.data_view_buffer(view)).ok_or(RunError::BadToken)?;
+                Ok(Value::Object(buffer))
+            }
+            "isView" => {
+                // Any value is accepted; a non-view object — or a value that
+                // is not an object at all — is `false`, never an error.
+                let verdict = match object(args.first().ok_or(RunError::BadToken)?) {
+                    Some(object) => zun_gc::with_current_heap(|heap| heap.is_view(object)),
+                    None => false,
+                };
+                Ok(Value::Bool(verdict))
+            }
             "dataViewGetU32" => {
                 let view =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

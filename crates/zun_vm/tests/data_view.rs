@@ -200,3 +200,32 @@ fn a_large_unsigned_literal_survives_a_round_trip_through_a_buffer() {
     // The same four bytes: 4294967295 unsigned, -1 signed.
     assert_eq!(out, vec!["4294967295", "-1"]);
 }
+
+#[test]
+fn byte_offset_reflects_the_construction() {
+    // A DataView built at a non-zero offset reports that offset; `byteLength`
+    // stays the span it was given.
+    let out = run_source(
+        "function main() {
+            let b = new ArrayBuffer(16);
+            let v = new DataView(b, 4, 8);
+            print(v.byteOffset());
+            print(v.byteLength());
+        }",
+    );
+    assert_eq!(out, vec!["4", "8"]);
+}
+
+#[test]
+fn buffer_refers_back_to_the_backing_array_buffer() {
+    // `buffer()` yields the ArrayBuffer the view was built over, so its
+    // `byteLength` is the whole buffer's, not the view's window.
+    let out = run_source(
+        "function main() {
+            let b = new ArrayBuffer(16);
+            let v = new DataView(b, 4, 8);
+            print(v.buffer().byteLength());
+        }",
+    );
+    assert_eq!(out, vec!["16"]);
+}

@@ -41,9 +41,9 @@ read.
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
-| 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping. Missing `isView`, resizable buffers |
-| 18 | DataView | partial | All element widths now present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. Missing `byteOffset`/`buffer` |
-| 19 | TypedArrays | partial | All eleven JS kinds now, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. `subarray` (shares the buffer) and `fill` present on every kind, bounds clamped like `slice`. Missing iteration, `byteOffset`/`buffer`, and the bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs index syntax on views or arity overloading first. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
+| 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, and the static `isView(x)`. Missing resizable buffers (deferred) |
+| 18 | DataView | partial | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints |
+| 19 | TypedArrays | partial | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs arity overloading first — plus `slice`/`copyWithin`, functional methods, `from/of`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` now captured** at construction (frame walk + sequence points; byte-span frames, not line:col). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). Still not a realm global; `cause` deferred (needs `any` fields + object-literal syntax) |
@@ -586,15 +586,24 @@ reclaims the target).
 `Ty::Buffer` is what the realm registers under the name `ArrayBuffer`; the byte
 storage lives in `zun_gc/buffers.rs`.
 
-- **Present:** `new ArrayBuffer(length)`, `byteLength()`, `slice(begin, end)`.
+- **Present:** `new ArrayBuffer(length)`, `byteLength()`, `slice(begin, end)`,
+  and the static `ArrayBuffer.isView(x)`.
   `slice` copies rather than aliasing, as JS does, and clamps inverted or
   out-of-range bounds to an empty result instead of failing.
+- **`ArrayBuffer.isView(x)`** — `true` for a `DataView` or any typed array,
+  `false` for everything else (including a plain `ArrayBuffer`, a non-view
+  object, and any non-object value). The argument is accepted as an opaque
+  value and a non-view answers `false` rather than erroring. Backed by
+  `Heap::is_view`, which checks the view registries; recognized as a static on
+  the receiver name `ArrayBuffer`.
 - **Methods, not properties.** JS has `buffer.byteLength`; this is
   `buffer.byteLength()`, consistent with `String.length()` and `Map.size()` here.
   The property-vs-method divergence is repo-wide and listed under Surprising
   findings rather than patched per type.
-- **Missing:** `ArrayBuffer.isView(x)`, resizable buffers
-  (`resize`/`maxByteLength`), `SharedArrayBuffer` (deferred, fine).
+- **Missing:** resizable buffers (`resize`/`maxByteLength`),
+  `SharedArrayBuffer` (deferred, fine). Resizable buffers stay deferred: a
+  `resize` would have to re-validate every outstanding view's window against the
+  new length, which the view registries do not track back-references for yet.
 
 ## 18. DataView — partial
 `BufferViewKind::DataView`; core accessors in `zun_core/views.rs`.
@@ -603,19 +612,26 @@ storage lives in `zun_gc/buffers.rs`.
   `getUint16/setUint16`, `getInt32/setInt32`, `getUint32/setUint32`,
   `getInt64/setInt64`, `getUint64/setUint64`, `getFloat32/setFloat32`,
   `getFloat64/setFloat64`, each with the little-endian flag (single bytes take
-  none), plus `byteLength()`.
+  none), plus `byteLength()`, `byteOffset()` and `buffer()`.
+- **`byteOffset()` / `buffer()`** expose the view's byte offset into its
+  backing buffer and a reference to that `ArrayBuffer`. The offset is the
+  stored `DataView`'s `offset()`; the buffer handle is the one saved in the
+  view object's field 0 at construction (`Heap::data_view_byte_offset` /
+  `data_view_buffer`). Methods, not properties, like the rest of the surface.
 - **Signed access was missing entirely** before this, so a binary format with
   signed fields could not be read: the same byte is `-1` as `Int8` and `255` as
   `Uint8`, and only the unsigned reading existed.
 - **64-bit naming:** JS calls these `getBigInt64`/`getBigUint64` and returns a
   BigInt. Zun has native 64-bit integers, so they are `getInt64`/`getUint64`
   returning `i64`/`u64`. A deliberate divergence, not an oversight.
-- **Missing:** `byteOffset()` and `buffer()` accessors; `Uint8Clamped` has no
-  DataView form in JS either.
+- **Missing:** nothing of the core surface now; `Uint8Clamped` has no DataView
+  form in JS either.
 
 ## 19. TypedArrays — partial
-`Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array` over a shared
-`ArrayBuffer`.
+All eleven JS kinds over a shared `ArrayBuffer`, generated from the master
+table in `zun_core/typed_elements.rs`: `Int8Array`, `Uint8Array`,
+`Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`,
+`Float32Array`, `Float64Array`, `BigInt64Array`, `BigUint64Array`.
 
 - **The constructor's third argument counted bytes, where JS counts
   elements.** `new Uint32Array(b, 0, 8)` gave a two-element view in Zun and an
@@ -625,17 +641,29 @@ storage lives in `zun_gc/buffers.rs`.
 - **`length()` and `byteLength()` were unreachable.** The natives existed for
   every kind; only `get`/`set` were in the checker's method table, so a view
   could be read but not measured.
-- **Present:** `get`, `set`, `length`, `byteLength` on all four kinds.
-- **Missing kinds:** `Int8Array`, `Int16Array`, `Int32Array`,
-  `Uint8ClampedArray`, `Float32Array`, `BigInt64Array`, `BigUint64Array`. Each
-  needs wiring in six places (the core element enum, `BufferViewKind`, the
-  natives, the interpreter dispatch, the realm facets and the checker's method
-  table); `zun_vm/tests/typed_array_kinds.rs` enumerates what the realm accepts
-  and fails if a kind is half-wired. Signed data is readable today through
-  `DataView` (#18), which has every width.
-- **Missing surface:** `subarray`, `slice`, `set(array, offset)`, `fill`,
-  `copyWithin`, the functional and iteration methods, and the statics
-  `TypedArray.from/of`.
+- **Present:** `get`, `set`, `length`, `byteLength`, `subarray`, `fill`,
+  `byteOffset`, `buffer`, and `[Symbol.iterator]` / `for...of` on every kind.
+  All generated from the master table, so a kind cannot be annotatable without
+  having the full method surface; `zun_vm/tests/typed_array_kinds.rs` enumerates
+  the kinds and fails if one is half-wired.
+- **`byteOffset` / `buffer`** mirror the DataView ones: the view's byte offset
+  into its backing buffer and a reference to that `ArrayBuffer`. Kind-independent
+  — a view carries its own byte offset and buffer handle regardless of element
+  width — so both go through the master table and every kind gets them at once
+  (`Heap::typed_array_byte_offset` / `typed_array_buffer`).
+- **Iteration** builds an element sequence and reuses the array iterator, the
+  same shape the string iterator uses: `<kind>IteratorNew` reads every element
+  into a fresh array, then returns an array iterator whose `next`/`done` are the
+  `arrayIterator*` intrinsics. `for (let x of someUint8Array)` and
+  `someUint8Array[Symbol.iterator]()` both route here; `DataView` is not
+  iterable and reports so. The element read happens before any allocation, so
+  the view handle is never held across a move.
+- **Deferred:** the bulk `set(source, offset)` — its name collides with the
+  indexed `set(index, value)`, so it needs arity/overload resolution first;
+  `slice` (copying), `copyWithin`, the functional methods, and the statics
+  `TypedArray.from/of`. `BigInt64Array`/`BigUint64Array` carry native
+  `i64`/`u64` rather than real BigInts, the same divergence as
+  `DataView.getInt64` (#18).
 
 ## 20. Date — partial
 `builtin/date.zun` over the `zun:date`/`zun:time` intrinsics, reachable as a
@@ -878,12 +906,17 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
    - Promise (#9): ✅ `then/catch/finally` (new-promise + Promise adoption) and statics
      `resolve/reject/all/allSettled/race/any` landed. Remaining: `withResolvers`,
      AggregateError for `any`, microtask deferral of a pending-source reaction.
-   - TypedArrays/DataView (#18,#19): missing element kinds + full method surface.
+   - TypedArrays/DataView (#18,#19): ✅ all eleven kinds, `get/set/length/
+     byteLength/subarray/fill/byteOffset/buffer` and `[Symbol.iterator]`; DataView
+     every width plus `byteOffset/buffer` — landed. Remaining (deferred): bulk
+     `set(source, offset)` (needs overload resolution), `slice/copyWithin`, the
+     functional methods, `TypedArray.from/of`, real BigInt elements.
    - BigInt (#4): `div/rem/pow/neg`, bitwise/shift, `BigInt()` coercion, `asIntN/asUintN`.
    - Error (#22): ✅ `.stack` capture and `AggregateError(errors, message)` landed.
      Remaining: `cause` (blocked on object-literal syntax + `any` fields), realm
      global, `aggregate instanceof Error`, `Promise.any` aggregate wiring.
-   - ArrayBuffer (#17): `byteLength slice isView`.
+   - ArrayBuffer (#17): ✅ `byteLength slice isView` landed. Remaining (deferred):
+     resizable buffers (`resize/maxByteLength`), `SharedArrayBuffer`.
    - Proxy/Reflect (#10): full trap set + `Reflect` global.
 7. **Boolean wrapper object** (#3) — low: `Boolean(x)` coercion + `boolean.toString()`
    landed; only the boxed `new Boolean(x)` object remains deferred (primitive suffices).

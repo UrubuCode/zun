@@ -86,6 +86,12 @@ macro_rules! buffer_module {
             },
             NativeFn { name: "dataViewLength", params: &[DataView], ret: U64, imp: unavailable },
             NativeFn { name: "dataViewByteLength", params: &[DataView], ret: U64, imp: unavailable },
+            NativeFn { name: "dataViewByteOffset", params: &[DataView], ret: U64, imp: unavailable },
+            NativeFn { name: "dataViewBuffer", params: &[DataView], ret: Buffer, imp: unavailable },
+            // `ArrayBuffer.isView(x)` — true for a DataView or typed array,
+            // false for anything else. Takes an opaque value so a non-view
+            // (even a non-object) is answered rather than rejected.
+            NativeFn { name: "isView", params: &[Opaque], ret: Bool, imp: unavailable },
             NativeFn {
                 name: "dataViewGetU32",
                 params: &[DataView, U64, Bool],
@@ -247,6 +253,30 @@ macro_rules! buffer_module {
                 name: concat!($native, "Fill"),
                 params: &[$view_ty, $arg_native, U64, U64],
                 ret: Bool,
+                imp: unavailable,
+            },
+            // `byteOffset` / `buffer`: the view's position in its backing
+            // buffer and a reference to that buffer. Methods here, as the
+            // rest of the surface is.
+            NativeFn {
+                name: concat!($native, "ByteOffset"),
+                params: &[$view_ty],
+                ret: U64,
+                imp: unavailable,
+            },
+            NativeFn {
+                name: concat!($native, "Buffer"),
+                params: &[$view_ty],
+                ret: Buffer,
+                imp: unavailable,
+            },
+            // `[Symbol.iterator]` — builds the element sequence and hands back
+            // an array iterator, so `next`/`done` are the `arrayIterator*`
+            // ones, exactly as the string iterator reuses them.
+            NativeFn {
+                name: concat!($native, "IteratorNew"),
+                params: &[Opaque],
+                ret: Opaque,
                 imp: unavailable,
             },
         )+

@@ -121,8 +121,27 @@ macro_rules! typed_array_surface {
                         Ty::Boolean,
                         vec![scalar_ty($arg_ty), index, index],
                     )),
+                    // `byteOffset`/`buffer`: the view's position in its
+                    // backing buffer and a reference to that buffer. Methods
+                    // here, as the rest of the surface is.
+                    (BufferViewKind::$variant, "byteOffset") => {
+                        Some((concat!($native, "ByteOffset"), index, vec![]))
+                    }
+                    (BufferViewKind::$variant, "buffer") => {
+                        Some((concat!($native, "Buffer"), Ty::Buffer, vec![]))
+                    }
                 )+
                 _ => None,
+            }
+        }
+
+        /// The `[Symbol.iterator]` constructor intrinsic for a typed-array
+        /// kind, or `None` for `DataView`, which is not iterable. `next`/`done`
+        /// are the `arrayIterator*` intrinsics, as for strings.
+        pub(crate) fn iterator_new(kind: BufferViewKind) -> Option<&'static str> {
+            match kind {
+                $(BufferViewKind::$variant => Some(concat!($native, "IteratorNew")),)+
+                BufferViewKind::DataView => None,
             }
         }
 

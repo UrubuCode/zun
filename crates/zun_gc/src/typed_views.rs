@@ -17,6 +17,41 @@ impl Heap {
         self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.byte_len())
     }
 
+    /// The typed-array view's byte offset into its backing buffer
+    /// (`typedArray.byteOffset`). Kind-independent: the view carries its own
+    /// byte offset regardless of element width.
+    pub fn typed_array_byte_offset(&self, object: Obj) -> Option<usize> {
+        self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.byte_offset())
+    }
+
+    /// The backing `ArrayBuffer` of a typed-array view (`typedArray.buffer`).
+    pub fn typed_array_buffer(&self, object: Obj) -> Option<Obj> {
+        self.typed_views.get(&(object.addr() as usize)).map(|(buffer, _)| *buffer)
+    }
+
+    /// The byte offset of a `DataView` into its backing buffer
+    /// (`dataView.byteOffset`).
+    pub fn data_view_byte_offset(&self, object: Obj) -> Option<usize> {
+        self.data_views.get(&(object.addr() as usize)).map(|view| view.offset())
+    }
+
+    /// The backing `ArrayBuffer` of a `DataView` (`dataView.buffer`). The
+    /// handle is stored in field 0 at construction; it is only returned for an
+    /// object that is actually a registered data view.
+    pub fn data_view_buffer(&self, object: Obj) -> Option<Obj> {
+        self.data_views
+            .contains_key(&(object.addr() as usize))
+            .then(|| unsafe { Obj::from_addr(object.field(0) as *mut u64) })
+    }
+
+    /// Whether `object` is a buffer view — a `DataView` or any typed array.
+    /// Backs `ArrayBuffer.isView`; a non-view object (or any value that is not
+    /// an object at all) answers `false` rather than failing.
+    pub fn is_view(&self, object: Obj) -> bool {
+        let key = object.addr() as usize;
+        self.data_views.contains_key(&key) || self.typed_views.contains_key(&key)
+    }
+
     pub fn data_view_get_u32(&self, object: Obj, relative: usize, little_endian: bool) -> Option<u32> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
         self.data_views.get(&(object.addr() as usize))?.get_u32(

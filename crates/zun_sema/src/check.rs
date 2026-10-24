@@ -858,6 +858,19 @@ impl Checker<'_> {
                     Ty::String => ("stringIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     Ty::Any => ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext"),
                     Ty::Error => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
+                    // A typed array iterates its elements; it builds an element
+                    // sequence and reuses the array iterator's `done`/`next`,
+                    // as a string iterator does. `DataView` is not iterable.
+                    Ty::BufferView(kind) => match crate::typed_arrays::iterator_new(kind) {
+                        Some(new_name) => (new_name, "arrayIteratorDone", "arrayIteratorNext"),
+                        None => {
+                            self.error(
+                                iterable_expr.span,
+                                "a DataView is not iterable".to_string(),
+                            );
+                            ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext")
+                        }
+                    },
                     other => {
                         self.error(
                             iterable_expr.span,
@@ -2648,6 +2661,36 @@ impl Checker<'_> {
                             span,
                         );
                     }
+                    // `ArrayBuffer.isView(x)` — true for a DataView or typed
+                    // array, false for anything else. Accepts any value; a
+                    // non-`any` operand is boxed, so a plain value answers
+                    // `false` rather than failing to type-check.
+                    if class_name == "ArrayBuffer"
+                        && self.text(method) == "isView"
+                        && !self.classes_by_name.contains_key("ArrayBuffer")
+                    {
+                        if args.len() != 1 {
+                            self.error(span, "`ArrayBuffer.isView` expects one argument".to_string());
+                            return self.poison(span);
+                        }
+                        let Some((id, _)) = zun_natives::resolve("zun:buffer", "isView") else {
+                            self.error(span, "missing `isView` intrinsic".to_string());
+                            return self.poison(span);
+                        };
+                        let mut arg = self.check_expr(cx, &args[0]);
+                        if arg.ty != Ty::Any && !arg.ty.is_error() {
+                            arg = hir::Expr {
+                                span: arg.span,
+                                kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                                ty: Ty::Any,
+                            };
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                    }
                     if let Some(&namespace) = self.core_namespaces.get(&class_name) {
                         let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
                             self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
@@ -3398,6 +3441,18 @@ impl Checker<'_> {
                     (Ty::BufferView(hir::BufferViewKind::DataView), "byteLength") => Some((
                         "dataViewByteLength",
                         Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    // `byteOffset`/`buffer`: the view's position in its
+                    // backing buffer and a reference to that `ArrayBuffer`.
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "byteOffset") => Some((
+                        "dataViewByteOffset",
+                        Ty::Int(IntKind::U64),
+                        vec![],
+                    )),
+                    (Ty::BufferView(hir::BufferViewKind::DataView), "buffer") => Some((
+                        "dataViewBuffer",
+                        Ty::Buffer,
                         vec![],
                     )),
                     // `ArrayBuffer`, which is what `Ty::Buffer` denotes. These
@@ -4840,6 +4895,16 @@ impl Checker<'_> {
                         Ty::Set => "setIteratorNew",
                         Ty::String => "stringIteratorNew",
                         Ty::Error => "arrayIteratorNew",
+                        Ty::BufferView(kind) => match crate::typed_arrays::iterator_new(kind) {
+                            Some(new_name) => new_name,
+                            None => {
+                                self.error(
+                                    object.span,
+                                    "a DataView has no Symbol.iterator".to_string(),
+                                );
+                                return self.poison(span);
+                            }
+                        },
                         other => {
                             self.error(
                                 object.span,
