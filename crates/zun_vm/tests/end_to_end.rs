@@ -503,6 +503,143 @@ fn array_shift_unshift_splice_mutate_in_place() {
 }
 
 #[test]
+fn array_find_last_and_find_last_index() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(4); a[0]=1.0; a[1]=2.0; a[2]=3.0; a[3]=2.0; \
+            print(a.findLast((v: any, i: any, arr: any) => (v as number) == 2.0) as number); \
+            print(a.findLastIndex((v: any, i: any, arr: any) => (v as number) == 2.0)); \
+            print(a.findLast((v: any, i: any, arr: any) => (v as number) == 9.0)); \
+            print(a.findLastIndex((v: any, i: any, arr: any) => (v as number) == 9.0)); }",
+    );
+    // Last 2 is at index 3; a miss yields undefined / -1.
+    assert_eq!(out, ["2", "3", "undefined", "-1"]);
+}
+
+#[test]
+fn array_flat_depth_default_and_explicit() {
+    let out = run_source(
+        "function main() { \
+            let inner = new Array(1); inner[0] = 3.0; \
+            let mid = new Array(2); mid[0] = 2.0; mid[1] = inner; \
+            let a = new Array(2); a[0] = 1.0; a[1] = mid; \
+            let one = a.flat(); \
+            print(one.length); print(one[0] as number); print(one[1] as number); \
+            let two = a.flat(2.0); \
+            print(two.length); print(two[2] as number); }",
+    );
+    // flat(): [1, 2, [3]] -> length 3; flat(2): [1, 2, 3] -> length 3, last 3.
+    assert_eq!(out, ["3", "1", "2", "3", "3"]);
+}
+
+#[test]
+fn array_flat_map_maps_then_flattens_one_level() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(2); a[0] = 1.0; a[1] = 2.0; \
+            let b = a.flatMap((x: any, i: any, arr: any) => { \
+                let pair = new Array(2); pair[0] = x; pair[1] = x; return pair; }); \
+            print(b.length); print(b[0] as number); print(b[1] as number); \
+            print(b[2] as number); print(b[3] as number); }",
+    );
+    // [1,1,2,2]
+    assert_eq!(out, ["4", "1", "1", "2", "2"]);
+}
+
+#[test]
+fn array_at_relative_index() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(3); a[0]=1.0; a[1]=2.0; a[2]=3.0; \
+            print(a.at(-1.0) as number); print(a.at(0.0) as number); \
+            print(a.at(-5.0)); print(a.at(10.0)); }",
+    );
+    assert_eq!(out, ["3", "1", "undefined", "undefined"]);
+}
+
+#[test]
+fn array_keys_values_entries() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(2); a[0] = 10.0; a[1] = 20.0; \
+            let k = a.keys(); print(k[0] as number); print(k[1] as number); \
+            let v = a.values(); print(v[0] as number); print(v[1] as number); \
+            let e = a.entries(); let p = e[1] as Array; \
+            print(p[0] as number); print(p[1] as number); }",
+    );
+    // keys 0,1; values 10,20; entries[1] = [1, 20].
+    assert_eq!(out, ["0", "1", "10", "20", "1", "20"]);
+}
+
+#[test]
+fn array_is_array_static() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(0); \
+            print(Array.isArray(a)); print(Array.isArray(5.0)); print(Array.isArray(\"x\")); }",
+    );
+    assert_eq!(out, ["true", "false", "false"]);
+}
+
+#[test]
+fn array_of_static_builds_array() {
+    let out = run_source(
+        "function main() { \
+            let a = Array.of(1.0, 2.0, 3.0); \
+            print(a.length); print(a[0] as number); print(a[2] as number); }",
+    );
+    assert_eq!(out, ["3", "1", "3"]);
+}
+
+#[test]
+fn array_from_string_and_mapped() {
+    let out = run_source(
+        "function main() { \
+            let chars = Array.from(\"ab\"); \
+            print(chars.length); print(chars[0] as string); print(chars[1] as string); \
+            let src = new Array(2); src[0] = 1.0; src[1] = 2.0; \
+            let doubled = Array.from(src, (x: any, i: any) => (x as number) * 2.0); \
+            print(doubled[0] as number); print(doubled[1] as number); }",
+    );
+    assert_eq!(out, ["2", "a", "b", "2", "4"]);
+}
+
+#[test]
+fn array_splice_inserts_variadic_items() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(2); a[0] = \"a\"; a[1] = \"b\"; \
+            let removed = a.splice(1 as u64, 0 as u64, \"x\"); \
+            print(removed.length); print(a.length); \
+            print(a[0] as string); print(a[1] as string); print(a[2] as string); }",
+    );
+    // splice(1,0,"x") inserts "x" at index 1: ["a","x","b"], nothing removed.
+    assert_eq!(out, ["0", "3", "a", "x", "b"]);
+}
+
+#[test]
+fn array_reduce_without_initial_value() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(3); a[0]=1.0; a[1]=2.0; a[2]=3.0; \
+            print(a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number)) as number); \
+            print(a.reduceRight((acc: any, v: any, i: any, arr: any) => (acc as number) * 10.0 + (v as number)) as number); }",
+    );
+    // reduce no-init: 1+2+3 = 6; reduceRight no-init seeds with 3 -> 3*10+2=32, *10+1=321.
+    assert_eq!(out, ["6", "321"]);
+}
+
+#[test]
+fn array_reduce_empty_no_initial_throws() {
+    let error = run_source_expect_error(
+        "function main(): number { \
+            let a = new Array(0); \
+            return a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number)) as number; }",
+    );
+    assert!(error.contains("Reduce of empty array"), "unexpected error: {error}");
+}
+
+#[test]
 fn array_sort_default_is_string_ascending() {
     let out = run_source(
         "function main() { \

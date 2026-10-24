@@ -31,7 +31,7 @@ read.
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
-| 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
+| 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). Remaining: `withResolvers`, AggregateError for `any`, unhandled-rejection-at-turn-end reporting |
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
@@ -368,29 +368,50 @@ dispatch (`check.rs`, `Ty::Array` arm of the managed-method table plus the
 `sort/reduce/reduceRight` pre-block).
 
 - **Present (standard):** `map(cb) filter(cb) forEach(cb) find(cb) findIndex(cb)
-  some(cb) every(cb) reduce(cb,init) reduceRight(cb,init) sort(cmp?) join(sep)
-  shift() unshift(v) splice(start,deleteCount) slice(start,end) concat(other)
-  fill(value) reverse copyWithin(t,s,e) flat indexOf lastIndexOf includes at(i)
-  length` + `[Symbol.iterator]`. Every callback receives the ECMAScript
-  `(value, index, array)` signature (comparator `(a, b)`); surplus arguments are
-  dropped to the callback's declared arity (interp `invoke_callback` truncates to
-  the callee `param_count`). `sort()` with no comparator is ascending **string**
-  order (spec default).
+  findLast(cb) findLastIndex(cb) some(cb) every(cb) reduce(cb[,init])
+  reduceRight(cb[,init]) sort(cmp?) join(sep) shift() unshift(v)
+  splice(start,deleteCount,...items) slice(start,end) concat(other) fill(value)
+  reverse copyWithin(t,s,e) flat(depth=1) flatMap(cb) keys() values() entries()
+  indexOf lastIndexOf includes at(i) length` + `[Symbol.iterator]`; statics
+  `Array.isArray(x) Array.of(...) Array.from(arrayLike[,mapFn])`. Every callback
+  receives the ECMAScript `(value, index, array)` signature (comparator `(a, b)`);
+  surplus arguments are dropped to the callback's declared arity (interp
+  `invoke_callback` truncates to the callee `param_count`). `sort()` with no
+  comparator is ascending **string** order (spec default). `at(i)` does relative
+  indexing (negative counts from the end) and yields `undefined` out of range; a
+  no-initial `reduce`/`reduceRight` seeds from the first/last element and throws a
+  TypeError on an empty array. The NUCLEUS #7 extension surface lives in a
+  dedicated `array` native module (`zun_natives/src/array_ext.rs`, appended last
+  so every existing dispatch id stays stable; implementations in
+  `zun_interp/src/collections.rs`).
 - **Zun extensions (kept, beyond ECMAScript):** `chunk windowed rotateLeft/Right
   union intersection difference symmetricDifference isSubsetOf isSupersetOf
   isPalindrome isSorted isUnique sum product average min max transpose sortNumeric
   take drop insertAt removeAt removeFirst removeAll swap count contains …` — the
   "collection algebra" surface in `builtin/array.zun`. (`sort`'s former numeric
   default is preserved as the extension `sortNumeric()`.)
-- **Missing (standard):** `findLast findLastIndex flatMap keys() values() entries()
-  at`-iterators `toSorted toReversed with group`; statics `Array.from(iterable
-  [,mapFn]) Array.of(...) Array.isArray(x)`; variadic `splice` inserts; the
-  no-initial `reduce`/`reduceRight` form (throws-on-empty); `fill`/`copyWithin`
-  range refinements.
+- **Missing (standard):** `toSorted toReversed toSpliced with group groupToMap`;
+  `fill`/`copyWithin` range refinements. `keys()`/`values()`/`entries()` return a
+  fresh managed **Array** (iterable via `for...of` and indexable), not a distinct
+  iterator object — pragmatic for v1; a proper iterator-protocol object is a
+  follow-up. `Array.from` consumes an array or string (and anything with array
+  storage); arbitrary iterator-protocol sources are deferred (documented). **Note:
+  `for (const [i, v] of arr.entries())` is blocked by a separate front-end gap —
+  for-of binds a single identifier, not a destructuring pattern** (ast/parser/oxc
+  `ForOf.name` is a `Name`); `entries()` itself works (iterate with one binding and
+  index the pair). That loop-binding destructuring is orthogonal to the Array
+  surface and left for a front-end change.
 - **Notes:** these callback methods are Tier 0 (they re-enter the interpreter via
   `self.call`, like proxy traps / `functionApply`); `CallIndirect` is not
-  JIT-lowered, so there is no new JIT path. `indexOf`/`lastIndexOf`/`includes`
-  stay value-based (spec) and `indexOf` returns `int`.
+  JIT-lowered, so there is no new JIT path. The non-callback additions (`at`,
+  `flat`, `keys`/`values`/`entries`, `splice` inserts, `isArray`/`of`/`from`) are
+  managed `CallBuiltin` natives that are not in the codegen eligibility allowlist,
+  so a function using them stays Tier 0 (interp equivalence holds trivially).
+  `Array.of(...)` and `splice`'s variadic inserts lower through an array literal in
+  sema (no variadic native needed); `Array.*` statics are recognized by the
+  receiver name `Array` for `isArray`/`of`/`from` (the Number/String precedent).
+  `indexOf`/`lastIndexOf`/`includes` stay value-based (spec) and `indexOf` returns
+  `int`.
 
 ### 7b. Array literals — partial  *(expression syntax landed)*
 `[ e1, e2, ... ]` now parses and lowers in the front-end (both the hand parser —

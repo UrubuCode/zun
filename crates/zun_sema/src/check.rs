@@ -1753,6 +1753,107 @@ impl Checker<'_> {
         acc
     }
 
+    /// Lower an `Array.<method>(...)` static call. `isArray(x)` tests the value;
+    /// `of(...)` builds an array from its positional arguments (lowered to an
+    /// array literal); `from(src, mapFn?)` materializes an array from a managed
+    /// array or string (other iterables deferred), optionally mapping each item.
+    fn check_array_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let box_any = |value: hir::Expr| {
+            if value.ty == Ty::Any || value.ty.is_error() {
+                value
+            } else {
+                let span = value.span;
+                hir::Expr {
+                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
+        };
+        match method {
+            "isArray" => {
+                if args.len() != 1 {
+                    self.error(
+                        span,
+                        format!("`Array.isArray` expects 1 argument, found {}", args.len()),
+                    );
+                    return self.poison(span);
+                }
+                let arg = box_any(self.check_expr(cx, &args[0]));
+                let Some((id, _)) = zun_natives::resolve("array", "arrayIsArray") else {
+                    self.error(span, "missing Array intrinsic `arrayIsArray`");
+                    return self.poison(span);
+                };
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                    ty: Ty::Boolean,
+                    span,
+                }
+            }
+            "of" => {
+                // `Array.of(...items)` is exactly an array literal of the args.
+                let elements =
+                    args.iter().map(|element| self.check_expr(cx, element)).collect();
+                hir::Expr {
+                    kind: hir::ExprKind::ArrayLiteral { elements },
+                    ty: Ty::Array,
+                    span,
+                }
+            }
+            "from" => {
+                if args.is_empty() || args.len() > 2 {
+                    self.error(
+                        span,
+                        format!("`Array.from` expects 1 or 2 argument(s), found {}", args.len()),
+                    );
+                    return self.poison(span);
+                }
+                let source = box_any(self.check_expr(cx, &args[0]));
+                if args.len() == 2 {
+                    let map_fn = self.check_expr(cx, &args[1]);
+                    if !map_fn.ty.is_error()
+                        && !self.is_assignable(map_fn.ty, Ty::Function(hir::DYNAMIC_FUNCTION))
+                    {
+                        self.error(map_fn.span, "`Array.from` map argument must be a function");
+                    }
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayFromMapped") else {
+                        self.error(span, "missing Array intrinsic `arrayFromMapped`");
+                        return self.poison(span);
+                    };
+                    hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![source, map_fn] },
+                        ty: Ty::Array,
+                        span,
+                    }
+                } else {
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayFrom") else {
+                        self.error(span, "missing Array intrinsic `arrayFrom`");
+                        return self.poison(span);
+                    };
+                    hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![source] },
+                        ty: Ty::Array,
+                        span,
+                    }
+                }
+            }
+            other => {
+                self.error(
+                    method_span,
+                    format!("`Array.{other}` is not supported in this runtime"),
+                );
+                self.poison(span)
+            }
+        }
+    }
+
     /// Lower a `Promise.<method>(...)` static call. `resolve`/`reject` take one
     /// value; the combinators (`all`/`allSettled`/`race`/`any`) take one
     /// iterable, which this floor requires to be a managed array.
@@ -3006,6 +3107,21 @@ impl Checker<'_> {
                             span,
                         );
                     }
+                    // `Array.isArray(x)` / `Array.of(...)` / `Array.from(src,
+                    // mapFn?)`. Recognized by receiver name for the known statics
+                    // (the `Array` class exists for its instance surface, like
+                    // `Number`); anything else on `Array` falls through.
+                    if class_name == "Array"
+                        && matches!(self.text(method), "isArray" | "of" | "from")
+                    {
+                        return self.check_array_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
                     // `Symbol.for(key)` / `Symbol.keyFor(symbol)` — the global
                     // cross-realm registry.
                     if class_name == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
@@ -3294,6 +3410,86 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if receiver.ty == Ty::Array && mname == "splice" {
+                    // `splice(start, deleteCount, ...items)`. The inserted items
+                    // are gathered into a managed array (an array literal), so a
+                    // single fixed-arity native carries the variadic inserts.
+                    if args.len() < 2 {
+                        self.error(
+                            span,
+                            format!(
+                                "`Array.splice` expects at least 2 argument(s), found {}",
+                                args.len()
+                            ),
+                        );
+                        return self.poison(span);
+                    }
+                    let mut start = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut start, Ty::Int(IntKind::U64));
+                    if !start.ty.is_error() && !self.is_assignable(start.ty, Ty::Int(IntKind::U64)) {
+                        self.error(start.span, "`Array.splice` start must be an integer");
+                    }
+                    let mut delete_count = self.check_expr(cx, &args[1]);
+                    coerce_numeric_literal(&mut delete_count, Ty::Int(IntKind::U64));
+                    if !delete_count.ty.is_error()
+                        && !self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64))
+                    {
+                        self.error(delete_count.span, "`Array.splice` deleteCount must be an integer");
+                    }
+                    let items: Vec<hir::Expr> =
+                        args[2..].iter().map(|item| self.check_expr(cx, item)).collect();
+                    let items = hir::Expr {
+                        kind: hir::ExprKind::ArrayLiteral { elements: items },
+                        ty: Ty::Array,
+                        span,
+                    };
+                    let Some((id, _)) = zun_natives::resolve("array", "arraySpliceInsert") else {
+                        self.error(span, "missing Array intrinsic `arraySpliceInsert`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![receiver, start, delete_count, items],
+                        },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
+                if receiver.ty == Ty::Array && mname == "flat" {
+                    // `flat(depth=1)` — the depth defaults to 1 when omitted.
+                    if args.len() > 1 {
+                        self.error(
+                            span,
+                            format!("`Array.flat` accepts at most 1 argument, found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let depth = match args.first() {
+                        Some(arg) => {
+                            let mut value = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut value, Ty::F64);
+                            if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::F64) {
+                                self.error(value.span, "`Array.flat` depth must be a number");
+                            }
+                            value
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(1.0),
+                            ty: Ty::F64,
+                            span,
+                        },
+                    };
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayFlat") else {
+                        self.error(span, "missing Array intrinsic `arrayFlat`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, depth] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
                 if receiver.ty == Ty::Array
                     && matches!(mname.as_str(), "sort" | "reduce" | "reduceRight")
                 {
@@ -3321,6 +3517,18 @@ impl Checker<'_> {
                                 Ty::Any,
                                 vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
                             ),
+                            // No-initial-value form: the first/last element seeds
+                            // the accumulator; an empty array throws a TypeError.
+                            ("reduce", 1) => (
+                                "arrayReduceNoInit",
+                                Ty::Any,
+                                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                            ),
+                            ("reduceRight", 1) => (
+                                "arrayReduceRightNoInit",
+                                Ty::Any,
+                                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                            ),
                             (other, found) => {
                                 self.error(
                                     span,
@@ -3346,7 +3554,9 @@ impl Checker<'_> {
                         }
                         call_args.push(value);
                     }
-                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name)
+                        .or_else(|| zun_natives::resolve("array", native_name))
+                    else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
                     };
@@ -3761,11 +3971,26 @@ impl Checker<'_> {
                     (Ty::Array, "unshift") => {
                         Some(("arrayUnshift", Ty::Int(IntKind::U64), vec![Ty::Any]))
                     }
-                    (Ty::Array, "splice") => Some((
-                        "arraySplice",
-                        Ty::Array,
-                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
+                    // `at(index)` with relative/undefined semantics (native).
+                    (Ty::Array, "at") => Some(("arrayAt", Ty::Any, vec![Ty::F64])),
+                    (Ty::Array, "findLast") => Some((
+                        "arrayFindLast",
+                        Ty::Any,
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
                     )),
+                    (Ty::Array, "findLastIndex") => Some((
+                        "arrayFindLastIndex",
+                        Ty::Int(IntKind::I32),
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
+                    (Ty::Array, "flatMap") => Some((
+                        "arrayFlatMap",
+                        Ty::Array,
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
+                    (Ty::Array, "keys") => Some(("arrayKeys", Ty::Array, vec![])),
+                    (Ty::Array, "values") => Some(("arrayValues", Ty::Array, vec![])),
+                    (Ty::Array, "entries") => Some(("arrayEntries", Ty::Array, vec![])),
                     (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
                     (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),
@@ -4025,6 +4250,24 @@ impl Checker<'_> {
                         "buffer"
                     } else if native_name.starts_with("promise") {
                         "promise"
+                    } else if matches!(
+                        native_name,
+                        "arrayAt"
+                            | "arrayFindLast"
+                            | "arrayFindLastIndex"
+                            | "arrayFlat"
+                            | "arrayFlatMap"
+                            | "arrayKeys"
+                            | "arrayValues"
+                            | "arrayEntries"
+                            | "arraySpliceInsert"
+                            | "arrayReduceNoInit"
+                            | "arrayReduceRightNoInit"
+                            | "arrayIsArray"
+                            | "arrayFrom"
+                            | "arrayFromMapped"
+                    ) {
+                        "array"
                     } else {
                         "collections"
                     };

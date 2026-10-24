@@ -17,6 +17,7 @@ pub(super) fn call_builtin(
         .or_else(|| managed_typeinfo_builtin(id))
         .or_else(|| managed_error_builtin(id))
         .or_else(|| managed_timers_builtin(id))
+        .or_else(|| managed_array_ext_builtin(id))
     {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
@@ -267,6 +268,33 @@ pub(crate) fn managed_timers_builtin(id: u32) -> Option<&'static str> {
         "setImmediate",
     ] {
         if zun_natives::resolve("timers", name).map(|(candidate, _)| candidate) == Some(id) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Recognize the extended Array surface (NUCLEUS #7), serviced on the
+/// interpreter floor because each re-enters the interpreter or touches the
+/// managed heap.
+pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
+    for name in [
+        "arrayAt",
+        "arrayFindLast",
+        "arrayFindLastIndex",
+        "arrayFlat",
+        "arrayFlatMap",
+        "arrayKeys",
+        "arrayValues",
+        "arrayEntries",
+        "arraySpliceInsert",
+        "arrayReduceNoInit",
+        "arrayReduceRightNoInit",
+        "arrayIsArray",
+        "arrayFrom",
+        "arrayFromMapped",
+    ] {
+        if zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }

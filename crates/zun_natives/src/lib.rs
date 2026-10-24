@@ -15,6 +15,7 @@
 //! can never collide. Extension modules such as `zun_node` will be organized
 //! the same way.
 
+mod array_ext;
 mod boolean;
 mod buffer;
 mod node_buffer;
@@ -262,6 +263,9 @@ pub static MODULES: &[Module] = &[
     // The `timers` macrotask surface (ASYNC slice 4). Appended last so every
     // existing dispatch id stays stable.
     timers::MODULE,
+    // Extended Array surface (NUCLEUS #7). Appended last so every existing
+    // dispatch id stays stable.
+    array_ext::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
