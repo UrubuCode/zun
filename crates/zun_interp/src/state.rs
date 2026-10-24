@@ -372,6 +372,15 @@ impl<'a> Interp<'a> {
     /// waking every reaction and parked frame attached to it. Called whenever
     /// the heap promise cell is resolved/rejected so control flows through the
     /// scheduler directly (the settle-after-attach half of heap↔scheduler sync).
+    /// Mark a promise as noticed (handled), so a rejection it carries is not
+    /// reported as unhandled at turn end. Bridges the promise first so the
+    /// scheduler knows its identity even on `await`'s synchronous fast path,
+    /// which settles an already-rejected promise without attaching a waiter.
+    pub(super) fn notice_promise(&mut self, promise: Obj) {
+        let pid = self.bridge_pid(promise);
+        self.async_state.promises.notice(pid);
+    }
+
     pub(super) fn wake_scheduler(&mut self, promise: Obj, settlement: Settlement) {
         let addr = promise.addr() as usize;
         if let Some(pid) = self.async_state.pid_by_obj.get(&addr).copied() {

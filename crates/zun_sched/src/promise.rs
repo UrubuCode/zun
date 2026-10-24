@@ -101,6 +101,13 @@ struct PromiseCell {
 #[derive(Debug, Default)]
 pub struct PromiseTable {
     cells: Vec<PromiseCell>,
+    /// Promises that rejected with nothing waiting on them. A rejection with no
+    /// waiter at settle time is provisionally unhandled; a handler attaching
+    /// afterwards (a `.catch`, an `await`, or an adopting promise) *notices* it
+    /// and removes it here. Whatever remains at turn end is an unhandled
+    /// rejection to report (mirrors rts: noticed when a handler attaches, even
+    /// after settle). An ordered set so reporting is deterministic.
+    unnoticed: std::collections::BTreeSet<PromiseId>,
 }
 
 impl PromiseTable {
@@ -126,6 +133,8 @@ impl PromiseTable {
 
     /// Attaches a parked frame to a promise.
     pub fn attach(&mut self, id: PromiseId, waiter: ContinuationId) -> Attachment {
+        // A handler attaching — now or after the fact — notices any rejection.
+        self.unnoticed.remove(&id);
         match self.cell(id).state {
             PromiseState::Settled(settlement) => Attachment::ReadyNow(settlement),
             PromiseState::Pending => {
@@ -146,6 +155,8 @@ impl PromiseTable {
             return Err(AdoptError::Cycle);
         }
 
+        // Using a promise as another's resolution notices its rejection.
+        self.unnoticed.remove(&other);
         match self.cell(other).state {
             PromiseState::Settled(settlement) => {
                 self.settle(id, settlement);
@@ -182,6 +193,11 @@ impl PromiseTable {
             if self.cell(current).state != PromiseState::Pending {
                 continue;
             }
+            // A rejection with nothing waiting on it is provisionally
+            // unhandled; a later handler attaching clears it (see `attach`).
+            if settlement == Settlement::Rejected && self.cell(current).waiters.is_empty() {
+                self.unnoticed.insert(current);
+            }
             self.cell_mut(current).state = PromiseState::Settled(settlement);
 
             for waiter in std::mem::take(&mut self.cell_mut(current).waiters) {
@@ -196,6 +212,26 @@ impl PromiseTable {
             accepted: true,
             woken,
         }
+    }
+
+    /// Marks a promise as noticed (handled), clearing any unhandled-rejection
+    /// tracking for it. Used by `await`, whose synchronous fast path settles an
+    /// already-rejected promise without attaching a scheduler waiter yet still
+    /// counts as handling it.
+    pub fn notice(&mut self, id: PromiseId) {
+        self.unnoticed.remove(&id);
+    }
+
+    /// Takes the set of promises that rejected with no handler ever attached,
+    /// clearing it. Called at turn end to report unhandled rejections; draining
+    /// means a promise is reported at most once.
+    pub fn take_unnoticed_rejections(&mut self) -> Vec<PromiseId> {
+        std::mem::take(&mut self.unnoticed).into_iter().collect()
+    }
+
+    /// Whether any unhandled rejection is outstanding.
+    pub fn has_unnoticed_rejections(&self) -> bool {
+        !self.unnoticed.is_empty()
     }
 
     /// How many promises exist.
@@ -286,6 +322,34 @@ mod tests {
         assert!(table.settle(promise, Settlement::Fulfilled).accepted);
         assert!(!table.settle(promise, Settlement::Rejected).accepted);
         assert_eq!(table.state(promise), PromiseState::Settled(Settlement::Fulfilled));
+    }
+
+    #[test]
+    fn a_rejection_with_no_waiter_is_unnoticed_until_a_handler_attaches() {
+        let mut table = PromiseTable::new();
+        // A detached rejection: nothing waiting → unnoticed.
+        let detached = table.create();
+        table.settle(detached, Settlement::Rejected);
+        assert!(table.has_unnoticed_rejections());
+
+        // A rejection with a handler attached before it settles is never
+        // unnoticed.
+        let handled = table.create();
+        table.attach(handled, ContinuationId(0));
+        table.settle(handled, Settlement::Rejected);
+
+        // A handler attaching AFTER the rejection notices it (clears it).
+        let late = table.create();
+        table.settle(late, Settlement::Rejected);
+        table.attach(late, ContinuationId(1));
+
+        // A fulfilled promise with no waiter is not a rejection, so not tracked.
+        let ok = table.create();
+        table.settle(ok, Settlement::Fulfilled);
+
+        let unnoticed = table.take_unnoticed_rejections();
+        assert_eq!(unnoticed, vec![detached], "only the detached rejection stays unhandled");
+        assert!(!table.has_unnoticed_rejections(), "take drains the set");
     }
 
     #[test]

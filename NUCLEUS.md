@@ -33,7 +33,7 @@ read.
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
-| 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). Remaining: `withResolvers`, AggregateError for `any`, unhandled-rejection-at-turn-end reporting |
+| 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }` (resolve/reject callable via dynamic method call); `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. Remaining: `new Promise(executor)` constructor; destructuring the resolver functions (front-end gap, see §9) |
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
 | 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
 | 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 4 · partial 16 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 5 · partial 15 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -528,11 +528,13 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
 - **Present (statics `Promise.*`):** `resolve(v)` (a Promise argument is returned
   unchanged; otherwise a resolved Promise), `reject(e)`, `all` (array of results, rejects
   on first rejection, in order), `allSettled` (array of `{status, value|reason}` dynamic
-  descriptors), `race` (first already-settled input wins), `any` (first fulfilment, else a
-  plain rejection — see AggregateError note).
+  descriptors), `race` (first already-settled input wins), `any` (first fulfilment, else an
+  `AggregateError` rejection — see AggregateError note), and `withResolvers()` (see
+  withResolvers note).
 - **Recognition (sema, `check.rs`):** `Promise.X(...)` statics follow the
   `check_number_static`/`check_string_static` pattern — a dedicated `check_promise_static`
   keyed on the `Promise` receiver name (guarded by `!classes_by_name.contains_key`).
+  `withResolvers` is handled first (zero args, result typed `any`).
   Instance `then/catch/finally` are a pre-block on a `Ty::Promise` receiver (like the
   Array `sort/reduce` pre-block), since they take optional function callbacks; an omitted
   callback lowers to `null`, which the floor reads as "no handler".
@@ -548,16 +550,60 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
   again, until no microtask and no pending timer remain. Reactions on a *pending* source are
   driven here (slice 3 retired eager-at-settle); the only remaining suspend-to-host path is
   the `ResumableSession` poll model, which also fires timers when microtasks go idle.
-- **AggregateError note:** `Promise.any` with all-rejected inputs still rejects with a
-  plain error message (`"All promises were rejected"`). `AggregateError` itself now
-  exists and carries an `errors` array (see §22), but `Promise`'s reject reason is stored
-  as a *string*, not a managed object, so wiring the aggregate in requires widening the
-  reason cell to hold an object first — that is the remaining work, not AggregateError.
-- **`reject` reason** is still a `string` (the managed cell stores a string reason); a boxed
-  `any` reason is unwrapped to its string before storage.
+- **Reason cell — widened (landed).** The managed Promise cell
+  (`zun_core::ManagedPromise`) now carries an optional first-class `reason: Option<Any>`
+  alongside the string `error`. A plain-string rejection sets `error` only (`reject`); an
+  object/boxed reason sets both via `reject_value(reason, message)` — the value is
+  delivered to `catch`/`await` (`settled_await_value` and the `then` on-rejected path), the
+  string keeps the display surface (`allSettled` descriptors, the unhandled-rejection line).
+  The reason object is write-barriered and traced by the GC (both mark passes in
+  `collection.rs`) and rewritten on compaction (`ManagedPromise::rewrite_object_references`).
+  `zun_gc` exposes `promise_reject_value`/`promise_reason`; interp has
+  `settle_promise_reject_value`.
+- **AggregateError for `any` (landed).** `Promise.any` collects each input's rejection
+  reason into an ordered array; when all inputs reject it settles its target via
+  `settle_promise_reject_value` with an **AggregateError-shaped dynamic object**
+  (`{ name: "AggregateError", message: "All promises were rejected", errors: [...] }`). A
+  dynamic object, not the typed `AggregateError` class (§22): that class ships in
+  `builtin/error.zun` and is compiled into a module only when the program imports it, so the
+  combinator floor cannot depend on it — the shape matches, so `reason.errors`/`.name`/
+  `.message` read the same. `catch`/`await` receive the object.
+- **`withResolvers` (landed).** `Promise.withResolvers()` → a dynamic object
+  `{ promise, resolve, reject }`. `promise` is an ordinary dynamic property (read with
+  `r.promise`, awaitable since `await` accepts `any`). `resolve`/`reject` are **native
+  "settler" callables** stored in the object's dynamic-FUNCTION slot
+  (`dynamic_set_function`) — function values do not box into `Any`, so they cannot be
+  ordinary properties. A settler is a `new_bound` handle over a record naming the promise +
+  mode; it is intercepted before the `bind` path (`settler_of` in `invoke_function_value`
+  and the `CallIndirect` bound branch) and settles natively. They are invoked from source as
+  **dynamic method calls** (`r.resolve(v)` / `r.reject(e)`): the `any`-receiver method-call
+  path (`dynamicCall0/1/2`) now checks the function slot first (invoking the stored handle),
+  falling back to the import-namespace loader. `reject(e)` carries an object/boxed `e` as a
+  first-class reason, a string `e` as a message.
+  - **Deferred (front-end gap, not faked):** *destructuring* the resolver functions
+    (`const { promise, resolve, reject } = Promise.withResolvers()`) does not bind the
+    function slots — object destructuring reads the dynamic *value* slot into `Any`-typed
+    locals, and an `Any` local is not callable. Use field/method form
+    (`const r: any = Promise.withResolvers(); r.resolve(v);`). Destructuring the
+    `promise` value alone works. Closing this needs either function-typed dynamic bindings +
+    indirect call, or function-aware destructuring — a front-end change, out of scope here.
+- **Unhandled rejection at turn end (landed).** `zun_sched`'s `PromiseTable` tracks an
+  `unnoticed` set: a promise that settles `Rejected` with **no waiter attached** is marked;
+  any later handler attaching (`attach`/`adopt`, i.e. a `.catch`/`.then`/an adopting
+  promise) clears it, as does `await` (via `notice`, since `await`'s synchronous fast path
+  settles without attaching). At **turn end** — after the microtask drain, when no timer
+  remains, in `run_event_loop` — `report_unhandled_rejections` drains the set and emits a
+  `UnhandledPromiseRejection: <message>` line through the output sink (each reported once).
+  Checked at turn end, not at settle time, so `const p = Promise.reject(x); p.catch(f)` is
+  **not** reported. `Promise.reject`/`reject` settlers route through
+  `settle_promise_reject`, which bridges the promise so even a fully detached rejection is
+  tracked.
 - **Tests:** `zun_vm/tests/promise_surface.rs` (end-to-end cases exercising the scheduler
   via `await`: then-chaining, adoption, rejection skip/propagation, catch, finally
-  pass-through, all/allSettled/race/any, resolve-of-a-Promise, pending-source reactions).
+  pass-through, all/allSettled/race/any, resolve-of-a-Promise, pending-source reactions,
+  `withResolvers` resolve/reject, `any` AggregateError, unhandled-rejection reporting and
+  the late-`catch` suppression) + a `PromiseTable` unnoticed-tracking unit test in
+  `zun_sched`.
 
 ## 9a. Timers — unified loop (ASYNC #4)
 Timers are a **core capability** (the VM owns the event loop), not a library: the macrotask

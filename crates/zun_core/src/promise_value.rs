@@ -17,6 +17,14 @@ pub struct ManagedPromise {
     state: ManagedPromiseState,
     result: Option<Any>,
     error: Option<String>,
+    /// A rejection reason carried as a first-class value (an object such as an
+    /// `AggregateError`, or any boxed value) when the rejection was raised with
+    /// one. `error` keeps the display string either way (the message, or the
+    /// stringified reason) so the string surface — `await`'s thrown `Value`,
+    /// `allSettled` descriptors — still works. When `reason` is set, the value
+    /// side takes precedence (delivered to `catch`/`await`); when it is `None`,
+    /// the rejection was a plain string message.
+    reason: Option<Any>,
 }
 
 impl ManagedPromise {
@@ -25,6 +33,7 @@ impl ManagedPromise {
             state: ManagedPromiseState::Pending,
             result: None,
             error: None,
+            reason: None,
         }
     }
 
@@ -41,13 +50,32 @@ impl ManagedPromise {
     }
 
     pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
-        let Some(value) = self.result else { return 0; };
-        let mapped = value.map_object_address(map);
-        if mapped == value { 0 } else { self.result = Some(mapped); 1 }
+        let mut rewritten = 0;
+        if let Some(value) = self.result {
+            let mapped = value.map_object_address(map);
+            if mapped != value {
+                self.result = Some(mapped);
+                rewritten += 1;
+            }
+        }
+        if let Some(value) = self.reason {
+            let mapped = value.map_object_address(map);
+            if mapped != value {
+                self.reason = Some(mapped);
+                rewritten += 1;
+            }
+        }
+        rewritten
     }
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// The first-class rejection reason, if the rejection carried one (as
+    /// opposed to a plain string message).
+    pub fn reason(&self) -> Option<Any> {
+        self.reason
     }
 
     pub fn resolve(&mut self, value: Any) -> bool {
@@ -65,6 +93,19 @@ impl ManagedPromise {
         }
         self.state = ManagedPromiseState::Rejected;
         self.error = Some(error.into());
+        true
+    }
+
+    /// Reject with a first-class reason value plus its display message. The
+    /// value is delivered to `catch`/`await`; the message keeps the string
+    /// surface working.
+    pub fn reject_value(&mut self, reason: Any, message: impl Into<String>) -> bool {
+        if self.state != ManagedPromiseState::Pending {
+            return false;
+        }
+        self.state = ManagedPromiseState::Rejected;
+        self.error = Some(message.into());
+        self.reason = Some(reason);
         true
     }
 }

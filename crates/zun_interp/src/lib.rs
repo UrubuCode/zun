@@ -52,12 +52,20 @@ fn settled_await_value(promise: zun_gc::Obj) -> Result<Option<Value>, RunError> 
             Some(zun_core::ManagedPromiseState::Resolved) => Ok(heap
                 .promise_result(promise)
                 .and_then(|value| value::Value::unbox_any(value, heap))),
-            Some(zun_core::ManagedPromiseState::Rejected) => Err(RunError::Thrown(
-                Value::Str(Rc::from(
+            Some(zun_core::ManagedPromiseState::Rejected) => {
+                // A rejection carrying a first-class reason (an object such as
+                // an `AggregateError`, or any boxed value) throws that value;
+                // otherwise the plain string message is thrown.
+                if let Some(reason) = heap.promise_reason(promise) {
+                    if let Some(value) = value::Value::unbox_any(reason, heap) {
+                        return Err(RunError::Thrown(value));
+                    }
+                }
+                Err(RunError::Thrown(Value::Str(Rc::from(
                     heap.promise_error(promise)
                         .unwrap_or_else(|| "Promise rejected".into()),
-                )),
-            )),
+                ))))
+            }
             None => Err(RunError::BadToken),
         }
     })
@@ -982,6 +990,13 @@ impl Interp<'_> {
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
+                    if let Some((promise, mode)) = self.settler_of(handle) {
+                        // A `Promise.withResolvers` settler: settle natively and
+                        // push its `undefined` result (no method body to run).
+                        let result = self.invoke_promise_settler(promise, mode, args)?;
+                        stack.push(result);
+                        continue;
+                    }
                     if handle.is_bound() {
                         // A `bind`-produced bound function: resolve its target and
                         // prepended arguments, then dispatch through the shared
@@ -1422,6 +1437,10 @@ impl Interp<'_> {
                 }
                 Opcode::Await => {
                     let promise = pop(&mut stack)?.as_object();
+                    // Awaiting a promise handles it — clear any
+                    // unhandled-rejection tracking even on the synchronous
+                    // already-settled fast path below.
+                    self.notice_promise(promise);
                     match settled_await_value(promise) {
                         Ok(Some(value)) => stack.push(value),
                         Ok(None) => {

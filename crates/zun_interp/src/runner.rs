@@ -660,8 +660,46 @@ impl Interp<'_> {
         loop {
             self.drain_microtasks()?;
             if !self.fire_one_timer()? {
+                // Turn end: every microtask has drained and no timer remains.
+                // Any promise that rejected with no handler ever attached (by
+                // now) is an unhandled rejection — report it. Checking here,
+                // not at settle time, is what makes `const p =
+                // Promise.reject(...); p.catch(f)` *not* unhandled (the
+                // `.catch` attaches before the drain completes and notices it).
+                self.report_unhandled_rejections();
                 return Ok(());
             }
+        }
+    }
+
+    /// Report each promise that rejected with no handler attached by turn end
+    /// (see [`Self::run_event_loop`]). The scheduler's `unnoticed` set is the
+    /// source of truth (a handler attaching clears a promise from it); this
+    /// maps each surviving `PromiseId` back to its heap cell for the message
+    /// and emits a diagnostic line through the output sink. Draining the set
+    /// means each rejection is reported at most once.
+    pub(super) fn report_unhandled_rejections(&mut self) {
+        if !self.async_state.promises.has_unnoticed_rejections() {
+            return;
+        }
+        let unnoticed = self.async_state.promises.take_unnoticed_rejections();
+        for pid in unnoticed {
+            // Reverse the promise→id bridge to find the heap cell.
+            let addr = self
+                .async_state
+                .pid_by_obj
+                .iter()
+                .find_map(|(&addr, &bridged)| (bridged == pid).then_some(addr));
+            let message = match addr {
+                Some(addr) => {
+                    let promise = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
+                    zun_gc::with_current_heap(|heap| heap.promise_error(promise))
+                        .unwrap_or_else(|| "Promise rejected".into())
+                }
+                None => "Promise rejected".into(),
+            };
+            self.output
+                .println(&format!("UnhandledPromiseRejection: {message}"));
         }
     }
 

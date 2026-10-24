@@ -18,6 +18,74 @@ fn run_source(src: &str) -> Vec<String> {
     out.lines
 }
 
+/// `Promise.withResolvers()` exposes the promise plus external resolve/reject.
+/// The resolver functions live in the object's function slot, so they are
+/// called as dynamic methods (`r.resolve(v)`); the promise is a plain field.
+#[test]
+fn with_resolvers_resolves_externally() {
+    let out = run_source(
+        "function main() { \
+            let r: any = Promise.withResolvers(); \
+            r.resolve(42.0); \
+            let v: any = await r.promise; \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["42"]);
+}
+
+#[test]
+fn with_resolvers_rejects_externally() {
+    // `await`ing the rejected promise throws; a `try`/`catch` observes the
+    // reason. (`r.promise` is typed `any`, and `await` accepts an `any`.)
+    let out = run_source(
+        "function main() { \
+            let r: any = Promise.withResolvers(); \
+            r.reject(\"nope\"); \
+            try { let v: any = await r.promise; } \
+            catch (e: string) { print(e); } }",
+    );
+    assert_eq!(out, ["nope"]);
+}
+
+/// `Promise.any` over all-rejected inputs rejects with an `AggregateError`
+/// carrying every rejection reason in its `errors` array.
+#[test]
+fn any_all_rejected_yields_an_aggregate_error() {
+    let out = run_source(
+        "function main() { \
+            let p = Promise.any([Promise.reject(\"a\"), Promise.reject(\"b\")]); \
+            let agg: any = await p.catch((e: any) => e); \
+            print(agg.name as string); \
+            let errs = agg.errors as Array; \
+            print(errs[0] as string); \
+            print(errs[1] as string); }",
+    );
+    assert_eq!(out, ["AggregateError", "a", "b"]);
+}
+
+/// A promise that rejects with no handler attached by turn end is reported.
+#[test]
+fn unhandled_rejection_is_reported_at_turn_end() {
+    let out = run_source(
+        "function main() { \
+            Promise.reject(\"boom\"); }",
+    );
+    assert_eq!(out, ["UnhandledPromiseRejection: boom"]);
+}
+
+/// Attaching `.catch` after the rejection notices it, so it is NOT reported —
+/// the noticed-at-turn-end rule (checked after the drain, not at settle time).
+#[test]
+fn a_late_catch_prevents_the_unhandled_report() {
+    let out = run_source(
+        "function main() { \
+            let p = Promise.reject(\"boom\"); \
+            let v: any = await p.catch((e: any) => e); \
+            print(v as string); }",
+    );
+    assert_eq!(out, ["boom"]);
+}
+
 #[test]
 fn then_chains_and_returns_a_new_promise() {
     let out = run_source(

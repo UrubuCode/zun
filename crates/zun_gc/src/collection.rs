@@ -280,7 +280,11 @@ impl Heap {
                 }
             }
             if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
-                if let Some(child) = promise.result().and_then(|value| value.as_object()) {
+                let children = [
+                    promise.result().and_then(|value| value.as_object()),
+                    promise.reason().and_then(|value| value.as_object()),
+                ];
+                for child in children.into_iter().flatten() {
                     if let Some(&cidx) = self.by_addr.get(&child) {
                         if !self.records[cidx].marked {
                             self.records[cidx].marked = true;
@@ -366,7 +370,11 @@ impl Heap {
                     }
                 }
                 if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
-                    if let Some(child) = promise.result().and_then(|value| value.as_object()) {
+                    let children = [
+                        promise.result().and_then(|value| value.as_object()),
+                        promise.reason().and_then(|value| value.as_object()),
+                    ];
+                    for child in children.into_iter().flatten() {
                         if let Some(&child_idx) = self.by_addr.get(&child) {
                             if !self.records[child_idx].marked {
                                 self.records[child_idx].marked = true;

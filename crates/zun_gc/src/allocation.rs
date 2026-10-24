@@ -146,6 +146,33 @@ impl Heap {
             .map(|promise| promise.reject(error))
     }
 
+    /// Reject a managed Promise with a first-class reason value (an object, or
+    /// any boxed value) plus its display message. The reason object is kept
+    /// alive via the write barrier, exactly like a resolved result.
+    pub fn promise_reject_value(
+        &mut self,
+        object: Obj,
+        reason: zun_core::Any,
+        message: impl Into<String>,
+    ) -> Option<bool> {
+        let result = self
+            .promises
+            .get_mut(&(object.addr() as usize))
+            .map(|promise| promise.reject_value(reason, message));
+        if let Some(child) = reason.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        result
+    }
+
+    /// The first-class rejection reason of a managed Promise, if it carried
+    /// one (otherwise the rejection was a plain string message).
+    pub fn promise_reason(&self, object: Obj) -> Option<zun_core::Any> {
+        self.promises
+            .get(&(object.addr() as usize))
+            .and_then(|promise| promise.reason())
+    }
+
     pub fn alloc_array(&mut self, length: usize) -> Obj {
         let object = self.alloc(0, 0);
         self.arrays.insert(

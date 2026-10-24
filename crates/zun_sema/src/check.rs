@@ -1865,6 +1865,26 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        // `Promise.withResolvers()` takes no arguments and returns a dynamic
+        // object `{ promise, resolve, reject }`. `resolve`/`reject` live in the
+        // object's function slot (function values do not box into `Any`), so
+        // they are called as dynamic methods (`r.resolve(v)`); the result is
+        // typed `any` so those calls route through the dynamic-call path.
+        if method == "withResolvers" {
+            if !args.is_empty() {
+                self.error(span, format!("`Promise.withResolvers` expects no arguments, found {}", args.len()));
+                return self.poison(span);
+            }
+            let Some((id, _)) = zun_natives::resolve("promise", "promiseWithResolvers") else {
+                self.error(span, "missing Promise intrinsic `promiseWithResolvers`");
+                return self.poison(span);
+            };
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![] },
+                ty: Ty::Any,
+                span,
+            };
+        }
         let (native, arg_ty): (&str, Ty) = match method {
             "resolve" => ("promiseResolveStatic", Ty::Any),
             "reject" => ("promiseRejectStatic", Ty::Any),

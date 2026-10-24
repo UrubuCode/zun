@@ -10,6 +10,10 @@ pub const MODULE: crate::Module = crate::Module {
     name: "promise",
     functions: &[
         NativeFn { name: "promiseNew", params: &[], ret: Promise, imp: unavailable },
+        // `Promise.withResolvers()` → `{ promise, resolve, reject }` as a
+        // dynamic object; the interpreter floor builds it (callable settlers in
+        // the function slot).
+        NativeFn { name: "promiseWithResolvers", params: &[], ret: Opaque, imp: unavailable },
         NativeFn {
             name: "promiseResolve",
             params: &[Promise, Opaque],
