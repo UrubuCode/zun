@@ -10,6 +10,7 @@ mod extension;
 mod jit_hook;
 mod native_hook;
 mod promise;
+pub mod sched;
 mod verify_module;
 
 use zun_interp::value::Value;
