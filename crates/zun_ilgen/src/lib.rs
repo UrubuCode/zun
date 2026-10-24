@@ -15,12 +15,13 @@
 //! - Branches patch forward displacements after the target is known
 //!   (displacements are relative to the end of the branch instruction).
 
-use zun_il::{encode, Instruction, NumKind, Opcode, Operand};
+use zun_il::{decode_all, encode, Instruction, NumKind, Opcode, Operand};
 use zun_common::Span;
 use zun_metadata::{
     BlobIndex, FieldDef, MemberRef, MethodDef, ModuleRef, TableKind, Token, TypeDef,
 };
-use zun_module::{write_body_with_handlers, ExceptionHandler, HandlerKind, Module};
+use zun_module::{read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, Module};
+use zun_regex::zil::MatcherNatives;
 use zun_sema::hir::{
     self, BinaryOp, CaptureMode, CaptureSource, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp,
 };
@@ -171,9 +172,15 @@ pub fn lower(program: &hir::Program) -> Module {
         });
     }
 
+    // Synthesize ZIL matchers for the static regexes (the `[GeneratedRegex]`
+    // analog) and splice them in as extra methods *before* lowering bodies, so
+    // their RIDs are allocated when call sites reference them. Patterns outside
+    // the compilable subset fall back to the runtime engine (see `RegexPlan`).
+    let regex_plan = splice_regex_matchers(program, &mut module);
+
     for (index, f) in program.functions.iter().enumerate() {
         let (code, handlers, points) =
-            lower_function(f, &layout, &mut module, program.functions.len() as u32);
+            lower_function(f, &layout, &mut module, program.functions.len() as u32, &regex_plan);
         module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
             zun_module::SequencePoint { method_rid: index as u32 + 1, pc, source_start: span.start, source_end: span.end }
         }));
@@ -197,6 +204,7 @@ pub fn lower(program: &hir::Program) -> Module {
             &layout,
             &mut module,
             program.functions.len() as u32,
+            &regex_plan,
         );
         module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
             zun_module::SequencePoint { method_rid: (closure_base + index) as u32 + 1, pc, source_start: span.start, source_end: span.end }
@@ -224,6 +232,123 @@ pub fn lower(program: &hir::Program) -> Module {
         .module_init
         .map(|index| Token::new(TableKind::MethodDef, index + 1));
     module
+}
+
+/// How a [`hir::ExprKind::RegexMatch`] is lowered: either to a call to the
+/// synthesized ZIL matcher (JIT-eligible, tiers up like any loop) or, when the
+/// pattern is outside the compilable subset, to the runtime regex engine.
+enum RegexPlan {
+    /// Compiled to a synthesized `isMatch(s): bool` method; call its RID.
+    Compiled { is_match_rid: u32 },
+    /// Outside the compilable subset (lookaround/backref/`i` flag/too many
+    /// groups): build the runtime `RegExp` and call `regexpIsMatch`, exactly as
+    /// the non-static path would. Observably identical to the old behavior.
+    Fallback {
+        regexp_new_id: u32,
+        is_match_id: u32,
+        pattern: String,
+        flags: String,
+    },
+}
+
+/// Resolve the native ids the synthesized matcher calls. `None` only if the
+/// frozen string/buffer builtins are missing (then every regex falls back).
+fn matcher_natives() -> Option<MatcherNatives> {
+    Some(MatcherNatives {
+        length: zun_natives::resolve("string", "length")?.0,
+        char_code_at: zun_natives::resolve("string", "charCodeAt")?.0,
+        buffer_read_u32: zun_natives::resolve("buffer", "bufferReadU32")?.0,
+        buffer_write_u32: zun_natives::resolve("buffer", "bufferWriteU32")?.0,
+        buffer_new: zun_natives::resolve("buffer", "bufferNew")?.0,
+    })
+}
+
+/// Compile each static regex to a ZIL matcher and splice it into `module`,
+/// returning a lowering plan per matcher (parallel to `program.regex_matchers`).
+fn splice_regex_matchers(program: &hir::Program, module: &mut Module) -> Vec<RegexPlan> {
+    if program.regex_matchers.is_empty() {
+        return Vec::new();
+    }
+    let nat = matcher_natives();
+    let fallback = |pattern: &str, flags: &str| -> RegexPlan {
+        // These natives back the ordinary (non-static) regex path, so sema has
+        // already required them to exist by the time any regex is lowered.
+        let regexp_new_id = zun_natives::resolve("collections", "regexpNew")
+            .expect("regexpNew intrinsic")
+            .0;
+        let is_match_id = zun_natives::resolve("collections", "regexpIsMatch")
+            .expect("regexpIsMatch intrinsic")
+            .0;
+        RegexPlan::Fallback {
+            regexp_new_id,
+            is_match_id,
+            pattern: pattern.to_owned(),
+            flags: flags.to_owned(),
+        }
+    };
+    let mut plans = Vec::with_capacity(program.regex_matchers.len());
+    for cr in &program.regex_matchers {
+        let compiled = nat
+            .and_then(|nat| zun_regex::zil::compile_is_match(&cr.pattern, &cr.flags, nat));
+        match compiled {
+            Some(ci) => {
+                let base = splice_module(module, &ci.module);
+                let is_match_rid = base + (ci.is_match_method.rid() - 1);
+                plans.push(RegexPlan::Compiled { is_match_rid });
+            }
+            None => plans.push(fallback(&cr.pattern, &cr.flags)),
+        }
+    }
+    plans
+}
+
+/// Copy every method of a synthesized `src` module into `dst`, returning the
+/// RID that `src`'s first method (RID 1) receives in `dst`. Internal
+/// `Call <MethodDef>` tokens are shifted by the same delta so the spliced
+/// methods still call each other; every other reference in these bodies is a
+/// `call.builtin` to a global native id, which needs no remap.
+fn splice_module(dst: &mut Module, src: &Module) -> u32 {
+    let base = dst.tables.method_defs.len() as u32 + 1;
+    let delta = base - 1;
+    for md in &src.tables.method_defs {
+        let body = read_body(&src.code, md.body_offset).expect("synthesized body reads back");
+        let instrs = decode_all(body.code).expect("synthesized code decodes");
+        let mut code = Vec::new();
+        for ins in &instrs {
+            // Re-encoding is length-preserving (fixed-width operands), so
+            // relative branch displacements stay valid after the token rewrite.
+            let remapped = match (ins.opcode, ins.operand) {
+                (Opcode::Call, Operand::Token(t)) if t.table() == Some(TableKind::MethodDef) => {
+                    Instruction::new(
+                        Opcode::Call,
+                        Operand::Token(Token::new(TableKind::MethodDef, t.rid() + delta)),
+                    )
+                }
+                _ => *ins,
+            };
+            encode(&remapped, &mut code);
+        }
+        // Names must be module-unique (the loader rejects duplicate exports),
+        // so disambiguate every synthesized method with its splice base RID.
+        // These methods are only ever reached by `Call <token>`, never by name.
+        let name = dst.strings.intern(&format!("{}${}", src.strings.get(md.name), base));
+        let offset = write_body(
+            &mut dst.code,
+            body.param_count,
+            body.local_count,
+            body.returns_value,
+            body.return_kind,
+            body.local_kinds,
+            &code,
+        );
+        dst.tables.add_method_def(MethodDef {
+            name,
+            signature: BlobIndex(0),
+            body_offset: offset,
+            is_static: md.is_static,
+        });
+    }
+    base
 }
 
 /// The method-body value-type code ([`zun_il::JitKind`]) for a checked type.
@@ -295,11 +420,12 @@ fn emit_classes(program: &hir::Program, module: &mut Module) -> Layout {
 }
 
 /// Lower one function body to ZIL bytes.
-fn lower_function(
-    f: &hir::Function,
-    layout: &Layout,
+fn lower_function<'a>(
+    f: &'a hir::Function,
+    layout: &'a Layout,
     module: &mut Module,
     closure_method_base: u32,
+    regex_plan: &'a [RegexPlan],
 ) -> (Vec<u8>, Vec<ExceptionHandler>, Vec<(u32, Span)>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
@@ -314,6 +440,7 @@ fn lower_function(
         finally_bodies: Vec::new(),
         closure_method_base,
         points: Vec::new(),
+        regex_plan,
     };
     gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16);
     gen.stmts(&f.body);
@@ -327,11 +454,12 @@ fn lower_function(
 
 /// Lower a synthetic closure function. Its hidden environment is local slot 0
 /// and its user locals are shifted by one slot in the emitted method body.
-fn lower_closure_function(
-    f: &hir::ClosureFunction,
-    layout: &Layout,
+fn lower_closure_function<'a>(
+    f: &'a hir::ClosureFunction,
+    layout: &'a Layout,
     module: &mut Module,
     closure_method_base: u32,
+    regex_plan: &'a [RegexPlan],
 ) -> (Vec<u8>, Vec<ExceptionHandler>, Vec<(u32, Span)>) {
     let mut gen = FnLowerer {
         code: Vec::new(),
@@ -346,6 +474,7 @@ fn lower_closure_function(
         finally_bodies: Vec::new(),
         closure_method_base,
         points: Vec::new(),
+        regex_plan,
     };
     gen.emit_defaults(&f.defaults, 1);
     gen.stmts(&f.body);
@@ -375,6 +504,9 @@ struct FnLowerer<'a, 'b> {
     finally_bodies: Vec<&'a [Stmt]>,
     closure_method_base: u32,
     points: Vec<(u32, Span)>,
+    /// Lowering plan for each static regex (parallel to
+    /// `Program::regex_matchers`); see [`RegexPlan`].
+    regex_plan: &'a [RegexPlan],
 }
 
 impl<'a, 'b> FnLowerer<'a, 'b> {
@@ -1153,6 +1285,39 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                         Opcode::CallBuiltin,
                         Operand::Imm32(*id as i32),
                     )),
+                }
+            }
+            ExprKind::RegexMatch { matcher, args } => {
+                // `self.regex_plan` is a borrow independent of `self`; bind it
+                // locally so the arm can also borrow `self` mutably to emit.
+                let plan = self.regex_plan;
+                match &plan[*matcher as usize] {
+                    RegexPlan::Compiled { is_match_rid } => {
+                        let rid = *is_match_rid;
+                        self.expr(&args[0]); // subject string
+                        self.emit(Instruction::new(
+                            Opcode::Call,
+                            Operand::Token(Token::new(TableKind::MethodDef, rid)),
+                        ));
+                    }
+                    RegexPlan::Fallback { regexp_new_id, is_match_id, pattern, flags } => {
+                        // regexpIsMatch(regexpNew(pattern, flags), subject) —
+                        // identical to the ordinary (non-static) regex path.
+                        let (new_id, match_id) = (*regexp_new_id, *is_match_id);
+                        let p = self.module.strings.intern(pattern);
+                        self.emit(Instruction::new(Opcode::ConstStr, Operand::StringRef(p.0)));
+                        let f = self.module.strings.intern(flags);
+                        self.emit(Instruction::new(Opcode::ConstStr, Operand::StringRef(f.0)));
+                        self.emit(Instruction::new(
+                            Opcode::CallBuiltin,
+                            Operand::Imm32(new_id as i32),
+                        ));
+                        self.expr(&args[0]); // subject string
+                        self.emit(Instruction::new(
+                            Opcode::CallBuiltin,
+                            Operand::Imm32(match_id as i32),
+                        ));
+                    }
                 }
             }
             ExprKind::DynamicNew => {

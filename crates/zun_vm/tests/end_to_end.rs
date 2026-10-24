@@ -2205,3 +2205,96 @@ fn error_subclass_throws_as_realm_global() {
     );
     assert_eq!(out, ["TypeError", "wrong type"]);
 }
+
+// --- Static-regex lowering (the `[GeneratedRegex]` analog) ------------------
+
+/// Compile `src` (with std prelude) to a module without running it, so tests can
+/// inspect the synthesized regex matcher methods.
+fn compile_with_std(user: &str) -> zun_module::Module {
+    let src = zun_prelude::with_prelude(user);
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(&src, &mut diags);
+    assert!(diags.is_empty(), "parse errors: {diags:?}");
+    let hir = zun_sema::check(&src, &ast, &mut diags);
+    assert!(diags.is_empty(), "sema errors: {diags:?}");
+    zun_ilgen::lower(&hir)
+}
+
+#[test]
+fn static_regex_literal_test_matches_js_semantics() {
+    // A regex literal used directly by `.test` lowers to the synthesized ZIL
+    // matcher. `.test` is unanchored, so a mid-string match counts.
+    let out = run_with_std(
+        r#"function main(): void {
+            if (/abc/.test("xabcx")) { print("hit-mid"); }
+            if (!/abc/.test("ab")) { print("no-partial"); }
+            if (/a|b/.test("zzb")) { print("alt"); }
+            if (/[0-9]x/.test("q9x")) { print("class"); }
+            if (!/zzz/.test("")) { print("empty-false"); }
+        }"#,
+    );
+    assert_eq!(out, ["hit-mid", "no-partial", "alt", "class", "empty-false"]);
+}
+
+#[test]
+fn static_new_regexp_const_test_matches_js_semantics() {
+    // `new RegExp("const", "flags")` with literal arguments is also static.
+    let out = run_with_std(
+        r#"function main(): void {
+            if (new RegExp("a.c", "s").test("a\nc")) { print("dotall"); }
+            if (new RegExp("foo|bar").test("xbarx")) { print("alt2"); }
+        }"#,
+    );
+    assert_eq!(out, ["dotall", "alt2"]);
+}
+
+#[test]
+fn out_of_subset_static_regex_still_works_via_runtime_engine() {
+    // `a+` is outside the compilable subset, so it stays on the runtime engine —
+    // observably identical, never an error.
+    let out = run_with_std(
+        r#"function main(): void {
+            if (/a+/.test("baaa")) { print("plus"); }
+            if (/^ab/.test("abc")) { print("anchor"); }
+            if (!/^ab/.test("xab")) { print("anchor-no"); }
+        }"#,
+    );
+    assert_eq!(out, ["plus", "anchor", "anchor-no"]);
+}
+
+#[test]
+fn static_regex_injects_jit_eligible_matcher_method() {
+    // The literal `/abc/.test(...)` must synthesize `matchAt` + `isMatch`
+    // methods in the module, and `matchAt` must be JIT-eligible (it tiers up to
+    // native like any numeric loop).
+    let module = compile_with_std(
+        r#"function main(): void {
+            if (/abc/.test("abc")) { print("ok"); }
+        }"#,
+    );
+    let names: Vec<&str> = module
+        .tables
+        .method_defs
+        .iter()
+        .map(|m| module.strings.get(m.name))
+        .collect();
+    assert!(
+        names.iter().any(|n| n.starts_with("matchAt$")),
+        "matchAt method must be injected: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.starts_with("isMatch$")),
+        "isMatch method must be injected: {names:?}"
+    );
+
+    // The injected `matchAt` is JIT-eligible.
+    let eligible = zun_codegen::eligible_methods(&module);
+    let match_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|m| module.strings.get(m.name).starts_with("matchAt$"))
+        .map(|i| i as u32 + 1)
+        .expect("matchAt present");
+    assert!(eligible.contains(&match_rid), "synthesized matchAt must be JIT-eligible");
+}

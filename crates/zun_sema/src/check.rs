@@ -126,6 +126,7 @@ fn check_impl(
         type_aliases: HashMap::new(),
         closures: Vec::new(),
         realm_globals: crate::realm::registry().into_iter().collect(),
+        regex_matchers: Vec::new(),
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -172,6 +173,7 @@ fn check_impl(
         main,
         module_init,
         closures: checker.closures,
+        regex_matchers: checker.regex_matchers,
     }
 }
 
@@ -222,6 +224,11 @@ struct Checker<'a> {
     /// from `builtin/realm.zun`; consulted before the hardcoded base-type
     /// matches in annotation/`new`/bare-identifier resolution.
     realm_globals: HashMap<String, crate::realm::RealmBinding>,
+    /// Static regexes (the `[GeneratedRegex]` analog) discovered at call sites
+    /// (`/pat/.test(s)`, `new RegExp(const).test(s)`). Each is synthesized to a
+    /// ZIL matcher by `zun_ilgen`; a [`hir::ExprKind::RegexMatch`] `matcher`
+    /// indexes this vector.
+    regex_matchers: Vec<hir::CompiledRegex>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -250,6 +257,35 @@ struct CaptureUse {
 }
 
 impl Checker<'_> {
+    /// Recognize a *static* regex used as a method-call receiver: a regex
+    /// literal `/pat/flags` (CASE 1) or `new RegExp(pattern, flags?)` whose
+    /// arguments const-fold to string literals (CASE 2). Returns the pattern and
+    /// flag text when the pattern is statically known, else `None` (a dynamic
+    /// `new RegExp(variable)` or any other receiver). The `const r = /pat/;`
+    /// binding (CASE 3) is intentionally not handled here (deferred).
+    fn static_regex(&self, receiver: &ast::Expr) -> Option<(String, String)> {
+        match receiver {
+            ast::Expr::RegexLiteral { pattern, flags, .. } => {
+                Some((pattern.clone(), flags.clone()))
+            }
+            ast::Expr::New { class, args, .. }
+                if self.text(class) == "RegExp" && (args.len() == 1 || args.len() == 2) =>
+            {
+                let pattern = match &args[0] {
+                    ast::Expr::String { value, .. } => value.clone(),
+                    _ => return None,
+                };
+                let flags = match args.get(1) {
+                    None => String::new(),
+                    Some(ast::Expr::String { value, .. }) => value.clone(),
+                    Some(_) => return None,
+                };
+                Some((pattern, flags))
+            }
+            _ => None,
+        }
+    }
+
     /// Build an expression that materializes the opaque class descriptor for a
     /// realm binding's `token` (PLAN §3.1). Lowers to the `realmDescriptor`
     /// intrinsic over the token, boxed as an `Any`.
@@ -3498,6 +3534,40 @@ impl Checker<'_> {
                                     span,
                                 };
                             }
+                        }
+                    }
+                }
+                // Static-regex fast path (the `[GeneratedRegex]` analog): a
+                // regex literal or `new RegExp(const, const)` used directly by
+                // `.test` / `.isMatch`. The pattern is known at compile time, so
+                // it is recorded for `zun_ilgen` to synthesize a ZIL matcher
+                // (which tiers up to native like any loop). `zun_ilgen` falls
+                // back to the runtime engine for patterns outside the compilable
+                // subset, so this never changes observable behavior. `exec` and
+                // the string `match`/`search`/etc. paths are left untouched.
+                {
+                    let mname_peek = self.text(method).to_string();
+                    if (mname_peek == "test" || mname_peek == "isMatch") && args.len() == 1 {
+                        if let Some((pattern, flags)) = self.static_regex(receiver.as_ref()) {
+                            let mut subject = self.check_expr(cx, &args[0]);
+                            coerce_numeric_literal(&mut subject, Ty::String);
+                            if !subject.ty.is_error() && !self.is_assignable(subject.ty, Ty::String)
+                            {
+                                self.error(
+                                    subject.span,
+                                    format!(
+                                        "`{mname_peek}` expects a string argument, found {:?}",
+                                        subject.ty
+                                    ),
+                                );
+                            }
+                            let matcher = self.regex_matchers.len() as u32;
+                            self.regex_matchers.push(hir::CompiledRegex { pattern, flags });
+                            return hir::Expr {
+                                kind: hir::ExprKind::RegexMatch { matcher, args: vec![subject] },
+                                ty: Ty::Boolean,
+                                span,
+                            };
                         }
                     }
                 }

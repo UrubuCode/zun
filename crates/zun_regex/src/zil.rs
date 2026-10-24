@@ -806,6 +806,131 @@ pub fn compile_backtracking(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Slice 3: unanchored boolean `isMatch` (RegExp.prototype.test semantics).
+// ---------------------------------------------------------------------------
+
+/// The unanchored search entry produced by [`compile_is_match`].
+#[derive(Debug)]
+pub struct CompiledIsMatch {
+    /// Module holding `matchAt` (rid 1), `matchAtAlloc` (rid 2), and
+    /// `isMatch` (rid 3).
+    pub module: Module,
+    /// Token of `isMatch(s: string): boolean`, the unanchored search entry.
+    pub is_match_method: Token,
+    /// Work-buffer size in bytes (allocated inside `isMatch`).
+    pub buffer_bytes: usize,
+    /// Number of capture groups excluding group 0.
+    pub group_count: usize,
+}
+
+/// Compile `pattern`/`flag_str` to an unanchored boolean `isMatch(s)` method
+/// (JS `RegExp.prototype.test` / `isMatch` semantics) built on top of the
+/// anchored [`compile_backtracking`] matcher. Returns `None` whenever the
+/// matcher does (out-of-subset program, ignore-case, too many groups).
+///
+/// `isMatch` scans every start position `0..=length(s)`, calling the
+/// JIT-eligible `matchAt` at each, and returns `true` on the first anchored
+/// match — mirroring [`crate::Regex::is_match`], which loops `find` over start
+/// positions. It allocates the work buffer once with `bufferNew` (so it stays a
+/// Tier-0 orchestrator, like `matchAtAlloc`), while the hot `matchAt` tiers up
+/// to Tier 1. Positions are UTF-16 code units (BMP-only agrees with the
+/// interpreted engine; see [`compile_backtracking`]).
+pub fn compile_is_match(
+    pattern: &str,
+    flag_str: &str,
+    nat: MatcherNatives,
+) -> Option<CompiledIsMatch> {
+    // Only honor flags whose semantics the matcher fully reproduces for a
+    // boolean unanchored search: `s` (dotAll, handled in the matcher) and `m`
+    // (multiline — affects only `^`/`$` assertions, which are outside the
+    // compilable subset, so it is a no-op here). `i` is rejected by
+    // `compile_backtracking`; `g`/`y`/`u`/`d` change search or indexing
+    // semantics (and the runtime engine rejects some of them), so any of them
+    // means fall back to the runtime engine.
+    let flags = Flags::parse(flag_str).ok()?;
+    if flags.global || flags.sticky || flags.unicode || flags.has_indices {
+        return None;
+    }
+    let CompiledMatcher { mut module, method, buffer_bytes, group_count, .. } =
+        compile_backtracking(pattern, flag_str, nat)?;
+
+    // Locals: 0 s:string, 1 n:u64, 2 pos:u64, 3 buf:object, 4 r:i64.
+    const S: u16 = 0;
+    const N: u16 = 1;
+    const POS: u16 = 2;
+    const BUF: u16 = 3;
+    const R: u16 = 4;
+
+    let mut a = Asm::new();
+    let loop_head = a.label();
+    let on_match = a.label();
+    let on_fail = a.label();
+
+    // n = length(s)
+    a.load(S);
+    a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.length as i32));
+    a.store(N);
+    // buf = bufferNew(buffer_bytes)
+    a.const_u64(buffer_bytes as u64);
+    a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.buffer_new as i32));
+    a.store(BUF);
+    // pos = 0
+    a.const_u64(0);
+    a.store(POS);
+
+    a.bind(loop_head);
+    // if pos > n: no match (the loop is inclusive so an empty match at the end
+    // of the string is found, matching `find`'s `s <= input.len()` bound).
+    a.load(POS);
+    a.load(N);
+    a.emit(Opcode::CmpGt, Operand::None);
+    a.br(Opcode::BranchTrue, on_fail);
+    // r = matchAt(s, pos, buf); matchAt re-initializes caps/sp in its prologue,
+    // so reusing one buffer across every position is safe.
+    a.load(S);
+    a.load(POS);
+    a.load(BUF);
+    a.emit(Opcode::Call, Operand::Token(method));
+    a.store(R);
+    // if r >= 0: matched (signed i64 compare; -1 means no match).
+    a.load(R);
+    a.emit(Opcode::ConstI64, Operand::Imm64(0));
+    a.emit(Opcode::CmpGe, Operand::None);
+    a.br(Opcode::BranchTrue, on_match);
+    // pos += 1; continue.
+    a.load(POS);
+    a.const_u64(1);
+    a.emit(Opcode::AddI32, Operand::None);
+    a.store(POS);
+    a.br(Opcode::Branch, loop_head);
+
+    a.bind(on_match);
+    a.emit(Opcode::ConstTrue, Operand::None);
+    a.emit(Opcode::Ret, Operand::None);
+    a.bind(on_fail);
+    a.emit(Opcode::ConstFalse, Operand::None);
+    a.emit(Opcode::Ret, Operand::None);
+
+    let code = a.finish();
+    let name: StringIndex = module.strings.intern("isMatch");
+    let local_kinds = [
+        JitKind::String.to_byte(),
+        JitKind::Num(NumKind::U64).to_byte(),
+        JitKind::Num(NumKind::U64).to_byte(),
+        JitKind::Object.to_byte(),
+        JitKind::Num(NumKind::I64).to_byte(),
+    ];
+    let body = write_body(&mut module.code, 1, 5, true, JitKind::Bool.to_byte(), &local_kinds, &code);
+    let is_match_method = module.tables.add_method_def(MethodDef {
+        name,
+        signature: zun_metadata::BlobIndex(0),
+        body_offset: body,
+        is_static: true,
+    });
+    Some(CompiledIsMatch { module, is_match_method, buffer_bytes, group_count })
+}
+
 /// Inclusive ranges of JS line terminators (matching [`is_line_terminator`]).
 fn line_terminator_ranges() -> Vec<(u32, u32)> {
     debug_assert!(['\n', '\r', '\u{2028}', '\u{2029}'].iter().all(|&c| is_line_terminator(c)));

@@ -219,6 +219,23 @@ pub struct Program {
     pub module_init: Option<FuncIndex>,
     /// Synthetic closure functions kept separate until closure lowering is enabled.
     pub closures: Vec<ClosureFunction>,
+    /// Static regexes detected at check time (the `[GeneratedRegex]` analog): a
+    /// regex literal or a `new RegExp(const, const)` used directly by `.test` /
+    /// `.isMatch`. `zun_ilgen` compiles each to a synthesized ZIL matcher method
+    /// (via `zun_regex::zil`) and lowers the matching [`ExprKind::RegexMatch`]
+    /// to a call to it, falling back to the runtime engine when the pattern is
+    /// outside the compilable subset (lookaround/backref/etc.). A
+    /// [`ExprKind::RegexMatch`] `matcher` indexes this vector.
+    pub regex_matchers: Vec<CompiledRegex>,
+}
+
+/// A static regex to be synthesized to a ZIL matcher at IL-generation time.
+#[derive(Debug, Clone)]
+pub struct CompiledRegex {
+    /// The pattern source (no enclosing slashes).
+    pub pattern: String,
+    /// The flag characters (e.g. `"i"`, `"s"`, `""`).
+    pub flags: String,
 }
 
 /// How a closure obtains a captured binding.
@@ -728,6 +745,18 @@ pub enum ExprKind {
     ///
     /// Entries are stored in source order; the object is the result value.
     DynamicObjectLiteral { entries: Vec<ObjectEntry> },
+    /// Test a static regex (the `[GeneratedRegex]` analog). `matcher` indexes
+    /// [`Program::regex_matchers`]; `args[0]` is the subject string. Lowered by
+    /// `zun_ilgen` to a call to the synthesized ZIL matcher (or, when the
+    /// pattern is outside the compilable subset, to the runtime regex engine).
+    /// Only the boolean `test` / `isMatch` shape is represented here; `exec` and
+    /// the string `match`/`search`/etc. paths stay on the runtime engine.
+    RegexMatch {
+        /// Index into [`Program::regex_matchers`].
+        matcher: u32,
+        /// The subject (`args[0]`) string expression.
+        args: Vec<Expr>,
+    },
     /// Explicitly box a statically typed value as Any.
     BoxAny {
         /// The value to box.

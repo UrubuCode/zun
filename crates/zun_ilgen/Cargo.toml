@@ -15,6 +15,7 @@ zun_il = { path = "../zun_il" }
 zun_metadata = { path = "../zun_metadata" }
 zun_module = { path = "../zun_module" }
 zun_natives = { path = "../zun_natives" }
+zun_regex = { path = "../zun_regex" }
 zun_sema = { path = "../zun_sema" }
 
 [lints]
