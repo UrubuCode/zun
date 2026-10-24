@@ -15,24 +15,6 @@ pub struct DataView {
     pub(crate) view: ByteView,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypedElement {
-    U8,
-    U16,
-    U32,
-    F64,
-}
-
-impl TypedElement {
-    pub const fn size(self) -> usize {
-        match self {
-            Self::U8 => 1,
-            Self::U16 => 2,
-            Self::U32 => 4,
-            Self::F64 => 8,
-        }
-    }
-}
 
 /// Typed-array view metadata over a bounded byte window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,65 +371,107 @@ impl TypedArrayView {
     pub fn element(self) -> TypedElement {
         self.element
     }
+}
 
-    pub fn read_u8(self, buffer: &ByteBuffer, index: usize) -> Option<u8> {
-        (self.element == TypedElement::U8)
-            .then(|| buffer.get(self.view.offset + index))
-            .flatten()
-    }
-
-    pub fn write_u8(self, buffer: &mut ByteBuffer, index: usize, value: u8) -> bool {
-        self.element == TypedElement::U8
-            && index < self.len()
-            && buffer.set(self.view.offset + index, value)
-    }
-
-    pub fn read_u16(self, buffer: &ByteBuffer, index: usize) -> Option<u16> {
-        (self.element == TypedElement::U16)
-            .then(|| buffer.read_u16(self.view.offset + index.checked_mul(2)?))
-            .flatten()
-    }
-
-    pub fn write_u16(self, buffer: &mut ByteBuffer, index: usize, value: u16) -> bool {
-        self.element == TypedElement::U16
-            && index
-                .checked_mul(2)
-                .is_some_and(|offset| self.view.write_u16(buffer, offset, value))
-    }
-
-    pub fn read_u32(self, buffer: &ByteBuffer, index: usize) -> Option<u32> {
-        if self.element != TypedElement::U32 {
+impl TypedArrayView {
+    /// The bytes of one element, bounds-checked against the view rather than
+    /// against the whole buffer: a view is a window, and reading past its end
+    /// has to fail even when the buffer behind it is longer.
+    fn element_bytes<const N: usize>(self, buffer: &ByteBuffer, index: usize) -> Option<[u8; N]> {
+        let offset = index.checked_mul(N)?;
+        if offset.checked_add(N)? > self.view.len() {
             return None;
         }
-        self.view.read_u32(buffer, index.checked_mul(4)?)
-    }
-
-    pub fn write_u32(self, buffer: &mut ByteBuffer, index: usize, value: u32) -> bool {
-        self.element == TypedElement::U32
-            && index
-                .checked_mul(4)
-                .is_some_and(|offset| self.view.write_u32(buffer, offset, value))
-    }
-
-    pub fn read_f64(self, buffer: &ByteBuffer, index: usize) -> Option<f64> {
-        if self.element != TypedElement::F64 {
-            return None;
+        let base = self.view.offset() + offset;
+        let mut bytes = [0u8; N];
+        for (step, byte) in bytes.iter_mut().enumerate() {
+            *byte = buffer.get(base + step)?;
         }
-        let offset = index.checked_mul(8)?;
-        (offset.checked_add(8)? <= self.view.len())
-            .then(|| buffer.read_f64(self.view.offset() + offset))
-            .flatten()
+        Some(bytes)
     }
 
-    pub fn write_f64(self, buffer: &mut ByteBuffer, index: usize, value: f64) -> bool {
-        if self.element != TypedElement::F64 {
-            return false;
-        }
-        let Some(offset) = index.checked_mul(8) else {
+    fn set_element_bytes<const N: usize>(
+        self,
+        buffer: &mut ByteBuffer,
+        index: usize,
+        bytes: [u8; N],
+    ) -> bool {
+        let Some(offset) = index.checked_mul(N) else {
             return false;
         };
-        offset.checked_add(8).is_some_and(|end| {
-            end <= self.view.len() && buffer.write_f64(self.view.offset() + offset, value)
-        })
+        if offset.checked_add(N).is_none_or(|end| end > self.view.len()) {
+            return false;
+        }
+        let base = self.view.offset() + offset;
+        bytes
+            .into_iter()
+            .enumerate()
+            .all(|(step, byte)| buffer.set(base + step, byte))
     }
 }
+
+/// Generates the element enum and one read/write pair per kind from the
+/// master table, so a kind cannot exist in the enum without its accessors.
+macro_rules! define_typed_elements {
+    ($((
+        $variant:ident, $repr:ty, $arg:ty, $width:expr, $js:literal, $native:literal,
+        $elem_ty:literal, $arg_ty:literal, $native_ty:ident, $encode:path,
+        $read:ident, $write:ident, $alloc:ident, $get:ident, $set:ident
+    )),+ $(,)?) => {
+        /// Which kind of element a typed-array view is a view of.
+        ///
+        /// Generated from the master table in `typed_elements.rs`.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum TypedElement {
+            $($variant),+
+        }
+
+        impl TypedElement {
+            /// One element's size in bytes.
+            pub const fn size(self) -> usize {
+                match self {
+                    $(Self::$variant => $width),+
+                }
+            }
+
+            /// The JavaScript constructor name for this kind.
+            pub const fn js_name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $js),+
+                }
+            }
+
+            /// Every kind, in table order — for tests that must not fall
+            /// behind the table.
+            pub const ALL: &'static [TypedElement] = &[$(TypedElement::$variant),+];
+        }
+
+        impl TypedArrayView {
+            $(
+                /// Reads one element. A view of any other kind reads `None`,
+                /// so a `Float32Array` cannot be read as if it held `i32`s.
+                pub fn $read(self, buffer: &ByteBuffer, index: usize) -> Option<$repr> {
+                    if self.element != TypedElement::$variant {
+                        return None;
+                    }
+                    Some(<$repr>::from_le_bytes(
+                        self.element_bytes::<{ $width }>(buffer, index)?,
+                    ))
+                }
+
+                /// Writes one element, converting the accepted value into the
+                /// stored representation. Refuses a view of any other kind.
+                pub fn $write(self, buffer: &mut ByteBuffer, index: usize, value: $arg) -> bool {
+                    self.element == TypedElement::$variant
+                        && self.set_element_bytes::<{ $width }>(
+                            buffer,
+                            index,
+                            $encode(value).to_le_bytes(),
+                        )
+                }
+            )+
+        }
+    };
+}
+
+crate::typed_element_table!(define_typed_elements);

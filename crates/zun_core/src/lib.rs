@@ -4,6 +4,7 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
+mod typed_elements;
 #[path = "views.rs"]
 mod views;
 mod ordered_map;
@@ -37,6 +38,7 @@ pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
 pub use regexp::{EngineKind, RegexError, RegexValue};
 pub use bigint::BigInt;
+pub use typed_elements::{clamp_to_u8, same};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedElement;
