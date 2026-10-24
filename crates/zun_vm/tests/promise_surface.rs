@@ -165,6 +165,96 @@ fn promise_any_takes_the_first_fulfilment() {
     assert_eq!(out, ["99"]);
 }
 
+// --- Slice 3: reactions on PENDING sources (the fix). Each reaction's side
+// effect prints during the turn-drain, after the synchronous body's prints, so
+// the output order is the observable proof that the reaction ran as a
+// microtask rather than inline or not at all. ---
+
+#[test]
+fn then_on_a_pending_promise_runs_when_it_later_resolves() {
+    // The fix: a `then` on a PENDING promise schedules a reaction that runs
+    // when the source settles. Under the old eager-at-settle path this printed
+    // only "sync" because the reaction was never driven.
+    let out = run_source(
+        "function main() { \
+            let p = new Promise(); \
+            p.then((x: any) => { print(x as number); }); \
+            print(\"sync\"); \
+            p.resolve(5.0); }",
+    );
+    assert_eq!(out, ["sync", "5"]);
+}
+
+#[test]
+fn catch_on_a_pending_promise_runs_on_later_rejection() {
+    let out = run_source(
+        "function main() { \
+            let p = new Promise(); \
+            p.catch((e: any) => { print(e as string); }); \
+            p.reject(\"boom\"); \
+            print(\"sync\"); }",
+    );
+    assert_eq!(out, ["sync", "boom"]);
+}
+
+#[test]
+fn finally_on_a_pending_promise_runs_on_settle() {
+    let out = run_source(
+        "function main() { \
+            let p = new Promise(); \
+            p.finally(() => { print(\"cleanup\"); }); \
+            p.resolve(1.0); \
+            print(\"sync\"); }",
+    );
+    assert_eq!(out, ["sync", "cleanup"]);
+}
+
+#[test]
+fn an_already_settled_then_still_does_not_run_inline() {
+    // The async-not-sync guarantee: even on an already-resolved source the
+    // callback runs on the drain, after the synchronous "sync".
+    let out = run_source(
+        "function main() { \
+            Promise.resolve(7.0).then((x: any) => { print(x as number); }); \
+            print(\"sync\"); }",
+    );
+    assert_eq!(out, ["sync", "7"]);
+}
+
+#[test]
+fn reactions_run_in_attach_order_and_chain_within_one_drain() {
+    // Multiple `then`s on one promise run in attach order; a reaction scheduled
+    // by a reaction (the chained `d`) runs in the same drain, after c.
+    let out = run_source(
+        "function main() { \
+            let p = new Promise(); \
+            p.then((x: any) => { print(\"a\"); }); \
+            p.then((x: any) => { print(\"b\"); }); \
+            p.then((x: any) => { print(\"c\"); }).then((y: any) => { print(\"d\"); }); \
+            p.resolve(1.0); \
+            print(\"sync\"); }",
+    );
+    assert_eq!(out, ["sync", "a", "b", "c", "d"]);
+}
+
+#[test]
+fn promise_all_over_pending_inputs_resolves_after_both_settle() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(2); \
+            let p1 = new Promise(); \
+            let p2 = new Promise(); \
+            a[0] = p1; \
+            a[1] = p2; \
+            Promise.all(a).then((v: any) => { print(\"all done\"); }); \
+            p1.resolve(1.0); \
+            print(\"mid\"); \
+            p2.resolve(2.0); \
+            print(\"sync\"); }",
+    );
+    assert_eq!(out, ["mid", "sync", "all done"]);
+}
+
 #[test]
 fn promise_resolve_returns_an_existing_promise_unchanged() {
     let out = run_source(

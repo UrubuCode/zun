@@ -1492,6 +1492,11 @@ impl Interp<'_> {
         if let Some(hook) = self.hook {
             hook.append_roots(&mut extra_roots);
         }
+        // Pending `await` frames, scheduled reactions and combinator aggregates
+        // are live across a collection that happens while a reaction callback or
+        // a resumed frame is executing: root them here so a promise still owed a
+        // reaction is not reclaimed, and rewrite them when the heap moves.
+        self.append_parked_roots(&mut extra_roots);
         if full && parent.is_none() {
             let hook = self.hook;
             roots::collect_and_compact_current(
@@ -1503,6 +1508,7 @@ impl Interp<'_> {
                     for value in self.static_fields.values_mut() {
                         Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
                     }
+                    self.async_state.rewrite_after_move(relocation);
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);
                     }
@@ -1522,6 +1528,7 @@ impl Interp<'_> {
                     for value in self.static_fields.values_mut() {
                         Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
                     }
+                    self.async_state.rewrite_after_move(relocation);
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);
                     }

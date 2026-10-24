@@ -27,10 +27,13 @@ pub(super) struct Interp<'a> {
     /// `Error`'s `.stack` capture (PLAN §3.1): a frame carries no managed
     /// references (just two `u32`s), so it needs no GC rooting or relocation.
     pub(super) call_stack: Vec<CallFrame>,
-    /// The machine-level async substrate for `await`: the scheduler, its promise
-    /// table, and the side table that owns parked interpreter frames keyed by
-    /// [`ContinuationId`]. See [`AsyncState`]. `then`/combinators still run on
-    /// the old eager-at-settle path (slice 3 migrates them).
+    /// The machine-level async substrate for `await`, `then`/`catch`/`finally`
+    /// and the `Promise.*` combinators: the scheduler, its promise table, and
+    /// the side tables that own parked interpreter frames and scheduled
+    /// reactions keyed by [`ContinuationId`]. See [`AsyncState`]. Settlement now
+    /// flows through the scheduler directly and reactions run as microtasks on
+    /// the turn-drain (slice 3); the old eager-at-settle `then`/combinator path
+    /// is retired.
     pub(super) async_state: AsyncState,
 }
 
@@ -52,7 +55,74 @@ pub(super) struct AsyncState {
     /// Parked frames (the control/value state + GC roots), keyed by the id the
     /// scheduler holds. This table is the root owner for a parked `await`.
     pub(super) parked: HashMap<ContinuationId, ParkedFrame>,
+    /// Scheduled `then`/`catch`/`finally`/combinator reactions, keyed by the id
+    /// the scheduler holds. A reaction waits on a *source* promise and, when
+    /// that source settles, runs its callback (or passes the settlement
+    /// through) as a microtask and settles a *new* target promise. This table
+    /// is the root owner for the source/target promises and the callbacks a
+    /// pending reaction holds.
+    pub(super) reactions: HashMap<ContinuationId, Reaction>,
+    /// Shared aggregate state for `Promise.all/allSettled/race/any`: one entry
+    /// per in-flight combinator, referenced by index from every per-input
+    /// [`ReactionKind::Combinator`]. Kept here (single ownership) rather than
+    /// inside the reactions so its rooted result array is rewritten exactly once
+    /// on a moving collection.
+    pub(super) aggregates: Vec<Aggregate>,
     pub(super) next_cont: u32,
+}
+
+/// Which `Promise.*` combinator an [`Aggregate`] is driving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CombinatorKind {
+    All,
+    AllSettled,
+    Race,
+    Any,
+}
+
+/// What a scheduled reaction does when its source promise settles.
+#[derive(Debug)]
+pub(super) enum ReactionKind {
+    /// `then(onFulfilled?, onRejected?)` / `catch`. A missing callback forwards
+    /// the matching settlement to the target (pass-through), which is also how
+    /// a pending adopted promise is wired to its adopter.
+    Then {
+        on_fulfilled: Option<Value>,
+        on_rejected: Option<Value>,
+    },
+    /// `finally(onFinally)`: runs the cleanup on settlement and passes the
+    /// source settlement through unless the cleanup throws.
+    Finally { on_finally: Option<Value> },
+    /// One input of a combinator; updates `aggregates[aggregate]` at `index`.
+    Combinator { aggregate: usize, index: usize },
+}
+
+/// A scheduled reaction: the control ids the scheduler holds, the heap promises
+/// it reads from and settles, and the callback policy.
+#[derive(Debug)]
+pub(super) struct Reaction {
+    /// The source promise whose settlement wakes this reaction
+    /// (`Value::Object`).
+    pub(super) source: Value,
+    /// The new promise this reaction settles (`Value::Object`).
+    pub(super) target: Value,
+    pub(super) kind: ReactionKind,
+}
+
+/// Shared state for one combinator: the result holder it fills and the counter
+/// that decides when the aggregate target settles.
+#[derive(Debug)]
+pub(super) struct Aggregate {
+    pub(super) kind: CombinatorKind,
+    /// The aggregate's result promise (`Value::Object`).
+    pub(super) target: Value,
+    /// The managed array collecting per-input results/descriptors
+    /// (`Value::Object`), or `Value::Void` for `race`/`any` (no array result).
+    pub(super) holder: Value,
+    /// Inputs still outstanding before the aggregate can conclude.
+    pub(super) remaining: usize,
+    /// Set once the target has settled, so later inputs are ignored.
+    pub(super) settled: bool,
 }
 
 /// A parked interpreter frame and the scheduler promise whose settlement wakes
@@ -60,24 +130,8 @@ pub(super) struct AsyncState {
 #[derive(Debug)]
 pub(super) struct ParkedFrame {
     pub(super) frame: ExecutionFrame,
-    pub(super) pid: PromiseId,
 }
 
-impl AsyncState {
-    /// The scheduler `PromiseId` bridged to a managed promise `Obj`, creating it
-    /// on first use.
-    fn pid_for(&mut self, promise: Obj) -> PromiseId {
-        let addr = promise.addr() as usize;
-        match self.pid_by_obj.get(&addr) {
-            Some(pid) => *pid,
-            None => {
-                let pid = self.promises.create();
-                self.pid_by_obj.insert(addr, pid);
-                pid
-            }
-        }
-    }
-}
 
 /// One live interpreter activation, used for runtime stack capture.
 #[derive(Debug, Clone, Copy)]
@@ -117,29 +171,91 @@ impl<'a> Interp<'a> {
         &mut self,
         relocation: &zun_gc::RelocationMap,
     ) -> usize {
+        self.async_state.rewrite_after_move(relocation)
+    }
+}
+
+impl AsyncState {
+    /// Rewrite every parked `await` frame, every pending reaction and
+    /// aggregate, and the promise→id bridge after a moving collection, so the
+    /// control state carried across a collection survives relocation.
+    pub(super) fn rewrite_after_move(&mut self, relocation: &zun_gc::RelocationMap) -> usize {
         let mut rewritten = 0;
-        for parked in self.async_state.parked.values_mut() {
+        for parked in self.parked.values_mut() {
             rewritten += parked.frame.rewrite_managed_references(relocation);
+        }
+        for reaction in self.reactions.values_mut() {
+            rewritten += usize::from(reaction.source.rewrite_managed_reference(relocation));
+            rewritten += usize::from(reaction.target.rewrite_managed_reference(relocation));
+            match &mut reaction.kind {
+                ReactionKind::Then {
+                    on_fulfilled,
+                    on_rejected,
+                } => {
+                    if let Some(value) = on_fulfilled {
+                        rewritten += usize::from(value.rewrite_managed_reference(relocation));
+                    }
+                    if let Some(value) = on_rejected {
+                        rewritten += usize::from(value.rewrite_managed_reference(relocation));
+                    }
+                }
+                ReactionKind::Finally { on_finally } => {
+                    if let Some(value) = on_finally {
+                        rewritten += usize::from(value.rewrite_managed_reference(relocation));
+                    }
+                }
+                ReactionKind::Combinator { .. } => {}
+            }
+        }
+        for aggregate in self.aggregates.iter_mut() {
+            rewritten += usize::from(aggregate.target.rewrite_managed_reference(relocation));
+            rewritten += usize::from(aggregate.holder.rewrite_managed_reference(relocation));
         }
         // Keys in the promise→id bridge are heap addresses, which move with the
         // objects they name.
-        if !self.async_state.pid_by_obj.is_empty() {
-            let old: Vec<(usize, PromiseId)> = self.async_state.pid_by_obj.drain().collect();
+        if !self.pid_by_obj.is_empty() {
+            let old: Vec<(usize, PromiseId)> = self.pid_by_obj.drain().collect();
             for (addr, pid) in old {
                 let obj = unsafe { Obj::from_addr(addr as *mut u64) };
                 let relocated = relocation.relocate(obj).addr() as usize;
-                self.async_state.pid_by_obj.insert(relocated, pid);
+                self.pid_by_obj.insert(relocated, pid);
             }
         }
         rewritten
     }
+}
 
-    /// Append the GC roots held by every parked `await` frame. These frames are
-    /// owned by [`AsyncState::parked`] and are rooted from here while parked,
-    /// exactly as the actively suspended frame is.
+impl<'a> Interp<'a> {
+    /// Append the GC roots held by every parked `await` frame, every pending
+    /// reaction (its source/target promises and callbacks), and every in-flight
+    /// combinator aggregate (its target and result holder). All of these are
+    /// owned by [`AsyncState`] and are rooted from here while they sit in their
+    /// side tables, exactly as the actively suspended frame is.
     pub(super) fn append_parked_roots(&self, roots: &mut Vec<Obj>) {
         for parked in self.async_state.parked.values() {
             parked.frame.append_managed_roots(roots);
+        }
+        for reaction in self.async_state.reactions.values() {
+            let mut values = vec![reaction.source.clone(), reaction.target.clone()];
+            match &reaction.kind {
+                ReactionKind::Then {
+                    on_fulfilled,
+                    on_rejected,
+                } => {
+                    values.extend(on_fulfilled.clone());
+                    values.extend(on_rejected.clone());
+                }
+                ReactionKind::Finally { on_finally } => values.extend(on_finally.clone()),
+                ReactionKind::Combinator { .. } => {}
+            }
+            super::roots::collect_frame_roots(&values, &[], roots);
+        }
+        for aggregate in &self.async_state.aggregates {
+            super::roots::collect_frame_roots(
+                &[aggregate.target.clone(), aggregate.holder.clone()],
+                &[],
+                roots,
+            );
         }
     }
 
@@ -158,39 +274,82 @@ impl<'a> Interp<'a> {
                 ))
             }
         };
-        let pid = self.async_state.pid_for(promise);
+        let pid = self.bridge_pid(promise);
         let cid = ContinuationId(self.async_state.next_cont);
         self.async_state.next_cont += 1;
         let state = &mut self.async_state;
         state
             .scheduler
             .park(&mut state.promises, Continuation::new(cid, pid));
-        state.parked.insert(cid, ParkedFrame { frame, pid });
+        state.parked.insert(cid, ParkedFrame { frame });
         Ok(cid)
     }
 
-    /// Drive the scheduler from the current heap settlement of each parked
-    /// promise: a promise the host (or an earlier turn) settled on the heap now
-    /// settles its scheduler `PromiseId`, which wakes the parked continuation.
+    /// The scheduler [`PromiseId`] bridged to a managed promise `Obj`, created
+    /// on first use. Crucially, a newly created bridge is *reconciled* against
+    /// the heap immediately: if the heap promise has already settled, the
+    /// scheduler promise is settled to match now, so a reaction or frame that
+    /// attaches afterwards sees `ReadyNow` (enqueued) rather than parking on a
+    /// scheduler promise that can never settle. This is the attach-after-settle
+    /// half of keeping the heap cell and the scheduler in step; the settle
+    /// paths ([`Interp::settle_promise_resolve`]/`settle_promise_reject`) are
+    /// the settle-after-attach half.
+    pub(super) fn bridge_pid(&mut self, promise: Obj) -> PromiseId {
+        let addr = promise.addr() as usize;
+        if let Some(pid) = self.async_state.pid_by_obj.get(&addr) {
+            return *pid;
+        }
+        let pid = self.async_state.promises.create();
+        self.async_state.pid_by_obj.insert(addr, pid);
+        let settlement = zun_gc::with_current_heap(|heap| heap.promise_state(promise));
+        let settlement = match settlement {
+            Some(zun_core::ManagedPromiseState::Resolved) => Some(Settlement::Fulfilled),
+            Some(zun_core::ManagedPromiseState::Rejected) => Some(Settlement::Rejected),
+            _ => None,
+        };
+        if let Some(settlement) = settlement {
+            let state = &mut self.async_state;
+            state.scheduler.settle(&mut state.promises, pid, settlement);
+        }
+        pid
+    }
+
+    /// Settle the scheduler promise bridged to `promise` (if any) to `settlement`,
+    /// waking every reaction and parked frame attached to it. Called whenever
+    /// the heap promise cell is resolved/rejected so control flows through the
+    /// scheduler directly (the settle-after-attach half of heap↔scheduler sync).
+    pub(super) fn wake_scheduler(&mut self, promise: Obj, settlement: Settlement) {
+        let addr = promise.addr() as usize;
+        if let Some(pid) = self.async_state.pid_by_obj.get(&addr).copied() {
+            let state = &mut self.async_state;
+            state.scheduler.settle(&mut state.promises, pid, settlement);
+        }
+    }
+
+    /// Safety-net reconciliation: settle the scheduler promise of any bridged
+    /// heap promise that has settled on the heap without the scheduler being
+    /// told (for example a promise the *host* resolved directly through
+    /// `heap_mut()` between polls, which never runs the in-program settle path).
     ///
-    /// This is the transitional bridge — the heap promise cell remains the
-    /// settlement source of truth (the old `then` path reads it too), and the
-    /// scheduler learns of a settlement here. Slice 3 routes settlement through
-    /// the scheduler directly.
+    /// Settlement normally flows through the scheduler directly
+    /// ([`Interp::settle_promise_resolve`]/`settle_promise_reject` and
+    /// [`Interp::bridge_pid`]); this pass is kept only to cover host-driven
+    /// settlement, and double-settle is a no-op, so running it is always safe.
     pub(super) fn reconcile_settlements(&mut self) {
         let mut to_settle: Vec<(PromiseId, Settlement)> = Vec::new();
-        for parked in self.async_state.parked.values() {
-            if let FrameState::Suspended { promise, .. } = parked.frame.state {
-                let settlement = zun_gc::with_current_heap(|heap| heap.promise_state(promise));
-                match settlement {
-                    Some(zun_core::ManagedPromiseState::Resolved) => {
-                        to_settle.push((parked.pid, Settlement::Fulfilled))
-                    }
-                    Some(zun_core::ManagedPromiseState::Rejected) => {
-                        to_settle.push((parked.pid, Settlement::Rejected))
-                    }
-                    _ => {}
+        for (&addr, &pid) in &self.async_state.pid_by_obj {
+            if self.async_state.promises.state(pid) != zun_sched::PromiseState::Pending {
+                continue;
+            }
+            let promise = unsafe { Obj::from_addr(addr as *mut u64) };
+            match zun_gc::with_current_heap(|heap| heap.promise_state(promise)) {
+                Some(zun_core::ManagedPromiseState::Resolved) => {
+                    to_settle.push((pid, Settlement::Fulfilled))
                 }
+                Some(zun_core::ManagedPromiseState::Rejected) => {
+                    to_settle.push((pid, Settlement::Rejected))
+                }
+                _ => {}
             }
         }
         let state = &mut self.async_state;
@@ -199,17 +358,33 @@ impl<'a> Interp<'a> {
         }
     }
 
-    /// Take the next frame the scheduler reports runnable, removing it from the
-    /// parked side table. Returns `None` when nothing is runnable yet.
-    pub(super) fn next_runnable_frame(&mut self) -> Option<ExecutionFrame> {
-        while let Some(ran) = self.async_state.scheduler.next() {
-            if let zun_sched::Ran::Continuation(cid) = ran {
-                if let Some(parked) = self.async_state.parked.remove(&cid) {
-                    return Some(parked.frame);
+    /// Advance the scheduler by one microtask: pull the next runnable
+    /// continuation and either run its reaction (synchronously, settling the
+    /// reaction's target) or hand back the woken `await` frame for the caller to
+    /// resume. Reactions are drained in place; only frames cross back out,
+    /// because resuming a frame re-enters the interpreter and may suspend again.
+    pub(super) fn next_microstep(&mut self) -> Result<Microstep, super::RunError> {
+        loop {
+            // Pick up any host-driven heap settlement before asking what runs.
+            self.reconcile_settlements();
+            match self.async_state.scheduler.next() {
+                Some(zun_sched::Ran::Continuation(cid)) => {
+                    if self.async_state.reactions.contains_key(&cid) {
+                        self.run_reaction(cid)?;
+                        return Ok(Microstep::RanReaction);
+                    }
+                    if let Some(parked) = self.async_state.parked.remove(&cid) {
+                        return Ok(Microstep::Frame(parked.frame));
+                    }
+                    // A woken id with no owner (cancelled or already taken):
+                    // skip it and keep draining.
+                    continue;
                 }
+                // Tasks (timers/macrotasks) are slice 4; ignore them here.
+                Some(zun_sched::Ran::Task(_)) => continue,
+                None => return Ok(Microstep::Idle),
             }
         }
-        None
     }
 
     /// The promise the single parked `await` frame is waiting on, if any.
@@ -311,6 +486,17 @@ pub(super) struct ExecutionFrame {
 pub(super) enum FrameState {
     Runnable,
     Suspended { promise: Obj, resume_pc: usize },
+}
+
+/// Result of advancing the scheduler by one microtask via
+/// [`Interp::next_microstep`].
+pub(super) enum Microstep {
+    /// A reaction ran to completion in place; keep draining.
+    RanReaction,
+    /// An `await` frame woke and must be resumed by the caller.
+    Frame(ExecutionFrame),
+    /// Nothing is runnable.
+    Idle,
 }
 
 /// Internal outcome used by the resumable interpreter boundary.

@@ -1,6 +1,6 @@
 use super::gc_policy::GC_INTERVAL;
 use super::{CallHook, Interp, Output, RunError, Value};
-use super::state::{AsyncState, ExecutionFrame, ExecutionOutcome};
+use super::state::{AsyncState, ExecutionFrame, ExecutionOutcome, Microstep};
 use zun_il::{decode_one, Opcode};
 use zun_module::{read_body, Module};
 
@@ -415,17 +415,23 @@ impl<'a> ResumableSession<'a> {
                 None,
             )
         } else {
-            // Drive the scheduler: a promise the host settled on the heap wakes
-            // its parked `await` continuation, whose frame we then resume. If
-            // nothing is runnable yet, the session stays suspended.
-            self.interp.reconcile_settlements();
-            match self.interp.next_runnable_frame() {
-                Some(frame) => self.interp.resume_suspended(frame),
-                None => return Ok(ResumeResult::Suspended),
+            // Drive the scheduler: run queued reactions (as microtasks) and
+            // resume woken `await` continuations. A promise the host settled on
+            // the heap is picked up by the reconcile pass inside `next_microstep`.
+            // If nothing is runnable yet, the session stays suspended.
+            loop {
+                match self.interp.next_microstep()? {
+                    Microstep::RanReaction => continue,
+                    Microstep::Frame(frame) => break self.interp.resume_suspended(frame),
+                    Microstep::Idle => return Ok(ResumeResult::Suspended),
+                }
             }
         };
         match outcome {
             ExecutionOutcome::Complete(value) => {
+                // Flush reactions queued by the completed body before reporting
+                // completion, matching the turn-drain of a plain `run()`.
+                self.interp.drain_microtasks()?;
                 self.interp.deliver_finalization_callbacks()?;
                 Ok(ResumeResult::Complete(value))
             }
@@ -532,7 +538,23 @@ pub(super) fn run_method_with(
             }
         }
     }
-    let result = match interp.call(method_rid, args, None) {
+    // The entry point may contain a top-level `await` on a pending promise, or
+    // schedule `then`/combinator reactions: run it, then drain the scheduler to
+    // empty (the turn-drain) so reactions queued by reactions run too.
+    let first = interp.call(method_rid, args, None);
+    let outcome = match first {
+        Err(RunError::Suspended) => interp
+            .suspended
+            .take()
+            .map(ExecutionOutcome::Suspended)
+            .unwrap_or_else(|| {
+                ExecutionOutcome::Fault(RunError::Malformed(
+                    "suspended execution did not provide a frame".into(),
+                ))
+            }),
+        other => ExecutionOutcome::from_result(other),
+    };
+    let result = match interp.drive_to_completion(outcome) {
         Ok(value) => value,
         Err(error) => return Err(interp.annotate_error(error)),
     };
@@ -567,6 +589,68 @@ impl Interp<'_> {
                 }
                 args.push(token);
                 self.call(callback.method_rid(), args, None)?;
+            }
+        }
+    }
+
+    /// Drive one synchronous turn to completion: run the entry's outcome, and
+    /// whenever it is suspended on a pending `await`, park it and pump the
+    /// scheduler (running reactions, resuming woken frames) until the entry
+    /// resumes to a terminal result. On completion, drain any remaining queued
+    /// reactions (the turn-drain) before returning.
+    pub(super) fn drive_to_completion(
+        &mut self,
+        mut outcome: ExecutionOutcome,
+    ) -> Result<Value, RunError> {
+        loop {
+            match outcome {
+                ExecutionOutcome::Complete(value) => {
+                    self.drain_microtasks()?;
+                    return Ok(value);
+                }
+                ExecutionOutcome::Thrown(value) => return Err(RunError::Thrown(value)),
+                ExecutionOutcome::Fault(error) => return Err(error),
+                ExecutionOutcome::Suspended(frame) => {
+                    // A top-level `await` on a pending promise: park it, then
+                    // pump microtasks until something resumes it.
+                    self.park_suspended(frame)?;
+                    outcome = loop {
+                        match self.next_microstep()? {
+                            Microstep::RanReaction => continue,
+                            Microstep::Frame(frame) => break self.resume_suspended(frame),
+                            Microstep::Idle => {
+                                return Err(RunError::Malformed(
+                                    "async turn went idle with the entry point still suspended"
+                                        .into(),
+                                ))
+                            }
+                        }
+                    };
+                }
+            }
+        }
+    }
+
+    /// Drain the scheduler's runnable queue to empty: run reactions, and resume
+    /// any woken detached `await` frames (fire-and-forget async tasks). Reactions
+    /// queued by reactions run in the same drain (the rts `drain_microtasks`
+    /// model). An unhandled throw from a detached task is swallowed here so one
+    /// failed task does not abort the turn; promise-level unhandled-rejection
+    /// reporting is a later addition (the scheduler has no `unnoticed` list yet).
+    pub(super) fn drain_microtasks(&mut self) -> Result<(), RunError> {
+        loop {
+            match self.next_microstep()? {
+                Microstep::RanReaction => continue,
+                Microstep::Frame(frame) => match self.resume_suspended(frame) {
+                    ExecutionOutcome::Complete(_) => continue,
+                    ExecutionOutcome::Suspended(frame) => {
+                        self.park_suspended(frame)?;
+                        continue;
+                    }
+                    ExecutionOutcome::Thrown(_) => continue,
+                    ExecutionOutcome::Fault(error) => return Err(error),
+                },
+                Microstep::Idle => return Ok(()),
             }
         }
     }
