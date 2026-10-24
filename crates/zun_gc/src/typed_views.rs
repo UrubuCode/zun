@@ -206,9 +206,16 @@ impl Heap {
     pub fn typed_array_subarray(&mut self, object: Obj, begin: usize, end: usize) -> Option<Obj> {
         let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
         let subview = view.subview(begin, end);
-        // Same shape as `alloc_typed_array`: the buffer's address is carried
-        // across the allocation and into the child's field, exactly as every
-        // view allocation here already does.
+        // The buffer's address is carried across this allocation, which the
+        // comment on `buffer_slice` forbids. It is safe here, and the reason
+        // is worth writing down because the shape looks like the bug it is
+        // not: `alloc` only bump-allocates or reuses a free slot, and never
+        // moves anything. Objects move in `compact`, which is an explicit
+        // `unsafe fn` the VM calls at a safepoint — and which remaps both the
+        // `typed_views` key and the buffer handle stored in the value, so a
+        // view survives compaction with both ends still pointing at the right
+        // objects. `buffer_slice`'s rule is about reading bytes across a
+        // collection, not about this.
         let child = self.alloc(0, 1);
         child.set_field(0, buffer.addr() as u64);
         self.typed_views.insert(child.addr() as usize, (buffer, subview));
