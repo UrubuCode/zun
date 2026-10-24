@@ -262,6 +262,40 @@ precompiled TS std classes).
 (PC→source), currently minimal — required for useful stack traces (the rts pain that
 motivated Zun).
 
+### 3.5 Decorators & compile-time macros (the .NET source-generator model)
+
+Decorators are the language feature AND the hook for a **macro system** (PLAN §3.2:
+"Decorators — language feature + macro"). Grounded in `.docs-dotnet/08-static-analysis/
+12-source-generators-analysis-and-generation.md`: .NET's "macro" is the **Roslyn source
+generator** — attribute-triggered, **compile-time** metaprogramming that sees symbols and
+**emits code** (`[GeneratedRegex]`, `[JsonSerializable]`, `[LibraryImport]`), replacing
+runtime reflection. Zun adopts this model because it is **AOT-friendly, zero-runtime-cost,
+static/analyzable** — exactly the thesis.
+
+- **A decorator `@name` is the trigger** (the attribute analogue). A decorator registered
+  as a **macro** is recognized by the compiler, which runs a **compile-time transform** on
+  the decorated target (class/method/field) **before final sema/ilgen** (the natural
+  extension point for an IR-compiled language), augmenting or replacing it by emitting
+  HIR/code — not manipulating syntax trees by hand.
+- **Parser/Emitter separation** (the repo discipline): a macro reads a **value-model** of
+  the target (AST→model) and an **emitter** produces code (model→output). Keep models
+  free of AST/compilation references so the pipeline can later become **incremental**
+  (cache by value) — incremental caching itself is deferred for v1.
+- **Contract of failure:** analyze → decide → **diagnostic + safe fallback**, never a
+  silent miscompile or a compiler crash (the `LimitedSourceGeneration` pattern).
+- **Static & AOT:** because expansion happens at build time, the output is ordinary ZIL
+  the trimmer/AOT see like any other code — no runtime reflection, no `RequiresDynamicCode`.
+- **Two flavors, one syntax:** (a) **compile-time macro decorators** (the source-generator
+  analogue — the primary goal, the macro system); (b) optional **runtime decorators**
+  (TC39 `(value, context)` protocol) for ordinary decoration — note that TC39 standard
+  decorators do NOT need the deferred property-descriptor model (unlike legacy TS method
+  decorators), so the runtime flavor is not blocked by it.
+- **Staging:** (1) decorator **syntax** — lexer `@`, parse `@expr`/`@expr(args)` on
+  class/method/field, AST nodes carrying the decorator list (foundation for both flavors);
+  (2) the **macro-expansion hook** — a compile-time pass that runs registered macro
+  transforms on decorated targets + a first built-in macro proving it + diagnostic/fallback;
+  (3) runtime TC39 decorators if/when wanted. Each generator pairs with an analyzer/diagnostic.
+
 ## 4. Module distribution (minimal core + fetched extensions)
 
 The minimal core (§3 nucleus + `zun_abi`) ships; extensions live in separate official
