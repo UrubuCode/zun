@@ -10,6 +10,7 @@ members = [
     "crates/zun_sema",
     "crates/zun_ilgen",
     "crates/zun_interp",
+    "crates/zun_sched",
     "crates/zun_vm",
     "crates/zun_cli",
     "crates/zun_verify",

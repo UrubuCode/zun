@@ -20,9 +20,9 @@
 //! This module is the control machine, standalone and unit-tested. It models
 //! *control* only — which frame runs when, which promise settles which way,
 //! which waiters wake. It deliberately holds **no value and no heap object**:
-//! the settled value lives in a side table in the language layer (the existing
-//! [`crate::promise`] machinery for now), keyed by [`PromiseId`]. This mirrors
-//! the rts split, where [`Settlement`] carries no value.
+//! the settled value lives in a side table in the language layer (the managed
+//! promise cell in `zun_gc`/`zun_vm` for now), keyed by [`PromiseId`]. This
+//! mirrors the rts split, where [`Settlement`] carries no value.
 //!
 //! It is not yet wired into the interpreter. Slices 2 and 3 migrate `await`,
 //! `then` and the combinators onto it (see the module-level notes on
@@ -33,8 +33,8 @@
 //! rts carries a `SchedulerId` on every promise and a `Delivery::Elsewhere`
 //! hand-off, because it runs one scheduler per thread-local region and a promise
 //! created in one region can be awaited from another. Zun's Tier 0 interpreter
-//! is single-threaded (see [`crate::promise::Scheduler`]), so slice 1 keeps a
-//! single owner-less scheduler: no `SchedulerId`, no cross-region `Delivery`.
+//! is single-threaded, so slice 1 keeps a single owner-less scheduler: no
+//! `SchedulerId`, no cross-region `Delivery`.
 //! The promise/continuation/queue split is otherwise mirrored one-for-one, and
 //! re-introducing per-region ownership later is additive (a field on the cell
 //! plus a `Delivery` return), not a redesign.

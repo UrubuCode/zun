@@ -11,7 +11,7 @@
 //! A [`Settlement`] carries **no value**. Whether a promise fulfilled or
 //! rejected is control information the machine needs to know who to wake and
 //! how; *what* it fulfilled with is a value, and the value lives in a side table
-//! in the language layer (for now, the existing [`crate::promise`] machinery),
+//! in the language layer (for now, the managed promise cell in `zun_gc`),
 //! keyed by [`PromiseId`]. This machine never touches a `Value` or a heap
 //! `Obj`, which is what keeps it a control machine and keeps the GC out of it.
 

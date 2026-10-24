@@ -1,0 +1,10 @@
+[package]
+name = "zun_sched"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The machine-level async substrate: promises, continuations, and scheduling order."
+
+[lints]
+workspace = true

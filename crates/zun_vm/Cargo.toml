@@ -11,6 +11,7 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 zun_interp = { path = "../zun_interp" }
+zun_sched = { path = "../zun_sched" }
 zun_module = { path = "../zun_module" }
 zun_loader = { path = "../zun_loader" }
 zun_metadata = { path = "../zun_metadata" }

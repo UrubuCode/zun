@@ -10,8 +10,13 @@ mod extension;
 mod jit_hook;
 mod native_hook;
 mod promise;
-pub mod sched;
 mod verify_module;
+
+/// The machine-level async substrate (promises, continuations, scheduling
+/// order). Relocated to the leaf crate [`zun_sched`] so the interpreter can
+/// depend on it without a cycle; re-exported here so existing `zun_vm::sched`
+/// paths keep working.
+pub use zun_sched as sched;
 
 use zun_interp::value::Value;
 use zun_interp::{run_with, CallHook, Output, RunError, StdoutOutput};

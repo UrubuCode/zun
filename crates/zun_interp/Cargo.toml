@@ -15,6 +15,7 @@ zun_core = { path = "../zun_core" }
 zun_natives = { path = "../zun_natives" }
 zun_loader = { path = "../zun_loader" }
 zun_types = { path = "../zun_types" }
+zun_sched = { path = "../zun_sched" }
 
 [dev-dependencies]
 zun_compiler = { path = "../zun_compiler" }
