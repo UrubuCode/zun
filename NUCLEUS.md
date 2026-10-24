@@ -43,7 +43,7 @@ read.
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping. Missing `isView`, resizable buffers |
 | 18 | DataView | partial | All element widths now present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. Missing `byteOffset`/`buffer` |
-| 19 | TypedArrays | partial | Constructor length now counts elements as JS does (it counted bytes); `length()`/`byteLength()` reachable. Still only 4 kinds, and no `subarray`/`fill`/`set`/iteration |
+| 19 | TypedArrays | partial | All eleven JS kinds now, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Missing `subarray`/`fill`/`set`-from-array/iteration, and `byteOffset`/`buffer`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · partial 18 · missing 3 (of 26 nucleus items, JSON excluded).
+**Counts:** done 5 · mostly 2 · partial 17 · missing 2 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
