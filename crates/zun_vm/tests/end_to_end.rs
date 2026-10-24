@@ -1383,27 +1383,6 @@ fn std_prelude_numeric_helpers() {
 }
 
 #[test]
-fn fs_intrinsics_round_trip() {
-    let dir = std::env::temp_dir();
-    let path = dir.join("zun_fs_test.txt");
-    let path_str = path.to_string_lossy().replace('\\', "/");
-    let _ = std::fs::remove_file(&path);
-
-    let src = format!(
-        "import {{ writeText, readText, exists }} from \"zun:fs\";\n\
-         function main() {{\n\
-            let p: string = \"{path_str}\";\n\
-            writeText(p, \"zun io works\");\n\
-            print(readText(p));\n\
-            if (exists(p)) {{ print(\"yes\"); }}\n\
-         }}"
-    );
-    let out = run_source(&src);
-    assert_eq!(out, ["zun io works", "yes"]);
-    let _ = std::fs::remove_file(&path);
-}
-
-#[test]
 fn unknown_import_is_a_sema_error() {
     let src = "import { nope } from \"zun:ghost\";\nfunction main() {}";
     let mut diags = Vec::new();

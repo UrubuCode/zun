@@ -445,13 +445,13 @@
     }
     #[test]
     fn parses_import() {
-        let src = "import { readText, writeText } from \"zun:fs\";\nfunction main() {}";
+        let src = "import { print, println } from \"zun:io\";\nfunction main() {}";
         let p = parse_ok(src);
         assert_eq!(p.imports.len(), 1);
-        assert_eq!(p.imports[0].module, "zun:fs");
+        assert_eq!(p.imports[0].module, "zun:io");
         assert_eq!(p.imports[0].names.len(), 2);
-        assert_eq!(ident_text(src, &p.imports[0].names[0].imported), "readText");
-        assert_eq!(ident_text(src, &p.imports[0].names[0].local), "readText");
+        assert_eq!(ident_text(src, &p.imports[0].names[0].imported), "print");
+        assert_eq!(ident_text(src, &p.imports[0].names[0].local), "print");
         assert_eq!(p.functions.len(), 1);
     }
 

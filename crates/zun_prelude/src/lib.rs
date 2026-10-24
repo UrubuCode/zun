@@ -8,7 +8,7 @@
 //! pure numeric code, so its functions are JIT-eligible like any other. When
 //! code-module imports land, this becomes the importable `zun:math` module.
 //!
-//! This is distinct from the **intrinsics** (`zun:fs`, `zun:io`, ...), which are
+//! This is distinct from the **intrinsics** (`zun:io`, `zun:time`, ...), which are
 //! runtime-implemented in Rust (see `zun_intrinsics`).
 
 /// The numeric helper portion of the prelude.

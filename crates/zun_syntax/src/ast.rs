@@ -23,7 +23,7 @@ pub struct Program {
 pub struct Import {
     /// The imported names.
     pub names: Vec<ImportName>,
-    /// The module string (decoded, e.g. `"zun:fs"`).
+    /// The module string (decoded, e.g. `"zun:io"`).
     pub module: String,
     /// Span of the whole declaration.
     pub span: Span,

@@ -1,5 +1,5 @@
 //! Native modules — the runtime-implemented part of the standard library
-//! (`zun:fs`, `zun:io`, `zun:env`, `zun:time`), the analogue of .NET
+//! (`zun:io`, `zun:time`), the analogue of .NET
 //! InternalCall bodies and Rust's `std::sys`. Distinct from FFI/P-Invoke, which
 //! calls *external* native libraries (PLAN.md §4.4).
 //!
@@ -20,8 +20,6 @@ mod buffer;
 mod collections;
 mod date;
 mod error;
-mod env;
-mod fs;
 mod io;
 mod math;
 mod number;
@@ -229,7 +227,7 @@ impl core::fmt::Debug for NativeFn {
 /// A built-in module: a `zun:`-prefixed name and its functions.
 #[derive(Debug)]
 pub struct Module {
-    /// The module name, e.g. `"zun:fs"`.
+    /// The module name, e.g. `"zun:io"`.
     pub name: &'static str,
     /// The functions the module exports (ids are their registry positions).
     pub functions: &'static [NativeFn],
@@ -239,8 +237,6 @@ pub struct Module {
 /// index across this list; `print` is the very first entry, so its id is 0.
 pub static MODULES: &[Module] = &[
     io::MODULE,
-    fs::MODULE,
-    env::MODULE,
     time::MODULE,
     math::MODULE,
     number::MODULE,
@@ -366,9 +362,7 @@ fn module_namespace(module_name: &str, fn_name: &str) -> &'static str {
         "zun:math" => "math",
         "zun:date" => "date",
         "zun:promise" => "promise",
-        "zun:fs" => "fs",
         "zun:io" => "io",
-        "zun:env" => "env",
         "zun:time" => "time",
         "zun:buffer" => "buffer",
         "zun:typeinfo" => "typeinfo",
@@ -573,10 +567,10 @@ mod tests {
         // io's first function is `print`, so PRINT == 0.
         assert_eq!(by_id(PRINT).unwrap().name, "print");
         assert_eq!(intrinsic_id(PRINT).get(), 0);
-        let (id, f) = resolve("zun:fs", "readText").unwrap();
-        assert_eq!(f.name, "readText");
+        let (id, f) = resolve("zun:time", "nowMillis").unwrap();
+        assert_eq!(f.name, "nowMillis");
         // Ids are positional and round-trip through by_id.
-        assert_eq!(by_id(id).unwrap().name, "readText");
+        assert_eq!(by_id(id).unwrap().name, "nowMillis");
     }
 
     #[test]
@@ -657,8 +651,8 @@ mod tests {
 
     #[test]
     fn param_counts_are_right() {
-        let (write_id, _) = resolve("zun:fs", "writeText").unwrap();
-        assert_eq!(param_count(write_id), 2);
+        let (concat_id, _) = resolve("zun:string", "concat").unwrap();
+        assert_eq!(param_count(concat_id), 2);
     }
 
     #[test]
@@ -678,7 +672,7 @@ mod tests {
         assert_eq!(function.ret, NativeTy::F64);
         assert_eq!(
             id as usize,
-            MODULES[..4]
+            MODULES[..2]
                 .iter()
                 .map(|m| m.functions.len())
                 .sum::<usize>()
