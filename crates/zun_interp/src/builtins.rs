@@ -16,6 +16,7 @@ pub(super) fn call_builtin(
         .or_else(|| managed_node_buffer_builtin(id))
         .or_else(|| managed_typeinfo_builtin(id))
         .or_else(|| managed_error_builtin(id))
+        .or_else(|| managed_timers_builtin(id))
     {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
@@ -248,6 +249,24 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferWriteBigUInt64BE",
     ] {
         if zun_natives::resolve("nodeBuffer", name).map(|(candidate, _)| candidate) == Some(id) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Recognize the `timers` macrotask intrinsics (ASYNC slice 4), serviced on the
+/// interpreter floor because each needs the scheduler, timer heap and heap.
+pub(crate) fn managed_timers_builtin(id: u32) -> Option<&'static str> {
+    for name in [
+        "setTimeout",
+        "setInterval",
+        "clearTimeout",
+        "clearInterval",
+        "queueMicrotask",
+        "setImmediate",
+    ] {
+        if zun_natives::resolve("timers", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }

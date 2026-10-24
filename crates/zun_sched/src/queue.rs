@@ -38,6 +38,7 @@ pub struct Queues {
     continuations: VecDeque<ContinuationId>,
     tasks: VecDeque<TaskId>,
     cancelled: Vec<ContinuationId>,
+    cancelled_tasks: Vec<TaskId>,
 }
 
 impl Queues {
@@ -78,6 +79,24 @@ impl Queues {
         self.cancelled.contains(&continuation)
     }
 
+    /// Marks a task as never to be run — the macrotask analogue of
+    /// [`Self::cancel`]. A due timer that has been cleared (`clearTimeout`/
+    /// `clearInterval`) is cancelled here; when the scheduled [`TaskId`] comes
+    /// up it is dropped rather than run, and an interval consults the same flag
+    /// before re-arming. Cancellation is a flag rather than a removal for the
+    /// same reason it is for continuations: a task can be cleared while queued,
+    /// while still pending in the timer heap, or while neither.
+    pub fn cancel_task(&mut self, task: TaskId) {
+        if !self.cancelled_tasks.contains(&task) {
+            self.cancelled_tasks.push(task);
+        }
+    }
+
+    /// Whether a task has been cancelled.
+    pub fn is_task_cancelled(&self, task: TaskId) -> bool {
+        self.cancelled_tasks.contains(&task)
+    }
+
     /// Takes the next thing to run, or `None` when nothing is runnable.
     ///
     /// This is the whole ordering rule, in one place, so that it can be read and
@@ -88,7 +107,12 @@ impl Queues {
                 return Some(Ran::Continuation(continuation));
             }
         }
-        self.tasks.pop_front().map(Ran::Task)
+        while let Some(task) = self.tasks.pop_front() {
+            if !self.is_task_cancelled(task) {
+                return Some(Ran::Task(task));
+            }
+        }
+        None
     }
 
     /// Whether anything is waiting to run.
@@ -97,7 +121,8 @@ impl Queues {
     /// will be dropped rather than run, so a scheduler that treated it as work
     /// would report itself busy with nothing to do.
     pub fn has_work(&self) -> bool {
-        self.continuations.iter().any(|c| !self.is_cancelled(*c)) || !self.tasks.is_empty()
+        self.continuations.iter().any(|c| !self.is_cancelled(*c))
+            || self.tasks.iter().any(|t| !self.is_task_cancelled(*t))
     }
 
     /// How many continuations are queued, cancelled or not.
@@ -162,6 +187,38 @@ mod tests {
             1,
             "it is still there, it just will not run"
         );
+    }
+
+    #[test]
+    fn a_cancelled_task_is_dropped_rather_than_run() {
+        let mut queues = Queues::new();
+        queues.schedule(TaskId(0));
+        queues.schedule(TaskId(1));
+        queues.cancel_task(TaskId(0));
+
+        assert_eq!(queues.next(), Some(Ran::Task(TaskId(1))));
+        assert_eq!(queues.next(), None);
+    }
+
+    #[test]
+    fn a_queue_holding_only_cancelled_tasks_reports_itself_idle() {
+        let mut queues = Queues::new();
+        queues.schedule(TaskId(0));
+        queues.cancel_task(TaskId(0));
+        assert!(!queues.has_work());
+    }
+
+    #[test]
+    fn continuations_still_drain_before_an_uncancelled_task() {
+        let mut queues = Queues::new();
+        queues.schedule(TaskId(5));
+        queues.cancel_task(TaskId(4));
+        queues.schedule(TaskId(4));
+        queues.wake(ContinuationId(0));
+
+        assert_eq!(queues.next(), Some(Ran::Continuation(ContinuationId(0))));
+        assert_eq!(queues.next(), Some(Ran::Task(TaskId(5))));
+        assert_eq!(queues.next(), None);
     }
 
     #[test]

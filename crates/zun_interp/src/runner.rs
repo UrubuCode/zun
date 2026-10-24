@@ -423,15 +423,24 @@ impl<'a> ResumableSession<'a> {
                 match self.interp.next_microstep()? {
                     Microstep::RanReaction => continue,
                     Microstep::Frame(frame) => break self.interp.resume_suspended(frame),
-                    Microstep::Idle => return Ok(ResumeResult::Suspended),
+                    Microstep::Idle => {
+                        // Microtasks are idle: fire the earliest-due timer to
+                        // make progress on the unified loop. Only when no timer
+                        // remains either does this poll stay suspended.
+                        if self.interp.fire_one_timer()? {
+                            continue;
+                        }
+                        return Ok(ResumeResult::Suspended);
+                    }
                 }
             }
         };
         match outcome {
             ExecutionOutcome::Complete(value) => {
-                // Flush reactions queued by the completed body before reporting
-                // completion, matching the turn-drain of a plain `run()`.
-                self.interp.drain_microtasks()?;
+                // Flush reactions and timers queued by the completed body before
+                // reporting completion, matching the turn-drain of a plain
+                // `run()` (the full unified loop).
+                self.interp.run_event_loop()?;
                 self.interp.deliver_finalization_callbacks()?;
                 Ok(ResumeResult::Complete(value))
             }
@@ -605,28 +614,53 @@ impl Interp<'_> {
         loop {
             match outcome {
                 ExecutionOutcome::Complete(value) => {
-                    self.drain_microtasks()?;
+                    self.run_event_loop()?;
                     return Ok(value);
                 }
                 ExecutionOutcome::Thrown(value) => return Err(RunError::Thrown(value)),
                 ExecutionOutcome::Fault(error) => return Err(error),
                 ExecutionOutcome::Suspended(frame) => {
                     // A top-level `await` on a pending promise: park it, then
-                    // pump microtasks until something resumes it.
+                    // pump the unified loop (microtasks, then a timer macrotask
+                    // when microtasks go idle) until something resumes it.
                     self.park_suspended(frame)?;
                     outcome = loop {
                         match self.next_microstep()? {
                             Microstep::RanReaction => continue,
                             Microstep::Frame(frame) => break self.resume_suspended(frame),
                             Microstep::Idle => {
+                                // No microtask is runnable: fire the earliest-due
+                                // timer to make progress (its callback may settle
+                                // the promise the entry awaits). Only when no
+                                // timer remains either is the turn a real deadlock.
+                                if self.fire_one_timer()? {
+                                    continue;
+                                }
                                 return Err(RunError::Malformed(
                                     "async turn went idle with the entry point still suspended"
                                         .into(),
-                                ))
+                                ));
                             }
                         }
                     };
                 }
+            }
+        }
+    }
+
+    /// The unified micro+macrotask event loop (PLAN §5.1): drain the microtask
+    /// queue (Promise reactions / awaits) to empty, then fire the single
+    /// earliest-due ready timer as one macrotask, then drain microtasks again,
+    /// and so on until **no microtask and no pending timer remain**. A
+    /// `setTimeout(cb, 0)` therefore fires only after every currently-queued
+    /// microtask has run (macrotask < microtask drain). Timers advance a virtual
+    /// clock by fast-forward rather than sleeping, so a timed program terminates
+    /// deterministically (see [`Interp::fire_one_timer`]).
+    pub(super) fn run_event_loop(&mut self) -> Result<(), RunError> {
+        loop {
+            self.drain_microtasks()?;
+            if !self.fire_one_timer()? {
+                return Ok(());
             }
         }
     }

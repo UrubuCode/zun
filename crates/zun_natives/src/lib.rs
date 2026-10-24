@@ -26,6 +26,7 @@ mod math;
 mod number;
 mod string;
 mod time;
+mod timers;
 mod promise;
 mod typeinfo;
 
@@ -258,6 +259,9 @@ pub static MODULES: &[Module] = &[
     // The Node `Buffer` surface. Appended last so every existing dispatch id
     // stays stable (Buffer builds on the existing Uint8Array byte-view floor).
     node_buffer::MODULE,
+    // The `timers` macrotask surface (ASYNC slice 4). Appended last so every
+    // existing dispatch id stays stable.
+    timers::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

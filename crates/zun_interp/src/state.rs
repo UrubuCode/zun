@@ -2,7 +2,7 @@ use super::{CallHook, Output, Value};
 use std::collections::HashMap;
 use zun_module::Module;
 use zun_gc::Obj;
-use zun_sched::{Continuation, ContinuationId, PromiseId, PromiseTable, Scheduler, Settlement};
+use zun_sched::{Continuation, ContinuationId, PromiseId, PromiseTable, Scheduler, Settlement, TaskId};
 
 pub(super) struct Interp<'a> {
     pub(super) module: &'a Module,
@@ -69,6 +69,51 @@ pub(super) struct AsyncState {
     /// on a moving collection.
     pub(super) aggregates: Vec<Aggregate>,
     pub(super) next_cont: u32,
+    /// The macrotask timer source feeding the scheduler's task tier (ASYNC
+    /// slice 4). Pending timers live here, keyed by due time; a due timer is
+    /// scheduled as a [`TaskId`] on the scheduler and its callback fired as a
+    /// macrotask. This table is the GC-root owner for the callbacks (and any
+    /// forwarded arguments) of pending timers, rooted and rewritten alongside
+    /// the reaction/parked-frame tables.
+    pub(super) timers: TimerHeap,
+    /// Monotonic allocator for timer [`TaskId`]s, which double as the numeric
+    /// handles `setTimeout`/`setInterval`/`setImmediate` return.
+    pub(super) next_task: u32,
+}
+
+/// A min-heap (by due time) of pending timers — the timer source of the
+/// unified event loop. Kept as a `Vec` with linear min-selection rather than a
+/// `BinaryHeap` so its managed callbacks can be iterated and rewritten in place
+/// on a moving collection; timer populations are small on Tier 0.
+#[derive(Debug, Default)]
+pub(super) struct TimerHeap {
+    pub(super) entries: Vec<TimerEntry>,
+    /// Virtual current time (ms). Seeded lazily from the real `nowMillis` clock
+    /// when the first timer is armed, then advanced by fast-forward: when only
+    /// not-yet-due timers remain, the loop jumps the clock to the earliest due
+    /// time instead of sleeping, so `run()` terminates deterministically
+    /// without real wall-clock blocking (PLAN §5.1).
+    pub(super) clock: i64,
+    pub(super) seeded: bool,
+    /// Insertion order, the tie-breaker among equal due times so timers armed
+    /// earlier fire first (FIFO within a due instant).
+    pub(super) next_seq: u64,
+}
+
+/// One pending timer: the scheduler task it feeds, when it is due, the callback
+/// to run, and — for an interval — the period it re-arms with.
+#[derive(Debug)]
+pub(super) struct TimerEntry {
+    pub(super) task: TaskId,
+    pub(super) due: i64,
+    pub(super) seq: u64,
+    /// `Some(period_ms)` for an interval (re-arms itself), `None` for a one-shot.
+    pub(super) period: Option<i64>,
+    /// The callback closure (`Value::Function`).
+    pub(super) callback: Value,
+    /// Extra arguments forwarded to the callback (currently always empty; the
+    /// `...args` tail is reserved).
+    pub(super) args: Vec<Value>,
 }
 
 /// Which `Promise.*` combinator an [`Aggregate`] is driving.
@@ -211,6 +256,10 @@ impl AsyncState {
             rewritten += usize::from(aggregate.target.rewrite_managed_reference(relocation));
             rewritten += usize::from(aggregate.holder.rewrite_managed_reference(relocation));
         }
+        for timer in self.timers.entries.iter_mut() {
+            rewritten += usize::from(timer.callback.rewrite_managed_reference(relocation));
+            rewritten += Value::rewrite_managed_references(&mut timer.args, relocation);
+        }
         // Keys in the promise→id bridge are heap addresses, which move with the
         // objects they name.
         if !self.pid_by_obj.is_empty() {
@@ -256,6 +305,11 @@ impl<'a> Interp<'a> {
                 &[],
                 roots,
             );
+        }
+        for timer in &self.async_state.timers.entries {
+            let mut values = vec![timer.callback.clone()];
+            values.extend(timer.args.iter().cloned());
+            super::roots::collect_frame_roots(&values, &[], roots);
         }
     }
 
@@ -657,5 +711,30 @@ mod tests {
         assert_eq!(roots, vec![old]);
         assert_eq!(frame.rewrite_managed_references(&relocation), 1);
         assert!(matches!(frame.state, FrameState::Suspended { promise, .. } if promise == new));
+    }
+
+    #[test]
+    fn moving_collection_rewrites_a_pending_timers_callback() {
+        // A timer callback (and any forwarded arg) is a GC root held by the
+        // timer heap; a moving collection while it is pending must relocate it.
+        let old = unsafe { Obj::from_addr(0x5000usize as *mut u64) };
+        let new = unsafe { Obj::from_addr(0x6000usize as *mut u64) };
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert(old, new);
+
+        let mut state = AsyncState::default();
+        state.timers.entries.push(TimerEntry {
+            task: TaskId(0),
+            due: 10,
+            seq: 0,
+            period: None,
+            callback: Value::Object(old),
+            args: vec![Value::Object(old)],
+        });
+
+        let rewritten = state.rewrite_after_move(&relocation);
+        assert_eq!(rewritten, 2, "both the callback and its arg are rewritten");
+        assert!(matches!(state.timers.entries[0].callback, Value::Object(object) if object == new));
+        assert!(matches!(state.timers.entries[0].args[0], Value::Object(object) if object == new));
     }
 }

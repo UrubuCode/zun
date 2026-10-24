@@ -159,6 +159,21 @@ impl Scheduler {
         self.queues.next()
     }
 
+    /// Schedules a macrotask (a due timer feeds the task tier this way).
+    pub fn schedule_task(&mut self, task: TaskId) {
+        self.queues.schedule(task);
+    }
+
+    /// Cancels a macrotask (`clearTimeout`/`clearInterval`).
+    pub fn cancel_task(&mut self, task: TaskId) {
+        self.queues.cancel_task(task);
+    }
+
+    /// Whether a macrotask has been cancelled.
+    pub fn is_task_cancelled(&self, task: TaskId) -> bool {
+        self.queues.is_task_cancelled(task)
+    }
+
     /// Runs until nothing is runnable, reporting what ran in order.
     ///
     /// Only useful for reasoning about ordering — a real event loop blocks

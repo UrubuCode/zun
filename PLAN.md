@@ -444,6 +444,19 @@ finally` + `all/allSettled/race/any` + the turn-drain onto it, retiring eager-at
 (4) unify micro+macrotask (timers) in the one loop. Behavior kept green against the existing
 Promise surface tests throughout.
 
+Slices 1–4 **done.** Slice 4 landed the **unified event loop** and the **timers** surface in
+core (ASYNC #4): a min-heap of pending timers (keyed by due time, FIFO tiebreak) feeds the
+scheduler's macrotask (`TaskId`) tier; a turn is *drain microtasks to empty → fire the single
+earliest-due timer as one macrotask → repeat* until no microtask and no pending timer remain,
+so a `setTimeout(cb, 0)` always runs after every queued microtask (macrotask < microtask
+drain). Time is a **virtual clock** seeded from the real `nowMillis` and advanced by
+fast-forward between macrotasks (no wall-clock sleeping), so timed programs terminate
+deterministically. The `timers` namespace (`setTimeout`/`setInterval`/`clearTimeout`/
+`clearInterval`/`queueMicrotask`/`setImmediate`) is a core capability because the VM owns the
+loop; `clear*` cancels via the scheduler's task-queue cancellation, and a pending timer's
+callback is a GC root held by the timer heap (rooted/rewritten like the reaction and
+parked-frame tables). Intervals re-arm themselves until cleared.
+
 ## 6. Implementation phases
 
 - **Phase 0 — format:** `.zm`, metadata tables/tokens, master opcode table,

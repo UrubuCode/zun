@@ -33,7 +33,7 @@ read.
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
-| 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Remaining: `withResolvers`, microtask deferral of a *pending*-source reaction (eager-at-settle on Tier 0), AggregateError for `any` |
+| 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). Remaining: `withResolvers`, AggregateError for `any`, unhandled-rejection-at-turn-end reporting |
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Map([[k,v],…])`, array only); missing only `size` as property (is a method), general (non-array) iterable construction |
 | 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Set([…])`, array only); missing only `size` as property, general (non-array) iterable construction |
@@ -486,12 +486,13 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
   itself settled and `await` takes its synchronous fast path. Callbacks re-enter the
   interpreter via `invoke_callback` (like array callbacks / `functionApply`), rooted across
   the re-entry with `NativeRootScope`; not JIT-eligible (Tier 0 only).
-- **Known limitation (documented, not faked):** there is no microtask drain inside a plain
-  `run()` — `await` of a *pending* Promise suspends to a host poll (the existing
-  cooperative model). A reaction whose **source is still pending** at call time therefore
-  cannot be driven here: the returned Promise stays pending (the same place a bare
-  `await <pending>` ends up). In practice Zun Promises settle synchronously
-  (`resolve`/`reject`/`Promise.resolve`), so the chaining surface is exercised end-to-end.
+- **Unified event loop (ASYNC #4, PLAN §5.1):** a plain `run()` now drives a real
+  micro+macrotask loop in `zun_interp` (`drive_to_completion`/`run_event_loop`): microtasks
+  (Promise reactions / `await` continuations) drain to empty, then the single earliest-due
+  **timer** fires as one macrotask on the scheduler's `TaskId` tier, then microtasks drain
+  again, until no microtask and no pending timer remain. Reactions on a *pending* source are
+  driven here (slice 3 retired eager-at-settle); the only remaining suspend-to-host path is
+  the `ResumableSession` poll model, which also fires timers when microtasks go idle.
 - **AggregateError note:** `Promise.any` with all-rejected inputs still rejects with a
   plain error message (`"All promises were rejected"`). `AggregateError` itself now
   exists and carries an `errors` array (see §22), but `Promise`'s reject reason is stored
@@ -499,9 +500,34 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
   reason cell to hold an object first — that is the remaining work, not AggregateError.
 - **`reject` reason** is still a `string` (the managed cell stores a string reason); a boxed
   `any` reason is unwrapped to its string before storage.
-- **Tests:** `zun_vm/tests/promise_surface.rs` (12 end-to-end cases exercising the scheduler
+- **Tests:** `zun_vm/tests/promise_surface.rs` (end-to-end cases exercising the scheduler
   via `await`: then-chaining, adoption, rejection skip/propagation, catch, finally
-  pass-through, all/allSettled/race/any, resolve-of-a-Promise).
+  pass-through, all/allSettled/race/any, resolve-of-a-Promise, pending-source reactions).
+
+## 9a. Timers — unified loop (ASYNC #4)
+Timers are a **core capability** (the VM owns the event loop), not a library: the macrotask
+side of the same loop that runs Promise microtasks. Native signatures in
+`zun_natives/src/timers.rs` (`timers` namespace, appended **last** so dispatch ids stay
+stable); implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; resolved as bare
+global calls in `zun_sema/src/check.rs` (like `print`, shadowable by a user symbol).
+- **Surface:** `setTimeout(cb, ms?)` / `setInterval(cb, ms?)` → numeric handle;
+  `clearTimeout(h)` / `clearInterval(h)`; `queueMicrotask(cb)`; `setImmediate(cb)` → handle.
+- **Timer heap** (`AsyncState::timers`): a `Vec`-backed min-heap keyed by due time (FIFO
+  tiebreak by arm order). A due timer feeds the scheduler's `TaskId` macrotask tier
+  (`schedule_task` → consumed via `scheduler.next()`), so the scheduler stays the ordering
+  authority (continuations drain before any task).
+- **Virtual time:** the clock is seeded from the real `nowMillis` once, then **fast-forwarded**
+  to the earliest due time between macrotasks — no wall-clock sleeping, so timed programs
+  terminate deterministically.
+- **Ordering guarantee:** `setTimeout(cb, 0)` fires after every currently-queued microtask
+  (macrotask < microtask drain), proven in tests by a `queueMicrotask`/`.then` running first.
+- **Cancellation:** `clear*` cancels via the scheduler's task-queue cancellation
+  (`Queues::cancel_task`) and drops the pending entry; intervals re-arm until cleared.
+- **GC:** a pending timer's callback (and any forwarded args) is a heap root held by the timer
+  heap, rooted in `append_parked_roots` and rewritten in `AsyncState::rewrite_after_move`,
+  exactly like the reaction / parked-frame tables.
+- **Tests:** `zun_vm/tests/timers_surface.rs` (9 end-to-end cases) + a rooting unit test in
+  `zun_interp/src/state.rs` and task-cancellation tests in `zun_sched/src/queue.rs`.
 
 ## 10. Proxy / Reflect — mostly
 - **Present:** `new Proxy(target,handler)` → `proxyNew`; dynamic

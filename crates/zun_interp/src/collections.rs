@@ -2,8 +2,8 @@
 
 use super::{Interp, RunError};
 use super::value::Value;
-use super::state::{Aggregate, CombinatorKind, ExecutionFrame, ExecutionOutcome, Reaction, ReactionKind};
-use zun_sched::{Continuation, ContinuationId, Settlement};
+use super::state::{Aggregate, CombinatorKind, ExecutionFrame, ExecutionOutcome, Reaction, ReactionKind, TimerEntry};
+use zun_sched::{Continuation, ContinuationId, Settlement, TaskId};
 use zun_module::read_body;
 
 impl<'a> Interp<'a> {
@@ -2215,6 +2215,50 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 self.promise_combinator(name, array)
             }
+            "setTimeout" | "setInterval" | "setImmediate" => {
+                // The callback is required and must be a function value; a
+                // missing/non-function callback is a no-op that still returns a
+                // (dead) handle, matching the lenient host surface.
+                let callback = match args.first() {
+                    Some(value @ Value::Function(_)) => value.clone(),
+                    _ => return Ok(Value::Float(f64::NAN, zun_il::NumKind::F64)),
+                };
+                // `setImmediate` is a 0-delay macrotask; the others read the
+                // (checker-defaulted) delay argument.
+                let delay = if name == "setImmediate" {
+                    0
+                } else {
+                    match args.get(1) {
+                        Some(Value::Float(ms, _)) => *ms as i64,
+                        Some(Value::Int(ms, _)) => *ms,
+                        _ => 0,
+                    }
+                };
+                let delay = delay.max(0);
+                let period = if name == "setInterval" { Some(delay.max(0)) } else { None };
+                let handle = self.timer_arm(callback, delay, period);
+                Ok(Value::Float(handle as f64, zun_il::NumKind::F64))
+            }
+            "clearTimeout" | "clearInterval" => {
+                let handle = match args.first() {
+                    Some(Value::Float(handle, _)) => *handle as i64,
+                    Some(Value::Int(handle, _)) => *handle,
+                    // A nullish/absent handle clears nothing (JS is lenient).
+                    _ => return Ok(Value::Void),
+                };
+                if handle >= 0 {
+                    self.timer_clear(handle as u32);
+                }
+                Ok(Value::Void)
+            }
+            "queueMicrotask" => {
+                let callback = match args.first() {
+                    Some(Value::Function(handle)) => *handle,
+                    _ => return Ok(Value::Void),
+                };
+                self.queue_microtask(callback)?;
+                Ok(Value::Void)
+            }
             "objectKeys" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let entries = self.object_own_entries(obj)?;
@@ -2731,6 +2775,134 @@ impl<'a> Interp<'a> {
         self.call(method_rid, final_args, None)
     }
 
+    // --- Timers: the macrotask source of the unified event loop (slice 4) ---
+
+    /// The current virtual time (ms), seeded lazily from the real `nowMillis`
+    /// clock on first use. The real clock is only the *base*; the loop advances
+    /// this virtual clock by fast-forward between macrotasks rather than
+    /// sleeping (see [`Self::fire_one_timer`]).
+    fn timer_now(&mut self) -> i64 {
+        if !self.async_state.timers.seeded {
+            let real = real_now_millis(self.output);
+            self.async_state.timers.clock = real;
+            self.async_state.timers.seeded = true;
+        }
+        self.async_state.timers.clock
+    }
+
+    /// Arm a timer: allocate a scheduler [`TaskId`] (which doubles as the
+    /// numeric handle), compute its due time from the current virtual clock,
+    /// and push it onto the timer heap. `period` is `Some` for an interval.
+    pub(super) fn timer_arm(&mut self, callback: Value, delay: i64, period: Option<i64>) -> u32 {
+        let now = self.timer_now();
+        let task = TaskId(self.async_state.next_task);
+        self.async_state.next_task += 1;
+        let seq = self.async_state.timers.next_seq;
+        self.async_state.timers.next_seq += 1;
+        self.async_state.timers.entries.push(TimerEntry {
+            task,
+            due: now.saturating_add(delay.max(0)),
+            seq,
+            period,
+            callback,
+            args: Vec::new(),
+        });
+        task.0
+    }
+
+    /// Clear a timer by handle: cancel it on the scheduler's task queue (which
+    /// also stops an interval re-arming) and drop any still-pending entry.
+    pub(super) fn timer_clear(&mut self, handle: u32) {
+        let task = TaskId(handle);
+        self.async_state.scheduler.cancel_task(task);
+        self.async_state.timers.entries.retain(|timer| timer.task != task);
+    }
+
+    /// `queueMicrotask(cb)`: enqueue a callback directly on the reaction
+    /// (microtask) queue, so it runs before any macrotask on the next drain.
+    /// Modelled as a `then` on an already-resolved promise — the same
+    /// enqueue-not-run-inline discipline every reaction follows.
+    pub(super) fn queue_microtask(
+        &mut self,
+        callback: zun_core::FunctionHandle,
+    ) -> Result<(), RunError> {
+        let promise = zun_gc::with_current_heap_mut(|heap| {
+            let promise = heap.alloc_promise();
+            heap.promise_resolve(promise, zun_core::Any::null());
+            promise
+        });
+        self.promise_then(promise, Some(callback), None)?;
+        Ok(())
+    }
+
+    /// Index of the earliest-due pending timer (min by `(due, seq)`), or `None`
+    /// when the heap is empty. Cleared timers are already purged from the heap.
+    fn earliest_timer_index(&self) -> Option<usize> {
+        let entries = &self.async_state.timers.entries;
+        if entries.is_empty() {
+            return None;
+        }
+        let mut best = 0;
+        for index in 1..entries.len() {
+            let candidate = &entries[index];
+            let current = &entries[best];
+            if (candidate.due, candidate.seq) < (current.due, current.seq) {
+                best = index;
+            }
+        }
+        Some(best)
+    }
+
+    /// Fire the single earliest-due ready timer as one macrotask, returning
+    /// whether a timer was fired (`false` when none remain). The earliest timer
+    /// is always fired regardless of real wall-clock time: if it is not yet due
+    /// the virtual clock fast-forwards to its due time (no real sleeping), which
+    /// is what makes a timed program terminate deterministically. A due timer is
+    /// scheduled on the scheduler's task tier and consumed through it, so the
+    /// scheduler stays the authority on micro-before-macro ordering. An interval
+    /// re-arms itself (at `now + period`) unless it was cleared meanwhile.
+    pub(super) fn fire_one_timer(&mut self) -> Result<bool, RunError> {
+        let Some(index) = self.earliest_timer_index() else {
+            return Ok(false);
+        };
+        let entry = self.async_state.timers.entries.remove(index);
+        if entry.due > self.async_state.timers.clock {
+            self.async_state.timers.clock = entry.due;
+        }
+        self.async_state.scheduler.schedule_task(entry.task);
+        let ran = matches!(
+            self.async_state.scheduler.next(),
+            Some(zun_sched::Ran::Task(task)) if task == entry.task
+        );
+        if ran {
+            if let Value::Function(handle) = &entry.callback {
+                // A throw from a timer callback is swallowed (detached-task
+                // semantics, as in the microtask drain); a non-throw fault
+                // still aborts the turn.
+                match self.invoke_callback(*handle, entry.args.clone()) {
+                    Ok(_) | Err(RunError::Thrown(_)) => {}
+                    Err(other) => return Err(other),
+                }
+            }
+            if let Some(period) = entry.period {
+                if !self.async_state.scheduler.is_task_cancelled(entry.task) {
+                    let now = self.async_state.timers.clock;
+                    let seq = self.async_state.timers.next_seq;
+                    self.async_state.timers.next_seq += 1;
+                    self.async_state.timers.entries.push(TimerEntry {
+                        task: entry.task,
+                        due: now.saturating_add(period.max(0)),
+                        seq,
+                        period: Some(period),
+                        callback: entry.callback.clone(),
+                        args: entry.args,
+                    });
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// Read the settlement of a managed Promise. Errors if the object is not a
     /// Promise cell.
     fn promise_settlement_of(&self, promise: zun_gc::Obj) -> Result<PromiseSettlement, RunError> {
@@ -3210,6 +3382,19 @@ fn as_function(value: &Option<Value>) -> Option<zun_core::FunctionHandle> {
     match value {
         Some(Value::Function(handle)) => Some(*handle),
         _ => None,
+    }
+}
+
+/// The real wall-clock time in milliseconds, read through the `zun:time`
+/// `nowMillis` native. Used only as the *base* the virtual timer clock is
+/// seeded from; the event loop advances from there by fast-forward.
+fn real_now_millis(output: &mut dyn super::Output) -> i64 {
+    match zun_natives::resolve("time", "nowMillis") {
+        Some((id, _)) => match zun_natives::dispatch(id, &[], output) {
+            Ok(zun_natives::NativeValue::Int(ms)) => ms,
+            _ => 0,
+        },
+        None => 0,
     }
 }
 

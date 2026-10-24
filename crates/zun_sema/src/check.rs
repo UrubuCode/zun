@@ -2507,6 +2507,86 @@ impl Checker<'_> {
                     };
                 }
 
+                // The `timers` macrotask surface (ASYNC slice 4): bare global
+                // functions on the VM's unified event loop. Resolved here like
+                // `print`, but only when the name is not a user symbol (a local
+                // or top-level function of the same name shadows it, handled
+                // above). Each lowers to the interpreter's timer floor.
+                if matches!(
+                    name.as_str(),
+                    "setTimeout"
+                        | "setInterval"
+                        | "clearTimeout"
+                        | "clearInterval"
+                        | "queueMicrotask"
+                        | "setImmediate"
+                ) && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                {
+                    let Some((id, _)) = zun_natives::resolve("timers", &name) else {
+                        self.error(span, format!("missing timer intrinsic `{name}`"));
+                        return self.poison(span);
+                    };
+                    let number = |span| hir::Expr {
+                        kind: hir::ExprKind::Number(0.0),
+                        ty: Ty::F64,
+                        span,
+                    };
+                    let is_callback = |arg: &hir::Expr| {
+                        matches!(arg.ty, Ty::Function(_)) || arg.ty.is_error()
+                    };
+                    let (built_args, ret) = match name.as_str() {
+                        "setTimeout" | "setInterval" => {
+                            if args.is_empty() || args.len() > 2 {
+                                self.error(span, format!("`{name}` expects a callback and an optional delay"));
+                                return self.poison(span);
+                            }
+                            let mut it = args.into_iter();
+                            let cb = it.next().expect("callback");
+                            if !is_callback(&cb) {
+                                self.error(cb.span, format!("`{name}` expects a function callback"));
+                            }
+                            let mut ms = it.next().unwrap_or_else(|| number(span));
+                            // Accept any numeric delay; a non-number is an error.
+                            if !ms.ty.is_int() && !ms.ty.is_float() && !ms.ty.is_error() {
+                                self.error(ms.span, format!("`{name}` delay must be a number"));
+                            }
+                            coerce_numeric_literal(&mut ms, Ty::F64);
+                            (vec![cb, ms], Ty::F64)
+                        }
+                        "setImmediate" | "queueMicrotask" => {
+                            if args.len() != 1 {
+                                self.error(span, format!("`{name}` expects a single callback"));
+                                return self.poison(span);
+                            }
+                            let cb = args.into_iter().next().expect("callback");
+                            if !is_callback(&cb) {
+                                self.error(cb.span, format!("`{name}` expects a function callback"));
+                            }
+                            let ret = if name == "setImmediate" { Ty::F64 } else { Ty::Void };
+                            (vec![cb], ret)
+                        }
+                        // clearTimeout / clearInterval
+                        _ => {
+                            if args.len() != 1 {
+                                self.error(span, format!("`{name}` expects a timer handle"));
+                                return self.poison(span);
+                            }
+                            let mut handle = args.into_iter().next().expect("handle");
+                            if !handle.ty.is_int() && !handle.ty.is_float() && !handle.ty.is_error() {
+                                self.error(handle.span, format!("`{name}` expects a numeric handle"));
+                            }
+                            coerce_numeric_literal(&mut handle, Ty::F64);
+                            (vec![handle], Ty::Void)
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: built_args },
+                        ty: ret,
+                        span,
+                    };
+                }
+
                 if name == "dynamicSetFunction" {
                     if args.len() != 3 {
                         self.error(span, "dynamicSetFunction expects an object, name, and function");
