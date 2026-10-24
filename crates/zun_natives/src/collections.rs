@@ -430,5 +430,12 @@ pub const MODULE: crate::Module = crate::Module {
         // arguments; `resolve_call_target` unwraps the box back to the callable.
         // Appended last so existing dispatch ids stay stable.
         NativeFn { name: "functionBox", params: &[Function], ret: Opaque, imp: unavailable },
+        // `String(x)` coercion (ECMAScript ToString). The argument arrives as an
+        // immediate `Any` (`Opaque`): a non-`any` operand is boxed at the call
+        // site, so the one native handles every operand type. For an object it
+        // performs OrdinaryToPrimitive(hint "string") via `[Symbol.toPrimitive]`,
+        // then falls back to `[Symbol.toStringTag]` → `"[object <Tag>]"`, else
+        // `"[object Object]"`. Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "stringCoerce", params: &[Opaque], ret: Str, imp: unavailable },
     ],
 };

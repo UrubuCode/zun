@@ -29,7 +29,7 @@ read.
 | 2 | Number | mostly | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants), instance `toString(radix)/toFixed/toExponential/toPrecision/valueOf`; only `toLocaleString` remains (locale/ICU — gated) |
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
-| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** now drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`). Remaining: `toPrimitive`/`toStringTag` dispatch (blocked on a missing coercion / object-stringification site), typed-class `hasInstance`. Object-literal computed symbol keys land (`{ [sym]: v }`); class computed symbol-key members still deferred |
+| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). Remaining (all front-end/structural): typed-class `hasInstance`/class computed symbol-key members, operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
 | 6 | Object | mostly | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. Remaining: `getOwnPropertySymbols` |
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
 | 8 | Function | mostly | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0). **Function-valued `bind` partial/`this` arguments now work**: a function cannot box into `Any`, so each function-typed prepended argument is wrapped by a `functionBox` intrinsic (a GC-traced object carrying the callable in a `__boxedFn` function slot, keeping its captured environment visible to precise root handling) and `resolve_call_target` unwraps it before dispatch — order among prepended args is preserved. Deferred: **`Function` constructor** (`new Function(args, body)` evaluates a source string ⇒ needs a runtime compiler; the VM links no compiler and this conflicts with AOT reachability/trimming — structural); **a function inside `apply`'s arguments array** / functions in generic arrays (would require letting `box_any` carry functions globally — a deliberate GC-root-precision invariant, broad arg-marshalling rework); **multi-argument bound calls** (bound functions are typed `Function` and dynamic calls use the single-trailing-arg IL arity model — carrying an argument count for a dynamic `CallIndirect` is an opcode-set + verifier change) |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 6 · mostly 17 · partial 3 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 6 · mostly 18 · partial 2 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -287,13 +287,16 @@ the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 fl
   instance methods (`a.pow(b)`, `a.and(b)`, `a.shl(b)`, `a.not()`, …). Adding
   those tokens is a separate language decision. Also deferred: `valueOf`.
 
-## 5. Symbol — partial  *(HIGH priority — foundation landed)*
+## 5. Symbol — mostly  *(HIGH priority — foundation + coercion dispatch landed)*
 The `SymbolRegistry` (`zun_core/src/symbols.rs`) is now surfaced to user code. A symbol
 is a first-class value: `Ty::Symbol` in sema, carried at runtime as an immediate `Any`
 (`AnyTag::Symbol`, payload = `SymbolId`), so the GC traces straight past it. The
 isolate's `Heap` owns the registry (`symbol_create/for/key_for/description`), seeded with
-the five well-known symbols at fixed ids 0..4 (`zun_core::WellKnownSymbol`) so their
-identities are stable and match the compiler's constants. All Symbol operations are
+the twelve well-known symbols at fixed ids 0..11 (`zun_core::WellKnownSymbol`) so their
+identities are stable and match the compiler's constants. Ids 0..4 are the dispatch-bearing
+set (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`); ids 5..11
+(`match/replace/search/split/species/isConcatSpreadable/unscopables`) are seeded as stable
+**values** only (no behavior wired yet), appended at the end so the earlier ids never move. All Symbol operations are
 allocating/interning managed builtins on the Tier-0 floor (`zun:collections`
 `symbolNew/For/KeyFor/WellKnown/Description`, dispatched in
 `zun_interp/src/collections.rs`) — not JIT-eligible, so there is no second path to keep
@@ -331,27 +334,40 @@ in sync.
   function values do not box into `Any` (so they live in the dedicated symbol-function
   slot, not the symbol-value slot). Interp-only (Tier-0 floor, like the other Symbol
   ops); no JIT path to keep in sync.
+- **Behavioral dispatch — `Symbol.toPrimitive` / `Symbol.toStringTag` via `String(x)` (landed):**
+  `String(x)` is now a first-class coercion call, the ECMAScript ToString site —
+  analogous to the existing `Boolean(x)`/`BigInt(x)` coercion calls in sema's plain-Call
+  path (`check.rs`). A value already typed `string` returns unchanged; every other operand
+  is boxed into `Any` and run through the heap-aware `stringCoerce` managed builtin
+  (`zun:collections`, serviced in `zun_interp/src/collections.rs`, Tier-0 floor like the
+  other Symbol ops). For an **object** operand it performs OrdinaryToPrimitive with hint
+  `"string"`: if the object carries a `[Symbol.toPrimitive]` method (read from the
+  symbol-function slot, well-known id 3, attached via `dynamicSetSymbolFunction`), it is
+  called with the hint string and its result is ToString'd; otherwise, if
+  `[Symbol.toStringTag]` holds a **string** in the symbol-value slot (readable via
+  `dynamic_get_symbol`, well-known id 4) the result is `"[object <Tag>]"`; else the default
+  `"[object Object]"`. Primitives stringify through `Value::display`. This gives both
+  `toPrimitive` (string hint) and `toStringTag` an observable, spec-shaped site. Interp-only
+  (no JIT path to keep in sync).
 - **Deferred (documented follow-up):**
   - **`Symbol.hasInstance` on a typed class** stays deferred: it requires class
     computed-symbol-key member definitions (see below) so a class can carry the method.
     Only the dynamic-object path above is wired.
-  - **`Symbol.toPrimitive` dispatch is blocked on a missing coercion site.** There is
-    today no reachable object→primitive coercion to hook: `+` and template
-    interpolation require matching `string`/number operand types (an object operand is
-    a type error), and there are no `Number(obj)`/`String(obj)` coercion functions
-    (only `BigInt`/`Boolean` exist as coercion calls). Wiring `toPrimitive` therefore
-    needs a new coercion path (a type-system decision), plus function-valued symbol
-    members (`dynamicSetSymbolFunction` already provides the storage primitive). Not
-    built here.
-  - **`Symbol.toStringTag` dispatch is blocked on a missing stringification site.**
-    There is no `Object` class and no `Object.prototype.toString`; the only object
-    stringification is the generic `"[object]"` in `Value::display` and the `print`
-    native, which runs on a heap-free `NativeArg` and so cannot read a symbol property.
-    A `[Symbol.toStringTag]` **string value** is already storable/readable via the
-    symbol-value slot (`obj[Symbol.toStringTag] = "X"`), but exposing it needs a
-    heap-aware object-stringification site (an `Object.prototype.toString`, or
-    intercepting `print`/`String(obj)` in interp — and matching it in codegen). A
-    design decision about where that canonical site lives; not built here.
+  - **Operator-position object→primitive auto-coercion** stays deferred: `+` and template
+    interpolation still require matching `string`/number operand types (an object operand is
+    a type error). The explicit `String(x)` call is the sufficient, spec-correct site; wiring
+    `toPrimitive` into operators is a broader type-system change, not needed to observe the
+    dispatch.
+  - **`Number(obj)` number-hint coercion** is not built: it would reuse the same
+    `[Symbol.toPrimitive]` machinery with hint `"number"`/`"default"`, but ToNumber of the
+    resulting primitive (parsing arbitrary strings) is a larger surface than the `String(x)`
+    deliverable. The storage/dispatch primitive is in place should it be added later.
+  - **`Object.prototype.toString`** as a canonical stringification site is still absent; the
+    `print` native keeps the generic `"[object]"` (it runs on a heap-free `NativeArg`).
+    `String(obj)` is the heap-aware stringification site; a shared `toString` would route
+    through the same `stringCoerce` logic.
+  - **Seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`** have stable
+    values but no behavior wired (no RegExp-protocol/`concat`/`species` dispatch keys on them yet).
   - **Object-literal computed symbol-key properties** (`{ [computedSymbol]: v }`) now
     lower: an object literal builds a `DynamicObject` (`Expr::ObjectLiteral` →
     `hir::ExprKind::DynamicObjectLiteral` → `NewDynamic` + per-entry `StoreDynamic`/
@@ -359,8 +375,6 @@ in sync.
     symbol-keyed slot. Still deferred: **class** computed symbol-key member definitions
     and object **method shorthand** with a computed symbol name (`{ [Symbol.iterator]() {} }`)
     — see §Object literals below.
-  - Other well-known symbols (`isConcatSpreadable match replace search split species
-    unscopables`) — not seeded; add to `WellKnownSymbol` when a consumer needs them.
 
 ## 6. Object — mostly  *(property-descriptor model landed)*
 The `Object` global is recognized in sema (`check.rs` `check_object_static` + the

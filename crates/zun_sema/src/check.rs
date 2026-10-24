@@ -3126,6 +3126,48 @@ impl Checker<'_> {
                     };
                 }
 
+                // `String(x)` coercion when called as a plain function (JS
+                // `String` is a coercion, not a constructor, called bare): the
+                // ECMAScript ToString of `x` as a `string` primitive. A value
+                // already typed `string` is returned unchanged; every other
+                // operand is boxed into `Any` and run through the `stringCoerce`
+                // native, which performs object→primitive coercion
+                // (`[Symbol.toPrimitive]` / `[Symbol.toStringTag]`) at run time.
+                if name == "String" && !self.by_name.contains_key(&name) {
+                    if args.len() != 1 {
+                        self.error(span, "`String` expects one argument");
+                        return self.poison(span);
+                    }
+                    let arg = args.into_iter().next().expect("one argument");
+                    if arg.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    // A value already typed `string` is its own ToString.
+                    if arg.ty == Ty::String {
+                        return arg;
+                    }
+                    let Some((id, _)) = zun_natives::resolve("collections", "stringCoerce") else {
+                        self.error(span, "missing `stringCoerce` intrinsic");
+                        return self.poison(span);
+                    };
+                    // The native reads its operand as `any`, so box a non-`any`
+                    // operand (primitive or object) into an `Any` carrier.
+                    let arg = if arg.ty == Ty::Any {
+                        arg
+                    } else {
+                        hir::Expr {
+                            span: arg.span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                            ty: Ty::Any,
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+
                 if let Some(&func) = self.by_name.get(&name) {
                     if self.signatures[func as usize].is_generator {
                         let Some((native_id, _)) = zun_natives::resolve("buffer", "generatorIteratorNewArgs") else {
@@ -6027,6 +6069,13 @@ impl Checker<'_> {
                             "hasInstance" => Some(2.0),
                             "toPrimitive" => Some(3.0),
                             "toStringTag" => Some(4.0),
+                            "match" => Some(5.0),
+                            "replace" => Some(6.0),
+                            "search" => Some(7.0),
+                            "split" => Some(8.0),
+                            "species" => Some(9.0),
+                            "isConcatSpreadable" => Some(10.0),
+                            "unscopables" => Some(11.0),
                             _ => None,
                         };
                         if let Some(well_known_id) = well_known_id {

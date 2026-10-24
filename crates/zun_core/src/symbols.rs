@@ -23,16 +23,33 @@ pub enum WellKnownSymbol {
     HasInstance = 2,
     ToPrimitive = 3,
     ToStringTag = 4,
+    // Seeded as stable *values* only (no behavioral dispatch yet): they let
+    // user code read `Symbol.match` etc. as distinct identities. Appended at
+    // the end so ids 0..4 stay fixed.
+    Match = 5,
+    Replace = 6,
+    Search = 7,
+    Split = 8,
+    Species = 9,
+    IsConcatSpreadable = 10,
+    Unscopables = 11,
 }
 
 impl WellKnownSymbol {
     /// All well-known symbols in id order; the seed order for the registry.
-    pub const ALL: [WellKnownSymbol; 5] = [
+    pub const ALL: [WellKnownSymbol; 12] = [
         WellKnownSymbol::Iterator,
         WellKnownSymbol::AsyncIterator,
         WellKnownSymbol::HasInstance,
         WellKnownSymbol::ToPrimitive,
         WellKnownSymbol::ToStringTag,
+        WellKnownSymbol::Match,
+        WellKnownSymbol::Replace,
+        WellKnownSymbol::Search,
+        WellKnownSymbol::Split,
+        WellKnownSymbol::Species,
+        WellKnownSymbol::IsConcatSpreadable,
+        WellKnownSymbol::Unscopables,
     ];
 
     pub const fn id(self) -> SymbolId { SymbolId(self as u64) }
@@ -46,6 +63,13 @@ impl WellKnownSymbol {
             WellKnownSymbol::HasInstance => "Symbol.hasInstance",
             WellKnownSymbol::ToPrimitive => "Symbol.toPrimitive",
             WellKnownSymbol::ToStringTag => "Symbol.toStringTag",
+            WellKnownSymbol::Match => "Symbol.match",
+            WellKnownSymbol::Replace => "Symbol.replace",
+            WellKnownSymbol::Search => "Symbol.search",
+            WellKnownSymbol::Split => "Symbol.split",
+            WellKnownSymbol::Species => "Symbol.species",
+            WellKnownSymbol::IsConcatSpreadable => "Symbol.isConcatSpreadable",
+            WellKnownSymbol::Unscopables => "Symbol.unscopables",
         }
     }
 
@@ -58,6 +82,13 @@ impl WellKnownSymbol {
             "hasInstance" => WellKnownSymbol::HasInstance,
             "toPrimitive" => WellKnownSymbol::ToPrimitive,
             "toStringTag" => WellKnownSymbol::ToStringTag,
+            "match" => WellKnownSymbol::Match,
+            "replace" => WellKnownSymbol::Replace,
+            "search" => WellKnownSymbol::Search,
+            "split" => WellKnownSymbol::Split,
+            "species" => WellKnownSymbol::Species,
+            "isConcatSpreadable" => WellKnownSymbol::IsConcatSpreadable,
+            "unscopables" => WellKnownSymbol::Unscopables,
             _ => return None,
         })
     }

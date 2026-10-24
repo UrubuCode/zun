@@ -2057,6 +2057,50 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Bool(found))
             }
+            "stringCoerce" => {
+                // `String(x)` — ECMAScript ToString. Primitives stringify
+                // directly; an object runs OrdinaryToPrimitive with hint
+                // "string": call `[Symbol.toPrimitive]("string")` if present and
+                // ToString its result, else expose `[Symbol.toStringTag]` as
+                // `"[object <Tag>]"`, else `"[object Object]"`.
+                let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let text = match value {
+                    Value::Object(obj) => {
+                        let to_prim = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol_function(
+                                obj,
+                                zun_core::WellKnownSymbol::ToPrimitive.id(),
+                            )
+                        });
+                        if let Some(handle) = to_prim {
+                            let hint = zun_gc::with_current_heap_mut(|heap| {
+                                Value::Any(zun_core::Any::string(
+                                    heap.intern_string("string".into()),
+                                ))
+                            });
+                            let result = self.invoke_function_value(handle, vec![hint])?;
+                            unbox_arg(&result)?.display()
+                        } else {
+                            let tag = zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_get_symbol(
+                                    obj,
+                                    zun_core::WellKnownSymbol::ToStringTag.id(),
+                                )
+                                .and_then(|any| match Value::unbox_any(any, heap) {
+                                    Some(Value::Str(text)) => Some(text.to_string()),
+                                    _ => None,
+                                })
+                            });
+                            match tag {
+                                Some(tag) => format!("[object {tag}]"),
+                                None => "[object Object]".to_string(),
+                            }
+                        }
+                    }
+                    other => other.display(),
+                };
+                Ok(Value::Str(text.into()))
+            }
             "functionApply" => {
                 // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
                 // the leading positional argument, spread with the array.

@@ -1829,6 +1829,79 @@ mod method_tests {
     }
 
     #[test]
+    fn string_coercion_of_primitives() {
+        // `String(x)` is the ECMAScript ToString: primitives stringify
+        // directly, matching the interpreter's `display`.
+        assert_eq!(
+            typeof_of("function main(): string { return String(42); }"),
+            "42"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { return String(true); }"),
+            "true"
+        );
+        assert_eq!(
+            typeof_of("function main(): string { return String(\"hi\"); }"),
+            "hi"
+        );
+    }
+
+    #[test]
+    fn string_coercion_invokes_symbol_to_primitive_with_string_hint() {
+        // `String(obj)` runs OrdinaryToPrimitive(hint "string"): the stored
+        // `[Symbol.toPrimitive]` method is called and its result ToString'd.
+        let source = "import { dynamicSetSymbolFunction } from \"zun:core\";\n\
+             function toPrim(hint: any): any { return box_any(\"FROM_PRIMITIVE\"); }\n\
+             function main(): string {\n\
+               let o = dynamic_new();\n\
+               dynamicSetSymbolFunction(o, Symbol.toPrimitive, toPrim);\n\
+               let x: any = o;\n\
+               return String(x);\n\
+             }";
+        assert_eq!(typeof_of(source), "FROM_PRIMITIVE");
+    }
+
+    #[test]
+    fn string_coercion_exposes_symbol_to_string_tag() {
+        // With no `[Symbol.toPrimitive]`, `String(obj)` surfaces the string
+        // `[Symbol.toStringTag]` value as `"[object <Tag>]"`.
+        let tagged = "function main(): string {\n\
+               let o = dynamic_new();\n\
+               o[Symbol.toStringTag] = box_any(\"Widget\");\n\
+               let x: any = o;\n\
+               return String(x);\n\
+             }";
+        assert_eq!(typeof_of(tagged), "[object Widget]");
+
+        // Default when neither well-known symbol is present.
+        let plain = "function main(): string {\n\
+               let o = dynamic_new();\n\
+               let x: any = o;\n\
+               return String(x);\n\
+             }";
+        assert_eq!(typeof_of(plain), "[object Object]");
+    }
+
+    #[test]
+    fn well_known_symbols_are_distinct_stable_values() {
+        // The newly-seeded well-known symbols are distinct identities: using
+        // two of them as keys on one object keeps both slots independent.
+        let source = "function main(): u64 {\n\
+               let o = dynamic_new();\n\
+               o[Symbol.match] = box_any(1);\n\
+               o[Symbol.replace] = box_any(2);\n\
+               o[Symbol.species] = box_any(3);\n\
+               return (o[Symbol.match] as u64) * 100 + (o[Symbol.replace] as u64) * 10 + (o[Symbol.species] as u64);\n\
+             }";
+        let module = zun_compiler::compile(source).expect("compile well-known symbols");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run well-known symbols") {
+            Value::Int(value, _) => assert_eq!(value, 123),
+            other => panic!("expected an integer result, found {other:?}"),
+        }
+    }
+
+    #[test]
     fn generator_session_contextual_next_uses_owned_state() {
         let module = zun_compiler::compile("function* main(): int { yield 3; return 4; }")
             .expect("compile generator function");

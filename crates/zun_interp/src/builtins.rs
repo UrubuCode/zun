@@ -206,6 +206,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectPropertyIsEnumerable",
         "stringMatchAll",
         "functionBox",
+        "stringCoerce",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
