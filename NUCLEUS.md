@@ -37,14 +37,14 @@ read.
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
 | 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
 | 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
-| 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
+| 13 | WeakMap | done | `set/get/has/delete`; semantics OK (ephemeron floor). ECMAScript WeakMap has no iteration/size/clear by design, so this is the complete surface, not a gap |
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | mostly | Spec-shaped `new FinalizationRegistry(cleanup)` / `register(target, heldValue, unregisterToken?)` / `unregister(unregisterToken)`; `unregister` keyed by unregister-token object identity (weak key); cleanup callback delivered on collection. Deferred: `heldValue` is a `u64`, not an arbitrary value |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, and the static `isView(x)`. Missing resizable buffers (deferred) |
 | 18 | DataView | mostly | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. **Endianness flag is now optional and defaults to `false` (big-endian) per spec** — `getUint32(0)` type-checks and reads big-endian; single-byte widths still take none |
 | 19 | TypedArrays | mostly | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. **Bulk `set(source, offset?)`** (overloaded against the indexed `set(index, value)` by first-argument type), **copying `slice(start?, end?)`**, **in-place `copyWithin(target, start?, end?)`**, the functional methods **`map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`** (spec `(value, index, array)` callback, Tier 0), **`indexOf`/`includes`/`join`**, and the statics **`from(src, mapFn?)`/`of(...)`** all landed, as kind-agnostic `typedArray*` natives (one each, not per-kind). `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: no-initial-value `reduce` (initial value required); `Uint8Array.slice` keeps Buffer (shared-type) semantics. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
-| 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters (== UTC, calendar is UTC-only). Missing `toLocale*`, local setters |
+| 20 | Date | mostly | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters AND local-time setters (`setFullYear/setMonth/setDate/setHours/setMinutes/setSeconds/setMilliseconds` with ECMAScript optional trailing args, == their UTC counterparts since the calendar is UTC-only). Only `toLocale*` remains (locale/ICU — gated) |
 | 21 | Buffer | mostly | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`(negative indices)/`write`/`equals`/`copy`/`fill(value)`, common LE/BE 8/16/32/64 readers/writers, `readFloat*`/`readDouble*`/`writeFloat*`/`writeDouble*`, variable-width `read{U,}Int*`/`write{U,}Int*` (1..6 bytes, incl. 24-bit), `swap16/32/64`, and `indexOf`/`lastIndexOf`/`includes` (number/string/Buffer needle + byteOffset/encoding). Encodings utf8/hex/base64/base64url/ucs2/utf16le/latin1. Length-mismatch swap + OOB access err as `BadToken` (project convention, not JS `RangeError`). Deferred: negative `copy` indices (clamped) |
 | 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 16 · partial 5 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 6 · mostly 17 · partial 3 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -766,10 +766,12 @@ table. Iterator intrinsics present (`mapIterator*`).
   note Array has these as extras but Set does not; iterator-object return for
   `keys/values/entries`; draining an arbitrary user `[Symbol.iterator]` object.
 
-## 13. WeakMap — partial / effectively done
-`std/weak_map.zun`; ephemeron-backed GC floor.
-- **Present:** `set get has delete`. Correctly non-iterable.
-- **Missing:** nothing material for the spec surface (WeakMap has no iteration/size/clear).
+## 13. WeakMap — done
+`builtin/weak_map.zun`; ephemeron-backed GC floor.
+- **Present:** `set get has delete` (all verified end to end). Correctly non-iterable.
+- **Missing:** nothing. ECMAScript WeakMap has no iteration, no `size`, and no
+  `clear` by design (weak keys are not observable), so `set/get/has/delete` is the
+  complete surface — this is `done`, not `partial`.
 
 ## 14. WeakSet — done
 `builtin/weak_set.zun`; reuses the WeakMap ephemeron floor (each object member is
@@ -935,7 +937,7 @@ table in `zun_core/typed_elements.rs`: `Int8Array`, `Uint8Array`,
   `i64`/`u64` rather than real BigInts, the same divergence as
   `DataView.getInt64` (#18).
 
-## 20. Date — partial
+## 20. Date — mostly
 `builtin/date.zun` over the `zun:date`/`zun:time` intrinsics, reachable as a
 global through the prelude.
 
@@ -971,14 +973,28 @@ global through the prelude.
   counterpart (0-based month, 0-based-from-Sunday weekday). This is accurate for
   a UTC-only calendar, not a fake offset; the local getters diverge from the UTC
   getters only once a timezone intrinsic lands.
+- **Local-time setters** `setFullYear/setMonth/setDate/setHours/setMinutes/
+  setSeconds/setMilliseconds` now exist, mirroring the local getters. Because the
+  calendar is UTC-only (local *is* UTC, `getTimezoneOffset` hardcoded 0), each
+  lands on exactly the same timestamp as its `setUTC*` counterpart from the same
+  instant — this is the correct behaviour in this model, **not a bug**; they will
+  diverge from the UTC setters only once a tz offset lands. Each returns the new
+  timestamp. They take the ECMAScript optional trailing arguments
+  (`setFullYear(y, month?, date?)`, `setMonth(m, date?)`, `setHours(h, min?, sec?,
+  ms?)`, `setMinutes(min, sec?, ms?)`, `setSeconds(sec, ms?)`): an omitted
+  component keeps its current value, implemented as default parameter expressions
+  that read the component back off `this` before the timestamp is rebuilt. No new
+  natives — they compose the existing `date.fromUTC` machinery, so Date stays a
+  declarative `.zun` surface and AOT dispatch ids are unchanged.
 - **Present:** millis storage, `getTime/setTime valueOf isValid
-  isBefore/isAfter/isEqual`, the UTC getters and UTC setters, the local getters,
-  `toISOString toJSON toString`, `getTimezoneOffset`, `new Date()`/`new
-  Date(millis)`, and the statics `now/parse/UTC/fromMillis/fromISO/fromISODate`.
-- **Missing / deferred:** `new Date(string)` (use `Date.fromISO`); local-time
-  *setters* (`setFullYear` etc. — would be identical to the UTC setters while
-  local == UTC, deferred to avoid duplicating the surface until a tz offset
-  exists); `toDateString toTimeString toUTCString`; `toLocale*` (locale/ICU).
+  isBefore/isAfter/isEqual`, the UTC getters and UTC setters, the local getters
+  AND local setters, `toISOString toJSON toString`, `getTimezoneOffset`, `new
+  Date()`/`new Date(millis)`, and the statics
+  `now/parse/UTC/fromMillis/fromISO/fromISODate`.
+- **Missing / deferred:** `new Date(string)` (use `Date.fromISO`);
+  `toDateString toTimeString toUTCString`; `toLocale*` (`toLocaleDateString`/
+  `toLocaleTimeString`/`toLocaleString`) — **GATED** on a locale/ICU model the VM
+  does not have.
 
 ## 21. Buffer (Node) — mostly  *(built on the Uint8Array byte-view floor)*
 

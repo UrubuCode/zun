@@ -112,6 +112,43 @@ class Date {
         this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, value as i64);
         return this.millis;
     }
+    // Local-time setters. The calendar is UTC-only (local == UTC, matching the
+    // local getters above), so each delegates to the same UTC component math as
+    // its `setUTC*` counterpart and returns the new timestamp. The optional
+    // trailing arguments follow ECMAScript: an omitted component keeps its
+    // current value (the default expression reads it back off `this` before the
+    // timestamp is rebuilt). `month`/`day` here are the JS-named 0-based month
+    // and 1-based date, as `getUTCMonth`/`getUTCDate` report them.
+    setFullYear(year: i32, month: i32 = this.getUTCMonth(), day: i32 = this.getUTCDate()): i64 {
+        this.millis = date.fromUTC(year as i64, (month + 1) as i64, day as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setMonth(month: i32, day: i32 = this.getUTCDate()): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, (month + 1) as i64, day as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setDate(day: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, day as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        return this.millis;
+    }
+    setHours(hour: i32, minute: i32 = this.utcMinute(), second: i32 = this.utcSecond(), milli: i32 = this.utcMillisecond()): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, hour as i64, minute as i64, second as i64, milli as i64);
+        return this.millis;
+    }
+    setMinutes(minute: i32, second: i32 = this.utcSecond(), milli: i32 = this.utcMillisecond()): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, minute as i64, second as i64, milli as i64);
+        return this.millis;
+    }
+    setSeconds(second: i32, milli: i32 = this.utcMillisecond()): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, second as i64, milli as i64);
+        return this.millis;
+    }
+    setMilliseconds(milli: i32): i64 {
+        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, milli as i64);
+        return this.millis;
+    }
+    // GATED: `toLocaleDateString`/`toLocaleTimeString`/`toLocaleString` need a
+    // locale/ICU model the VM does not have; they are intentionally absent.
     toISOString(): string { return this.isoDateTime(); }
     toJSON(): string { return this.toISOString(); }
     toString(): string { return this.isoDateTime(); }

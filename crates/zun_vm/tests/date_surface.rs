@@ -224,6 +224,96 @@ fn local_getters_equal_utc_because_the_calendar_is_utc() {
 }
 
 #[test]
+fn local_setters_change_the_right_component_and_return_the_new_time() {
+    let out = run_source(
+        r#"function main() {
+            let d = Date.fromISO("2021-01-03T10:20:30.400Z");
+            print(d.setFullYear(1999));
+            print(d.toISOString());
+            print(d.setMonth(11));
+            print(d.toISOString());
+            print(d.setDate(25));
+            print(d.toISOString());
+            print(d.setHours(1));
+            print(d.setMinutes(2));
+            print(d.setSeconds(3));
+            print(d.setMilliseconds(4));
+            print(d.toISOString());
+        }"#,
+    );
+    assert_eq!(
+        out,
+        vec![
+            "915358830400",
+            "1999-01-03T10:20:30.400Z",
+            "944216430400",
+            "1999-12-03T10:20:30.400Z",
+            "946117230400",
+            "1999-12-25T10:20:30.400Z",
+            "946084830400",
+            "946083750400",
+            "946083723400",
+            "946083723004",
+            "1999-12-25T01:02:03.004Z",
+        ]
+    );
+}
+
+#[test]
+fn local_setters_equal_their_utc_counterparts_on_the_same_input() {
+    // Local == UTC in this UTC-only calendar, so a local setter must land on the
+    // exact same timestamp as its `setUTC*` counterpart from the same instant.
+    let out = run_source(
+        r#"function main() {
+            let a = Date.fromISO("2021-01-03T10:20:30.400Z");
+            let b = Date.fromISO("2021-01-03T10:20:30.400Z");
+            print(a.setFullYear(1999) == b.setUTCFullYear(1999));
+            print(a.setMonth(11) == b.setUTCMonth(11));
+            print(a.setDate(25) == b.setUTCDate(25));
+            print(a.setHours(1) == b.setUTCHours(1));
+            print(a.setMinutes(2) == b.setUTCMinutes(2));
+            print(a.setSeconds(3) == b.setUTCSeconds(3));
+            print(a.setMilliseconds(4) == b.setUTCMilliseconds(4));
+        }"#,
+    );
+    assert_eq!(out, vec!["true", "true", "true", "true", "true", "true", "true"]);
+}
+
+#[test]
+fn local_setters_accept_optional_trailing_arguments() {
+    // `setFullYear(y, month, date)` and `setHours(h, min, sec, ms)` replace all
+    // supplied components at once; omitted trailing components keep their value.
+    let out = run_source(
+        r#"function main() {
+            let d = new Date(0);
+            d.setFullYear(2020, 5, 15);
+            print(d.toISOString());
+            d.setHours(8, 9, 10, 11);
+            print(d.toISOString());
+            let e = new Date(0);
+            e.setFullYear(2020);
+            print(e.getFullYear());
+        }"#,
+    );
+    assert_eq!(
+        out,
+        vec!["2020-06-15T00:00:00.000Z", "2020-06-15T08:09:10.011Z", "2020"]
+    );
+}
+
+#[test]
+fn set_full_year_on_the_epoch_then_read_it_back() {
+    let out = run_source(
+        r#"function main() {
+            let d = new Date(0);
+            d.setFullYear(2020);
+            print(d.getFullYear());
+        }"#,
+    );
+    assert_eq!(out, vec!["2020"]);
+}
+
+#[test]
 fn dates_before_the_epoch_work() {
     let out = run_source(
         r#"function main() {
