@@ -42,6 +42,58 @@ fn run_source_expect_error(src: &str) -> String {
 }
 
 #[test]
+fn boolean_coercion_matches_js_truthiness() {
+    // `Boolean(x)` returns the JS truthiness of `x` as a `boolean` primitive,
+    // consistent with the truthiness used for `if`/`&&` conditions.
+    let out = run_source(
+        r#"function main() {
+            if (!Boolean(0.0)) { print("zero-false"); }
+            if (Boolean(1.0)) { print("one-true"); }
+            if (!Boolean("")) { print("empty-false"); }
+            if (Boolean("x")) { print("nonempty-true"); }
+            if (!Boolean(box_any(null))) { print("null-false"); }
+            if (Boolean(true)) { print("bool-passthrough"); }
+        }"#,
+    );
+    assert_eq!(
+        out,
+        [
+            "zero-false",
+            "one-true",
+            "empty-false",
+            "nonempty-true",
+            "null-false",
+            "bool-passthrough",
+        ]
+    );
+}
+
+#[test]
+fn boolean_primitive_to_string() {
+    let out = run_source(
+        r#"function main() {
+            print(true.toString());
+            print(false.toString());
+        }"#,
+    );
+    assert_eq!(out, ["true", "false"]);
+}
+
+#[test]
+fn global_this_boolean_resolves() {
+    // `Boolean` is a realm global; reading it through `globalThis` yields its
+    // class descriptor (a stable token), proving the binding resolves.
+    let out = run_source(
+        r#"import { classDescriptorToken } from "zun:collections";
+        function main() {
+            let token: number = classDescriptorToken(dynamic_get(globalThis, "Boolean"));
+            if (token >= 0.0) { print("boolean-resolves"); }
+        }"#,
+    );
+    assert_eq!(out, ["boolean-resolves"]);
+}
+
+#[test]
 fn object_keys_values_entries_on_a_dynamic_object_follow_insertion_order() {
     let out = run_source(
         r#"function main() {

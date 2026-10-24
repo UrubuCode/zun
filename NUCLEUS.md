@@ -27,7 +27,7 @@ read.
 |---|------|--------|--------------|
 | 1 | String | partial | Standard surface largely landed (`at/slice/concat/codePointAt/split/replaceAll`, string-vs-RegExp dispatch on `split`/`replace`, `[Symbol.iterator]`, statics `fromCharCode/fromCodePoint`); deferred `matchAll/normalize/localeCompare/toLocale*/String.raw` |
 | 2 | Number | partial | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants) and `toString(radix)`; remaining `toPrecision/toExponential/toLocaleString/valueOf` |
-| 3 | Boolean | missing | No wrapper class/type; only the primitive `Ty::Boolean`. No `Boolean()`, no `.toString()` object surface |
+| 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
 | 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
@@ -155,9 +155,29 @@ the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 fl
   new statics are the idiomatic `Number.isNaN(x)` surface. All of these allocate/branch
   only and are not JIT-lowered — Tier-0 only, no second path to keep in sync.
 
-## 3. Boolean — missing
-No `std/boolean.zun`, no wrapper type; only primitive `Ty::Boolean`. No `Boolean()`
-coercion function, no object `.toString()/.valueOf()`. GOAL ranks this lowest.
+## 3. Boolean — mostly
+`zun:boolean` native module (`crates/zun_natives/src/boolean.rs`) + sema intercepts.
+`Boolean` stays a realm global (`builtin/realm.zun`, `FallThrough`), so
+`globalThis.Boolean` resolves.
+
+- **Present:**
+  - `Boolean(x)` coercion — returns the JS truthiness of `x` as a `boolean`
+    primitive (not a wrapper object). Intercepted in sema's plain-`Call` path
+    (next to `BigInt(x)`); a value already typed `boolean` is returned as-is, any
+    other type routes to the `booleanCoerce` native. That native mirrors the
+    interpreter's `is_truthy` (used for `if`/`&&` on dynamic callback results):
+    `false`, `0`/`NaN`, `""`, `null`/`undefined` falsy; objects, functions and
+    non-empty strings truthy. Concrete `string`/`number` arrive marshalled by
+    value (so are classified exactly).
+  - `boolean.toString()` — `true`→`"true"`, `false`→`"false"`, a sema intercept on
+    a `Ty::Boolean` receiver (like `number.toString(radix)`), via the
+    `booleanToString` native.
+- **Deferred:** the wrapper OBJECT `new Boolean(x)` (a boxed `Boolean` object) —
+  rarely used; the primitive-returning `Boolean(x)` call is the important surface.
+  No `builtin/boolean.zun` class, no `.valueOf()` object surface.
+- **Known limitation:** a *boxed* string inside an `Any` (value whose static type
+  is `any`) is treated as truthy — the native sees only the string handle and
+  cannot resolve the backing text to test emptiness. Concrete `string` is exact.
 
 ## 4. BigInt — mostly
 `builtin/bigint.zun` (extern) + native (`collections.rs`, `zun_core/bigint.rs`).
@@ -769,7 +789,8 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
    - Error (#22): `AggregateError`, `cause`, verify `.stack` capture.
    - ArrayBuffer (#17): `byteLength slice isView`.
    - Proxy/Reflect (#10): full trap set + `Reflect` global.
-7. **Boolean wrapper object** (#3) — low (primitive suffices for most code).
+7. **Boolean wrapper object** (#3) — low: `Boolean(x)` coercion + `boolean.toString()`
+   landed; only the boxed `new Boolean(x)` object remains deferred (primitive suffices).
 
 ### Infra (separate from the class surface)
 - ~~**ZIL math opcodes** (#26)~~ — done: fifteen ops at `0x96-0xA4` (ten float, five

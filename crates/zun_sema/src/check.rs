@@ -1820,6 +1820,34 @@ impl Checker<'_> {
                     };
                 }
 
+                // `Boolean(x)` coercion when called as a plain function:
+                // returns the JS truthiness of `x` as a `boolean` primitive
+                // (not a wrapper object). The `truthy` native mirrors the
+                // interpreter's `is_truthy`, so coercion matches `if`/`&&`.
+                if name == "Boolean" && !self.by_name.contains_key(&name) {
+                    if args.len() != 1 {
+                        self.error(span, "`Boolean` expects one argument");
+                        return self.poison(span);
+                    }
+                    let arg = args.into_iter().next().expect("one argument");
+                    if arg.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    // A value already typed `boolean` is its own truthiness.
+                    if arg.ty == Ty::Boolean {
+                        return arg;
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:boolean", "booleanCoerce") else {
+                        self.error(span, "missing Boolean intrinsic `booleanCoerce`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::Boolean,
+                        span,
+                    };
+                }
+
                 if let Some(&func) = self.by_name.get(&name) {
                     if self.signatures[func as usize].is_generator {
                         let Some((native_id, _)) = zun_natives::resolve("zun:buffer", "generatorIteratorNewArgs") else {
@@ -3383,6 +3411,20 @@ impl Checker<'_> {
                     };
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, radix] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+                // `boolean.toString()` → `"true"` / `"false"`. Intercepted
+                // before class dispatch, like `number.toString(radix?)`, since
+                // the primitive `boolean` has no backing class.
+                if receiver.ty == Ty::Boolean && mname == "toString" && args.is_empty() {
+                    let Some((id, _)) = zun_natives::resolve("zun:boolean", "booleanToString") else {
+                        self.error(span, "missing Boolean intrinsic `booleanToString`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
                         ty: Ty::String,
                         span,
                     };
