@@ -20,6 +20,19 @@ pub(super) struct Interp<'a> {
     /// Most recent executing frame/program counter, used for source-aware
     /// diagnostics at the public runner boundary.
     pub(super) active_frame: Option<(u32, u32)>,
+    /// Live chain of interpreter activations, innermost last. Each entry is the
+    /// callee's method rid and its current program counter; the top entry's pc
+    /// is advanced as the method executes. This is the frame walk behind
+    /// `Error`'s `.stack` capture (PLAN §3.1): a frame carries no managed
+    /// references (just two `u32`s), so it needs no GC rooting or relocation.
+    pub(super) call_stack: Vec<CallFrame>,
+}
+
+/// One live interpreter activation, used for runtime stack capture.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CallFrame {
+    pub(super) method_rid: u32,
+    pub(super) pc: u32,
 }
 
 impl<'a> Interp<'a> {

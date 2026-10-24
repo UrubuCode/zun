@@ -46,7 +46,7 @@ read.
 | 19 | TypedArrays | partial | All eleven JS kinds now, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. `subarray` (shares the buffer) and `fill` present on every kind, bounds clamped like `slice`. Missing iteration, `byteOffset`/`buffer`, and the bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs index syntax on views or arity overloading first. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
-| 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
+| 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` now captured** at construction (frame walk + sequence points; byte-span frames, not line:col). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). Still not a realm global; `cause` deferred (needs `any` fields + object-literal syntax) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
@@ -491,10 +491,11 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
   cannot be driven here: the returned Promise stays pending (the same place a bare
   `await <pending>` ends up). In practice Zun Promises settle synchronously
   (`resolve`/`reject`/`Promise.resolve`), so the chaining surface is exercised end-to-end.
-- **AggregateError note:** `Promise.any` with all-rejected inputs rejects with a plain
-  error message (`"All promises were rejected"`). `AggregateError` is unavailable — `Error`
-  is not a realm global and construction has no ordered/optional args (see §22), so the
-  aggregated `errors` array cannot be carried yet.
+- **AggregateError note:** `Promise.any` with all-rejected inputs still rejects with a
+  plain error message (`"All promises were rejected"`). `AggregateError` itself now
+  exists and carries an `errors` array (see §22), but `Promise`'s reject reason is stored
+  as a *string*, not a managed object, so wiring the aggregate in requires widening the
+  reason cell to hold an object first — that is the remaining work, not AggregateError.
 - **`reject` reason** is still a `string` (the managed cell stores a string reason); a boxed
   `any` reason is unwrapped to its string before storage.
 - **Tests:** `zun_vm/tests/promise_surface.rs` (12 end-to-end cases exercising the scheduler
@@ -696,9 +697,31 @@ ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
   `e.name = "..."`; that is a dynamic-path concern.
 - **`toString()`** follows JS, including the empty-message case: `new Error("")`
   prints `Error`, not `Error: `.
-- **`.stack` is absent** — not merely unverified, which is what this entry used to
-  say. There is no `stack` property and no capture anywhere; the sequence-point
-  debug info that landed is a prerequisite, not the feature.
+- **`.stack` is captured at construction** (`zun:error` intrinsic
+  `captureStackTrace`, serviced on the interpreter's managed floor —
+  `zun_interp::collections` / `builtins.rs`, alongside the collection and
+  `zun:typeinfo` intrinsics). It is a *trailing field with a default
+  initializer* on `Error` (`stackFrames: string = captureStackTrace()`), so it
+  stays optional (`new Error(msg)` is unchanged) and is evaluated at the
+  construction site, where the live frame chain is exactly the methods that led
+  to the `new`. The public `get stack()` renders the `name: message` header on
+  top of the captured frames, so the header reflects the concrete subclass.
+  - **Capture mechanism:** the interpreter keeps a `call_stack: Vec<CallFrame>`
+    (method rid + pc), pushed/popped in `Interp::call` and advanced per
+    instruction — a frame carries only two `u32`s, so no GC rooting. At capture
+    the chain is walked innermost-first; each frame resolves its method name
+    from the `MethodDef` table and its source span from the `.zm` sequence
+    points.
+  - **Format:** first line `<name>: <message>`, then one
+    `    at <fn> (<start>..<end>)` per frame, e.g.
+    `Error: deep` / `    at makeIt (1360..1379)` / `    at main (3722..3730)`.
+  - **Fidelity/limits:** sequence points record **byte spans** into the source,
+    and the VM holds no source text, so frames render byte offsets, not
+    `file:line:col`. Only frames of the current module are walked (a call into
+    another loaded module runs on its own interpreter instance). Async-resumed
+    frames may be incomplete (a resumed activation re-enters `call` fresh).
+    `captureStackTrace` itself is a `call.builtin` with no activation, so it
+    never appears in its own trace.
 - **`Error` is now a global**, in both compile paths. It reaches programs through
   the prelude (`zun_prelude::ERRORS`), not as a module: **a class cannot cross a
   module boundary in Zun**, so `builtin/error.zun` as the `zun:std:error` module was
@@ -716,16 +739,26 @@ ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
   entry cannot denote `Ty::Instance(<program-assigned class index>)`. The class is
   in scope by name, which is what user code needs; the realm binding waits on the
   same type-identity work.
-- **`cause` and `AggregateError` are blocked on construction, not on effort.** Object
-  construction requires exactly one positional argument per declared field, with no
-  constructors, defaults or optional arguments. So `cause` cannot be an optional
-  second field without breaking `new Error(msg)`, and `AggregateError` cannot take
-  JS's `(errors, message)` order, since inherited fields come first and would force
-  `(message, errors)`.
+- **`AggregateError(errors, message)` now lands**, carrying its `errors` array.
+  It is declared **standalone, not `extends Error`**: construction fills fields
+  inherited-first, so an `extends Error` subclass would force `message` ahead of
+  `errors` and could not express JS's `(errors, message)` order. Declared on its
+  own, the field order (`errors`, `message`, then the optional `stackFrames`) is
+  ours to choose, so the JS constructor shape and `.stack` both work. The cost is
+  that `aggregate instanceof Error` is `false`, and the shared surface
+  (`name`/`toString`/`get stack`) is duplicated rather than inherited. Reachable
+  by name through the prelude like the other error classes.
+- **`cause` is still deferred**, on two independent blockers, not effort: (1)
+  `new Error(message, { cause })` needs an **options object literal**, and object
+  literals are not in the AST; (2) a `cause` field would be typed `any`, which the
+  construction/GC path still stores as zero (the documented `any`-field gap below).
+  Either alone blocks it; both must land first.
 - **`Error.captureStackTrace` / `stackTraceLimit`** are V8 extensions rather than
   ECMAScript; worth a deliberate decision before implementing.
 - **Tests:** `zun_vm/tests/error_surface.rs` runs the shipped `builtin/error.zun`
-  source itself rather than a copy.
+  source itself rather than a copy — now including `.stack` (header + frame line,
+  subclass header, nested innermost-first ordering, thrown-and-caught) and
+  `AggregateError` (`errors` round-trip + shape).
 
 ## 23. globalThis / global — done
 `check.rs:1096`: both identifiers lower to `ExprKind::RealmGlobal` (opcode `0x94`),
@@ -847,7 +880,9 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      AggregateError for `any`, microtask deferral of a pending-source reaction.
    - TypedArrays/DataView (#18,#19): missing element kinds + full method surface.
    - BigInt (#4): `div/rem/pow/neg`, bitwise/shift, `BigInt()` coercion, `asIntN/asUintN`.
-   - Error (#22): `AggregateError`, `cause`, verify `.stack` capture.
+   - Error (#22): ✅ `.stack` capture and `AggregateError(errors, message)` landed.
+     Remaining: `cause` (blocked on object-literal syntax + `any` fields), realm
+     global, `aggregate instanceof Error`, `Promise.any` aggregate wiring.
    - ArrayBuffer (#17): `byteLength slice isView`.
    - Proxy/Reflect (#10): full trap set + `Reflect` global.
 7. **Boolean wrapper object** (#3) — low: `Boolean(x)` coercion + `boolean.toString()`
@@ -874,8 +909,10 @@ These are not per-class work; they are the common causes behind several
   `JitKind::Other => 0`, so `class H { v: any; }` with `new H(42)` reads back as
   `Void`, and `new H(null)` does not compare equal to `null`. Making it work needs
   boxing on store, unboxing on load, and the GC tracing the slot — so it touches
-  collector correctness and belongs in a `GC:` commit. This is what blocks
-  `Error.cause` and `AggregateError.errors` (#22): both want an `any` field.
+  collector correctness and belongs in a `GC:` commit. This still blocks
+  `Error.cause` (#22), which wants an `any` field. `AggregateError.errors` (#22)
+  sidesteps it by typing the field as `Array` (a managed reference the GC already
+  traces) rather than `any`.
 - **Construction has no constructors.** An object is built from exactly one
   positional argument per declared field, inherited fields first. Trailing fields
   with a default initializer are now optional (`class P { x: i64; y: i64 = 5; }`

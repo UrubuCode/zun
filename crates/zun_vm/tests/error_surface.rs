@@ -117,3 +117,92 @@ fn errors_survive_being_thrown_and_caught() {
     );
     assert_eq!(out, vec!["TypeError: thrown"]);
 }
+
+#[test]
+fn stack_starts_with_the_header_and_has_a_frame() {
+    // `.stack` is the `name: message` header followed by at least one captured
+    // frame line. The trace is rendered from the live interpreter frames and
+    // the `.zm` sequence points (byte spans, since the VM has no source text).
+    let out = run_with_errors(
+        r#"function main() {
+            let e = new Error("boom");
+            print(e.stack);
+        }"#,
+    );
+    assert_eq!(out.len(), 1);
+    let stack = &out[0];
+    assert!(stack.starts_with("Error: boom"), "stack was: {stack:?}");
+    assert!(stack.contains("\n    at "), "no frame line in: {stack:?}");
+    assert!(stack.contains("main"), "no main frame in: {stack:?}");
+}
+
+#[test]
+fn subclass_stack_uses_the_subclass_header() {
+    let out = run_with_errors(
+        r#"function main() {
+            print(new TypeError("x").stack);
+        }"#,
+    );
+    assert_eq!(out.len(), 1);
+    assert!(out[0].starts_with("TypeError: x"), "stack was: {:?}", out[0]);
+    assert!(out[0].contains("    at "), "no frame line in: {:?}", out[0]);
+}
+
+#[test]
+fn nested_calls_each_appear_as_a_frame() {
+    // Innermost frame first: the helper that constructs the error, then main.
+    let out = run_with_errors(
+        r#"function makeIt(): Error {
+            return new Error("deep");
+        }
+        function main() {
+            print(makeIt().stack);
+        }"#,
+    );
+    assert_eq!(out.len(), 1);
+    let stack = &out[0];
+    assert!(stack.starts_with("Error: deep"), "stack was: {stack:?}");
+    assert!(stack.contains("makeIt"), "no makeIt frame in: {stack:?}");
+    assert!(stack.contains("main"), "no main frame in: {stack:?}");
+    // makeIt (innermost) is listed before main.
+    let make_at = stack.find("makeIt").unwrap();
+    let main_at = stack.find("main").unwrap();
+    assert!(make_at < main_at, "frames out of order: {stack:?}");
+}
+
+#[test]
+fn thrown_and_caught_error_keeps_its_stack() {
+    let out = run_with_errors(
+        r#"function main() {
+            try {
+                throw new RangeError("oops");
+            } catch (e: Error) {
+                print(e.stack);
+            }
+        }"#,
+    );
+    assert_eq!(out.len(), 1);
+    assert!(out[0].starts_with("RangeError: oops"), "stack was: {:?}", out[0]);
+    assert!(out[0].contains("    at "), "no frame line in: {:?}", out[0]);
+}
+
+#[test]
+fn aggregate_error_carries_its_errors_and_shape() {
+    let out = run_with_errors(
+        r#"function main() {
+            let errs = new Array(2);
+            errs[0] = new Error("a");
+            errs[1] = new Error("b");
+            let agg = new AggregateError(errs, "several");
+            print(agg.name);
+            print(agg.message);
+            print(agg.errors.length);
+            print(agg.stack);
+        }"#,
+    );
+    assert_eq!(out.len(), 4);
+    assert_eq!(out[0], "AggregateError");
+    assert_eq!(out[1], "several");
+    assert_eq!(out[2], "2");
+    assert!(out[3].starts_with("AggregateError: several"), "stack was: {:?}", out[3]);
+}

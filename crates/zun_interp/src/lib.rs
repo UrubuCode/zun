@@ -177,7 +177,24 @@ impl Interp<'_> {
 
     /// Call the method at `method_rid` (1-based) with `args`, returning its
     /// result ([`Value::Void`] for a void method).
+    ///
+    /// This wrapper keeps `self.call_stack` balanced: it pushes the activation
+    /// on entry and pops it on every exit path (including the error returns
+    /// deep inside [`Self::call_inner`]), so a runtime stack capture (see
+    /// `Error.stack`) sees exactly the methods currently executing.
     fn call(
+        &mut self,
+        method_rid: u32,
+        args: Vec<Value>,
+        parent: Option<&RootLink>,
+    ) -> Result<Value, RunError> {
+        self.call_stack.push(crate::state::CallFrame { method_rid, pc: 0 });
+        let result = self.call_inner(method_rid, args, parent);
+        self.call_stack.pop();
+        result
+    }
+
+    fn call_inner(
         &mut self,
         method_rid: u32,
         args: Vec<Value>,
@@ -215,6 +232,9 @@ impl Interp<'_> {
 
         while *pc < code.len() {
             self.active_frame = Some((method_rid, *pc as u32));
+            if let Some(frame) = self.call_stack.last_mut() {
+                frame.pc = *pc as u32;
+            }
             let (instr, size) =
                 decode_one(&code[*pc..]).map_err(|e| RunError::Malformed(e.to_string()))?;
             let next = *pc + size;

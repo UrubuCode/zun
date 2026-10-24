@@ -10,11 +10,20 @@
 // The trade is that `name` is read-only here, while JS allows `e.name = "..."`.
 // That is a dynamic-path concern; typed code gets the correct name for free.
 //
-// Stack capture stays runtime work: `.stack` needs frame walking against the
-// sequence-point debug info, which only the VM can do.
+// Stack capture is runtime work: the `captureStackTrace` intrinsic walks the
+// interpreter's live frames against the `.zm` sequence-point debug info (PLAN
+// §3.1) and returns the frame lines. It is a *trailing field with a default
+// initializer*, so it stays optional — `new Error(msg)` still takes the
+// message alone — and is evaluated at the construction site, where the live
+// frame chain is exactly the methods that led to the `new`. The public
+// `.stack` getter renders the `name: message` header on top of it, so the
+// header always reflects the concrete subclass and message.
+
+import { captureStackTrace } from "zun:core";
 
 class Error {
     message: string;
+    stackFrames: string = captureStackTrace();
 
     get name(): string {
         return "Error";
@@ -27,6 +36,14 @@ class Error {
             return this.name;
         }
         return this.name + ": " + this.message;
+    }
+
+    // `err.stack`: the JS-shaped header line followed by the captured frames.
+    get stack(): string {
+        if (this.stackFrames == "") {
+            return this.toString();
+        }
+        return this.toString() + "\n" + this.stackFrames;
     }
 }
 
@@ -63,5 +80,37 @@ class TypeError extends Error {
 class URIError extends Error {
     get name(): string {
         return "URIError";
+    }
+}
+
+// `AggregateError(errors, message)` — carries the list of errors that a
+// combinator (e.g. `Promise.any`) collected. It does *not* extend `Error`:
+// Zun builds an object field-by-field with inherited fields first, so an
+// `extends Error` subclass would force `message` ahead of `errors` and could
+// not express JS's `(errors, message)` order. Declared standalone, the field
+// order is ours to choose, so the JS constructor shape is preserved. The cost
+// is that `aggregate instanceof Error` is false; the shared surface
+// (`name`/`toString`/`stack`) is duplicated here instead of inherited.
+class AggregateError {
+    errors: Array;
+    message: string;
+    stackFrames: string = captureStackTrace();
+
+    get name(): string {
+        return "AggregateError";
+    }
+
+    toString(): string {
+        if (this.message == "") {
+            return this.name;
+        }
+        return this.name + ": " + this.message;
+    }
+
+    get stack(): string {
+        if (this.stackFrames == "") {
+            return this.toString();
+        }
+        return this.toString() + "\n" + this.stackFrames;
     }
 }

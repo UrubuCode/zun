@@ -71,6 +71,7 @@ impl<'a> OwnedGeneratorSession<'a> {
             yielded: None,
             static_fields: std::collections::HashMap::new(),
             active_frame: None,
+            call_stack: Vec::new(),
         };
         let outcome = if let Some(frame) = self.pending.take() {
             interp.resume_suspended(frame)
@@ -384,6 +385,7 @@ impl<'a> ResumableSession<'a> {
                 yielded: None,
                 static_fields: std::collections::HashMap::new(),
                 active_frame: None,
+                call_stack: Vec::new(),
             },
             method_rid,
             args: Some(args),
@@ -480,6 +482,7 @@ pub(super) fn run_method_with(
         yielded: None,
         static_fields: std::collections::HashMap::new(),
         active_frame: None,
+        call_stack: Vec::new(),
     };
     // Run the module initializer once before the entry point (PLAN §3.1, doc 02
     // area 10): it seeds the realm global on this same heap so `globalThis.Map`

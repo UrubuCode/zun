@@ -2417,6 +2417,25 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Bool(found))
             }
+            "captureStackTrace" => {
+                // Runtime stack capture for `Error` construction (PLAN §3.1):
+                // walk the live activation chain, innermost first, rendering
+                // one frame line each. The managed `Error.stack` getter
+                // prepends the `name: message` header, so this returns only the
+                // frame lines.
+                //
+                // Fidelity: method names come from the module's `MethodDef`
+                // table and the source location from the sequence-point debug
+                // info, which records *byte spans* into the original source —
+                // the interpreter has no source text, so a frame renders
+                // `(<start>..<end>)` byte offsets rather than `file:line:col`.
+                // The innermost frame is the one constructing the `Error`;
+                // `captureStackTrace` itself is a `call.builtin` (no activation
+                // of its own), so it does not appear. Only frames of the
+                // current module are walked; a frame in another loaded module
+                // runs on its own interpreter and is not visible here.
+                Ok(Value::Str(self.render_stack_trace().into()))
+            }
             "typeofAny" => {
                 // Runtime `typeof` for an `any` operand. A managed reference is
                 // refined with the heap: a BigInt payload is `"bigint"`, every
@@ -2475,6 +2494,30 @@ impl<'a> Interp<'a> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+
+    /// Render the live activation chain as the frame lines of an `Error.stack`
+    /// string: innermost frame first, one `    at <fn> (<span>)` per frame. See
+    /// the `captureStackTrace` arm for the fidelity notes.
+    pub(crate) fn render_stack_trace(&self) -> String {
+        let mut lines = String::new();
+        for (index, frame) in self.call_stack.iter().rev().enumerate() {
+            if index > 0 {
+                lines.push('\n');
+            }
+            let (name, span) = match self.module.debug_frame_at(frame.method_rid, frame.pc) {
+                Some(debug) => (debug.method_name, debug.source_span),
+                None => ("<anonymous>", None),
+            };
+            let name = if name.is_empty() { "<anonymous>" } else { name };
+            match span {
+                Some((start, end)) => {
+                    lines.push_str(&format!("    at {name} ({start}..{end})"));
+                }
+                None => lines.push_str(&format!("    at {name}")),
+            }
+        }
+        lines
     }
 
     /// Enumerate the own enumerable string keys and their values for either a

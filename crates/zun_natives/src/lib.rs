@@ -19,6 +19,7 @@ mod boolean;
 mod buffer;
 mod collections;
 mod date;
+mod error;
 mod env;
 mod fs;
 mod io;
@@ -251,6 +252,7 @@ pub static MODULES: &[Module] = &[
     // Appended last so every existing dispatch id stays stable.
     boolean::MODULE,
     typeinfo::MODULE,
+    error::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

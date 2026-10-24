@@ -14,6 +14,7 @@ pub(super) fn call_builtin(
     if let Some(name) = managed_collection_builtin(id)
         .or_else(|| managed_buffer_builtin(id))
         .or_else(|| managed_typeinfo_builtin(id))
+        .or_else(|| managed_error_builtin(id))
     {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
@@ -201,6 +202,17 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
 pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
     for name in ["typeofAny", "instanceofClass"] {
         if zun_natives::resolve("zun:typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Recognize the `zun:error` intrinsics the interpreter services directly on
+/// its managed floor (the live frame-stack capture behind `Error.stack`).
+pub(crate) fn managed_error_builtin(id: u32) -> Option<&'static str> {
+    for name in ["captureStackTrace"] {
+        if zun_natives::resolve("zun:error", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }
