@@ -12,6 +12,9 @@ impl<'a> Interp<'a> {
         if let Some(result) = crate::typed_arrays::call(name, args) {
             return result;
         }
+        if let Some(result) = crate::node_buffer::call(name, args) {
+            return result;
+        }
         let object = |value: &Value| match value {
             Value::Object(object) => Some(*object),
             Value::Any(any) => any

@@ -52,3 +52,8 @@ global.set("Boolean", Boolean, true);
 global.set("Object", Object, true);
 global.set("Symbol", Symbol, true);
 global.set("Reflect", Reflect, true);
+
+// Node `Buffer`. A nominal alias for the `Uint8Array` byte-view floor (Buffer
+// IS a Uint8Array in Node); its statics/instance methods are recognized by
+// receiver name. Appended last so every earlier descriptor token stays stable.
+global.set("Buffer", Buffer, true);

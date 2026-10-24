@@ -45,14 +45,14 @@ read.
 | 18 | DataView | partial | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints |
 | 19 | TypedArrays | partial | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs arity overloading first — plus `slice`/`copyWithin`, functional methods, `from/of`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters (== UTC, calendar is UTC-only). Missing `toLocale*`, local setters |
-| 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
+| 21 | Buffer | partial | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`/`write`/`equals`/`copy`/`fill(value)` + common LE/BE 8/16/32/64 readers/writers. Encodings utf8/hex/base64/latin1. Deferred: ucs2/utf16le, base64url, 24-bit/float read*/write*, `swap16/32`, `indexOf`/`includes`, negative slice indices |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` now captured** at construction (frame walk + sequence points; byte-span frames, not line:col). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). Still not a realm global; `cause` deferred (needs `any` fields + object-literal syntax) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | missing | Planned in A; not implemented (no parse/sema/lowering) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 4 · partial 15 · missing 2 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 4 · partial 16 · missing 1 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -106,8 +106,9 @@ frozen runtime representation is unchanged — the registry only rebinds the nam
   `FinalizationRegistry`,
   `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
   `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
-  `Number`, `Boolean`, `Object`, `Symbol`, `Reflect`. (`Map` keeps token 0;
-  `Reflect` is appended last to keep every earlier token stable.)
+  `Number`, `Boolean`, `Object`, `Symbol`, `Reflect`, `Buffer`. (`Map` keeps
+  token 0; `Reflect` and then `Buffer` are appended last to keep every earlier
+  token stable. `Buffer` denotes the `Uint8Array` byte view — see #21.)
 - **Not registrable yet:** `Date` and `Error` (+ subclasses
   `EvalError/RangeError/ReferenceError/SyntaxError/TypeError/URIError`) — their
   annotation would resolve to `Ty::Instance(<program-assigned class index>)`, which
@@ -730,23 +731,54 @@ global through the prelude.
   local == UTC, deferred to avoid duplicating the surface until a tz offset
   exists); `toDateString toTimeString toUTCString`; `toLocale*` (locale/ICU).
 
-## 21. Buffer (Node) — missing
+## 21. Buffer (Node) — partial  *(built on the Uint8Array byte-view floor)*
 
-Audited 2026-10-23, and the previous entry was wrong twice over. It read
-"partial / verify" and pointed at `zun_natives/src/buffer.rs` as evidence of a
-Buffer implementation.
+Node's `Buffer` **is** a `Uint8Array` subclass, so Zun's `Buffer` is a nominal
+alias for the `U8` typed-array view (`Ty::BufferView(BufferViewKind::U8)`) — it
+owns no storage of its own and reuses the existing byte-view floor (#17/#19).
+There is no parallel `builtin/buffer.zun` class.
 
-- **There is no `Buffer` class.** No `builtin/buffer.zun`, no realm entry, no
-  checker path; `new Buffer(4)` is an unknown class.
-- **`zun_natives/src/buffer.rs` is not it.** That module is the `ArrayBuffer`,
-  `DataView` and typed-array floor (`bufferNew`, `bufferGetU8`, `dataViewGetU32`,
-  `u8ArrayGet`, …), which belongs to #17, #18 and #19. `Ty::Buffer` is the type
-  behind the name `ArrayBuffer`, not Node's `Buffer`.
-- **What a real entry needs:** `Buffer.from/alloc/allocUnsafe/concat/isBuffer/
-  byteLength`, instance `write read*/toString(encoding) slice fill copy equals
-  indexOf`, and the encodings (`utf8`, `hex`, `base64`) that none of the floor
-  provides. PLAN §3.2 does place Buffer in bucket A, so it stays here, but it is
-  a surface to build rather than one to finish.
+- **Storage + realm registration.** A Buffer is a `U8` view over a fresh
+  `ArrayBuffer` (`heap.alloc_buffer` + `heap.alloc_typed_array`). `Buffer` is a
+  declarative realm global (`builtin/realm.zun` `global.set("Buffer", Buffer,
+  true)` + a `base_type_facets` entry mapping it to `Ty::BufferView(U8)` with a
+  `FallThrough` ctor), appended last so every earlier descriptor token stays
+  stable. `globalThis.Buffer` resolves and `Buffer` works as an annotation; the
+  statics are recognized by receiver name (like `ArrayBuffer.isView`), so there
+  is no `new Buffer()` (deprecated in Node anyway).
+- **Natives.** A new `zun:core` namespace `nodeBuffer`
+  (`zun_natives/src/node_buffer.rs`), appended **last** in the `MODULES`
+  registry so no existing dispatch id shifts. Implementations live on the Tier-0
+  interpreter floor (`zun_interp/src/node_buffer.rs`), routed by name through
+  `managed_node_buffer_builtin`. Not JIT-eligible (they allocate/throw), so no
+  second path to keep in sync.
+- **Statics (present):** `Buffer.from(string, encoding?)`, `from(array)`,
+  `from(arrayBuffer)` (overload resolved on the argument's static type),
+  `alloc(size, fill?)` (zero-filled), `allocUnsafe(size)` (zero-filled here),
+  `concat(list)`, `isBuffer(x)` (true only for a `U8` view), `byteLength(string,
+  encoding?)`.
+- **Instance (present):** `length` (property), indexed byte get/set `buf[i]`
+  (added generically for all buffer views), `toString(encoding?, start?, end?)`,
+  `slice(start?, end?)` (shares memory, via `typed_array_subarray`),
+  `write(string, offset?, encoding?)`, `fill(value)` (single-arg, whole buffer),
+  `equals(other)`, `copy(target, targetStart?, sourceStart?, sourceEnd?)`, and
+  the common fixed-width readers/writers `readUInt8/readInt8`,
+  `read{U,}Int16LE/BE`, `read{U,}Int32LE/BE`, `readBig{U,}Int64LE/BE` and the
+  matching `write*` (all assembled from single-byte view access).
+- **`subarray`/`fill(v,begin,end)`/`get`/`set`** keep their typed-array
+  semantics (generic dispatch) — a Buffer shares its type with a plain
+  `Uint8Array`, so only the Buffer-unique method shapes are intercepted; the
+  typed-array surface is not regressed.
+- **Encodings (present):** `utf8`/`utf-8`, `hex`, `base64` (standard alphabet),
+  `latin1`/`binary`. Unknown encodings fall back to utf8 (lenient).
+- **Deferred (documented, not faked):** `ucs2`/`utf16le` and `base64url`
+  encodings; the long tail of readers/writers (24-bit `read{U,}IntLE/BE`,
+  `readFloatLE/BE`, `readDoubleLE/BE`), `swap16/swap32`, `indexOf`/`includes`,
+  negative `slice`/`copy` indices (clamped, not counted from the end). Because a
+  Buffer and a plain `Uint8Array` are the same type here, `isBuffer` answers
+  `true` for any `Uint8Array` and the Buffer instance methods are reachable on a
+  bare `Uint8Array` too — the one visible consequence of the shared
+  representation.
 
 ## 22. Error (+ subclasses) — partial
 `builtin/error.zun` (module `zun:std:error`): `Error` + `EvalError RangeError

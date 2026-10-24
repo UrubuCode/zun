@@ -17,6 +17,7 @@
 
 mod boolean;
 mod buffer;
+mod node_buffer;
 mod collections;
 mod date;
 mod error;
@@ -254,6 +255,9 @@ pub static MODULES: &[Module] = &[
     boolean::MODULE,
     typeinfo::MODULE,
     error::MODULE,
+    // The Node `Buffer` surface. Appended last so every existing dispatch id
+    // stays stable (Buffer builds on the existing Uint8Array byte-view floor).
+    node_buffer::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

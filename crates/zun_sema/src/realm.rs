@@ -185,6 +185,12 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         // value is what `globalThis.Reflect` resolves to, and
         // `Reflect.<method>(...)` static calls are recognized by receiver name.
         "Reflect" => (Ty::DynamicObject, CtorLowering::FallThrough),
+        // `Buffer` is a nominal alias for the `Uint8Array` byte view (Node's
+        // Buffer IS a Uint8Array). The annotation denotes a U8 view and the
+        // descriptor value is what `globalThis.Buffer` resolves to;
+        // `Buffer.from`/`alloc`/… statics are recognized by receiver name, so
+        // there is no `new Buffer()` constructor lowering (deprecated in Node).
+        "Buffer" => (Ty::BufferView(Bv::U8), CtorLowering::FallThrough),
         _ => return None,
     })
 }

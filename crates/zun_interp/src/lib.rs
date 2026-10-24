@@ -13,6 +13,7 @@ mod gc_policy;
 mod hooks;
 mod namespace;
 mod native;
+mod node_buffer;
 mod metadata;
 mod output;
 mod operands;

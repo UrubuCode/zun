@@ -29,6 +29,13 @@ impl Heap {
         self.typed_views.get(&(object.addr() as usize)).map(|(buffer, _)| *buffer)
     }
 
+    /// The element kind of a typed-array view, or `None` if `object` is not a
+    /// typed-array view. Backs Node's `Buffer.isBuffer`, which is true only for
+    /// a `Uint8Array`-kind view.
+    pub fn typed_array_element(&self, object: Obj) -> Option<zun_core::TypedElement> {
+        self.typed_views.get(&(object.addr() as usize)).map(|(_, view)| view.element())
+    }
+
     /// The byte offset of a `DataView` into its backing buffer
     /// (`dataView.byteOffset`).
     pub fn data_view_byte_offset(&self, object: Obj) -> Option<usize> {

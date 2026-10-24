@@ -13,6 +13,7 @@ pub(super) fn call_builtin(
     let args = pop_n(stack, zun_natives::param_count(id))?;
     if let Some(name) = managed_collection_builtin(id)
         .or_else(|| managed_buffer_builtin(id))
+        .or_else(|| managed_node_buffer_builtin(id))
         .or_else(|| managed_typeinfo_builtin(id))
         .or_else(|| managed_error_builtin(id))
     {
@@ -193,6 +194,60 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
             .map(|(candidate, _)| candidate)
             == Some(id)
         {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Recognize the Node `Buffer` intrinsics (the `nodeBuffer` namespace),
+/// serviced on the interpreter's managed byte-view floor.
+pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
+    for name in [
+        "nodeBufferFromString",
+        "nodeBufferFromArray",
+        "nodeBufferFromArrayBuffer",
+        "nodeBufferAlloc",
+        "nodeBufferAllocUnsafe",
+        "nodeBufferConcat",
+        "nodeBufferIsBuffer",
+        "nodeBufferByteLength",
+        "nodeBufferToString",
+        "nodeBufferWrite",
+        "nodeBufferSlice",
+        "nodeBufferFill",
+        "nodeBufferEquals",
+        "nodeBufferCopy",
+        "nodeBufferReadUInt8",
+        "nodeBufferWriteUInt8",
+        "nodeBufferReadInt8",
+        "nodeBufferWriteInt8",
+        "nodeBufferReadUInt16LE",
+        "nodeBufferWriteUInt16LE",
+        "nodeBufferReadUInt16BE",
+        "nodeBufferWriteUInt16BE",
+        "nodeBufferReadInt16LE",
+        "nodeBufferWriteInt16LE",
+        "nodeBufferReadInt16BE",
+        "nodeBufferWriteInt16BE",
+        "nodeBufferReadUInt32LE",
+        "nodeBufferWriteUInt32LE",
+        "nodeBufferReadUInt32BE",
+        "nodeBufferWriteUInt32BE",
+        "nodeBufferReadInt32LE",
+        "nodeBufferWriteInt32LE",
+        "nodeBufferReadInt32BE",
+        "nodeBufferWriteInt32BE",
+        "nodeBufferReadBigInt64LE",
+        "nodeBufferWriteBigInt64LE",
+        "nodeBufferReadBigInt64BE",
+        "nodeBufferWriteBigInt64BE",
+        "nodeBufferReadBigUInt64LE",
+        "nodeBufferWriteBigUInt64LE",
+        "nodeBufferReadBigUInt64BE",
+        "nodeBufferWriteBigUInt64BE",
+    ] {
+        if zun_natives::resolve("nodeBuffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
     }
