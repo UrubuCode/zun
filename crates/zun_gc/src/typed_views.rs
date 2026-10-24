@@ -135,44 +135,59 @@ impl Heap {
         let view = *self.data_views.get(&(object.addr() as usize))?;
         Some(view.set_u16(self.buffers.get_mut(&(buffer.addr() as usize))?, relative, value, little_endian))
     }
-
-    pub fn u8_array_get(&self, object: Obj, index: usize) -> Option<u8> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
-        view.read_u8(self.buffers.get(&(buffer.addr() as usize))?, index)
-    }
-
-    pub fn u8_array_set(&mut self, object: Obj, index: usize, value: u8) -> Option<bool> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u8(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
-    }
-
-    pub fn f64_array_get(&self, object: Obj, index: usize) -> Option<f64> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
-        view.read_f64(self.buffers.get(&(buffer.addr() as usize))?, index)
-    }
-
-    pub fn f64_array_set(&mut self, object: Obj, index: usize, value: f64) -> Option<bool> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_f64(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
-    }
-
-    pub fn u16_array_get(&self, object: Obj, index: usize) -> Option<u16> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
-        view.read_u16(self.buffers.get(&(buffer.addr() as usize))?, index)
-    }
-
-    pub fn u16_array_set(&mut self, object: Obj, index: usize, value: u16) -> Option<bool> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u16(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
-    }
-
-    pub fn u32_array_get(&self, object: Obj, index: usize) -> Option<u32> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
-        view.read_u32(self.buffers.get(&(buffer.addr() as usize))?, index)
-    }
-
-    pub fn u32_array_set(&mut self, object: Obj, index: usize, value: u32) -> Option<bool> {
-        let (buffer, view) = self.typed_views.get(&(object.addr() as usize)).copied()?;
-        Some(view.write_u32(self.buffers.get_mut(&(buffer.addr() as usize))?, index, value))
-    }
 }
+
+/// Generates the heap side of every typed-array kind from the master table
+/// in `zun_core`: one allocator, one getter and one setter each. Threading a
+/// new kind through by hand is what left kinds half-wired before.
+macro_rules! typed_array_heap_access {
+    ($((
+        $variant:ident, $repr:ty, $arg:ty, $width:expr, $js:literal, $native:literal,
+        $elem_ty:literal, $arg_ty:literal, $native_ty:ident, $encode:path,
+        $read:ident, $write:ident, $alloc:ident, $get:ident, $set:ident
+    )),+ $(,)?) => {
+        impl Heap {
+            $(
+                /// Allocates a view of this kind over `buffer`. `length`
+                /// counts elements, as the JS constructor does.
+                pub fn $alloc(
+                    &mut self,
+                    buffer: Obj,
+                    offset: usize,
+                    length: usize,
+                ) -> Option<Obj> {
+                    let view = zun_core::TypedArrayView::new(
+                        self.buffer_len(buffer)?,
+                        offset,
+                        length,
+                        zun_core::TypedElement::$variant,
+                    )?;
+                    let object = self.alloc(0, 1);
+                    object.set_field(0, buffer.addr() as u64);
+                    self.typed_views.insert(object.addr() as usize, (buffer, view));
+                    Some(object)
+                }
+
+                /// Reads one element. `None` when the object is not a view,
+                /// the index is outside it, or it is a view of another kind.
+                pub fn $get(&self, object: Obj, index: usize) -> Option<$repr> {
+                    let (buffer, view) = self.typed_views.get(&(object.addr() as usize))?;
+                    view.$read(self.buffers.get(&(buffer.addr() as usize))?, index)
+                }
+
+                /// Writes one element, reporting whether it landed.
+                pub fn $set(&mut self, object: Obj, index: usize, value: $arg) -> Option<bool> {
+                    let (buffer, view) =
+                        self.typed_views.get(&(object.addr() as usize)).copied()?;
+                    Some(view.$write(
+                        self.buffers.get_mut(&(buffer.addr() as usize))?,
+                        index,
+                        value,
+                    ))
+                }
+            )+
+        }
+    };
+}
+
+zun_core::typed_element_table!(typed_array_heap_access);
