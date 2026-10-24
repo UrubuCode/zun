@@ -34,7 +34,7 @@ read.
 | 7 | Array | partial | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); Zun extensions kept. Missing `findLast/findLastIndex/flat/flatMap/keys/values/entries/at` iterators, statics `Array.from/of/isArray`, variadic `splice` inserts, no-initial `reduce` |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
 | 9 | Promise | partial | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any`. `await` works via opcode. Remaining: `withResolvers`, microtask deferral of a *pending*-source reaction (eager-at-settle on Tier 0), AggregateError for `any` |
-| 10 | Proxy / Reflect | partial | `proxyNew` + `reflect_get/reflect_set` exist; no full trap set, no `Reflect` global object surface |
+| 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). Deferred: descriptor-dependent traps + `apply`/`construct`, and `in`/`delete` operators (not in the lexer) |
 | 11 | Map | partial | `set/get/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Map([[k,v],…])`, array only); missing only `size` as property (is a method), general (non-array) iterable construction |
 | 12 | Set | partial | `add/has/size/delete/clear/values/keys/entries/forEach` + iterator + iterable constructor (`new Set([…])`, array only); missing only `size` as property, general (non-array) iterable construction |
 | 13 | WeakMap | partial | `set/get/has/delete`; semantics OK (ephemeron floor). No iteration (correct) |
@@ -68,7 +68,8 @@ frozen runtime representation is unchanged — the registry only rebinds the nam
   `FinalizationRegistry`,
   `Promise`, `RegExp`, `BigInt`, `Array`, `ArrayBuffer`, `DataView`,
   `Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array`, `String`,
-  `Number`, `Boolean`, `Object`, `Symbol`. (`Map` keeps token 0.)
+  `Number`, `Boolean`, `Object`, `Symbol`, `Reflect`. (`Map` keeps token 0;
+  `Reflect` is appended last to keep every earlier token stable.)
 - **Not registrable yet:** `Date` and `Error` (+ subclasses
   `EvalError/RangeError/ReferenceError/SyntaxError/TypeError/URIError`) — their
   annotation would resolve to `Ty::Instance(<program-assigned class index>)`, which
@@ -462,14 +463,36 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
   via `await`: then-chaining, adoption, rejection skip/propagation, catch, finally
   pass-through, all/allSettled/race/any, resolve-of-a-Promise).
 
-## 10. Proxy / Reflect — partial
-- **Present:** `new Proxy(target,handler)` → `proxyNew` (`check.rs:2590`); dynamic
-  `reflect_get`/`reflect_set` recognized (`check.rs:1569-1601`).
-- **Missing:** full trap set (`get set has deleteProperty apply construct ownKeys
-  getOwnPropertyDescriptor defineProperty getPrototypeOf setPrototypeOf …`); a real
-  `Reflect` global with `Reflect.get/set/has/deleteProperty/ownKeys/apply/construct/
-  defineProperty/getPrototypeOf/…`.
-- **Notes:** verify which traps `proxyNew` actually honors at runtime.
+## 10. Proxy / Reflect — mostly
+- **Present:** `new Proxy(target,handler)` → `proxyNew`; dynamic
+  `reflect_get`/`reflect_set` free functions recognized.
+- **Proxy traps that intercept (`zun_interp/src/collections.rs` `proxyGet`/`proxySet`/
+  `proxyHas`/`proxyDelete`):** `get(target,key)`, `set(target,key,value)`,
+  `has(target,key)`, `deleteProperty(target,key)`. Each looks up the named trap on the
+  handler (`heap.proxy_trap`); when the trap is **absent** it falls back to the target's
+  default dynamic-property behavior (Reflect-style). Trap callbacks are invoked with the
+  receiver-as-leading-param model (handler environment, then `target`, `key`[, `value`]).
+- **Property-access syntax now routes through the handler** (`zun_sema/src/check.rs`):
+  a `Ty::Proxy` receiver lowers `proxy.k` / `proxy[k]` reads to `proxyGet` and
+  `proxy.k = v` / `proxy[k] = v` writes to `proxySet` (`proxy_get`/`proxy_set` helpers).
+  The key must be a `string`.
+- **`Reflect` realm global** — registered declaratively like `Object`
+  (`builtin/realm.zun` + `zun_sema/src/realm.rs` `base_type_facets`, `FallThrough`,
+  `Ty::DynamicObject`), so `globalThis.Reflect` resolves to its class descriptor.
+  `Reflect.<m>(...)` statics are recognized by receiver name (`check_reflect_static`,
+  dispatched next to `Object`): `get(target,key)`→`LoadDynamicValue`,
+  `set(target,key,value)`→`StoreDynamicValue` (value boxed to `Any`),
+  `has(target,key)`→`reflectHas`, `deleteProperty(target,key)`→`reflectDelete`,
+  `ownKeys(target)`→`objectKeys`. These are the default operations the Proxy traps fall
+  back to. No new natives were added (existing `proxy*`/`reflect*`/`objectKeys`
+  intrinsics reused), so native dispatch ids are unchanged.
+- **Deferred (documented, not faked):** the descriptor-dependent traps/statics
+  (`getOwnPropertyDescriptor`/`defineProperty`/`getPrototypeOf`/`setPrototypeOf`/
+  `isExtensible`/`preventExtensions`) — they need the property-descriptor model still
+  deferred (NUCLEUS §6) — and the `apply`/`construct` traps. The `has`/`deleteProperty`
+  traps are reachable via `Reflect.has`/`Reflect.deleteProperty` and the `proxyHas`/
+  `proxyDelete` natives, but **not** via the `in`/`delete` operators: those operator
+  tokens are not in the lexer (a language-wide feature, like BigInt's `** & | ^`).
 
 ## 11. Map — partial
 `std/map.zun` → `zun:collections` (`collections.rs`, `ordered_map.rs`). Ordered hash

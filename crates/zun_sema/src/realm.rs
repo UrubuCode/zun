@@ -173,6 +173,11 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "Boolean" => (Ty::Boolean, CtorLowering::FallThrough),
         "Object" => (Ty::DynamicObject, CtorLowering::FallThrough),
         "Symbol" => (Ty::Symbol, CtorLowering::FallThrough),
+        // Surface-only reflection namespace. Like `Object`, it has no `new`
+        // constructor and is never used as a type annotation; the descriptor
+        // value is what `globalThis.Reflect` resolves to, and
+        // `Reflect.<method>(...)` static calls are recognized by receiver name.
+        "Reflect" => (Ty::DynamicObject, CtorLowering::FallThrough),
         _ => return None,
     })
 }
