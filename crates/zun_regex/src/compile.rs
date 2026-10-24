@@ -67,6 +67,12 @@ pub(crate) struct FirstSet {
 }
 
 impl FirstSet {
+    /// The exact first-set members (used to synthesize a candidate test in
+    /// [`crate::zil`], so the generated matcher's prefilter matches this one).
+    pub(crate) fn members(&self) -> &[SetMember] {
+        &self.members
+    }
+
     fn test(&self, x: char) -> bool {
         self.members.iter().any(|m| match m {
             SetMember::Char(c) => {

@@ -25,7 +25,7 @@ use zun_metadata::{MethodDef, StringIndex, TableKind, Token};
 use zun_module::{write_body, Module};
 
 use crate::ast::{ClassItem, is_line_terminator};
-use crate::compile::{compile, Inst};
+use crate::compile::{compile, Inst, Prefilter, SetMember};
 use crate::flags::Flags;
 
 /// Native ids of the string builtins the synthesized code calls.
@@ -200,6 +200,10 @@ pub struct CompiledMatcher {
     pub group_count: usize,
     /// Number of capture cells (`2 * (group_count + 1)`).
     pub cap_cells: usize,
+    /// The program's conservative first-position prefilter, reused by
+    /// [`compile_is_match`] to emit a candidate-skipping unanchored scan (so the
+    /// generated matcher and the runtime engine agree on prefilter decisions).
+    pub(crate) prefilter: Prefilter,
 }
 
 /// Decode a packed `matchAt` result into capture-group spans (`None` = no
@@ -387,31 +391,38 @@ fn escape_ranges(item: ClassItem) -> (Vec<(u32, u32)>, bool) {
     }
 }
 
-/// Emit `m2 = (c in any of `ranges`)` as a 0/1 value in [`L_M2`].
-fn emit_in_ranges(a: &mut Asm, ranges: &[(u32, u32)]) {
+/// Emit `out = (char in slot `c_slot` is in any of `ranges`)` as a 0/1 value in
+/// local `out_slot`.
+fn emit_in_ranges_slots(a: &mut Asm, ranges: &[(u32, u32)], c_slot: u16, out_slot: u16) {
     a.const_u64(0);
-    a.store(L_M2);
+    a.store(out_slot);
     for &(lo, hi) in ranges {
         let skip = a.label();
         if lo == hi {
-            a.load(L_C);
+            a.load(c_slot);
             a.const_u64(lo as u64);
             a.emit(Opcode::CmpNe, Operand::None);
             a.br(Opcode::BranchTrue, skip);
         } else {
-            a.load(L_C);
+            a.load(c_slot);
             a.const_u64(lo as u64);
             a.emit(Opcode::CmpLt, Operand::None);
             a.br(Opcode::BranchTrue, skip);
-            a.load(L_C);
+            a.load(c_slot);
             a.const_u64(hi as u64);
             a.emit(Opcode::CmpGt, Operand::None);
             a.br(Opcode::BranchTrue, skip);
         }
         a.const_u64(1);
-        a.store(L_M2);
+        a.store(out_slot);
         a.bind(skip);
     }
+}
+
+/// Emit `m2 = (c in any of `ranges`)` as a 0/1 value in [`L_M2`] (the matcher's
+/// class-membership slots).
+fn emit_in_ranges(a: &mut Asm, ranges: &[(u32, u32)]) {
+    emit_in_ranges_slots(a, ranges, L_C, L_M2);
 }
 
 /// Compile a pattern whose program uses only the slice-2 subset to a
@@ -453,6 +464,7 @@ pub fn compile_backtracking(
         }
     }
 
+    let prefilter = prog.prefilter.clone();
     let cap_cells = 2 * (prog.group_count + 1);
     if cap_cells > PACK_MAX_CELLS {
         return None; // too many groups to pack into the i64 result
@@ -803,6 +815,7 @@ pub fn compile_backtracking(
         buffer_bytes,
         group_count: prog.group_count,
         cap_cells,
+        prefilter,
     })
 }
 
@@ -824,18 +837,102 @@ pub struct CompiledIsMatch {
     pub group_count: usize,
 }
 
+/// Emit `cand_slot = (the char in `c_slot` is a viable first character per
+/// `members`)`. Mirrors the matcher's `Class` membership (and literal compare),
+/// so the generated prefilter accepts exactly the chars the runtime `FirstSet`
+/// does. Over-approximation is safe (a false candidate only costs a `matchAt`);
+/// under-approximation would skip a real match, so this never narrows.
+fn emit_first_set_candidate(
+    a: &mut Asm,
+    members: &[SetMember],
+    c_slot: u16,
+    cand_slot: u16,
+    item_slot: u16,
+    hit_slot: u16,
+) {
+    a.const_u64(0);
+    a.store(cand_slot);
+    for member in members {
+        match member {
+            SetMember::Char(ch) => {
+                let after = a.label();
+                a.load(c_slot);
+                a.const_u64(*ch as u64);
+                a.emit(Opcode::CmpNe, Operand::None);
+                a.br(Opcode::BranchTrue, after);
+                a.const_u64(1);
+                a.store(cand_slot);
+                a.bind(after);
+            }
+            SetMember::Class(cls) => {
+                // hit = OR over items (respecting per-item negation).
+                a.const_u64(0);
+                a.store(hit_slot);
+                for &item in &cls.items {
+                    let (ranges, negate_item) = escape_ranges(item);
+                    emit_in_ranges_slots(a, &ranges, c_slot, item_slot);
+                    let after = a.label();
+                    a.load(item_slot);
+                    a.const_u64(0);
+                    if negate_item {
+                        a.emit(Opcode::CmpEq, Operand::None); // matches when NOT in set
+                    } else {
+                        a.emit(Opcode::CmpNe, Operand::None); // matches when in set
+                    }
+                    a.br(Opcode::BranchFalse, after);
+                    a.const_u64(1);
+                    a.store(hit_slot);
+                    a.bind(after);
+                }
+                // matched = hit XOR cls.negated -> candidate.
+                let after = a.label();
+                a.load(hit_slot);
+                a.const_u64(0);
+                if cls.negated {
+                    a.emit(Opcode::CmpNe, Operand::None); // in set -> negated fails
+                } else {
+                    a.emit(Opcode::CmpEq, Operand::None); // not in set -> fails
+                }
+                a.br(Opcode::BranchTrue, after);
+                a.const_u64(1);
+                a.store(cand_slot);
+                a.bind(after);
+            }
+        }
+    }
+}
+
 /// Compile `pattern`/`flag_str` to an unanchored boolean `isMatch(s)` method
 /// (JS `RegExp.prototype.test` / `isMatch` semantics) built on top of the
 /// anchored [`compile_backtracking`] matcher. Returns `None` whenever the
 /// matcher does (out-of-subset program, ignore-case, too many groups).
 ///
-/// `isMatch` scans every start position `0..=length(s)`, calling the
-/// JIT-eligible `matchAt` at each, and returns `true` on the first anchored
-/// match — mirroring [`crate::Regex::is_match`], which loops `find` over start
-/// positions. It allocates the work buffer once with `bufferNew` (so it stays a
-/// Tier-0 orchestrator, like `matchAtAlloc`), while the hot `matchAt` tiers up
-/// to Tier 1. Positions are UTF-16 code units (BMP-only agrees with the
-/// interpreted engine; see [`compile_backtracking`]).
+/// `isMatch` performs an unanchored search by advancing the start position
+/// through a **FindFirstChar prefilter** derived from the program's conservative
+/// first-position analysis (the same [`Prefilter`] the runtime engine computes,
+/// carried out of [`compile_backtracking`]), calling the JIT-eligible `matchAt`
+/// only at candidate positions and returning `true` on the first anchored match.
+/// The prefilter cases emitted:
+///
+/// * [`Prefilter::Byte`] (a required leading ASCII literal `c`): a `charCodeAt`
+///   compare loop advances the start index while the code unit `!= c`, so
+///   `matchAt` launches only at matching positions (the JIT-native analog of
+///   `memchr`; ZIL has no memchr).
+/// * [`Prefilter::Set`] (a required leading first-character set, e.g. a class or
+///   an all-consuming alternation): a candidate test mirroring the matcher's
+///   `Class` membership gates each `matchAt`.
+/// * [`Prefilter::Anchored`] (non-multiline leading `^`): a single `matchAt` at
+///   position 0. (Unreachable for the compilable subset — assertions are gated
+///   out of [`compile_backtracking`] — but kept for completeness.)
+/// * [`Prefilter::None`] / [`Prefilter::Multiline`]: the original naive scan of
+///   every start position `0..=length(s)` (a bail reproduces today's exact
+///   results).
+///
+/// This mirrors [`crate::Regex::is_match`], which loops `find` (now prefiltered)
+/// over start positions. The work buffer is allocated once with `bufferNew` (so
+/// `isMatch` stays a Tier-0 orchestrator, like `matchAtAlloc`), while the hot
+/// `matchAt` tiers up to Tier 1. Positions are UTF-16 code units (BMP-only
+/// agrees with the interpreted engine; see [`compile_backtracking`]).
 pub fn compile_is_match(
     pattern: &str,
     flag_str: &str,
@@ -852,18 +949,23 @@ pub fn compile_is_match(
     if flags.global || flags.sticky || flags.unicode || flags.has_indices {
         return None;
     }
-    let CompiledMatcher { mut module, method, buffer_bytes, group_count, .. } =
+    let CompiledMatcher { mut module, method, buffer_bytes, group_count, prefilter, .. } =
         compile_backtracking(pattern, flag_str, nat)?;
 
-    // Locals: 0 s:string, 1 n:u64, 2 pos:u64, 3 buf:object, 4 r:i64.
+    // Locals: 0 s:string, 1 n:u64, 2 pos:u64, 3 buf:object, 4 r:i64, then the
+    // prefilter scratch (used only by the Set path): 5 c:u64, 6 cand:u64,
+    // 7 item:u64, 8 hit:u64.
     const S: u16 = 0;
     const N: u16 = 1;
     const POS: u16 = 2;
     const BUF: u16 = 3;
     const R: u16 = 4;
+    const C: u16 = 5;
+    const CAND: u16 = 6;
+    const ITEM: u16 = 7;
+    const HIT: u16 = 8;
 
     let mut a = Asm::new();
-    let loop_head = a.label();
     let on_match = a.label();
     let on_fail = a.label();
 
@@ -879,31 +981,101 @@ pub fn compile_is_match(
     a.const_u64(0);
     a.store(POS);
 
-    a.bind(loop_head);
-    // if pos > n: no match (the loop is inclusive so an empty match at the end
-    // of the string is found, matching `find`'s `s <= input.len()` bound).
-    a.load(POS);
-    a.load(N);
-    a.emit(Opcode::CmpGt, Operand::None);
-    a.br(Opcode::BranchTrue, on_fail);
-    // r = matchAt(s, pos, buf); matchAt re-initializes caps/sp in its prologue,
-    // so reusing one buffer across every position is safe.
-    a.load(S);
-    a.load(POS);
-    a.load(BUF);
-    a.emit(Opcode::Call, Operand::Token(method));
-    a.store(R);
-    // if r >= 0: matched (signed i64 compare; -1 means no match).
-    a.load(R);
-    a.emit(Opcode::ConstI64, Operand::Imm64(0));
-    a.emit(Opcode::CmpGe, Operand::None);
-    a.br(Opcode::BranchTrue, on_match);
-    // pos += 1; continue.
-    a.load(POS);
-    a.const_u64(1);
-    a.emit(Opcode::AddI32, Operand::None);
-    a.store(POS);
-    a.br(Opcode::Branch, loop_head);
+    // Emit `r = matchAt(s, pos, buf); if r >= 0 goto on_match`. matchAt
+    // re-initializes caps/sp in its prologue, so reusing one buffer across
+    // every position is safe.
+    let emit_attempt = |a: &mut Asm| {
+        a.load(S);
+        a.load(POS);
+        a.load(BUF);
+        a.emit(Opcode::Call, Operand::Token(method));
+        a.store(R);
+        a.load(R);
+        a.emit(Opcode::ConstI64, Operand::Imm64(0));
+        a.emit(Opcode::CmpGe, Operand::None);
+        a.br(Opcode::BranchTrue, on_match);
+    };
+
+    match &prefilter {
+        // Leading `^` (non-multiline): only position 0 is viable.
+        Prefilter::Anchored => {
+            emit_attempt(&mut a);
+            a.br(Opcode::Branch, on_fail);
+        }
+        // Required leading literal / first-char set: skip non-candidate starts.
+        // Candidates are all < n (a required first char can never match at the
+        // end), so `pos >= n` ends the search, exactly like the runtime
+        // `Prefilter::{Byte,Set}::next`, which never returns `len`.
+        Prefilter::Byte(_, ch) => {
+            let scan = a.label();
+            let advance = a.label();
+            a.bind(scan);
+            a.load(POS);
+            a.load(N);
+            a.emit(Opcode::CmpGe, Operand::None);
+            a.br(Opcode::BranchTrue, on_fail);
+            // if charCodeAt(s, pos) != ch: advance
+            a.load(S);
+            a.load(POS);
+            a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.char_code_at as i32));
+            a.const_u32(*ch as u32);
+            a.emit(Opcode::CmpNe, Operand::None);
+            a.br(Opcode::BranchTrue, advance);
+            emit_attempt(&mut a);
+            a.bind(advance);
+            a.load(POS);
+            a.const_u64(1);
+            a.emit(Opcode::AddI32, Operand::None);
+            a.store(POS);
+            a.br(Opcode::Branch, scan);
+        }
+        Prefilter::Set(fs) => {
+            let scan = a.label();
+            let advance = a.label();
+            a.bind(scan);
+            a.load(POS);
+            a.load(N);
+            a.emit(Opcode::CmpGe, Operand::None);
+            a.br(Opcode::BranchTrue, on_fail);
+            // c = charCodeAt(s, pos); cand = (c is a viable first char)
+            a.load(S);
+            a.load(POS);
+            a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.char_code_at as i32));
+            a.emit(Opcode::Conv, Operand::Imm32(NumKind::U64.to_imm()));
+            a.store(C);
+            emit_first_set_candidate(&mut a, fs.members(), C, CAND, ITEM, HIT);
+            // if cand == 0: advance
+            a.load(CAND);
+            a.const_u64(0);
+            a.emit(Opcode::CmpEq, Operand::None);
+            a.br(Opcode::BranchTrue, advance);
+            emit_attempt(&mut a);
+            a.bind(advance);
+            a.load(POS);
+            a.const_u64(1);
+            a.emit(Opcode::AddI32, Operand::None);
+            a.store(POS);
+            a.br(Opcode::Branch, scan);
+        }
+        // No usable first-char information (or multiline `^`, which the subset
+        // never reaches): try every start position `0..=n` inclusive, so an
+        // empty match at the end of the string is found (matching `find`'s
+        // `s <= input.len()` bound). Identical to the pre-prefilter behavior.
+        Prefilter::None | Prefilter::Multiline => {
+            let loop_head = a.label();
+            a.bind(loop_head);
+            a.load(POS);
+            a.load(N);
+            a.emit(Opcode::CmpGt, Operand::None);
+            a.br(Opcode::BranchTrue, on_fail);
+            emit_attempt(&mut a);
+            a.load(POS);
+            a.const_u64(1);
+            a.emit(Opcode::AddI32, Operand::None);
+            a.store(POS);
+            a.br(Opcode::Branch, loop_head);
+        }
+    }
 
     a.bind(on_match);
     a.emit(Opcode::ConstTrue, Operand::None);
@@ -914,14 +1086,19 @@ pub fn compile_is_match(
 
     let code = a.finish();
     let name: StringIndex = module.strings.intern("isMatch");
+    let u64b = JitKind::Num(NumKind::U64).to_byte();
     let local_kinds = [
         JitKind::String.to_byte(),
-        JitKind::Num(NumKind::U64).to_byte(),
-        JitKind::Num(NumKind::U64).to_byte(),
+        u64b, // n
+        u64b, // pos
         JitKind::Object.to_byte(),
-        JitKind::Num(NumKind::I64).to_byte(),
+        JitKind::Num(NumKind::I64).to_byte(), // r
+        u64b,                                 // c
+        u64b,                                 // cand
+        u64b,                                 // item
+        u64b,                                 // hit
     ];
-    let body = write_body(&mut module.code, 1, 5, true, JitKind::Bool.to_byte(), &local_kinds, &code);
+    let body = write_body(&mut module.code, 1, 9, true, JitKind::Bool.to_byte(), &local_kinds, &code);
     let is_match_method = module.tables.add_method_def(MethodDef {
         name,
         signature: zun_metadata::BlobIndex(0),

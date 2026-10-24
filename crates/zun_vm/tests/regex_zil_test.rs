@@ -49,12 +49,21 @@ const PATTERNS: &[(&str, &str)] = &[
     ("é", ""), // BMP non-ASCII
     ("[a-c]|[x-z]", ""),
     ("hello", ""),
+    ("cat|dog|bird|fish", ""), // all-consuming alternation -> first-char Set
 ];
 
 const INPUTS: &[&str] = &[
     "", "a", "b", "c", "ab", "abc", "abx", "abd", "xabc", "abcx", "foo", "bar",
     "baz", "x", "y", "z", "xy", "ac", "a.c", "aXc", "a\nc", "bc", "cc", "aabc",
     "ba", "0x", "9x", "hello", "xhellox", "café", "é", "zzz", "qqq",
+    // Long non-matching prefixes with the match (if any) at the very end, so a
+    // FindFirstChar prefilter skips most of the string: these are the cases
+    // where the prefilter changes work but must never change the result.
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzhello",
+    "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcat",
+    "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm0x",
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwé",
+    "no-match-anywhere-in-this-long-filler-string-at-all",
 ];
 
 fn args(input: &str) -> Vec<Value> {
