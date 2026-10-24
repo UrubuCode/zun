@@ -105,3 +105,109 @@ fn is_buffer_and_equals() {
     );
     assert_eq!(out, vec!["true", "false", "true", "false", "2"]);
 }
+
+#[test]
+fn utf16le_and_ucs2_roundtrip() {
+    let out = run_source(
+        r#"function main() {
+            let b = Buffer.from("hi", "utf16le");
+            print(b.length);
+            print(b.toString("hex"));
+            print(b.toString("utf16le"));
+            print(Buffer.from("hi", "ucs2").toString("ucs2"));
+        }"#,
+    );
+    // 'h'=0x68,'i'=0x69 -> LE 16-bit units [68 00 69 00].
+    assert_eq!(out, vec!["4", "68006900", "hi", "hi"]);
+}
+
+#[test]
+fn base64url_roundtrip() {
+    let out = run_source(
+        r#"function main() {
+            print(Buffer.from("hello").toString("base64url"));
+            print(Buffer.from("aGVsbG8", "base64url").toString());
+        }"#,
+    );
+    assert_eq!(out, vec!["aGVsbG8", "hello"]);
+}
+
+#[test]
+fn float_and_double_roundtrip() {
+    let out = run_source(
+        r#"function main() {
+            let b = Buffer.alloc(8);
+            b.writeFloatLE(1.5, 0);
+            print(b.readFloatLE(0));
+            b.writeFloatBE(0.5, 0);
+            print(b.readFloatBE(0));
+            b.writeDoubleLE(1.5, 0);
+            print(b.readDoubleLE(0));
+            b.writeDoubleBE(0.25, 0);
+            print(b.readDoubleBE(0));
+        }"#,
+    );
+    assert_eq!(out, vec!["1.5", "0.5", "1.5", "0.25"]);
+}
+
+#[test]
+fn variable_width_int_roundtrip() {
+    let out = run_source(
+        r#"function main() {
+            let b = Buffer.alloc(6);
+            b.writeUIntLE(66051, 0, 3);
+            print(b[0]);
+            print(b[1]);
+            print(b[2]);
+            print(b.readUIntLE(0, 3));
+            print(b.readUIntBE(0, 3));
+            let s = Buffer.alloc(3);
+            s.writeIntLE(-2, 0, 3);
+            print(s.readIntLE(0, 3));
+        }"#,
+    );
+    // 66051 = 0x010203 -> LE bytes [3, 2, 1]; BE read = 0x030201 = 197121.
+    assert_eq!(out, vec!["3", "2", "1", "66051", "197121", "-2"]);
+}
+
+#[test]
+fn byte_swaps() {
+    let out = run_source(
+        r#"function main() {
+            print(Buffer.from([1, 2, 3, 4]).swap16().toString("hex"));
+            print(Buffer.from([1, 2, 3, 4]).swap32().toString("hex"));
+            print(Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]).swap64().toString("hex"));
+        }"#,
+    );
+    assert_eq!(out, vec!["02010403", "04030201", "0807060504030201"]);
+}
+
+#[test]
+fn index_of_includes_and_last() {
+    let out = run_source(
+        r#"function main() {
+            let b = Buffer.from("abcabc");
+            print(b.indexOf("bc"));
+            print(b.lastIndexOf("bc"));
+            print(b.indexOf(99));
+            print(b.indexOf("bc", 2));
+            print(b.indexOf("zz"));
+            print(b.includes("abc"));
+            print(b.includes("zz"));
+        }"#,
+    );
+    assert_eq!(out, vec!["1", "4", "2", "4", "-1", "true", "false"]);
+}
+
+#[test]
+fn negative_slice_indices() {
+    let out = run_source(
+        r#"function main() {
+            let b = Buffer.from("hello");
+            print(b.slice(-3).toString());
+            print(b.slice(1, -1).toString());
+            print(b.slice(-4, -2).toString());
+        }"#,
+    );
+    assert_eq!(out, vec!["llo", "ell", "el"]);
+}

@@ -32,6 +32,25 @@ fn as_usize(value: Option<&Value>) -> Option<usize> {
     }
 }
 
+fn as_i64(value: Option<&Value>) -> Option<i64> {
+    match value? {
+        Value::Int(value, _) => Some(*value),
+        Value::Float(value, _) => Some(*value as i64),
+        _ => None,
+    }
+}
+
+/// Resolve a possibly-negative relative index against `len` (ES/Node slice
+/// semantics): a negative index counts from the end, and the result is clamped
+/// to `0..=len`.
+fn relative(index: i64, len: usize) -> usize {
+    if index < 0 {
+        (len as i64 + index).max(0) as usize
+    } else {
+        (index as usize).min(len)
+    }
+}
+
 fn as_string(value: Option<&Value>) -> Option<std::rc::Rc<str>> {
     match value? {
         Value::Str(text) => Some(text.clone()),
@@ -72,9 +91,12 @@ fn normalize_encoding(name: &str) -> &'static str {
     match name.to_ascii_lowercase().as_str() {
         "hex" => "hex",
         "base64" => "base64",
+        "base64url" => "base64url",
         "latin1" | "binary" => "latin1",
-        // utf8/utf-8 and anything else. ucs2/utf16le and base64url are
-        // deferred (documented in NUCLEUS #21).
+        // `ucs2`/`ucs-2`/`utf16le`/`utf-16le` are all aliases for little-endian
+        // UTF-16 (two bytes per code unit) in Node.
+        "ucs2" | "ucs-2" | "utf16le" | "utf-16le" => "utf16le",
+        // utf8/utf-8 and anything else.
         _ => "utf8",
     }
 }
@@ -83,8 +105,9 @@ fn normalize_encoding(name: &str) -> &'static str {
 fn encode(text: &str, encoding: &str) -> Vec<u8> {
     match normalize_encoding(encoding) {
         "hex" => decode_hex(text),
-        "base64" => decode_base64(text),
+        "base64" | "base64url" => decode_base64(text),
         "latin1" => text.chars().map(|c| (c as u32 & 0xff) as u8).collect(),
+        "utf16le" => encode_utf16le(text),
         _ => text.as_bytes().to_vec(),
     }
 }
@@ -94,9 +117,28 @@ fn decode(bytes: &[u8], encoding: &str) -> String {
     match normalize_encoding(encoding) {
         "hex" => bytes.iter().map(|b| format!("{b:02x}")).collect(),
         "base64" => encode_base64(bytes),
+        "base64url" => encode_base64url(bytes),
         "latin1" => bytes.iter().map(|&b| b as char).collect(),
+        "utf16le" => decode_utf16le(bytes),
         _ => String::from_utf8_lossy(bytes).into_owned(),
     }
+}
+
+/// Little-endian UTF-16 (ucs2/utf16le): two bytes per code unit, low byte first.
+fn encode_utf16le(text: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for unit in text.encode_utf16() {
+        out.push((unit & 0xff) as u8);
+        out.push((unit >> 8) as u8);
+    }
+    out
+}
+
+fn decode_utf16le(bytes: &[u8]) -> String {
+    // A trailing odd byte is dropped, matching Node's truncation.
+    let units: Vec<u16> =
+        bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    String::from_utf16_lossy(&units)
 }
 
 fn decode_hex(text: &str) -> Vec<u8> {
@@ -129,14 +171,26 @@ fn encode_base64(bytes: &[u8]) -> String {
     out
 }
 
+/// Base64url (`-`/`_`, unpadded): the URL-safe alphabet Node emits for the
+/// `base64url` encoding. Padding is omitted; the decoder above is tolerant of
+/// both alphabets so no separate decoder is needed.
+fn encode_base64url(bytes: &[u8]) -> String {
+    encode_base64(bytes)
+        .trim_end_matches('=')
+        .replace('+', "-")
+        .replace('/', "_")
+}
+
 fn decode_base64(text: &str) -> Vec<u8> {
     let value = |c: u8| -> Option<u32> {
         match c {
             b'A'..=b'Z' => Some((c - b'A') as u32),
             b'a'..=b'z' => Some((c - b'a' + 26) as u32),
             b'0'..=b'9' => Some((c - b'0' + 52) as u32),
-            b'+' => Some(62),
-            b'/' => Some(63),
+            // Accept both the standard (`+`/`/`) and URL-safe (`-`/`_`)
+            // alphabets so one decoder serves `base64` and `base64url`.
+            b'+' | b'-' => Some(62),
+            b'/' | b'_' => Some(63),
             _ => None,
         }
     };
@@ -214,6 +268,40 @@ fn accessor(name: &str) -> Option<Accessor> {
         return None;
     };
     Some(Accessor { width, signed, little_endian, num_kind })
+}
+
+/// Scan `haystack` for `needle`, honoring a possibly-negative `byte_offset`
+/// (negative counts from the end). `last` searches backward (for
+/// `lastIndexOf`). Returns the matching byte index, or `None`.
+fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -> Option<usize> {
+    let len = haystack.len();
+    if needle.is_empty() {
+        let off = if byte_offset < 0 {
+            (len as i64 + byte_offset).max(0)
+        } else {
+            byte_offset.min(len as i64)
+        };
+        return Some(off as usize);
+    }
+    if needle.len() > len {
+        return None;
+    }
+    let max_start = len - needle.len();
+    if last {
+        // Highest start index to consider (byteOffset defaults to the length).
+        let start = if byte_offset < 0 { len as i64 + byte_offset } else { byte_offset };
+        if start < 0 {
+            return None;
+        }
+        let start = (start as usize).min(max_start);
+        (0..=start).rev().find(|&i| &haystack[i..i + needle.len()] == needle)
+    } else {
+        let start = if byte_offset < 0 { (len as i64 + byte_offset).max(0) as usize } else { byte_offset as usize };
+        if start > max_start {
+            return None;
+        }
+        (start..=max_start).find(|&i| &haystack[i..i + needle.len()] == needle)
+    }
 }
 
 /// Sign-extend an unsigned value of `width` bytes.
@@ -332,8 +420,10 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
         "nodeBufferSlice" => Some((|| {
             let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let len = view_len(view).ok_or(RunError::BadToken)?;
-            let start = as_usize(args.get(1)).unwrap_or(0).min(len);
-            let end = as_usize(args.get(2)).unwrap_or(len).min(len);
+            // Signed indices: negatives count from the end (Node/ES slice).
+            let start = relative(as_i64(args.get(1)).unwrap_or(0), len);
+            let end = relative(as_i64(args.get(2)).unwrap_or(len as i64), len);
+            let end = end.max(start);
             let child = zun_gc::with_current_heap_mut(|heap| heap.typed_array_subarray(view, start, end))
                 .ok_or(RunError::BadToken)?;
             Ok(Value::Object(child))
@@ -372,6 +462,142 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                 }
             });
             Ok(Value::Int(copied as i64, NumKind::U64))
+        })()),
+        // --- Buffer gap closure (NUCLEUS #21) -----------------------------
+        // IEEE-754 float/double readers/writers. The raw bit pattern rides the
+        // existing fixed-width `read_uint`/`write_uint` helpers, then is
+        // reinterpreted. Reads yield a JS number (`F64`); writes return the
+        // next offset like the integer writers.
+        "nodeBufferReadFloatLE" | "nodeBufferReadFloatBE" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let offset = as_usize(args.get(1)).unwrap_or(0);
+            let le = name.ends_with("LE");
+            let bits = read_uint(view, offset, 4, le).ok_or(RunError::BadToken)? as u32;
+            Ok(Value::Float(f32::from_bits(bits) as f64, NumKind::F64))
+        })()),
+        "nodeBufferReadDoubleLE" | "nodeBufferReadDoubleBE" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let offset = as_usize(args.get(1)).unwrap_or(0);
+            let le = name.ends_with("LE");
+            let bits = read_uint(view, offset, 8, le).ok_or(RunError::BadToken)?;
+            Ok(Value::Float(f64::from_bits(bits), NumKind::F64))
+        })()),
+        "nodeBufferWriteFloatLE" | "nodeBufferWriteFloatBE" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let offset = as_usize(args.get(1)).unwrap_or(0);
+            let value = match args.get(2) {
+                Some(Value::Float(v, _)) => *v as f32,
+                Some(Value::Int(v, _)) => *v as f32,
+                _ => return Err(RunError::BadToken),
+            };
+            let le = name.ends_with("LE");
+            let next = write_uint(view, offset, value.to_bits() as u64, 4, le).ok_or(RunError::BadToken)?;
+            Ok(Value::Int(next as i64, NumKind::U64))
+        })()),
+        "nodeBufferWriteDoubleLE" | "nodeBufferWriteDoubleBE" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let offset = as_usize(args.get(1)).unwrap_or(0);
+            let value = match args.get(2) {
+                Some(Value::Float(v, _)) => *v,
+                Some(Value::Int(v, _)) => *v as f64,
+                _ => return Err(RunError::BadToken),
+            };
+            let le = name.ends_with("LE");
+            let next = write_uint(view, offset, value.to_bits(), 8, le).ok_or(RunError::BadToken)?;
+            Ok(Value::Int(next as i64, NumKind::U64))
+        })()),
+        // Variable-width integer readers/writers (`readUIntLE(offset, byteLength)`
+        // etc., 1..=6 bytes in Node, incl. the 24/40/48-bit cases). The width is
+        // a runtime argument. Reads yield a JS number (`F64`, which holds every
+        // value up to 48 bits exactly); writes return the next offset.
+        "nodeBufferReadUIntLE" | "nodeBufferReadUIntBE" | "nodeBufferReadIntLE"
+        | "nodeBufferReadIntBE" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let offset = as_usize(args.get(1)).unwrap_or(0);
+            let width = as_usize(args.get(2)).unwrap_or(0);
+            if width == 0 || width > 6 {
+                return Err(RunError::BadToken);
+            }
+            let le = name.ends_with("LE");
+            let raw = read_uint(view, offset, width, le).ok_or(RunError::BadToken)?;
+            let signed = name.contains("ReadInt");
+            let value = if signed { sign_extend(raw, width) as f64 } else { raw as f64 };
+            Ok(Value::Float(value, NumKind::F64))
+        })()),
+        "nodeBufferWriteUIntLE" | "nodeBufferWriteUIntBE" | "nodeBufferWriteIntLE"
+        | "nodeBufferWriteIntBE" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let offset = as_usize(args.get(1)).unwrap_or(0);
+            let value = match args.get(2) {
+                Some(Value::Float(v, _)) => *v as i64 as u64,
+                Some(Value::Int(v, _)) => *v as u64,
+                _ => return Err(RunError::BadToken),
+            };
+            let width = as_usize(args.get(3)).unwrap_or(0);
+            if width == 0 || width > 6 {
+                return Err(RunError::BadToken);
+            }
+            let le = name.ends_with("LE");
+            let next = write_uint(view, offset, value, width, le).ok_or(RunError::BadToken)?;
+            Ok(Value::Int(next as i64, NumKind::U64))
+        })()),
+        // In-place byte swaps. Node throws a RangeError when the length is not a
+        // multiple of the element width; the project's buffer ops signal failure
+        // with `RunError::BadToken`, so a length mismatch returns that here.
+        "nodeBufferSwap16" | "nodeBufferSwap32" | "nodeBufferSwap64" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let width = match name {
+                "nodeBufferSwap16" => 2,
+                "nodeBufferSwap32" => 4,
+                _ => 8,
+            };
+            let len = view_len(view).ok_or(RunError::BadToken)?;
+            if len % width != 0 {
+                return Err(RunError::BadToken);
+            }
+            zun_gc::with_current_heap_mut(|heap| {
+                let mut base = 0;
+                while base < len {
+                    for i in 0..width / 2 {
+                        let a = heap.u8_array_get(view, base + i)?;
+                        let b = heap.u8_array_get(view, base + width - 1 - i)?;
+                        heap.u8_array_set(view, base + i, b)?;
+                        heap.u8_array_set(view, base + width - 1 - i, a)?;
+                    }
+                    base += width;
+                }
+                Some(())
+            })
+            .ok_or(RunError::BadToken)?;
+            Ok(Value::Object(view))
+        })()),
+        // Search: `indexOf`/`lastIndexOf`/`includes`. The needle is a byte value
+        // (number), a string (interpreted under the given encoding), or another
+        // buffer; the optional byteOffset may be negative (counts from the end).
+        "nodeBufferIndexOf" | "nodeBufferLastIndexOf" | "nodeBufferIncludes" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let haystack = view_bytes(view).ok_or(RunError::BadToken)?;
+            let encoding = as_string(args.get(3)).unwrap_or_else(|| "utf8".into());
+            // The needle arrives boxed to `Any`; unbox to its concrete value.
+            let needle_val = match args.get(1).ok_or(RunError::BadToken)? {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                    .ok_or(RunError::BadToken)?,
+                other => other.clone(),
+            };
+            let needle: Vec<u8> = match &needle_val {
+                Value::Str(text) => encode(text, &encoding),
+                Value::Int(v, _) => vec![(*v & 0xff) as u8],
+                Value::Float(v, _) => vec![(*v as i64 & 0xff) as u8],
+                Value::Object(obj) => view_bytes(*obj).ok_or(RunError::BadToken)?,
+                _ => return Err(RunError::BadToken),
+            };
+            let last = name == "nodeBufferLastIndexOf";
+            let offset = as_i64(args.get(2)).unwrap_or(0);
+            let found = buffer_search(&haystack, &needle, offset, last);
+            match name {
+                "nodeBufferIncludes" => Ok(Value::Bool(found.is_some())),
+                _ => Ok(Value::Int(found.map(|i| i as i64).unwrap_or(-1), NumKind::I64)),
+            }
         })()),
         _ => {
             // Fixed-width readers/writers.

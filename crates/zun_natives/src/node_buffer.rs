@@ -48,7 +48,8 @@ pub const MODULE: crate::Module = crate::Module {
         // `buf.write(string, offset?, encoding?)` -> bytes written.
         NativeFn { name: "nodeBufferWrite", params: &[U8Array, Str, U64, Str], ret: U64, imp: unavailable },
         // `buf.slice(start?, end?)` / `buf.subarray(...)` — shares memory.
-        NativeFn { name: "nodeBufferSlice", params: &[U8Array, U64, U64], ret: U8Array, imp: unavailable },
+        // Signed indices so negatives can count from the end (Node/ES).
+        NativeFn { name: "nodeBufferSlice", params: &[U8Array, I64, I64], ret: U8Array, imp: unavailable },
         // `buf.fill(value)` — fill the whole buffer with a byte.
         NativeFn { name: "nodeBufferFill", params: &[U8Array, U8], ret: Bool, imp: unavailable },
         // `buf.equals(other)`.
@@ -87,5 +88,37 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "nodeBufferWriteBigUInt64LE", params: &[U8Array, U64, U64], ret: U64, imp: unavailable },
         NativeFn { name: "nodeBufferReadBigUInt64BE", params: &[U8Array, U64], ret: U64, imp: unavailable },
         NativeFn { name: "nodeBufferWriteBigUInt64BE", params: &[U8Array, U64, U64], ret: U64, imp: unavailable },
+
+        // --- NUCLEUS #21 gap closure (appended last; ids stay stable) ------
+        // IEEE-754 float/double accessors. A reader is `(view, offset) -> f64`;
+        // a writer `(view, offset, value) -> u64` (next offset).
+        NativeFn { name: "nodeBufferReadFloatLE", params: &[U8Array, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferReadFloatBE", params: &[U8Array, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteFloatLE", params: &[U8Array, U64, F64], ret: U64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteFloatBE", params: &[U8Array, U64, F64], ret: U64, imp: unavailable },
+        NativeFn { name: "nodeBufferReadDoubleLE", params: &[U8Array, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferReadDoubleBE", params: &[U8Array, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteDoubleLE", params: &[U8Array, U64, F64], ret: U64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteDoubleBE", params: &[U8Array, U64, F64], ret: U64, imp: unavailable },
+        // Variable-width integers (1..=6 bytes): reader `(view, offset, byteLen)
+        // -> f64`; writer `(view, offset, value, byteLen) -> u64`.
+        NativeFn { name: "nodeBufferReadUIntLE", params: &[U8Array, U64, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferReadUIntBE", params: &[U8Array, U64, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferReadIntLE", params: &[U8Array, U64, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferReadIntBE", params: &[U8Array, U64, U64], ret: F64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteUIntLE", params: &[U8Array, U64, F64, U64], ret: U64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteUIntBE", params: &[U8Array, U64, F64, U64], ret: U64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteIntLE", params: &[U8Array, U64, F64, U64], ret: U64, imp: unavailable },
+        NativeFn { name: "nodeBufferWriteIntBE", params: &[U8Array, U64, F64, U64], ret: U64, imp: unavailable },
+        // In-place byte swaps; return the (mutated) same view.
+        NativeFn { name: "nodeBufferSwap16", params: &[U8Array], ret: U8Array, imp: unavailable },
+        NativeFn { name: "nodeBufferSwap32", params: &[U8Array], ret: U8Array, imp: unavailable },
+        NativeFn { name: "nodeBufferSwap64", params: &[U8Array], ret: U8Array, imp: unavailable },
+        // Search. Needle is boxed to `Opaque` (number / string / Buffer);
+        // byteOffset is signed (negative counts from the end); encoding applies
+        // to a string needle. `indexOf`/`lastIndexOf` -> index or -1.
+        NativeFn { name: "nodeBufferIndexOf", params: &[U8Array, Opaque, I64, Str], ret: I64, imp: unavailable },
+        NativeFn { name: "nodeBufferLastIndexOf", params: &[U8Array, Opaque, I64, Str], ret: I64, imp: unavailable },
+        NativeFn { name: "nodeBufferIncludes", params: &[U8Array, Opaque, I64, Str], ret: Bool, imp: unavailable },
     ],
 };

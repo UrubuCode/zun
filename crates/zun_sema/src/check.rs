@@ -1958,8 +1958,29 @@ impl Checker<'_> {
                     self.error(span, "`slice` expects at most 2 arguments".to_string());
                     return self.poison(span);
                 }
-                let start = opt_int!(0, 0);
-                let end = opt_int!(1, u64::MAX);
+                // Signed indices: a negative counts from the end. The `end`
+                // default is a large positive sentinel the floor clamps to the
+                // real length (a negative sentinel would be read as `len-1`).
+                let i64_ty = Ty::Int(IntKind::I64);
+                let opt_signed = |checker: &mut Self, cx: &mut FunctionCx, pos: usize, default: f64| {
+                    match args.get(pos) {
+                        Some(arg) => {
+                            let mut value = checker.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut value, i64_ty);
+                            if !value.ty.is_int() && !value.ty.is_error() {
+                                checker.error(value.span, "Buffer offset/index must be an integer");
+                            }
+                            value
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(default),
+                            ty: i64_ty,
+                            span,
+                        },
+                    }
+                };
+                let start = opt_signed(self, cx, 0, 0.0);
+                let end = opt_signed(self, cx, 1, (1i64 << 53) as f64);
                 call(self, "nodeBufferSlice", vec![receiver, start, end], u8_view)
             }
             "fill" => {
@@ -2003,6 +2024,114 @@ impl Checker<'_> {
                     vec![receiver, target, target_start, source_start, source_end],
                     u64_ty,
                 )
+            }
+            "swap16" | "swap32" | "swap64" => {
+                if !args.is_empty() {
+                    self.error(span, format!("`{mname}` expects no arguments"));
+                    return self.poison(span);
+                }
+                let native = match mname {
+                    "swap16" => "nodeBufferSwap16",
+                    "swap32" => "nodeBufferSwap32",
+                    _ => "nodeBufferSwap64",
+                };
+                call(self, native, vec![receiver], u8_view)
+            }
+            "indexOf" | "includes" | "lastIndexOf" => {
+                if args.is_empty() || args.len() > 3 {
+                    self.error(span, format!("`{mname}` expects 1 to 3 arguments"));
+                    return self.poison(span);
+                }
+                // The needle (number / string / Buffer) is boxed to `Any`; the
+                // optional byteOffset is signed; the optional encoding is a
+                // string. `lastIndexOf` defaults its offset to the length (a
+                // large sentinel the floor clamps down).
+                let needle_raw = self.check_expr(cx, &args[0]);
+                let needle = if needle_raw.ty == Ty::Any || needle_raw.ty.is_error() {
+                    needle_raw
+                } else {
+                    hir::Expr {
+                        span: needle_raw.span,
+                        kind: hir::ExprKind::BoxAny { value: Box::new(needle_raw) },
+                        ty: Ty::Any,
+                    }
+                };
+                let i64_ty = Ty::Int(IntKind::I64);
+                let default_offset = if mname == "lastIndexOf" { (1i64 << 53) as f64 } else { 0.0 };
+                let byte_offset = match args.get(1) {
+                    Some(arg) => {
+                        let mut value = self.check_expr(cx, arg);
+                        coerce_numeric_literal(&mut value, i64_ty);
+                        if !value.ty.is_int() && !value.ty.is_error() {
+                            self.error(value.span, "Buffer byteOffset must be an integer");
+                        }
+                        value
+                    }
+                    None => hir::Expr {
+                        kind: hir::ExprKind::Number(default_offset),
+                        ty: i64_ty,
+                        span,
+                    },
+                };
+                let encoding = match args.get(2) {
+                    Some(arg) => self.check_expr(cx, arg),
+                    None => string_lit("utf8", span),
+                };
+                let (native, ret) = match mname {
+                    "indexOf" => ("nodeBufferIndexOf", Ty::Int(IntKind::I64)),
+                    "lastIndexOf" => ("nodeBufferLastIndexOf", Ty::Int(IntKind::I64)),
+                    _ => ("nodeBufferIncludes", Ty::Boolean),
+                };
+                call(self, native, vec![receiver, needle, byte_offset, encoding], ret)
+            }
+            // Variable-width integer readers `readUIntLE(offset, byteLength)`.
+            "readUIntLE" | "readUIntBE" | "readIntLE" | "readIntBE" => {
+                let native = buffer_accessor_native(mname);
+                let Some((id, info)) = zun_natives::resolve("nodeBuffer", &native) else {
+                    self.error(span, format!("`{mname}` is not a supported Buffer reader"));
+                    return self.poison(span);
+                };
+                if args.len() != 2 {
+                    self.error(span, format!("`{mname}` expects an offset and a byteLength"));
+                    return self.poison(span);
+                }
+                let offset = opt_int!(0, 0);
+                let byte_length = opt_int!(1, 1);
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, offset, byte_length] },
+                    ty: native_ty(info.ret),
+                    span,
+                }
+            }
+            // Variable-width integer writers `writeUIntLE(value, offset, byteLength)`.
+            "writeUIntLE" | "writeUIntBE" | "writeIntLE" | "writeIntBE" => {
+                let native = buffer_accessor_native(mname);
+                let Some((id, info)) = zun_natives::resolve("nodeBuffer", &native) else {
+                    self.error(span, format!("`{mname}` is not a supported Buffer writer"));
+                    return self.poison(span);
+                };
+                if args.len() != 3 {
+                    self.error(span, format!("`{mname}` expects a value, offset and byteLength"));
+                    return self.poison(span);
+                }
+                // Node order `(value, offset, byteLength)`; native takes
+                // `(view, offset, value, byteLength)`.
+                let mut value = self.check_expr(cx, &args[0]);
+                let value_ty = native_ty(info.params[2]);
+                coerce_numeric_literal(&mut value, value_ty);
+                if !value.ty.is_error() && !self.is_assignable(value.ty, value_ty) {
+                    self.error(value.span, format!("argument type {:?} does not match {value_ty:?}", value.ty));
+                }
+                let offset = opt_int!(1, 0);
+                let byte_length = opt_int!(2, 1);
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, offset, value, byte_length],
+                    },
+                    ty: Ty::Int(IntKind::U64),
+                    span,
+                }
             }
             read if read.starts_with("read") => {
                 let native = buffer_accessor_native(read);
@@ -4547,6 +4676,10 @@ impl Checker<'_> {
                 if receiver.ty == Ty::BufferView(hir::BufferViewKind::U8) {
                     let intercept = match mname.as_str() {
                         "toString" | "write" | "slice" | "equals" | "copy" => true,
+                        // Node Buffer search accepts number / string / Buffer
+                        // needles (richer than the numeric typed-array form).
+                        "indexOf" | "includes" | "lastIndexOf" => true,
+                        "swap16" | "swap32" | "swap64" => true,
                         "fill" => args.len() == 1,
                         other => other.starts_with("read") || other.starts_with("write"),
                     };

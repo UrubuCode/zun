@@ -45,14 +45,14 @@ read.
 | 18 | DataView | mostly | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. **Endianness flag is now optional and defaults to `false` (big-endian) per spec** — `getUint32(0)` type-checks and reads big-endian; single-byte widths still take none |
 | 19 | TypedArrays | mostly | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. **Bulk `set(source, offset?)`** (overloaded against the indexed `set(index, value)` by first-argument type), **copying `slice(start?, end?)`**, **in-place `copyWithin(target, start?, end?)`**, the functional methods **`map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`** (spec `(value, index, array)` callback, Tier 0), **`indexOf`/`includes`/`join`**, and the statics **`from(src, mapFn?)`/`of(...)`** all landed, as kind-agnostic `typedArray*` natives (one each, not per-kind). `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: no-initial-value `reduce` (initial value required); `Uint8Array.slice` keeps Buffer (shared-type) semantics. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters (== UTC, calendar is UTC-only). Missing `toLocale*`, local setters |
-| 21 | Buffer | partial | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`/`write`/`equals`/`copy`/`fill(value)` + common LE/BE 8/16/32/64 readers/writers. Encodings utf8/hex/base64/latin1. Deferred: ucs2/utf16le, base64url, 24-bit/float read*/write*, `swap16/32`, `indexOf`/`includes`, negative slice indices |
+| 21 | Buffer | mostly | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`(negative indices)/`write`/`equals`/`copy`/`fill(value)`, common LE/BE 8/16/32/64 readers/writers, `readFloat*`/`readDouble*`/`writeFloat*`/`writeDouble*`, variable-width `read{U,}Int*`/`write{U,}Int*` (1..6 bytes, incl. 24-bit), `swap16/32/64`, and `indexOf`/`lastIndexOf`/`includes` (number/string/Buffer needle + byteOffset/encoding). Encodings utf8/hex/base64/base64url/ucs2/utf16le/latin1. Length-mismatch swap + OOB access err as `BadToken` (project convention, not JS `RangeError`). Deferred: negative `copy` indices (clamped) |
 | 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 12 · partial 9 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 13 · partial 8 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -948,7 +948,7 @@ global through the prelude.
   local == UTC, deferred to avoid duplicating the surface until a tz offset
   exists); `toDateString toTimeString toUTCString`; `toLocale*` (locale/ICU).
 
-## 21. Buffer (Node) — partial  *(built on the Uint8Array byte-view floor)*
+## 21. Buffer (Node) — mostly  *(built on the Uint8Array byte-view floor)*
 
 Node's `Buffer` **is** a `Uint8Array` subclass, so Zun's `Buffer` is a nominal
 alias for the `U8` typed-array view (`Ty::BufferView(BufferViewKind::U8)`) — it
@@ -976,26 +976,38 @@ There is no parallel `builtin/buffer.zun` class.
   encoding?)`.
 - **Instance (present):** `length` (property), indexed byte get/set `buf[i]`
   (added generically for all buffer views), `toString(encoding?, start?, end?)`,
-  `slice(start?, end?)` (shares memory, via `typed_array_subarray`),
+  `slice(start?, end?)` (shares memory, via `typed_array_subarray`; **negative
+  indices count from the end**, Node/ES semantics),
   `write(string, offset?, encoding?)`, `fill(value)` (single-arg, whole buffer),
-  `equals(other)`, `copy(target, targetStart?, sourceStart?, sourceEnd?)`, and
-  the common fixed-width readers/writers `readUInt8/readInt8`,
-  `read{U,}Int16LE/BE`, `read{U,}Int32LE/BE`, `readBig{U,}Int64LE/BE` and the
-  matching `write*` (all assembled from single-byte view access).
+  `equals(other)`, `copy(target, targetStart?, sourceStart?, sourceEnd?)`, the
+  fixed-width readers/writers `readUInt8/readInt8`, `read{U,}Int16LE/BE`,
+  `read{U,}Int32LE/BE`, `readBig{U,}Int64LE/BE` and matching `write*`, the
+  **IEEE-754 `readFloatLE/BE`/`readDoubleLE/BE` + `writeFloat*`/`writeDouble*`**,
+  the **variable-width `read{U,}IntLE/BE(offset, byteLength)` /
+  `write{U,}IntLE/BE(value, offset, byteLength)`** (1..=6 bytes, incl. the
+  24/40/48-bit cases), the in-place byte swaps **`swap16`/`swap32`/`swap64`**,
+  and the search methods **`indexOf`/`lastIndexOf`/`includes`** (byte-value,
+  string, or Buffer needle; optional signed `byteOffset` + `encoding`). All
+  assembled from single-byte view access.
 - **`subarray`/`fill(v,begin,end)`/`get`/`set`** keep their typed-array
   semantics (generic dispatch) — a Buffer shares its type with a plain
   `Uint8Array`, so only the Buffer-unique method shapes are intercepted; the
   typed-array surface is not regressed.
 - **Encodings (present):** `utf8`/`utf-8`, `hex`, `base64` (standard alphabet),
-  `latin1`/`binary`. Unknown encodings fall back to utf8 (lenient).
-- **Deferred (documented, not faked):** `ucs2`/`utf16le` and `base64url`
-  encodings; the long tail of readers/writers (24-bit `read{U,}IntLE/BE`,
-  `readFloatLE/BE`, `readDoubleLE/BE`), `swap16/swap32`, `indexOf`/`includes`,
-  negative `slice`/`copy` indices (clamped, not counted from the end). Because a
-  Buffer and a plain `Uint8Array` are the same type here, `isBuffer` answers
-  `true` for any `Uint8Array` and the Buffer instance methods are reachable on a
-  bare `Uint8Array` too — the one visible consequence of the shared
-  representation.
+  `base64url` (URL-safe `-`/`_`, unpadded; the decoder is tolerant of both
+  alphabets), `ucs2`/`ucs-2`/`utf16le`/`utf-16le` (little-endian 16-bit code
+  units), `latin1`/`binary`. Unknown encodings fall back to utf8 (lenient).
+- **Error convention.** A `swap*` on a length that is not a multiple of the
+  element width, and any out-of-range reader/writer, signal failure with
+  `RunError::BadToken` — the same convention every neighbouring buffer op uses —
+  rather than a JS `RangeError` (Node's choice); the interpreter floor never
+  silently truncates there.
+- **Deferred (documented, not faked):** negative `copy` indices (copy still
+  clamps, unlike `slice`, which now counts from the end). Because a Buffer and a
+  plain `Uint8Array` are the same type here, `isBuffer` answers `true` for any
+  `Uint8Array`, the Buffer instance methods (including the richer `indexOf`) are
+  reachable on a bare `Uint8Array` too, and `slice` is a shared-memory view
+  rather than a copy — the visible consequences of the shared representation.
 
 ## 22. Error (+ subclasses) — mostly
 `builtin/error.zun` (module `zun:std:error`): `Error` + `EvalError RangeError
