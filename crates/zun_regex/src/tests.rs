@@ -480,6 +480,33 @@ fn prefilter_matches_naive_scan() {
         ("(a+)\\1", ""),
         ("(\\w)\\1", ""),
         ("\\1(a)", ""),
+        // bare single-atom loops (fast-path): greedy / lazy / bounded, class /
+        // char / any, plus patterns where backtracking INTO the run matters.
+        ("[a-z]+", ""),
+        ("\\w*", ""),
+        ("\\d+", ""),
+        (".*", ""),
+        (".*", "s"),
+        ("a+", ""),
+        ("a*", ""),
+        ("[a-z]+?", ""),
+        ("a+?", ""),
+        ("a*?", ""),
+        ("[a-z]{2,5}", ""),
+        ("[a-z]{2,5}?", ""),
+        ("[a-z]{3}", ""),
+        ("[a-z]+z", ""),   // greedy give-back into the run
+        ("\\w+@", ""),     // walk-back to the literal after the run
+        ("a+a", ""),       // run and trailing atom share the alphabet
+        ("a+?a", ""),      // lazy take-more into the run
+        ("\\d+5", ""),
+        ("[a-z]+[a-z]", ""),
+        ("x*y", ""),
+        // loops that MUST bail (capture / nested group): still correct.
+        ("(\\w)+", ""),
+        ("(ab)+", ""),
+        ("([a-z]+)x", ""),  // capture AROUND a bare loop: loop still fast
+        ("(a*)*", ""),
         // dotAll / any
         (".+", "s"),
         (".+", ""),
@@ -517,6 +544,20 @@ fn prefilter_matches_naive_scan() {
         "12345#678 9#0",
         "name: value: other:",
         "@@@@",
+        // fast-run corpus: runs at start/middle/end, backtrack-into-run targets.
+        "abcz",
+        "abc",
+        "zzz",
+        "aaa",
+        "aaab",
+        "baaa",
+        "user@x",
+        "   abcz   ",
+        "abababab",
+        "aaaa5aaa",
+        "xyz",
+        "éàü BMP",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
     ];
     for (pat, flags) in patterns {
         // Skip patterns that are invalid under a given flag set gracefully.

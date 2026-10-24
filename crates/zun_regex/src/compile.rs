@@ -33,6 +33,40 @@ pub(crate) enum Inst {
     Match,
 }
 
+/// The single consuming atom of a fast-path run loop.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RunAtom {
+    /// Literal char (already canonicalized when `icase`).
+    Char(char),
+    /// `.`
+    Any,
+    /// A character class, by index into [`Program::classes`].
+    Class(usize),
+}
+
+/// A recognized **bare single-atom** quantified loop, lowered to a tight scan in
+/// the matcher. Detected shape (no capture `Save`, no nested subexpression):
+///
+/// ```text
+/// LoopInit, LoopTest{min,max,greedy}, LoopBody{clear: None}, <atom>, LoopEnd
+/// ```
+///
+/// where `<atom>` is exactly one forward consuming instruction (`Char`, `Any`,
+/// or `Class`). This is the `[a-z]+` / `\w*` / `\d+` / `.*` / `a+` family. The
+/// scan consumes the whole run in one operation; backtracking within the run is
+/// a single stack entry carrying the run bounds (give back one at a time for
+/// greedy, take one more for lazy), reproducing the per-instruction semantics
+/// exactly.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FastRun {
+    pub atom: RunAtom,
+    pub min: u32,
+    pub max: u32,
+    pub greedy: bool,
+    /// Program counter of the instruction after the loop (`LoopTest.exit`).
+    pub exit: usize,
+}
+
 /// A compiled program.
 #[derive(Debug)]
 pub(crate) struct Program {
@@ -45,6 +79,11 @@ pub(crate) struct Program {
     pub dot_all: bool,
     /// Conservative first-position prefilter (FindFirstChar model).
     pub prefilter: Prefilter,
+    /// Per-`LoopInit` fast-path descriptor, indexed by the `LoopInit`'s pc.
+    /// `None` at every other pc and at loops that are not a bare single atom.
+    /// The instruction stream is left untouched, so the prefilter analysis and
+    /// the ZIL lowering see the original loop shape.
+    pub fast_runs: Vec<Option<FastRun>>,
 }
 
 /// One member of a first-character set.
@@ -244,6 +283,7 @@ pub(crate) fn compile(node: &RegexNode, group_count: usize, flags: Flags) -> Pro
     c.node(node, false);
     c.insts.push(Inst::Match);
     let prefilter = compute_prefilter(&c.insts, &c.classes, flags);
+    let fast_runs = compute_fast_runs(&c.insts);
     Program {
         insts: c.insts,
         classes: c.classes,
@@ -253,7 +293,49 @@ pub(crate) fn compile(node: &RegexNode, group_count: usize, flags: Flags) -> Pro
         multiline: flags.multiline,
         dot_all: flags.dot_all,
         prefilter,
+        fast_runs,
     }
+}
+
+/// Builds the per-`LoopInit` [`FastRun`] table. A loop qualifies only when it is
+/// a **bare single consuming atom** with no capture `Save` and no nested
+/// subexpression in its body — any capture, nested group, or multi-atom body
+/// keeps the per-instruction path (correctness over coverage). The lowering is
+/// exact for forward matching only; backward (lookbehind) atoms are left alone.
+fn compute_fast_runs(insts: &[Inst]) -> Vec<Option<FastRun>> {
+    let mut out = vec![None; insts.len()];
+    for pc in 0..insts.len() {
+        let Inst::LoopInit { ctr } = insts[pc] else { continue };
+        // LoopTest at pc+1, exit must be exactly pc+5 (the 5-instruction shape).
+        let (min, max, greedy) = match insts.get(pc + 1) {
+            Some(Inst::LoopTest { ctr: c, min, max, greedy, exit })
+                if *c == ctr && *exit == pc + 5 =>
+            {
+                (*min, *max, *greedy)
+            }
+            _ => continue,
+        };
+        // LoopBody with no capture clears (bare body) and the expected pos_reg.
+        match insts.get(pc + 2) {
+            Some(Inst::LoopBody { pos_reg, clear: None }) if *pos_reg == ctr + 1 => {}
+            _ => continue,
+        }
+        // Exactly one forward consuming atom.
+        let atom = match insts.get(pc + 3) {
+            Some(Inst::Char { c, back: false }) => RunAtom::Char(*c),
+            Some(Inst::Any { back: false }) => RunAtom::Any,
+            Some(Inst::Class { idx, back: false }) => RunAtom::Class(*idx),
+            _ => continue,
+        };
+        // LoopEnd closing this loop and jumping back to the test.
+        match insts.get(pc + 4) {
+            Some(Inst::LoopEnd { ctr: c, pos_reg, min: m, test })
+                if *c == ctr && *pos_reg == ctr + 1 && *m == min && *test == pc + 1 => {}
+            _ => continue,
+        }
+        out[pc] = Some(FastRun { atom, min, max, greedy, exit: pc + 5 });
+    }
+    out
 }
 
 /// Result of analyzing the first required atom of a (sub)program.

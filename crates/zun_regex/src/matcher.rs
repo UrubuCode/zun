@@ -5,7 +5,7 @@
 //! executed instruction costs one step against a shared budget.
 
 use crate::ast::{canonicalize, is_line_terminator, is_word_char, AssertKind};
-use crate::compile::{Inst, Program};
+use crate::compile::{Inst, Program, RunAtom};
 use crate::error::RegexError;
 
 pub(crate) const NONE: usize = usize::MAX;
@@ -14,6 +14,12 @@ enum Bt {
     Branch { pc: usize, pos: usize },
     Cap { slot: usize, old: usize },
     Reg { idx: usize, old: usize },
+    /// Greedy fast-run give-back: on pop, resume the loop exit having consumed
+    /// one fewer atom (`count - 1`), re-pushing while still above `min`.
+    Run { init: usize, start: usize, count: u32 },
+    /// Lazy fast-run take-more: on pop, resume having consumed one more atom
+    /// (`count + 1`), re-pushing while another atom is available below `max`.
+    RunLazy { init: usize, start: usize, count: u32 },
 }
 
 pub(crate) struct Vm<'a> {
@@ -21,6 +27,10 @@ pub(crate) struct Vm<'a> {
     pub input: &'a [char],
     pub steps: u64,
     pub limit: u64,
+    /// Whether the bare single-atom loop fast path is enabled. Always true in
+    /// production; the test-only reference scan disables it to validate the
+    /// fast path against the per-instruction backtracker.
+    fast: bool,
     /// Backtrack stack, reused across start positions and reentrant runs.
     stack: Vec<Bt>,
     /// Capture snapshots for lookaround, used as a reusable stack of slices
@@ -30,7 +40,11 @@ pub(crate) struct Vm<'a> {
 
 impl<'a> Vm<'a> {
     pub fn new(prog: &'a Program, input: &'a [char], limit: u64) -> Vm<'a> {
-        Vm { prog, input, steps: 0, limit, stack: Vec::new(), snap: Vec::new() }
+        Vm::with_fast(prog, input, limit, true)
+    }
+
+    pub fn with_fast(prog: &'a Program, input: &'a [char], limit: u64, fast: bool) -> Vm<'a> {
+        Vm { prog, input, steps: 0, limit, fast, stack: Vec::new(), snap: Vec::new() }
     }
 
     /// Resets per-attempt scratch (counters stay; buffers keep their capacity).
@@ -49,6 +63,17 @@ impl<'a> Vm<'a> {
 
     fn word_at(&self, i: usize) -> bool {
         self.input.get(i).is_some_and(|&c| is_word_char(c))
+    }
+
+    /// Whether the fast-run `atom` consumes the (forward) char at index `i`.
+    #[inline]
+    fn atom_at(&self, atom: RunAtom, i: usize) -> bool {
+        let Some(&c) = self.input.get(i) else { return false };
+        match atom {
+            RunAtom::Char(ch) => self.eq(c, ch),
+            RunAtom::Any => self.prog.dot_all || !is_line_terminator(c),
+            RunAtom::Class(idx) => self.prog.classes[idx].matches(c, self.prog.icase),
+        }
     }
 
     /// Runs from `pc`/`pos` until `Match` / `LookEnd`; returns the end position.
@@ -213,10 +238,65 @@ impl<'a> Vm<'a> {
                     return Ok(Some(pos));
                 }
                 Inst::LoopInit { ctr } => {
-                    self.stack.push(Bt::Reg { idx: *ctr, old: regs[*ctr] });
-                    regs[*ctr] = 0;
-                    pc += 1;
-                    true
+                    let fast = self.fast.then(|| prog.fast_runs[pc]).flatten();
+                    if let Some(fr) = fast {
+                        // Fast path: a bare single-atom loop. Scan the run in a
+                        // tight loop and leave a single backtrack entry carrying
+                        // the run bounds, instead of 4 instructions per char.
+                        let start = pos;
+                        if fr.greedy {
+                            // Consume as many as possible, up to `max`.
+                            let mut k = 0u32;
+                            while k < fr.max && self.atom_at(fr.atom, start + k as usize) {
+                                k += 1;
+                            }
+                            // Charge steps proportional to the scanned run so the
+                            // budget still bounds pathological inputs.
+                            self.steps += k as u64;
+                            if self.steps > self.limit {
+                                return Err(RegexError::StepLimitExceeded);
+                            }
+                            if k < fr.min {
+                                false // cannot satisfy the minimum
+                            } else {
+                                pos = start + k as usize;
+                                if k > fr.min {
+                                    self.stack.push(Bt::Run { init: pc, start, count: k });
+                                }
+                                pc = fr.exit;
+                                true
+                            }
+                        } else {
+                            // Lazy: consume exactly `min`, defer the rest.
+                            let mut k = 0u32;
+                            while k < fr.min && self.atom_at(fr.atom, start + k as usize) {
+                                k += 1;
+                            }
+                            self.steps += fr.min as u64;
+                            if self.steps > self.limit {
+                                return Err(RegexError::StepLimitExceeded);
+                            }
+                            if k < fr.min {
+                                false // not enough atoms for the minimum
+                            } else {
+                                pos = start + fr.min as usize;
+                                if fr.min < fr.max && self.atom_at(fr.atom, pos) {
+                                    self.stack.push(Bt::RunLazy {
+                                        init: pc,
+                                        start,
+                                        count: fr.min,
+                                    });
+                                }
+                                pc = fr.exit;
+                                true
+                            }
+                        }
+                    } else {
+                        self.stack.push(Bt::Reg { idx: *ctr, old: regs[*ctr] });
+                        regs[*ctr] = 0;
+                        pc += 1;
+                        true
+                    }
                 }
                 Inst::LoopTest { ctr, min, max, greedy, exit } => {
                     let count = regs[*ctr] as u64;
@@ -274,6 +354,30 @@ impl<'a> Vm<'a> {
                     Bt::Branch { pc: p, pos: q } => {
                         pc = p;
                         pos = q;
+                        break;
+                    }
+                    Bt::Run { init, start, count } => {
+                        // Greedy give-back: try one fewer atom (still >= min, as
+                        // this entry was only pushed while count > min).
+                        let fr = prog.fast_runs[init].unwrap();
+                        let new = count - 1;
+                        if new > fr.min {
+                            self.stack.push(Bt::Run { init, start, count: new });
+                        }
+                        pos = start + new as usize;
+                        pc = fr.exit;
+                        break;
+                    }
+                    Bt::RunLazy { init, start, count } => {
+                        // Lazy take-more: consume one further atom (the push
+                        // guaranteed it matches), then offer the next if any.
+                        let fr = prog.fast_runs[init].unwrap();
+                        let new = count + 1;
+                        if new < fr.max && self.atom_at(fr.atom, start + new as usize) {
+                            self.stack.push(Bt::RunLazy { init, start, count: new });
+                        }
+                        pos = start + new as usize;
+                        pc = fr.exit;
                         break;
                     }
                 }

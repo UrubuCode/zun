@@ -163,25 +163,52 @@ impl Regex {
 
     /// Finds the first match starting at char index `>= start`.
     pub fn find(&self, input: &str, start: usize) -> Result<Option<Match>, RegexError> {
-        let chars: Vec<char> = input.chars().collect();
-        self.find_chars(&chars, start)
+        // Decode into a reused thread-local `Vec<char>` so repeated single-shot
+        // `find` calls don't each allocate a fresh decode buffer (the allocation
+        // dominates the fast cases). `find` is never re-entrant in-process: the
+        // matcher is pure Rust with no user callbacks, and lookaround reuses the
+        // same already-decoded slice via `find_chars`. We still guard with
+        // `take()`: if a re-entrant `find` ever occurs on this thread the buffer
+        // is absent, and we fall back to a fresh `Vec` rather than corrupting it.
+        thread_local! {
+            static DECODE_BUF: std::cell::RefCell<Option<Vec<char>>> =
+                const { std::cell::RefCell::new(Some(Vec::new())) };
+        }
+        match DECODE_BUF.with(|cell| cell.borrow_mut().take()) {
+            Some(mut buf) => {
+                buf.clear();
+                buf.extend(input.chars());
+                let result = self.find_chars(&buf, start);
+                buf.clear();
+                DECODE_BUF.with(|cell| *cell.borrow_mut() = Some(buf));
+                result
+            }
+            None => {
+                // Re-entrant call on this thread: don't touch the borrowed buffer.
+                let chars: Vec<char> = input.chars().collect();
+                self.find_chars(&chars, start)
+            }
+        }
     }
 
     /// Like [`Regex::find`] over a pre-decoded char slice.
     pub fn find_chars(&self, input: &[char], start: usize) -> Result<Option<Match>, RegexError> {
-        self.find_chars_impl(input, start, true)
+        self.find_chars_impl(input, start, true, true)
     }
 
     /// Shared body of [`Regex::find_chars`]. When `use_prefilter` is false, every
-    /// position is tried (the pre-prefilter behavior) — used only to prove the
-    /// prefilter never changes results.
+    /// position is tried (the pre-prefilter behavior); when `fast` is false the
+    /// bare-loop fast path is bypassed for the per-instruction backtracker. Both
+    /// are disabled only by the test-only naive scan, to prove neither changes
+    /// the result.
     fn find_chars_impl(
         &self,
         input: &[char],
         start: usize,
         use_prefilter: bool,
+        fast: bool,
     ) -> Result<Option<Match>, RegexError> {
-        let mut vm = Vm::new(&self.program, input, self.step_limit);
+        let mut vm = Vm::with_fast(&self.program, input, self.step_limit, fast);
         // Allocated once per call and reused across every start position.
         let mut caps = vec![NONE; 2 * (self.program.group_count + 1)];
         let mut regs = vec![0usize; self.program.reg_count];
@@ -207,7 +234,7 @@ impl Regex {
         input: &[char],
         start: usize,
     ) -> Result<Option<Match>, RegexError> {
-        self.find_chars_impl(input, start, false)
+        self.find_chars_impl(input, start, false, false)
     }
 
     /// Anchored match attempt at exactly `pos` (sticky semantics).
