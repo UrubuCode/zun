@@ -1426,7 +1426,7 @@ mod tests {
             Some(true)
         );
         assert_eq!(heap.buffer_view_read_u16(buffer, shorts, 1), Some(0xbeef));
-        let floats = zun_core::TypedArrayView::new(16, 8, 8, zun_core::TypedElement::F64).unwrap();
+        let floats = zun_core::TypedArrayView::new(16, 8, 1, zun_core::TypedElement::F64).unwrap();
         assert_eq!(
             heap.buffer_view_write_f64(buffer, floats, 0, 1.5),
             Some(true)

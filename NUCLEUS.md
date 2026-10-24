@@ -43,7 +43,7 @@ read.
 | 16 | FinalizationRegistry | partial | `register/unregister` present over GC finalization queue; `unregister` keyed by numeric id, not token object (verify vs spec) |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping. Missing `isView`, resizable buffers |
 | 18 | DataView | partial | All element widths now present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. Missing `byteOffset`/`buffer` |
-| 19 | TypedArrays | partial | Only `Uint8Array/Uint16Array/Uint32Array/Float64Array`, each only `get/set`. Missing Int8/16/32, Uint8Clamped, Float32, BigInt64/Uint64 Array, and the whole method surface (`length/subarray/set/slice/fill/map/forEach/iterator`) |
+| 19 | TypedArrays | partial | Constructor length now counts elements as JS does (it counted bytes); `length()`/`byteLength()` reachable. Still only 4 kinds, and no `subarray`/`fill`/`set`/iteration |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. Not a realm global; `.stack` absent entirely; `cause`/`AggregateError` blocked on construction having no optional args |
@@ -514,16 +514,28 @@ storage lives in `zun_gc/buffers.rs`.
   DataView form in JS either.
 
 ## 19. TypedArrays — partial
-`native_types.rs` exposes only `U8Array/U16Array/U32Array/F64Array`; constructed via
-`u8ArrayNew/u16ArrayNew/u32ArrayNew/f64ArrayNew` (`check.rs:2495`). Each supports only
-`get(i)/set(i,v)`.
-- **Present kinds:** `Uint8Array Uint16Array Uint32Array Float64Array`.
-- **Missing kinds:** `Int8Array Int16Array Int32Array Uint8ClampedArray Float32Array
-  BigInt64Array BigUint64Array`.
-- **Missing surface (every kind):** `.length .byteLength .byteOffset .buffer`, `subarray
-  slice set(array,offset) fill copyWithin` and the iteration/functional surface
-  (`map forEach reduce find indexOf includes join [Symbol.iterator]`), statics
-  `TypedArray.from/of`, construction from buffer/length/array.
+`Uint8Array`, `Uint16Array`, `Uint32Array`, `Float64Array` over a shared
+`ArrayBuffer`.
+
+- **The constructor's third argument counted bytes, where JS counts
+  elements.** `new Uint32Array(b, 0, 8)` gave a two-element view in Zun and an
+  eight-element one in JS, so ported code read and wrote past what it believed
+  it had. Fixed: the length is an element count, and `byteLength()` is that
+  times the element width.
+- **`length()` and `byteLength()` were unreachable.** The natives existed for
+  every kind; only `get`/`set` were in the checker's method table, so a view
+  could be read but not measured.
+- **Present:** `get`, `set`, `length`, `byteLength` on all four kinds.
+- **Missing kinds:** `Int8Array`, `Int16Array`, `Int32Array`,
+  `Uint8ClampedArray`, `Float32Array`, `BigInt64Array`, `BigUint64Array`. Each
+  needs wiring in six places (the core element enum, `BufferViewKind`, the
+  natives, the interpreter dispatch, the realm facets and the checker's method
+  table); `zun_vm/tests/typed_array_kinds.rs` enumerates what the realm accepts
+  and fails if a kind is half-wired. Signed data is readable today through
+  `DataView` (#18), which has every width.
+- **Missing surface:** `subarray`, `slice`, `set(array, offset)`, `fill`,
+  `copyWithin`, the functional and iteration methods, and the statics
+  `TypedArray.from/of`.
 
 ## 20. Date — partial
 `builtin/date.zun` over the `zun:date`/`zun:time` intrinsics, reachable as a

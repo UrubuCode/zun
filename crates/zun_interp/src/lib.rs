@@ -2748,7 +2748,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_u32_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, u32ArrayNew, u32ArraySet, u32ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(16); let values = u32ArrayNew(buffer, 0, 16); u32ArraySet(values, 2, 16909060); return u32ArrayGet(values, 2) as u64; }",
+            "import { bufferNew, u32ArrayNew, u32ArraySet, u32ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(16); let values = u32ArrayNew(buffer, 0, 4); u32ArraySet(values, 2, 16909060); return u32ArrayGet(values, 2) as u64; }",
         )
         .expect("compile typed-array intrinsics");
         let mut output = CaptureOutput::default();
@@ -2770,7 +2770,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_f64_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, f64ArrayNew, f64ArraySet, f64ArrayGet } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); let values = f64ArrayNew(buffer, 0, 16); f64ArraySet(values, 1, 2.5); return f64ArrayGet(values, 1); }",
+            "import { bufferNew, f64ArrayNew, f64ArraySet, f64ArrayGet } from \"zun:buffer\"; function main(): number { let buffer = bufferNew(16); let values = f64ArrayNew(buffer, 0, 2); f64ArraySet(values, 1, 2.5); return f64ArrayGet(values, 1); }",
         )
         .expect("compile Float64Array intrinsics");
         let mut output = CaptureOutput::default();
@@ -2781,7 +2781,7 @@ mod method_tests {
     #[test]
     fn accesses_gc_backed_u16_typed_arrays_from_source() {
         let module = zun_compiler::compile(
-            "import { bufferNew, u16ArrayNew, u16ArraySet, u16ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let values = u16ArrayNew(buffer, 0, 8); u16ArraySet(values, 2, 4660); return u16ArrayGet(values, 2) as u64; }",
+            "import { bufferNew, u16ArrayNew, u16ArraySet, u16ArrayGet } from \"zun:buffer\"; function main(): u64 { let buffer = bufferNew(8); let values = u16ArrayNew(buffer, 0, 4); u16ArraySet(values, 2, 4660); return u16ArrayGet(values, 2) as u64; }",
         )
         .expect("compile Uint16Array intrinsics");
         let mut output = CaptureOutput::default();
