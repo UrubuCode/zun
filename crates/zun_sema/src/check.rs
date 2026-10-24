@@ -1789,6 +1789,65 @@ impl Checker<'_> {
                 let mut args: Vec<hir::Expr> =
                     args.iter().map(|a| self.check_expr(cx, a)).collect();
 
+                // `BigInt(x)` coercion when called as a plain function (JS
+                // BigInt is not constructed with `new`). A string argument
+                // parses (decimal or `0x`/`0o`/`0b`); a number must be
+                // integer-valued (non-integers are a runtime RangeError).
+                if name == "BigInt" && !self.by_name.contains_key(&name) {
+                    if args.len() != 1 {
+                        self.error(span, "`BigInt` expects one argument");
+                        return self.poison(span);
+                    }
+                    let arg = args.into_iter().next().expect("one argument");
+                    let native_name = if arg.ty.is_int() || arg.ty.is_float() {
+                        "bigIntFromNumber"
+                    } else if arg.ty == Ty::String {
+                        "bigIntNew"
+                    } else if arg.ty.is_error() {
+                        return self.poison(span);
+                    } else {
+                        self.error(arg.span, "`BigInt` expects a string or number argument");
+                        return self.poison(span);
+                    };
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::BigInt,
+                        span,
+                    };
+                }
+
+                // `Boolean(x)` coercion when called as a plain function:
+                // returns the JS truthiness of `x` as a `boolean` primitive
+                // (not a wrapper object). The `truthy` native mirrors the
+                // interpreter's `is_truthy`, so coercion matches `if`/`&&`.
+                if name == "Boolean" && !self.by_name.contains_key(&name) {
+                    if args.len() != 1 {
+                        self.error(span, "`Boolean` expects one argument");
+                        return self.poison(span);
+                    }
+                    let arg = args.into_iter().next().expect("one argument");
+                    if arg.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    // A value already typed `boolean` is its own truthiness.
+                    if arg.ty == Ty::Boolean {
+                        return arg;
+                    }
+                    let Some((id, _)) = zun_natives::resolve("zun:boolean", "booleanCoerce") else {
+                        self.error(span, "missing Boolean intrinsic `booleanCoerce`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::Boolean,
+                        span,
+                    };
+                }
+
                 if let Some(&func) = self.by_name.get(&name) {
                     if self.signatures[func as usize].is_generator {
                         let Some((native_id, _)) = zun_natives::resolve("zun:buffer", "generatorIteratorNewArgs") else {
@@ -2365,6 +2424,42 @@ impl Checker<'_> {
                         return hir::Expr {
                             kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
                             ty: ret_ty,
+                            span,
+                        };
+                    }
+                    // `BigInt.asIntN(bits, value)` / `BigInt.asUintN(bits,
+                    // value)`. The `BigInt` class exists (instance helpers), so
+                    // recognition keys on the receiver name and method pair; any
+                    // other member falls through to class dispatch.
+                    if class_name == "BigInt"
+                        && matches!(self.text(method), "asIntN" | "asUintN")
+                    {
+                        let member = self.text(method).to_string();
+                        let native = if member == "asIntN" {
+                            "bigIntAsIntN"
+                        } else {
+                            "bigIntAsUintN"
+                        };
+                        if args.len() != 2 {
+                            self.error(span, format!("`BigInt.{member}` expects two arguments"));
+                            return self.poison(span);
+                        }
+                        let Some((id, _)) = zun_natives::resolve("zun:collections", native) else {
+                            self.error(span, format!("missing `{native}` intrinsic"));
+                            return self.poison(span);
+                        };
+                        let mut bits = self.check_expr(cx, &args[0]);
+                        coerce_numeric_literal(&mut bits, Ty::Int(IntKind::I64));
+                        if !bits.ty.is_error() && !bits.ty.is_int() {
+                            self.error(bits.span, format!("`BigInt.{member}` bit width must be an integer"));
+                        }
+                        let value = self.check_expr(cx, &args[1]);
+                        if !value.ty.is_error() && value.ty != Ty::BigInt {
+                            self.error(value.span, format!("`BigInt.{member}` expects a BigInt value"));
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![bits, value] },
+                            ty: Ty::BigInt,
                             span,
                         };
                     }
@@ -2978,6 +3073,16 @@ impl Checker<'_> {
                     (Ty::BigInt, "add") => Some(("bigIntAdd", Ty::BigInt, vec![Ty::BigInt])),
                     (Ty::BigInt, "sub") => Some(("bigIntSub", Ty::BigInt, vec![Ty::BigInt])),
                     (Ty::BigInt, "mul") => Some(("bigIntMul", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "div") => Some(("bigIntDiv", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "rem") => Some(("bigIntRem", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "pow") => Some(("bigIntPow", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "neg") => Some(("bigIntNeg", Ty::BigInt, vec![])),
+                    (Ty::BigInt, "and") => Some(("bigIntAnd", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "or") => Some(("bigIntOr", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "xor") => Some(("bigIntXor", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "not") => Some(("bigIntNot", Ty::BigInt, vec![])),
+                    (Ty::BigInt, "shl") => Some(("bigIntShl", Ty::BigInt, vec![Ty::BigInt])),
+                    (Ty::BigInt, "shr") => Some(("bigIntShr", Ty::BigInt, vec![Ty::BigInt])),
                     (Ty::BigInt, "compare") => Some(("bigIntCompare", Ty::Int(IntKind::I32), vec![Ty::BigInt])),
                     (Ty::BigInt, "toString") => Some(("bigIntToString", Ty::String, vec![])),
                     (Ty::FinalizationRegistry, "register") => Some((
@@ -3234,6 +3339,20 @@ impl Checker<'_> {
                     };
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, radix] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+                // `boolean.toString()` → `"true"` / `"false"`. Intercepted
+                // before class dispatch, like `number.toString(radix?)`, since
+                // the primitive `boolean` has no backing class.
+                if receiver.ty == Ty::Boolean && mname == "toString" && args.is_empty() {
+                    let Some((id, _)) = zun_natives::resolve("zun:boolean", "booleanToString") else {
+                        self.error(span, "missing Boolean intrinsic `booleanToString`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
                         ty: Ty::String,
                         span,
                     };
@@ -3799,6 +3918,35 @@ impl Checker<'_> {
                             args: call_args,
                         },
                         ty: Ty::BufferView(view_kind),
+                        span,
+                    };
+                }
+                // `BigInt(x)` coercion. A string argument parses (decimal or a
+                // `0x`/`0o`/`0b` prefix); a number argument must be
+                // integer-valued (non-integers are a runtime RangeError).
+                if name == "BigInt" {
+                    if args.len() != 1 {
+                        self.error(span, "`BigInt` expects one argument");
+                        return self.poison(span);
+                    }
+                    let arg = self.check_expr(cx, &args[0]);
+                    let native_name = if arg.ty.is_int() || arg.ty.is_float() {
+                        "bigIntFromNumber"
+                    } else if arg.ty == Ty::String {
+                        "bigIntNew"
+                    } else if arg.ty.is_error() {
+                        return self.poison(span);
+                    } else {
+                        self.error(arg.span, "`BigInt` expects a string or number argument");
+                        return self.poison(span);
+                    };
+                    let Some((id, _)) = zun_natives::resolve("zun:collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::BigInt,
                         span,
                     };
                 }

@@ -25,6 +25,74 @@ fn run_source(src: &str) -> Vec<String> {
     out.lines
 }
 
+/// Compile and run `src`, expecting a runtime failure; return the error text.
+fn run_source_expect_error(src: &str) -> String {
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(src, &mut diags);
+    assert!(diags.is_empty(), "parse errors: {diags:?}");
+    let hir = zun_sema::check(src, &ast, &mut diags);
+    assert!(diags.is_empty(), "sema errors: {diags:?}");
+    let module = zun_ilgen::lower(&hir);
+    let bytes = module.write();
+    let mut out = CaptureOutput::default();
+    match zun_vm::execute_with(&bytes, &mut out) {
+        Ok(_) => panic!("program should have failed at runtime"),
+        Err(error) => error.to_string(),
+    }
+}
+
+#[test]
+fn boolean_coercion_matches_js_truthiness() {
+    // `Boolean(x)` returns the JS truthiness of `x` as a `boolean` primitive,
+    // consistent with the truthiness used for `if`/`&&` conditions.
+    let out = run_source(
+        r#"function main() {
+            if (!Boolean(0.0)) { print("zero-false"); }
+            if (Boolean(1.0)) { print("one-true"); }
+            if (!Boolean("")) { print("empty-false"); }
+            if (Boolean("x")) { print("nonempty-true"); }
+            if (!Boolean(box_any(null))) { print("null-false"); }
+            if (Boolean(true)) { print("bool-passthrough"); }
+        }"#,
+    );
+    assert_eq!(
+        out,
+        [
+            "zero-false",
+            "one-true",
+            "empty-false",
+            "nonempty-true",
+            "null-false",
+            "bool-passthrough",
+        ]
+    );
+}
+
+#[test]
+fn boolean_primitive_to_string() {
+    let out = run_source(
+        r#"function main() {
+            print(true.toString());
+            print(false.toString());
+        }"#,
+    );
+    assert_eq!(out, ["true", "false"]);
+}
+
+#[test]
+fn global_this_boolean_resolves() {
+    // `Boolean` is a realm global; reading it through `globalThis` yields its
+    // class descriptor (a stable token), proving the binding resolves.
+    let out = run_source(
+        r#"import { classDescriptorToken } from "zun:collections";
+        function main() {
+            let token: number = classDescriptorToken(dynamic_get(globalThis, "Boolean"));
+            if (token >= 0.0) { print("boolean-resolves"); }
+        }"#,
+    );
+    assert_eq!(out, ["boolean-resolves"]);
+}
+
 #[test]
 fn object_keys_values_entries_on_a_dynamic_object_follow_insertion_order() {
     let out = run_source(
@@ -839,6 +907,99 @@ fn bigint_literals_use_the_managed_constructor_path() {
         }"#,
     );
     assert_eq!(out, ["12345678901234567890"]);
+}
+
+#[test]
+fn bigint_division_power_and_negation_methods() {
+    let out = run_source(
+        r#"function main(): int {
+            print((10n / 3n).toString());
+            print((10n % 3n).toString());
+            print((2n).pow(10n).toString());
+            print((5n).neg().toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["3", "1", "1024", "-5"]);
+}
+
+#[test]
+fn bigint_bitwise_and_shift_use_twos_complement() {
+    let out = run_source(
+        r#"function main(): int {
+            print((7n).and(3n).toString());
+            print((5n).not().toString());
+            print((1n).shl(4n).toString());
+            print((8n).neg().shr(1n).toString());
+            print((12n).or(1n).toString());
+            print((6n).xor(3n).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["3", "-6", "16", "-4", "13", "5"]);
+}
+
+#[test]
+fn bigint_coercion_from_number_and_radix_string() {
+    let out = run_source(
+        r#"function main(): int {
+            print(BigInt(42).toString());
+            print(BigInt("0xff").toString());
+            print(BigInt("0b1010").toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["42", "255", "10"]);
+}
+
+#[test]
+fn bigint_coercion_rejects_non_integer_number() {
+    let error = run_source_expect_error(
+        r#"function main(): int {
+            print(BigInt(1.5).toString());
+            return 0;
+        }"#,
+    );
+    assert!(error.contains("non-integer"), "unexpected error: {error}");
+}
+
+#[test]
+fn bigint_division_by_zero_is_a_runtime_error() {
+    let error = run_source_expect_error(
+        r#"function main(): int {
+            print((10n / 0n).toString());
+            return 0;
+        }"#,
+    );
+    assert!(error.contains("division by zero"), "unexpected error: {error}");
+}
+
+#[test]
+fn bigint_as_int_n_and_as_uint_n_wrap() {
+    let out = run_source(
+        r#"function main(): int {
+            print(BigInt.asIntN(8, 255n).toString());
+            print(BigInt.asUintN(8, 256n).toString());
+            print(BigInt.asIntN(4, 9n).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["-1", "0", "-7"]);
+}
+
+#[test]
+fn bigint_operator_and_method_forms_agree() {
+    let out = run_source(
+        r#"function main(): int {
+            let a: BigInt = 10n;
+            let b: BigInt = 3n;
+            if ((a / b).toString() == a.div(b).toString()) { print(1); }
+            if ((a % b).toString() == a.rem(b).toString()) { print(2); }
+            if ((a * b).toString() == a.mul(b).toString()) { print(3); }
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["1", "2", "3"]);
 }
 
 #[test]

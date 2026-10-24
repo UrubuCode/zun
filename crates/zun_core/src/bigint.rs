@@ -42,6 +42,83 @@ impl BigInt {
         }
     }
 
+    /// Parse a BigInt from text, honoring an optional sign and the `0x`/`0o`/
+    /// `0b` radix prefixes (as accepted by `BigInt(string)` and `1n`-style
+    /// literals). A bare body is decimal.
+    pub fn parse(text: &str) -> Result<Self, &'static str> {
+        let trimmed = text.trim();
+        let bytes = trimmed.as_bytes();
+        if bytes.is_empty() {
+            return Err("empty bigint literal");
+        }
+        let (negative, rest) = match bytes[0] {
+            b'-' => (true, &trimmed[1..]),
+            b'+' => (false, &trimmed[1..]),
+            _ => (false, trimmed),
+        };
+        let (radix, digits) = if rest.len() >= 2 && &rest[..1] == "0" {
+            match rest.as_bytes()[1] {
+                b'x' | b'X' => (16u32, &rest[2..]),
+                b'o' | b'O' => (8, &rest[2..]),
+                b'b' | b'B' => (2, &rest[2..]),
+                _ => (10, rest),
+            }
+        } else {
+            (10, rest)
+        };
+        if digits.is_empty() {
+            return Err("invalid bigint literal");
+        }
+        let mut result = Self::zero();
+        for &byte in digits.as_bytes() {
+            let value = match byte {
+                b'0'..=b'9' => u32::from(byte - b'0'),
+                b'a'..=b'f' => u32::from(byte - b'a') + 10,
+                b'A'..=b'F' => u32::from(byte - b'A') + 10,
+                b'_' => continue,
+                _ => return Err("invalid bigint digit"),
+            };
+            if value >= radix {
+                return Err("bigint digit out of range for radix");
+            }
+            result.mul_small(radix);
+            result.add_small(value);
+        }
+        result.negative = negative && !result.is_zero();
+        Ok(result)
+    }
+
+    /// Build a BigInt from an integer-valued `number`. A non-integer or
+    /// non-finite input is rejected (matching JS `BigInt(1.5)` → RangeError).
+    pub fn from_f64(value: f64) -> Result<Self, &'static str> {
+        if !value.is_finite() {
+            return Err("cannot convert a non-finite number to a BigInt");
+        }
+        if value == 0.0 {
+            return Ok(Self::zero());
+        }
+        if value.fract() != 0.0 {
+            return Err("cannot convert a non-integer number to a BigInt");
+        }
+        let negative = value.is_sign_negative();
+        let bits = value.abs().to_bits();
+        let raw_exp = ((bits >> 52) & 0x7ff) as i64;
+        let fraction = bits & ((1u64 << 52) - 1);
+        // Integer-valued finite f64 is always normal here (|value| >= 1).
+        let mantissa = fraction | (1u64 << 52);
+        let exponent = raw_exp - 1075; // 1023 bias + 52 fraction bits.
+        let mut result = Self::from_u64(mantissa);
+        if exponent > 0 {
+            result = result.shl(exponent as u64);
+        } else if exponent < 0 {
+            // The value is integer-valued, so the dropped low bits are zero and
+            // this right shift on the positive magnitude is exact.
+            result = result.shr((-exponent) as u64);
+        }
+        result.negative = negative && !result.is_zero();
+        Ok(result)
+    }
+
     pub fn parse_decimal(text: &str) -> Result<Self, &'static str> {
         let bytes = text.as_bytes();
         if bytes.is_empty() {
@@ -169,6 +246,173 @@ impl BigInt {
             (false, false) => cmp_abs(&self.limbs, &other.limbs),
             (true, true) => cmp_abs(&other.limbs, &self.limbs),
         }
+    }
+
+    /// Raise to a non-negative power. A negative exponent is a RangeError in
+    /// JS BigInt, surfaced here as `Err`.
+    pub fn pow(&self, exponent: &Self) -> Result<Self, &'static str> {
+        if exponent.negative {
+            return Err("BigInt exponent must be non-negative");
+        }
+        let mut result = Self::from_u64(1);
+        let mut base = self.clone();
+        // Only iterate up to the exponent's highest set bit: iterating the full
+        // limb width would keep squaring `base` long past the top bit and blow
+        // its size up exponentially.
+        let bits = exponent.bit_length();
+        for bit in 0..bits {
+            if (exponent.limbs[bit / 32] >> (bit % 32)) & 1 == 1 {
+                result = result.mul(&base);
+            }
+            if bit + 1 < bits {
+                base = base.mul(&base);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Bitwise AND under infinite two's-complement semantics.
+    pub fn bitand(&self, other: &Self) -> Self {
+        self.bitwise(other, |a, b| a & b)
+    }
+    /// Bitwise OR under infinite two's-complement semantics.
+    pub fn bitor(&self, other: &Self) -> Self {
+        self.bitwise(other, |a, b| a | b)
+    }
+    /// Bitwise XOR under infinite two's-complement semantics.
+    pub fn bitxor(&self, other: &Self) -> Self {
+        self.bitwise(other, |a, b| a ^ b)
+    }
+    /// Bitwise NOT: `~x == -(x + 1)` (spec-exact for negatives too).
+    pub fn bitnot(&self) -> Self {
+        self.add(&Self::from_u64(1)).neg()
+    }
+
+    /// Left shift: `self << amount == self * 2^amount`.
+    pub fn shl(&self, amount: u64) -> Self {
+        self.mul(&Self::power_of_two(amount))
+    }
+
+    /// Arithmetic right shift: `self >> amount == floor(self / 2^amount)`.
+    /// For negative values this rounds toward negative infinity, matching the
+    /// JS `>>` operator on BigInt.
+    pub fn shr(&self, amount: u64) -> Self {
+        let divisor = Self::power_of_two(amount);
+        let (quotient, remainder) = self
+            .div_rem(&divisor)
+            .expect("power of two divisor is never zero");
+        if self.negative && !remainder.is_zero() {
+            quotient.sub(&Self::from_u64(1))
+        } else {
+            quotient
+        }
+    }
+
+    /// Interpret `self` as a two's-complement value `bits` wide and return the
+    /// signed result (`BigInt.asIntN`).
+    pub fn as_int_n(&self, bits: u64) -> Self {
+        if bits == 0 {
+            return Self::zero();
+        }
+        let modulus = Self::power_of_two(bits);
+        let (_, mut rem) = self.div_rem(&modulus).expect("modulus is non-zero");
+        // Map the remainder into `[0, 2^bits)`.
+        if rem.negative {
+            rem = rem.add(&modulus);
+        }
+        // Values at or above 2^(bits-1) wrap to the negative range.
+        let half = Self::power_of_two(bits - 1);
+        if rem.cmp(&half) != Ordering::Less {
+            rem.sub(&modulus)
+        } else {
+            rem
+        }
+    }
+
+    /// Interpret `self` as an unsigned two's-complement value `bits` wide
+    /// (`BigInt.asUintN`): the non-negative remainder modulo `2^bits`.
+    pub fn as_uint_n(&self, bits: u64) -> Self {
+        if bits == 0 {
+            return Self::zero();
+        }
+        let modulus = Self::power_of_two(bits);
+        let (_, mut rem) = self.div_rem(&modulus).expect("modulus is non-zero");
+        if rem.negative {
+            rem = rem.add(&modulus);
+        }
+        rem
+    }
+
+    /// Return `self` as a `u64` if it fits in 64 bits (ignoring sign), else
+    /// `None`. Used for shift/`asIntN` width arguments.
+    pub fn to_u64(&self) -> Option<u64> {
+        if self.limbs.len() > 2 {
+            return None;
+        }
+        let low = u64::from(*self.limbs.first().unwrap_or(&0));
+        let high = u64::from(*self.limbs.get(1).unwrap_or(&0));
+        Some(low | (high << 32))
+    }
+
+    /// The position of the highest set bit plus one (0 for zero).
+    fn bit_length(&self) -> usize {
+        match self.limbs.last() {
+            None => 0,
+            Some(&top) => (self.limbs.len() - 1) * 32 + (32 - top.leading_zeros() as usize),
+        }
+    }
+
+    /// `2^exponent` as a BigInt.
+    fn power_of_two(exponent: u64) -> Self {
+        let mut value = Self::zero();
+        value.set_bit(exponent as usize);
+        value
+    }
+
+    /// Apply a limb-wise bitwise operator under infinite two's-complement.
+    fn bitwise(&self, other: &Self, op: impl Fn(u32, u32) -> u32) -> Self {
+        let width = self.limbs.len().max(other.limbs.len()) + 1;
+        let left = self.to_twos_complement(width);
+        let right = other.to_twos_complement(width);
+        let combined: Vec<u32> = left
+            .iter()
+            .zip(right.iter())
+            .map(|(&a, &b)| op(a, b))
+            .collect();
+        Self::from_twos_complement(combined)
+    }
+
+    /// Sign-extend the magnitude into a `width`-limb two's-complement vector.
+    fn to_twos_complement(&self, width: usize) -> Vec<u32> {
+        let mut limbs = vec![0u32; width];
+        for (slot, &limb) in limbs.iter_mut().zip(self.limbs.iter()) {
+            *slot = limb;
+        }
+        if self.negative {
+            // Negate across the full width: invert every limb, then add one.
+            let mut carry = 1u64;
+            for limb in limbs.iter_mut() {
+                let value = u64::from(!*limb) + carry;
+                *limb = value as u32;
+                carry = value >> 32;
+            }
+        }
+        limbs
+    }
+
+    /// Rebuild a sign-magnitude value from a two's-complement limb vector whose
+    /// top limb carries the sign bit.
+    fn from_twos_complement(mut limbs: Vec<u32>) -> Self {
+        let negative = limbs.last().is_some_and(|&limb| limb >> 31 == 1);
+        if negative {
+            let mut carry = 1u64;
+            for limb in limbs.iter_mut() {
+                let value = u64::from(!*limb) + carry;
+                *limb = value as u32;
+                carry = value >> 32;
+            }
+        }
+        Self { negative, limbs }.normalized()
     }
 
     fn from_u128(mut value: u128, negative: bool) -> Self {
@@ -315,5 +559,68 @@ mod tests {
         let (quotient, remainder) = left.div_rem(&right).unwrap();
         assert_eq!(quotient.to_string(), "-3");
         assert_eq!(remainder.to_string(), "-2");
+    }
+
+    fn big(text: &str) -> BigInt {
+        BigInt::parse(text).unwrap()
+    }
+
+    #[test]
+    fn parses_radix_prefixes_and_signs() {
+        assert_eq!(big("0xff").to_string(), "255");
+        assert_eq!(big("0o17").to_string(), "15");
+        assert_eq!(big("0b1010").to_string(), "10");
+        assert_eq!(big("-0x10").to_string(), "-16");
+        assert_eq!(big("255").to_string(), "255");
+        assert!(BigInt::parse("0x").is_err());
+        assert!(BigInt::parse("12a").is_err());
+    }
+
+    #[test]
+    fn powers_reject_negative_exponents() {
+        assert_eq!(big("2").pow(&big("10")).unwrap().to_string(), "1024");
+        assert_eq!(big("5").pow(&big("0")).unwrap().to_string(), "1");
+        assert_eq!(big("-3").pow(&big("3")).unwrap().to_string(), "-27");
+        assert!(big("2").pow(&big("-1")).is_err());
+    }
+
+    #[test]
+    fn bitwise_follows_twos_complement_for_negatives() {
+        assert_eq!(big("7").bitand(&big("3")).to_string(), "3");
+        assert_eq!(big("12").bitor(&big("1")).to_string(), "13");
+        assert_eq!(big("6").bitxor(&big("3")).to_string(), "5");
+        assert_eq!(big("5").bitnot().to_string(), "-6");
+        assert_eq!(big("-1").bitand(&big("5")).to_string(), "5");
+        assert_eq!(big("-6").bitor(&big("3")).to_string(), "-5");
+        assert_eq!(big("-8").bitxor(&big("-1")).to_string(), "7");
+    }
+
+    #[test]
+    fn shifts_match_power_of_two_scaling() {
+        assert_eq!(big("1").shl(4).to_string(), "16");
+        assert_eq!(big("-8").shr(1).to_string(), "-4");
+        assert_eq!(big("-7").shr(1).to_string(), "-4");
+        assert_eq!(big("7").shr(1).to_string(), "3");
+        assert_eq!(big("255").shl(0).to_string(), "255");
+    }
+
+    #[test]
+    fn as_int_n_and_as_uint_n_wrap_like_the_spec() {
+        assert_eq!(big("255").as_int_n(8).to_string(), "-1");
+        assert_eq!(big("256").as_uint_n(8).to_string(), "0");
+        assert_eq!(big("9").as_int_n(4).to_string(), "-7");
+        assert_eq!(big("-1").as_uint_n(8).to_string(), "255");
+    }
+
+    #[test]
+    fn from_f64_rejects_non_integers() {
+        assert_eq!(BigInt::from_f64(42.0).unwrap().to_string(), "42");
+        assert_eq!(BigInt::from_f64(-5.0).unwrap().to_string(), "-5");
+        assert_eq!(
+            BigInt::from_f64(9007199254740992.0).unwrap().to_string(),
+            "9007199254740992"
+        );
+        assert!(BigInt::from_f64(1.5).is_err());
+        assert!(BigInt::from_f64(f64::INFINITY).is_err());
     }
 }

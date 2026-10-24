@@ -15,6 +15,7 @@
 //! can never collide. Extension modules such as `zun_node` will be organized
 //! the same way.
 
+mod boolean;
 mod buffer;
 mod collections;
 mod date;
@@ -246,6 +247,8 @@ pub static MODULES: &[Module] = &[
     collections::MODULE,
     buffer::MODULE,
     promise::MODULE,
+    // Appended last so every existing dispatch id stays stable.
+    boolean::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
