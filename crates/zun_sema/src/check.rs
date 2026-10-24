@@ -2708,7 +2708,31 @@ impl Checker<'_> {
                         ty: native_ty(native.ret),
                         span,
                     };
-                } else if name == "dynamic_new" {
+                }
+
+                if name == "dynamicSetSymbolFunction" {
+                    if args.len() != 3 {
+                        self.error(span, "dynamicSetSymbolFunction expects an object, symbol, and function");
+                        return self.poison(span);
+                    }
+                    let Some((id, native)) = zun_natives::resolve("collections", &name) else {
+                        return self.poison(span);
+                    };
+                    if args[0].ty != Ty::DynamicObject
+                        || args[1].ty != Ty::Symbol
+                        || !matches!(args[2].ty, Ty::Function(_))
+                    {
+                        self.error(span, "dynamicSetSymbolFunction expects (dynamic, symbol, function)");
+                        return self.poison(span);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
+
+                if name == "dynamic_new" {
                     if !args.is_empty() {
                         self.error(span, "dynamic_new takes no arguments");
                     }
@@ -6054,9 +6078,12 @@ impl Checker<'_> {
     /// ones upcast through `any`/a base type) by their runtime `type_rid`. A
     /// plain dynamic object built with `Object.create` has no class identity, so
     /// it answers `false` (never a false positive); matching such objects
-    /// against a class `prototype`, and `Symbol.hasInstance` customization, stay
-    /// deferred — both need a class↔prototype-object model that does not exist
-    /// yet.
+    /// against a class `prototype` stays deferred (needs a class↔prototype-object
+    /// model that does not exist yet). `Symbol.hasInstance` customization IS wired
+    /// when the right operand is a dynamic object carrying the method: such an
+    /// operand is not a class name, so it falls through to the `instanceofDynamic`
+    /// intrinsic below. Only `[Symbol.hasInstance]` on a typed class stays deferred
+    /// (needs class computed-symbol-key members).
     fn check_instanceof_operator(
         &mut self,
         cx: &mut FunctionCx,
@@ -6071,7 +6098,37 @@ impl Checker<'_> {
         };
         let name = self.text(class_name).to_string();
         let Some(&target) = self.classes_by_name.get(&name) else {
-            self.error(class_name.span, format!("unknown class `{name}`"));
+            // Not a class name: the right operand may be a dynamic object
+            // carrying a `[Symbol.hasInstance]` method. If the identifier
+            // resolves to an `any`/dynamic value, dispatch through that method
+            // at runtime (`C[Symbol.hasInstance](value)`); otherwise it is a
+            // genuine unknown-class reference.
+            let rhs = self.check_expr(cx, class);
+            if matches!(rhs.ty, Ty::Any | Ty::DynamicObject) {
+                let Some((id, _)) = zun_natives::resolve("typeinfo", "instanceofDynamic") else {
+                    self.error(span, "missing `instanceofDynamic` intrinsic".to_string());
+                    return self.poison(span);
+                };
+                // The operand reaches the native as `any` (the method's
+                // parameter is `any`), so box a non-dynamic left operand.
+                let value = if value.ty == Ty::Any {
+                    value
+                } else {
+                    hir::Expr {
+                        span: value.span,
+                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                        ty: Ty::Any,
+                    }
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![value, rhs] },
+                    ty: Ty::Boolean,
+                    span,
+                };
+            }
+            if !rhs.ty.is_error() {
+                self.error(class_name.span, format!("unknown class `{name}`"));
+            }
             return self.poison(span);
         };
         // Decide between a constant fold and a runtime class-hierarchy walk.

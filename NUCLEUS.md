@@ -29,7 +29,7 @@ read.
 | 2 | Number | partial | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants) and `toString(radix)`; remaining `toPrecision/toExponential/toLocaleString/valueOf` |
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
-| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Remaining: behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only). Object-literal computed symbol keys now land (`{ [sym]: v }`); class computed symbol-key members still deferred |
+| 5 | Symbol | partial | Foundation landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (`iterator/asyncIterator/hasInstance/toPrimitive/toStringTag`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** now drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`). Remaining: `toPrimitive`/`toStringTag` dispatch (blocked on a missing coercion / object-stringification site), typed-class `hasInstance`. Object-literal computed symbol keys land (`{ [sym]: v }`); class computed symbol-key members still deferred |
 | 6 | Object | partial | Enumeration/reflection surface landed (`keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` + instance `hasOwnProperty/isPrototypeOf`); descriptor-based statics deferred (no property-descriptor model) |
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
 | 8 | Function | partial | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0); no `Function` constructor, no bound-arg function values |
@@ -89,7 +89,10 @@ is preserved: `obj.in`, `obj.typeof`, a `delete(...)` method, etc. still parse
   closed the previously-unsound upcast fold (it answered `false`). **Still
   deferred (need a class↔prototype-object model that does not exist):** matching a
   plain `Object.create` dynamic object against a class (it answers `false`, never
-  a false positive), and `Symbol.hasInstance` customization.
+  a false positive). `Symbol.hasInstance` customization is now wired for a
+  **dynamic-object** right operand (`instanceofDynamic`; see §5); only
+  `[Symbol.hasInstance]` on a typed class stays deferred (needs class
+  computed-symbol-key members).
 - `void x` is **deferred** (left as an identifier/type name — `void` is a common
   return-type annotation; no `undefined` value representation exists yet). The
   `for (k in obj)` statement form is also out of scope (this is only the `in`
@@ -273,12 +276,43 @@ in sync.
     (`check.rs` ComputedCall intercept for `x[Symbol.iterator]()` → `*IteratorNew`).
   - Parser now accepts reserved keywords as member names (`Symbol.for`), via
     `TokenKind::is_keyword` + `member_name` in `zun_syntax`.
+- **Behavioral dispatch — `Symbol.hasInstance` (dynamic-object path landed):**
+  `value instanceof C` where `C` is a **dynamic object** carrying a
+  `[Symbol.hasInstance]` method now calls `C[Symbol.hasInstance](value)` and returns
+  `ToBoolean` of its result, overriding the default class check. Wiring:
+  `check_instanceof_operator` (`check.rs`) recognizes a right operand that is not a
+  class name but resolves to an `any`/`DynamicObject` value and lowers to the
+  `instanceofDynamic(value, C)` managed builtin (`zun:typeinfo`), serviced in
+  `zun_interp/src/collections.rs`: it reads the method from `C`'s symbol-function slot
+  (`dynamic_get_symbol_function`, well-known id 2) and invokes it with the existing
+  `invoke_function_value` machinery; absent the method a dynamic object has no class
+  identity, so the answer is `false`. The method is attached with the
+  `dynamicSetSymbolFunction(obj, symbol, fn)` intrinsic (`zun:collections`), the
+  symbol-keyed analogue of `dynamicSetFunction` — **not** `obj[sym] = fn`, because
+  function values do not box into `Any` (so they live in the dedicated symbol-function
+  slot, not the symbol-value slot). Interp-only (Tier-0 floor, like the other Symbol
+  ops); no JIT path to keep in sync.
 - **Deferred (documented follow-up):**
-  - **Behavioral dispatch** of the non-iterator well-known symbols: making `instanceof`
-    consult `Symbol.hasInstance`, coercion consult `Symbol.toPrimitive`, and
-    `Object.prototype.toString` consult `Symbol.toStringTag`. These are exposed as
-    **values** only; wiring their dispatch is a separate step (the iterator one already
-    drives `for...of`).
+  - **`Symbol.hasInstance` on a typed class** stays deferred: it requires class
+    computed-symbol-key member definitions (see below) so a class can carry the method.
+    Only the dynamic-object path above is wired.
+  - **`Symbol.toPrimitive` dispatch is blocked on a missing coercion site.** There is
+    today no reachable object→primitive coercion to hook: `+` and template
+    interpolation require matching `string`/number operand types (an object operand is
+    a type error), and there are no `Number(obj)`/`String(obj)` coercion functions
+    (only `BigInt`/`Boolean` exist as coercion calls). Wiring `toPrimitive` therefore
+    needs a new coercion path (a type-system decision), plus function-valued symbol
+    members (`dynamicSetSymbolFunction` already provides the storage primitive). Not
+    built here.
+  - **`Symbol.toStringTag` dispatch is blocked on a missing stringification site.**
+    There is no `Object` class and no `Object.prototype.toString`; the only object
+    stringification is the generic `"[object]"` in `Value::display` and the `print`
+    native, which runs on a heap-free `NativeArg` and so cannot read a symbol property.
+    A `[Symbol.toStringTag]` **string value** is already storable/readable via the
+    symbol-value slot (`obj[Symbol.toStringTag] = "X"`), but exposing it needs a
+    heap-aware object-stringification site (an `Object.prototype.toString`, or
+    intercepting `print`/`String(obj)` in interp — and matching it in codegen). A
+    design decision about where that canonical site lives; not built here.
   - **Object-literal computed symbol-key properties** (`{ [computedSymbol]: v }`) now
     lower: an object literal builds a `DynamicObject` (`Expr::ObjectLiteral` →
     `hir::ExprKind::DynamicObjectLiteral` → `NewDynamic` + per-entry `StoreDynamic`/
@@ -1009,9 +1043,12 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
 3. **Symbol — foundation complete** (#5) — ✅ `Symbol()` unique primitives;
    `Symbol.for/keyFor`; well-known symbols as **values**
    (`iterator asyncIterator hasInstance toPrimitive toStringTag`); `.description`;
-   user symbol-keyed `obj[sym]` get/set over the existing slot. **Remaining (deferred):**
-   behavioral dispatch of `hasInstance/toPrimitive/toStringTag` (value-only for now);
-   object-literal/class computed-key member definitions (no object literals in the AST).
+   user symbol-keyed `obj[sym]` get/set over the existing slot; `Symbol.hasInstance`
+   dispatch for `instanceof` on dynamic objects (`dynamicSetSymbolFunction` +
+   `instanceofDynamic`). **Remaining (deferred):** `toPrimitive` dispatch (no reachable
+   object→primitive coercion site), `toStringTag` dispatch (no reachable object
+   stringification site), typed-class `hasInstance`; class computed-key member
+   definitions. See §5 for the blocker analysis.
 
 ### MID
 4. ~~**WeakSet** (#14) and **WeakRef** (#15)~~ — done (reuse the WeakMap ephemeron / GC weak-reference floors).
@@ -1107,5 +1144,6 @@ These are not per-class work; they are the common causes behind several
 - **Symbol infrastructure is now surfaced:** the `SymbolRegistry` (`zun_core`) backs a
   first-class `Ty::Symbol` value (immediate `AnyTag::Symbol`). `Symbol()`,
   `Symbol.for/keyFor`, the five well-known symbols as values, `.description`, and
-  symbol-keyed `obj[sym]` get/set all reach user code. The behavioral dispatch of
-  `hasInstance/toPrimitive/toStringTag` remains a value-only follow-up (see §5).
+  symbol-keyed `obj[sym]` get/set all reach user code. `Symbol.hasInstance` now drives
+  `instanceof` for dynamic objects; `toPrimitive`/`toStringTag` dispatch remains blocked
+  on a missing coercion / object-stringification site (see §5).

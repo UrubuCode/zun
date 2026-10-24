@@ -66,5 +66,17 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: instanceof_class,
         },
+        NativeFn {
+            // `value instanceof C` where `C` is a dynamic object carrying a
+            // `[Symbol.hasInstance]` method. The managed floor looks the method
+            // up in `C`'s symbol-function slot and returns `ToBoolean` of its
+            // result; absent the method it answers `false` (a dynamic object
+            // has no class identity). The second argument is the right-hand
+            // object itself (not a metadata rid), hence `Opaque`.
+            name: "instanceofDynamic",
+            params: &[Opaque, Opaque],
+            ret: Bool,
+            imp: instanceof_class,
+        },
     ],
 };

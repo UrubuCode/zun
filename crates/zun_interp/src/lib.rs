@@ -1750,6 +1750,43 @@ mod method_tests {
     }
 
     #[test]
+    fn instanceof_dispatches_to_symbol_has_instance_on_dynamic_object() {
+        // `C[Symbol.hasInstance]` method decides `x instanceof C` for a dynamic
+        // object `C`, overriding the default class check (which a dynamic object
+        // could never satisfy). `accept` returns `true`, `reject` returns
+        // whether the operand is the number 7.
+        let accepting = "import { dynamicSetSymbolFunction } from \"zun:core\";\n\
+             function accept(x: any): boolean { return true; }\n\
+             function main(): boolean {\n\
+               let c = dynamic_new();\n\
+               dynamicSetSymbolFunction(c, Symbol.hasInstance, accept);\n\
+               let x: any = box_any(5);\n\
+               return x instanceof c;\n\
+             }";
+        assert!(bool_of(accepting));
+
+        // The method's own result drives the answer (ToBoolean of the return).
+        let selective = "import { dynamicSetSymbolFunction } from \"zun:core\";\n\
+             function isSeven(x: any): boolean { return (x as int) == 7; }\n\
+             function main(): boolean {\n\
+               let c = dynamic_new();\n\
+               dynamicSetSymbolFunction(c, Symbol.hasInstance, isSeven);\n\
+               let x: any = box_any(5);\n\
+               return x instanceof c;\n\
+             }";
+        assert!(!bool_of(selective));
+
+        // Without a `[Symbol.hasInstance]` method a dynamic object has no class
+        // identity, so the operand is never an instance.
+        let bare = "function main(): boolean {\n\
+               let c = dynamic_new();\n\
+               let x: any = box_any(5);\n\
+               return x instanceof c;\n\
+             }";
+        assert!(!bool_of(bare));
+    }
+
+    #[test]
     fn generator_session_contextual_next_uses_owned_state() {
         let module = zun_compiler::compile("function* main(): int { yield 3; return 4; }")
             .expect("compile generator function");

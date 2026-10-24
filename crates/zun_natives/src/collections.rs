@@ -396,5 +396,13 @@ pub const MODULE: crate::Module = crate::Module {
         // native un-coerced (`Opaque`) so it can dispatch on runtime kind.
         NativeFn { name: "mapFromIterable", params: &[Opaque], ret: Map, imp: unavailable },
         NativeFn { name: "setFromIterable", params: &[Opaque], ret: Set, imp: unavailable },
+        // Attach a function under a SYMBOL key on a dynamic object, mirroring
+        // the string-keyed `dynamicSetFunction`. Backs behavioral dispatch of
+        // well-known symbols whose member is a method (e.g.
+        // `[Symbol.hasInstance]`): function values are not boxable into `Any`,
+        // so they live in the object's dedicated symbol-function slot rather
+        // than the ordinary symbol-value slot. The symbol argument arrives as
+        // an immediate `Any` (`AnyTag::Symbol`), hence `Opaque`.
+        NativeFn { name: "dynamicSetSymbolFunction", params: &[DynamicObject, Opaque, Function], ret: Void, imp: unavailable },
     ],
 };

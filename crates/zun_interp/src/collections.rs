@@ -1968,6 +1968,49 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Void)
             }
+            "dynamicSetSymbolFunction" => {
+                // Attach a method under a Symbol key (e.g.
+                // `C[Symbol.hasInstance]`). The symbol arrives as an immediate
+                // `Any`; the function value goes into the dedicated
+                // symbol-function slot since functions are not boxable `Any`.
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let symbol = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                let function = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_set_symbol_function(object, symbol, function);
+                });
+                Ok(Value::Void)
+            }
+            "instanceofDynamic" => {
+                // `value instanceof C` where `C` is a dynamic object. If `C`
+                // carries a `[Symbol.hasInstance]` method, call it with `value`
+                // and return `ToBoolean` of the result; otherwise a dynamic
+                // object has no class identity, so the answer is `false`.
+                let value = args.first().ok_or(RunError::BadToken)?.clone();
+                let rhs = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let handler = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_symbol_function(
+                        rhs,
+                        zun_core::WellKnownSymbol::HasInstance.id(),
+                    )
+                });
+                let found = match handler {
+                    Some(handle) => {
+                        let result = self.invoke_function_value(handle, vec![value])?;
+                        zun_gc::with_current_heap(|heap| is_truthy(&result, heap))
+                    }
+                    None => false,
+                };
+                Ok(Value::Bool(found))
+            }
             "functionApply" => {
                 // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
                 // the leading positional argument, spread with the array.

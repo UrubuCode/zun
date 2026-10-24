@@ -192,6 +192,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "symbolWellKnown",
         "symbolDescription",
         "stringSplit",
+        "dynamicSetSymbolFunction",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
@@ -304,7 +305,7 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
 }
 
 pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
-    for name in ["typeofAny", "instanceofClass"] {
+    for name in ["typeofAny", "instanceofClass", "instanceofDynamic"] {
         if zun_natives::resolve("typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
