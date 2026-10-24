@@ -37,6 +37,13 @@ global.set("Uint8Array", Uint8Array, true);
 global.set("Uint16Array", Uint16Array, true);
 global.set("Uint32Array", Uint32Array, true);
 global.set("Float64Array", Float64Array, true);
+global.set("Int8Array", Int8Array, true);
+global.set("Uint8ClampedArray", Uint8ClampedArray, true);
+global.set("Int16Array", Int16Array, true);
+global.set("Int32Array", Int32Array, true);
+global.set("Float32Array", Float32Array, true);
+global.set("BigInt64Array", BigInt64Array, true);
+global.set("BigUint64Array", BigUint64Array, true);
 
 // Value types and surface-only globals.
 global.set("String", String, true);

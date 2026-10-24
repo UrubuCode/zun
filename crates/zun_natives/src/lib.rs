@@ -73,14 +73,32 @@ pub enum NativeTy {
     Buffer,
     /// A managed DataView reference.
     DataView,
+    // One variant per row of the typed-element master table in `zun_core`.
+    // The declarations in `buffer.rs` are generated from that table and name
+    // these, so a missing one is a build error rather than a kind that
+    // quietly has no intrinsics.
+    /// A managed Int8Array view.
+    I8Array,
     /// A managed Uint8Array view.
     U8Array,
+    /// A managed Uint8ClampedArray view.
+    U8ClampedArray,
+    /// A managed Int16Array view.
+    I16Array,
     /// A managed Uint16Array view.
     U16Array,
+    /// A managed Int32Array view.
+    I32Array,
     /// A managed Uint32Array view.
     U32Array,
+    /// A managed Float32Array view.
+    F32Array,
     /// A managed Float64Array view.
     F64Array,
+    /// A managed BigInt64Array view.
+    I64Array,
+    /// A managed BigUint64Array view.
+    U64Array,
     /// A managed Map reference.
     Map,
     /// A managed Set reference.

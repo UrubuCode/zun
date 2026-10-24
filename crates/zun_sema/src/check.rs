@@ -2888,7 +2888,14 @@ impl Checker<'_> {
                         }
                     }
                 }
-                let managed_method = match (receiver.ty, mname.as_str()) {
+                // `length`/`byteLength`/`get`/`set` on a typed-array view come
+                // from the master table in `zun_core`, so every kind the
+                // language accepts has the same reachable method surface.
+                let typed_array_method = match receiver.ty {
+                    Ty::BufferView(kind) => crate::typed_arrays::method(kind, mname.as_str()),
+                    _ => None,
+                };
+                let managed_method = typed_array_method.or_else(|| match (receiver.ty, mname.as_str()) {
                     // Standard `Array.prototype` methods routed to natives. The
                     // callback methods invoke the dynamic function value with the
                     // ECMAScript `(value, index, array)` signature (extra
@@ -3006,87 +3013,6 @@ impl Checker<'_> {
                     (Ty::String, "replaceAll") => {
                         Some(("replaceAll", Ty::String, vec![Ty::String, Ty::String]))
                     }
-                    // Element count and byte size. The natives existed for
-                    // every kind; only `get`/`set` were ever reachable, so a
-                    // view could be read but not measured.
-                    (Ty::BufferView(hir::BufferViewKind::U8), "length") => Some((
-                        "u8ArrayLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U8), "byteLength") => Some((
-                        "u8ArrayByteLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U16), "length") => Some((
-                        "u16ArrayLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U16), "byteLength") => Some((
-                        "u16ArrayByteLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U32), "length") => Some((
-                        "u32ArrayLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U32), "byteLength") => Some((
-                        "u32ArrayByteLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::F64), "length") => Some((
-                        "f64ArrayLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::F64), "byteLength") => Some((
-                        "f64ArrayByteLength",
-                        Ty::Int(IntKind::U64),
-                        vec![],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U8), "get") => Some((
-                        "u8ArrayGet",
-                        Ty::Int(IntKind::U8),
-                        vec![Ty::Int(IntKind::U64)],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U8), "set") => Some((
-                        "u8ArraySet",
-                        Ty::Boolean,
-                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U8)],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U16), "get") => Some((
-                        "u16ArrayGet",
-                        Ty::Int(IntKind::U16),
-                        vec![Ty::Int(IntKind::U64)],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U16), "set") => Some((
-                        "u16ArraySet",
-                        Ty::Boolean,
-                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16)],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U32), "get") => Some((
-                        "u32ArrayGet",
-                        Ty::Int(IntKind::U32),
-                        vec![Ty::Int(IntKind::U64)],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::U32), "set") => Some((
-                        "u32ArraySet",
-                        Ty::Boolean,
-                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32)],
-                    )),
-                    (Ty::BufferView(hir::BufferViewKind::F64), "get") => {
-                        Some(("f64ArrayGet", Ty::F64, vec![Ty::Int(IntKind::U64)]))
-                    }
-                    (Ty::BufferView(hir::BufferViewKind::F64), "set") => Some((
-                        "f64ArraySet",
-                        Ty::Boolean,
-                        vec![Ty::Int(IntKind::U64), Ty::F64],
-                    )),
                     (Ty::BufferView(hir::BufferViewKind::DataView), "getUint32") => Some((
                         "dataViewGetU32",
                         Ty::Int(IntKind::U32),
@@ -3209,7 +3135,7 @@ impl Checker<'_> {
                         vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
                     )),
                     _ => None,
-                };
+                });
                 if let Some((native_name, return_ty, expected)) = managed_method {
                     if args.len() != expected.len() {
                         self.error(
@@ -3242,14 +3168,16 @@ impl Checker<'_> {
                         "zun:string"
                     } else if native_name.starts_with("dataView")
                         || native_name.starts_with("buffer")
-                        // The typed-array natives, by element prefix. Matching
-                        // the method suffix instead (`ArrayGet`, `ArraySet`)
-                        // missed `u32ArrayLength` and friends, which then
-                        // resolved against `zun:collections` and were
-                        // reported missing.
-                        || ["u8", "u16", "u32", "f64"]
+                        // The typed-array natives, by the prefixes the master
+                        // table gives them. Matching the method suffix
+                        // instead (`ArrayGet`, `ArraySet`) missed
+                        // `u32ArrayLength` and friends, which then resolved
+                        // against `zun:collections` and were reported
+                        // missing; a hand-written list of prefixes missed
+                        // every kind added after it was written.
+                        || crate::typed_arrays::NATIVE_PREFIXES
                             .iter()
-                            .any(|element| native_name.starts_with(&format!("{element}Array")))
+                            .any(|prefix| native_name.starts_with(prefix))
                     {
                         "zun:buffer"
                     } else if native_name.starts_with("promise") {

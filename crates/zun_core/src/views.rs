@@ -413,11 +413,16 @@ impl TypedArrayView {
 /// Generates the element enum and one read/write pair per kind from the
 /// master table, so a kind cannot exist in the enum without its accessors.
 macro_rules! define_typed_elements {
-    ($((
-        $variant:ident, $repr:ty, $arg:ty, $width:expr, $js:literal, $native:literal,
-        $elem_ty:literal, $arg_ty:literal, $native_ty:ident, $encode:path,
-        $read:ident, $write:ident, $alloc:ident, $get:ident, $set:ident
-    )),+ $(,)?) => {
+    ($({
+        variant: $variant:ident, repr: $repr:ty, arg: $arg:ty, width: $width:expr,
+        js: $js:literal, native: $native:literal,
+        elem_ty: $elem_ty:literal, arg_ty: $arg_ty:literal,
+        view_ty: $view_ty:ident, elem_native: $elem_native:ident,
+        arg_native: $arg_native:ident,
+        encode: $encode:path,
+        read: $read:ident, write: $write:ident,
+        get: $get:ident, set: $set:ident
+    }),+ $(,)?) => {
         /// Which kind of element a typed-array view is a view of.
         ///
         /// Generated from the master table in `typed_elements.rs`.

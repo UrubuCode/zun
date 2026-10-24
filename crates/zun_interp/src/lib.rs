@@ -21,6 +21,7 @@ mod runner;
 mod stack;
 mod state;
 mod unwind;
+mod typed_arrays;
 pub mod value;
 
 use gc_policy::next_gc_interval;

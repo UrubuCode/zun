@@ -17,6 +17,11 @@ impl<'a> Checker<'a> {
         if let Some(binding) = self.realm_globals.get(&text) {
             return binding.ty;
         }
+        // The typed-array constructor names come from the master table, so an
+        // annotation cannot name a kind the rest of the wiring lacks.
+        if let Some(kind) = crate::typed_arrays::view_kind(text.as_str()) {
+            return Ty::BufferView(kind);
+        }
         match text.as_str() {
             "number" | "float" | "f64" => Ty::F64,
             "f32" => Ty::F32,
@@ -43,10 +48,6 @@ impl<'a> Checker<'a> {
             "Proxy" | "proxy" => Ty::Proxy,
             "Promise" | "promise" => Ty::Promise,
             "DataView" => Ty::BufferView(hir::BufferViewKind::DataView),
-            "Uint8Array" => Ty::BufferView(hir::BufferViewKind::U8),
-            "Uint16Array" => Ty::BufferView(hir::BufferViewKind::U16),
-            "Uint32Array" => Ty::BufferView(hir::BufferViewKind::U32),
-            "Float64Array" => Ty::BufferView(hir::BufferViewKind::F64),
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "Symbol" | "symbol" => Ty::Symbol,
             "any" => Ty::Any,

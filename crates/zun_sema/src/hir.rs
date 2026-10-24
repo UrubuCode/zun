@@ -132,14 +132,33 @@ pub enum Ty {
 pub enum BufferViewKind {
     /// Mixed-width, possibly unaligned view.
     DataView,
-    /// Unsigned 8-bit elements.
+    // One variant per row of the typed-element master table in `zun_core`,
+    // named exactly as its `TypedElement` variant is: the generated wiring in
+    // `typed_arrays.rs` pairs them by name, and `typed_array_kinds.rs` fails
+    // if the two lists drift apart.
+    /// Signed 8-bit elements (`Int8Array`).
+    I8,
+    /// Unsigned 8-bit elements (`Uint8Array`).
     U8,
-    /// Unsigned 16-bit elements.
+    /// Unsigned 8-bit elements that clamp rather than wrap
+    /// (`Uint8ClampedArray`).
+    U8Clamped,
+    /// Signed 16-bit elements (`Int16Array`).
+    I16,
+    /// Unsigned 16-bit elements (`Uint16Array`).
     U16,
-    /// Unsigned 32-bit elements.
+    /// Signed 32-bit elements (`Int32Array`).
+    I32,
+    /// Unsigned 32-bit elements (`Uint32Array`).
     U32,
-    /// 64-bit floating-point elements.
+    /// 32-bit floating-point elements (`Float32Array`).
+    F32,
+    /// 64-bit floating-point elements (`Float64Array`).
     F64,
+    /// Signed 64-bit elements (`BigInt64Array`).
+    I64,
+    /// Unsigned 64-bit elements (`BigUint64Array`).
+    U64,
 }
 
 impl Ty {

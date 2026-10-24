@@ -141,33 +141,18 @@ impl Heap {
 /// in `zun_core`: one allocator, one getter and one setter each. Threading a
 /// new kind through by hand is what left kinds half-wired before.
 macro_rules! typed_array_heap_access {
-    ($((
-        $variant:ident, $repr:ty, $arg:ty, $width:expr, $js:literal, $native:literal,
-        $elem_ty:literal, $arg_ty:literal, $native_ty:ident, $encode:path,
-        $read:ident, $write:ident, $alloc:ident, $get:ident, $set:ident
-    )),+ $(,)?) => {
+    ($({
+        variant: $variant:ident, repr: $repr:ty, arg: $arg:ty, width: $width:expr,
+        js: $js:literal, native: $native:literal,
+        elem_ty: $elem_ty:literal, arg_ty: $arg_ty:literal,
+        view_ty: $view_ty:ident, elem_native: $elem_native:ident,
+        arg_native: $arg_native:ident,
+        encode: $encode:path,
+        read: $read:ident, write: $write:ident,
+        get: $get:ident, set: $set:ident
+    }),+ $(,)?) => {
         impl Heap {
             $(
-                /// Allocates a view of this kind over `buffer`. `length`
-                /// counts elements, as the JS constructor does.
-                pub fn $alloc(
-                    &mut self,
-                    buffer: Obj,
-                    offset: usize,
-                    length: usize,
-                ) -> Option<Obj> {
-                    let view = zun_core::TypedArrayView::new(
-                        self.buffer_len(buffer)?,
-                        offset,
-                        length,
-                        zun_core::TypedElement::$variant,
-                    )?;
-                    let object = self.alloc(0, 1);
-                    object.set_field(0, buffer.addr() as u64);
-                    self.typed_views.insert(object.addr() as usize, (buffer, view));
-                    Some(object)
-                }
-
                 /// Reads one element. `None` when the object is not a view,
                 /// the index is outside it, or it is a view of another kind.
                 pub fn $get(&self, object: Obj, index: usize) -> Option<$repr> {
@@ -191,3 +176,25 @@ macro_rules! typed_array_heap_access {
 }
 
 zun_core::typed_element_table!(typed_array_heap_access);
+
+impl Heap {
+    /// Allocates a typed-array view over `buffer`. `length` counts
+    /// **elements**, as the JavaScript constructor does.
+    ///
+    /// One function for every kind rather than one per kind: the element kind
+    /// is a value here, and the view carries it.
+    pub fn alloc_typed_array(
+        &mut self,
+        buffer: Obj,
+        offset: usize,
+        length: usize,
+        element: zun_core::TypedElement,
+    ) -> Option<Obj> {
+        let view =
+            zun_core::TypedArrayView::new(self.buffer_len(buffer)?, offset, length, element)?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.typed_views.insert(object.addr() as usize, (buffer, view));
+        Some(object)
+    }
+}

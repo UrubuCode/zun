@@ -219,26 +219,6 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "dataViewSetU16",
         "dataViewGetF64",
         "dataViewSetF64",
-        "u32ArrayNew",
-        "u32ArrayLength",
-        "u32ArrayByteLength",
-        "u32ArrayGet",
-        "u32ArraySet",
-        "u8ArrayNew",
-        "u8ArrayLength",
-        "u8ArrayByteLength",
-        "u8ArrayGet",
-        "u8ArraySet",
-        "f64ArrayNew",
-        "f64ArrayLength",
-        "f64ArrayByteLength",
-        "f64ArrayGet",
-        "f64ArraySet",
-        "u16ArrayNew",
-        "u16ArrayLength",
-        "u16ArrayByteLength",
-        "u16ArrayGet",
-        "u16ArraySet",
         "arrayIteratorNew",
         "arrayIteratorNext",
         "arrayIteratorDone",
@@ -253,7 +233,12 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "generatorIteratorNext",
         "generatorIteratorDone",
         "stringIteratorNew",
-    ] {
+    ]
+    .into_iter()
+    // The typed-array intrinsics come from the master table, so a kind
+    // cannot be callable from compiled code but unknown here.
+    .chain(crate::typed_arrays::NATIVES.iter().copied())
+    {
         if zun_natives::resolve("zun:buffer", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }

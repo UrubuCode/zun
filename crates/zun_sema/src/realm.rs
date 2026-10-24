@@ -88,6 +88,11 @@ pub(crate) struct RealmBinding {
 /// checker's hardcoded class-constructor path.
 fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
     use hir::BufferViewKind as Bv;
+    // Every typed-array constructor comes from the master table, so a kind
+    // cannot be annotatable without being constructible.
+    if let Some(facets) = crate::typed_arrays::constructor(name) {
+        return Some(facets);
+    }
     let collection0 = |native, ty| CtorLowering::Intrinsic0 { module: "zun:collections", native, ty };
     Some(match name {
         // Managed collections with an optional iterable constructor argument.
@@ -160,22 +165,6 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "DataView" => (
             Ty::BufferView(Bv::DataView),
             CtorLowering::BufferView { native: "dataViewNew", kind: Bv::DataView },
-        ),
-        "Uint8Array" => (
-            Ty::BufferView(Bv::U8),
-            CtorLowering::BufferView { native: "u8ArrayNew", kind: Bv::U8 },
-        ),
-        "Uint16Array" => (
-            Ty::BufferView(Bv::U16),
-            CtorLowering::BufferView { native: "u16ArrayNew", kind: Bv::U16 },
-        ),
-        "Uint32Array" => (
-            Ty::BufferView(Bv::U32),
-            CtorLowering::BufferView { native: "u32ArrayNew", kind: Bv::U32 },
-        ),
-        "Float64Array" => (
-            Ty::BufferView(Bv::F64),
-            CtorLowering::BufferView { native: "f64ArrayNew", kind: Bv::F64 },
         ),
         // Value types and surface-only globals: annotation + descriptor only,
         // `new` (where it exists) stays on the existing class path.

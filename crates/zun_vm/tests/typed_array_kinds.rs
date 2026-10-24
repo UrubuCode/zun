@@ -15,6 +15,17 @@ use zun_interp::CaptureOutput;
 /// Add a kind here when adding it to the realm; the coverage test below
 /// refuses to let this list fall behind what the language accepts.
 const KINDS: &[(&str, &str)] = &[
+    ("Int8Array", "-128"),
+    ("Uint8ClampedArray", "255"),
+    ("Int16Array", "-32768"),
+    ("Int32Array", "-2147483648"),
+    ("Float32Array", "2.5"),
+    ("BigInt64Array", "-9223372036854775808"),
+    // 2^53, not `u64::MAX`: a bare numeric literal is an `f64`, so a value
+    // above 2^53 cannot be written as one and arrives rounded. The element
+    // itself is a full 64 bits — `crates/zun_core/tests/typed_elements.rs`
+    // round-trips `u64::MAX` through the view directly.
+    ("BigUint64Array", "9007199254740992"),
     ("Uint8Array", "200"),
     ("Uint16Array", "65535"),
     ("Uint32Array", "4294967295"),

@@ -1,7 +1,7 @@
 //! The one table of typed-array element kinds.
 //!
-//! A typed-array kind has to appear in the element enum, the heap's allocator
-//! and accessors, the native declarations, the interpreter's dispatch, the
+//! A typed-array kind has to appear in the element enum, the heap's
+//! accessors, the native declarations, the interpreter's dispatch, the
 //! checker's type and method tables, and the realm's constructor lowering.
 //! Writing that list seven times is how kinds end up half-wired — accepted by
 //! the compiler and wrong (or absent) at run time.
@@ -10,28 +10,30 @@
 //! wiring from it, the way the opcode set is generated from its master table.
 //! Adding a kind means adding one row below and nothing else.
 //!
-//! Each row is, in order:
+//! The fields are named rather than positional because every consumer has to
+//! repeat the whole matcher: with eighteen columns, a consumer that silently
+//! swapped two of them would reintroduce exactly the class of bug this table
+//! exists to remove.
 //!
-//! 1. `variant` — the [`crate::TypedElement`] variant.
-//! 2. `repr` — how one element is stored, and what reading one yields.
-//! 3. `arg` — what *writing* one accepts at the language boundary. Equal to
-//!    `repr` except for the clamped kind, which takes a `number` as JS does.
-//! 4. `width` — the element's size in bytes.
-//! 5. `js` — the JavaScript constructor name.
-//! 6. `native` — the prefix of this kind's `zun:buffer` intrinsics; the full
-//!    names are `<native>New`, `<native>Length`, `<native>ByteLength`,
-//!    `<native>Get` and `<native>Set`.
-//! 7. `elem_ty` — the Zun type name of a *read* element, as the checker
-//!    spells it.
-//! 8. `arg_ty` — the Zun type name a *written* element is accepted as.
-//! 9. `native_ty` — the `zun_natives::NativeTy` variant naming a view of
-//!    this kind.
-//! 10. `encode` — converts the `arg` into the stored `repr`. [`same`] for
-//!     every kind that stores what it is given.
-//! 11-15. The Rust method names generated for this kind: the view's reader
-//!     and writer, and the heap's allocator, getter and setter. They are
-//!     spelled out rather than pasted together so that every generated name
-//!     is greppable from this table.
+//! - `variant` — the [`crate::TypedElement`] variant.
+//! - `repr` — how one element is stored, and what reading one yields.
+//! - `arg` — what *writing* one accepts at the language boundary. Equal to
+//!   `repr` except for the clamped kind, which takes a `number` as JS does.
+//! - `width` — the element's size in bytes.
+//! - `js` — the JavaScript constructor name.
+//! - `native` — the prefix of this kind's `zun:buffer` intrinsics; the full
+//!   names are `<native>New`, `<native>Length`, `<native>ByteLength`,
+//!   `<native>Get` and `<native>Set`.
+//! - `elem_ty` / `arg_ty` — the Zun type names of a read and of a written
+//!   element, as the checker spells them.
+//! - `view_ty` / `elem_native` / `arg_native` — the `zun_natives::NativeTy`
+//!   variants for a view of this kind, a read element, and a written one.
+//! - `encode` — converts the `arg` into the stored `repr`. [`same`] for every
+//!   kind that stores what it is given.
+//! - `read` / `write` / `get` / `set` — the Rust method names
+//!   generated for this kind on the view and on the heap. They are spelled
+//!   out rather than pasted together so every generated name is greppable
+//!   from this table.
 //!
 //! The 64-bit kinds are named `BigInt64Array`/`BigUint64Array` in JS because
 //! JS numbers cannot hold 64 bits; their elements are BigInts there. Zun has
@@ -41,31 +43,105 @@
 macro_rules! typed_element_table {
     ($callback:path) => {
         $callback! {
-            (I8, i8, i8, 1, "Int8Array", "i8Array", "i8", "i8", I8Array, $crate::same,
-             read_i8, write_i8, alloc_i8_array, i8_array_get, i8_array_set),
-            (U8, u8, u8, 1, "Uint8Array", "u8Array", "u8", "u8", U8Array, $crate::same,
-             read_u8, write_u8, alloc_u8_array, u8_array_get, u8_array_set),
-            (U8Clamped, u8, f64, 1, "Uint8ClampedArray", "u8ClampedArray", "u8", "number",
-             U8ClampedArray, $crate::clamp_to_u8,
-             read_u8_clamped, write_u8_clamped, alloc_u8_clamped_array,
-             u8_clamped_array_get, u8_clamped_array_set),
-            (I16, i16, i16, 2, "Int16Array", "i16Array", "i16", "i16", I16Array, $crate::same,
-             read_i16, write_i16, alloc_i16_array, i16_array_get, i16_array_set),
-            (U16, u16, u16, 2, "Uint16Array", "u16Array", "u16", "u16", U16Array, $crate::same,
-             read_u16, write_u16, alloc_u16_array, u16_array_get, u16_array_set),
-            (I32, i32, i32, 4, "Int32Array", "i32Array", "i32", "i32", I32Array, $crate::same,
-             read_i32, write_i32, alloc_i32_array, i32_array_get, i32_array_set),
-            (U32, u32, u32, 4, "Uint32Array", "u32Array", "u32", "u32", U32Array, $crate::same,
-             read_u32, write_u32, alloc_u32_array, u32_array_get, u32_array_set),
-            (F32, f32, f32, 4, "Float32Array", "f32Array", "f32", "f32", F32Array, $crate::same,
-             read_f32, write_f32, alloc_f32_array, f32_array_get, f32_array_set),
-            (F64, f64, f64, 8, "Float64Array", "f64Array", "number", "number", F64Array,
-             $crate::same,
-             read_f64, write_f64, alloc_f64_array, f64_array_get, f64_array_set),
-            (I64, i64, i64, 8, "BigInt64Array", "i64Array", "i64", "i64", I64Array, $crate::same,
-             read_i64, write_i64, alloc_i64_array, i64_array_get, i64_array_set),
-            (U64, u64, u64, 8, "BigUint64Array", "u64Array", "u64", "u64", U64Array, $crate::same,
-             read_u64, write_u64, alloc_u64_array, u64_array_get, u64_array_set),
+            {
+                variant: I8, repr: i8, arg: i8, width: 1,
+                js: "Int8Array", native: "i8Array",
+                elem_ty: "i8", arg_ty: "i8",
+                view_ty: I8Array, elem_native: I8, arg_native: I8,
+                encode: $crate::same,
+                read: read_i8, write: write_i8,
+                get: i8_array_get, set: i8_array_set
+            },
+            {
+                variant: U8, repr: u8, arg: u8, width: 1,
+                js: "Uint8Array", native: "u8Array",
+                elem_ty: "u8", arg_ty: "u8",
+                view_ty: U8Array, elem_native: U8, arg_native: U8,
+                encode: $crate::same,
+                read: read_u8, write: write_u8,
+                get: u8_array_get, set: u8_array_set
+            },
+            {
+                variant: U8Clamped, repr: u8, arg: f64, width: 1,
+                js: "Uint8ClampedArray", native: "u8ClampedArray",
+                elem_ty: "u8", arg_ty: "number",
+                view_ty: U8ClampedArray, elem_native: U8, arg_native: F64,
+                encode: $crate::clamp_to_u8,
+                read: read_u8_clamped, write: write_u8_clamped,
+                get: u8_clamped_array_get, set: u8_clamped_array_set
+            },
+            {
+                variant: I16, repr: i16, arg: i16, width: 2,
+                js: "Int16Array", native: "i16Array",
+                elem_ty: "i16", arg_ty: "i16",
+                view_ty: I16Array, elem_native: I16, arg_native: I16,
+                encode: $crate::same,
+                read: read_i16, write: write_i16,
+                get: i16_array_get, set: i16_array_set
+            },
+            {
+                variant: U16, repr: u16, arg: u16, width: 2,
+                js: "Uint16Array", native: "u16Array",
+                elem_ty: "u16", arg_ty: "u16",
+                view_ty: U16Array, elem_native: U16, arg_native: U16,
+                encode: $crate::same,
+                read: read_u16, write: write_u16,
+                get: u16_array_get, set: u16_array_set
+            },
+            {
+                variant: I32, repr: i32, arg: i32, width: 4,
+                js: "Int32Array", native: "i32Array",
+                elem_ty: "i32", arg_ty: "i32",
+                view_ty: I32Array, elem_native: I32, arg_native: I32,
+                encode: $crate::same,
+                read: read_i32, write: write_i32,
+                get: i32_array_get, set: i32_array_set
+            },
+            {
+                variant: U32, repr: u32, arg: u32, width: 4,
+                js: "Uint32Array", native: "u32Array",
+                elem_ty: "u32", arg_ty: "u32",
+                view_ty: U32Array, elem_native: U32, arg_native: U32,
+                encode: $crate::same,
+                read: read_u32, write: write_u32,
+                get: u32_array_get, set: u32_array_set
+            },
+            {
+                variant: F32, repr: f32, arg: f32, width: 4,
+                js: "Float32Array", native: "f32Array",
+                elem_ty: "f32", arg_ty: "f32",
+                view_ty: F32Array, elem_native: F32, arg_native: F32,
+                encode: $crate::same,
+                read: read_f32, write: write_f32,
+                get: f32_array_get, set: f32_array_set
+            },
+            {
+                variant: F64, repr: f64, arg: f64, width: 8,
+                js: "Float64Array", native: "f64Array",
+                elem_ty: "number", arg_ty: "number",
+                view_ty: F64Array, elem_native: F64, arg_native: F64,
+                encode: $crate::same,
+                read: read_f64, write: write_f64,
+                get: f64_array_get, set: f64_array_set
+            },
+            {
+                variant: I64, repr: i64, arg: i64, width: 8,
+                js: "BigInt64Array", native: "i64Array",
+                elem_ty: "i64", arg_ty: "i64",
+                view_ty: I64Array, elem_native: I64, arg_native: I64,
+                encode: $crate::same,
+                read: read_i64, write: write_i64,
+                get: i64_array_get, set: i64_array_set
+            },
+            {
+                variant: U64, repr: u64, arg: u64, width: 8,
+                js: "BigUint64Array", native: "u64Array",
+                elem_ty: "u64", arg_ty: "u64",
+                view_ty: U64Array, elem_native: U64, arg_native: U64,
+                encode: $crate::same,
+                read: read_u64, write: write_u64,
+                get: u64_array_get, set: u64_array_set
+            },
         }
     };
 }
