@@ -44,3 +44,4 @@ global.set("Number", Number, true);
 global.set("Boolean", Boolean, true);
 global.set("Object", Object, true);
 global.set("Symbol", Symbol, true);
+global.set("Reflect", Reflect, true);

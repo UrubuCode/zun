@@ -1124,6 +1124,153 @@ impl Checker<'_> {
         }
     }
 
+    /// Build a `proxyGet(proxy, key)` native call routing a property read
+    /// through the handler's `get` trap (absent trap → target default).
+    fn proxy_get(&mut self, object: hir::Expr, key: hir::Expr, span: Span) -> hir::Expr {
+        if !key.ty.is_error() && key.ty != Ty::String {
+            self.error(key.span, "a proxy property key must be a string");
+        }
+        let Some((id, _)) = zun_natives::resolve("zun:collections", "proxyGet") else {
+            self.error(span, "missing `proxyGet` intrinsic");
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
+    /// Build a `proxySet(proxy, key, value)` native call routing a property
+    /// write through the handler's `set` trap (absent trap → target default).
+    /// The value is boxed to `Any`.
+    fn proxy_set(
+        &mut self,
+        object: hir::Expr,
+        key: hir::Expr,
+        value: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        if !key.ty.is_error() && key.ty != Ty::String {
+            self.error(key.span, "a proxy property key must be a string");
+        }
+        let boxed = if value.ty == Ty::Any {
+            value
+        } else {
+            hir::Expr {
+                span: value.span,
+                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                ty: Ty::Any,
+            }
+        };
+        let Some((id, _)) = zun_natives::resolve("zun:collections", "proxySet") else {
+            self.error(span, "missing `proxySet` intrinsic");
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key, boxed] },
+            ty: Ty::Boolean,
+            span,
+        }
+    }
+
+    /// Lower a `Reflect.<method>(...)` static call. `Reflect` is a surface-only
+    /// reflection namespace (realm global, no `new`); these are the default
+    /// property operations the Proxy traps fall back to.
+    ///
+    /// Supported: `get(target, key)`, `set(target, key, value)`,
+    /// `has(target, key)`, `deleteProperty(target, key)`, `ownKeys(target)`.
+    /// The descriptor-dependent reflection statics
+    /// (`getOwnPropertyDescriptor`/`defineProperty`/`getPrototypeOf`/
+    /// `setPrototypeOf`/`isExtensible`/`preventExtensions`) and the
+    /// `apply`/`construct` invokers are deferred (no property-descriptor model
+    /// yet — NUCLEUS §6).
+    fn check_reflect_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let expected = match method {
+            "get" | "has" | "deleteProperty" => 2usize,
+            "set" => 3,
+            "ownKeys" => 1,
+            other => {
+                self.error(
+                    method_span,
+                    format!("`Reflect.{other}` is not supported in this runtime"),
+                );
+                return self.poison(span);
+            }
+        };
+        let mut checked: Vec<hir::Expr> =
+            args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+        if checked.len() != expected {
+            self.error(
+                span,
+                format!("`Reflect.{method}` expects {expected} argument(s), found {}", checked.len()),
+            );
+            return self.poison(span);
+        }
+        // The target must be a dynamic receiver (plain object or `any`); a Proxy
+        // target is itself a dynamic receiver at runtime.
+        let target_ok = matches!(checked[0].ty, Ty::DynamicObject | Ty::Any | Ty::Proxy)
+            || checked[0].ty.is_error();
+        if !target_ok {
+            self.error(checked[0].span, "`Reflect` target must be an object");
+        }
+        let builtin = |checker: &mut Self, name: &str, checked: Vec<hir::Expr>, ty: Ty| {
+            let Some((id, _)) = zun_natives::resolve("zun:collections", name) else {
+                checker.error(span, format!("missing Reflect intrinsic `{name}`"));
+                return checker.poison(span);
+            };
+            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: checked }, ty, span }
+        };
+        match method {
+            "get" => {
+                let key = checked.pop().unwrap();
+                let object = checked.pop().unwrap();
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicGetValue {
+                        object: Box::new(object),
+                        key: Box::new(key),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
+            "set" => {
+                let value = checked.pop().unwrap();
+                let key = checked.pop().unwrap();
+                let object = checked.pop().unwrap();
+                let boxed = if value.ty == Ty::Any {
+                    value
+                } else {
+                    hir::Expr {
+                        span: value.span,
+                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                        ty: Ty::Any,
+                    }
+                };
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicSetValue {
+                        object: Box::new(object),
+                        key: Box::new(key),
+                        value: Box::new(boxed),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
+            "has" => builtin(self, "reflectHas", checked, Ty::Boolean),
+            "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean),
+            "ownKeys" => builtin(self, "objectKeys", checked, Ty::Array),
+            _ => unreachable!(),
+        }
+    }
+
     /// Lower a `Number.<method>(...)` static call. The strict predicates accept
     /// any argument type (JS does not coerce — a non-number is simply `false`);
     /// `parseFloat`/`parseInt` take a string and an optional radix.
@@ -2362,6 +2509,18 @@ impl Checker<'_> {
                     let class_name = self.text(class).to_string();
                     if class_name == "Object" && !self.classes_by_name.contains_key("Object") {
                         return self.check_object_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
+                    // `Reflect.*` reflection statics (`get set has deleteProperty
+                    // ownKeys`). Surface-only namespace, recognized by receiver
+                    // name; a program may still declare its own `Reflect` class.
+                    if class_name == "Reflect" && !self.classes_by_name.contains_key("Reflect") {
+                        return self.check_reflect_static(
                             cx,
                             &self.text(method).to_string(),
                             method.span,
@@ -4328,6 +4487,13 @@ impl Checker<'_> {
                         ty: Ty::Any,
                         span,
                     },
+                    // `proxy.key` routes through the handler's `get` trap (the
+                    // native falls back to the target when the trap is absent).
+                    Ty::Proxy => self.proxy_get(object, hir::Expr {
+                        kind: hir::ExprKind::String(fname),
+                        ty: Ty::String,
+                        span,
+                    }, span),
                     Ty::Error => self.poison(span),
                     other => {
                         self.error(object.span, format!("type {other:?} has no fields"));
@@ -4500,6 +4666,10 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if object.ty == Ty::Proxy {
+                    let key = self.check_expr(cx, index);
+                    return self.proxy_get(object, key, span);
+                }
                 let mut index = self.check_expr(cx, index);
                 coerce_numeric_literal(&mut index, Ty::INT);
                 if object.ty != Ty::Array && !object.ty.is_error() {
@@ -4548,6 +4718,11 @@ impl Checker<'_> {
                         ty: Ty::Any,
                         span,
                     };
+                }
+                if object.ty == Ty::Proxy {
+                    let key = self.check_expr(cx, index);
+                    let value = self.check_expr(cx, value);
+                    return self.proxy_set(object, key, value, span);
                 }
                 let mut index = self.check_expr(cx, index);
                 let value = self.check_expr(cx, value);
@@ -4682,6 +4857,15 @@ impl Checker<'_> {
                             ty: Ty::Any,
                             span,
                         }
+                    }
+                    // `proxy.key = v` routes through the handler's `set` trap.
+                    Ty::Proxy => {
+                        let key = hir::Expr {
+                            kind: hir::ExprKind::String(fname),
+                            ty: Ty::String,
+                            span,
+                        };
+                        self.proxy_set(object, key, value, span)
                     }
                     Ty::Error => self.poison(span),
                     other => {

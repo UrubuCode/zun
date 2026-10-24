@@ -2438,6 +2438,100 @@ mod method_tests {
     }
 
     #[test]
+    fn proxy_field_get_syntax_routes_through_handler_trap() {
+        let module = zun_compiler::compile(
+            "import { dynamicSetFunction } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(99); } function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); return proxy.answer; }",
+        )
+        .expect("compile proxy field get");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy field get");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(99.0)));
+    }
+
+    #[test]
+    fn proxy_field_get_syntax_falls_back_to_target_without_trap() {
+        let module = zun_compiler::compile(
+            "function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(41)); let handler = dynamic_new(); let proxy = new Proxy(target, handler); return proxy.answer; }",
+        )
+        .expect("compile proxy field get fallback");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy field get fallback");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(41.0)));
+    }
+
+    #[test]
+    fn proxy_field_set_syntax_routes_through_handler_trap() {
+        // A `set` trap that intercepts without writing leaves the target
+        // untouched; reading the target directly still sees the original value.
+        let module = zun_compiler::compile(
+            "import { dynamicSetFunction } from \"zun:collections\"; function setTrap(target: any, key: string, value: any): boolean { return true; } function main(): any { let target = dynamic_new(); dynamic_set(target, \"answer\", box_any(1)); let handler = dynamic_new(); dynamicSetFunction(handler, \"set\", setTrap); let proxy = new Proxy(target, handler); proxy.answer = box_any(7); return reflect_get(target, \"answer\"); }",
+        )
+        .expect("compile proxy field set");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy field set");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(1.0)));
+    }
+
+    #[test]
+    fn proxy_field_set_syntax_falls_back_to_target_without_trap() {
+        // No `set` trap: the write routes through to the target, and a
+        // trap-less read observes it (round-trip through the proxy).
+        let module = zun_compiler::compile(
+            "function main(): any { let target = dynamic_new(); let handler = dynamic_new(); let proxy = new Proxy(target, handler); proxy.answer = box_any(7); return proxy.answer; }",
+        )
+        .expect("compile proxy field set fallback");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy field set fallback");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(7.0)));
+    }
+
+    #[test]
+    fn proxy_index_get_syntax_routes_through_handler_trap() {
+        let module = zun_compiler::compile(
+            "import { dynamicSetFunction } from \"zun:collections\"; function getTrap(target: any, key: string): any { return box_any(123); } function main(): any { let target = dynamic_new(); let handler = dynamic_new(); dynamicSetFunction(handler, \"get\", getTrap); let proxy = new Proxy(target, handler); let key = \"x\"; return proxy[key]; }",
+        )
+        .expect("compile proxy index get");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run proxy index get");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(123.0)));
+    }
+
+    #[test]
+    fn reflect_get_and_set_operate_on_dynamic_storage() {
+        let module = zun_compiler::compile(
+            "function main(): any { let obj = dynamic_new(); Reflect.set(obj, \"k\", box_any(5)); return Reflect.get(obj, \"k\"); }",
+        )
+        .expect("compile Reflect get/set");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Reflect get/set");
+        assert!(matches!(result, Value::Any(value) if value.as_float() == Some(5.0)));
+    }
+
+    #[test]
+    fn reflect_has_and_delete_and_own_keys() {
+        let module = zun_compiler::compile(
+            "function main(): boolean { let obj = dynamic_new(); dynamic_set(obj, \"k\", box_any(5)); if (!Reflect.has(obj, \"k\")) { return false; } if (Reflect.has(obj, \"nope\")) { return false; } if (Reflect.ownKeys(obj).length != 1) { return false; } if (!Reflect.deleteProperty(obj, \"k\")) { return false; } return !Reflect.has(obj, \"k\"); }",
+        )
+        .expect("compile Reflect has/delete/ownKeys");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run Reflect has/delete/ownKeys");
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
+    fn global_this_reflect_resolves_to_a_descriptor() {
+        let module = zun_compiler::compile(
+            "function main(): any { return globalThis.Reflect; }",
+        )
+        .expect("compile globalThis.Reflect");
+        let mut output = CaptureOutput::default();
+        let result = run(&module, &mut output).expect("run globalThis.Reflect");
+        // The realm seeds a class descriptor for every registered base type, so
+        // `globalThis.Reflect` resolves to a non-void value.
+        assert!(!matches!(result, Value::Void));
+    }
+
+    #[test]
     fn host_function_entry_reuses_callable_handle_dispatch() {
         let module = zun_compiler::compile(
             "function add_one(value: number): number { return value + 1.0; }\n\
