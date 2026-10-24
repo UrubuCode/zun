@@ -485,6 +485,23 @@ macro_rules! define_typed_elements {
             /// Every kind, in table order — for tests that must not fall
             /// behind the table.
             pub const ALL: &'static [TypedElement] = &[$(TypedElement::$variant),+];
+
+            /// This kind's position in [`Self::ALL`]. Used as a stable,
+            /// table-order discriminant when a kind has to cross the IL
+            /// boundary as an integer (the typed-array `from`/`of` statics
+            /// carry their target kind this way).
+            pub fn index(self) -> u32 {
+                Self::ALL
+                    .iter()
+                    .position(|&kind| kind == self)
+                    .expect("every kind is in ALL") as u32
+            }
+
+            /// The kind at position `index` in [`Self::ALL`], or `None` when
+            /// the discriminant is out of range.
+            pub fn from_index(index: u32) -> Option<Self> {
+                Self::ALL.get(index as usize).copied()
+            }
         }
 
         impl TypedArrayView {

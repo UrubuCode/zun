@@ -42,8 +42,8 @@ read.
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
 | 16 | FinalizationRegistry | mostly | Spec-shaped `new FinalizationRegistry(cleanup)` / `register(target, heldValue, unregisterToken?)` / `unregister(unregisterToken)`; `unregister` keyed by unregister-token object identity (weak key); cleanup callback delivered on collection. Deferred: `heldValue` is a `u64`, not an arbitrary value |
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, and the static `isView(x)`. Missing resizable buffers (deferred) |
-| 18 | DataView | partial | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints |
-| 19 | TypedArrays | partial | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs arity overloading first — plus `slice`/`copyWithin`, functional methods, `from/of`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
+| 18 | DataView | mostly | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. **Endianness flag is now optional and defaults to `false` (big-endian) per spec** — `getUint32(0)` type-checks and reads big-endian; single-byte widths still take none |
+| 19 | TypedArrays | mostly | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. **Bulk `set(source, offset?)`** (overloaded against the indexed `set(index, value)` by first-argument type), **copying `slice(start?, end?)`**, **in-place `copyWithin(target, start?, end?)`**, the functional methods **`map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`** (spec `(value, index, array)` callback, Tier 0), **`indexOf`/`includes`/`join`**, and the statics **`from(src, mapFn?)`/`of(...)`** all landed, as kind-agnostic `typedArray*` natives (one each, not per-kind). `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: no-initial-value `reduce` (initial value required); `Uint8Array.slice` keeps Buffer (shared-type) semantics. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters (== UTC, calendar is UTC-only). Missing `toLocale*`, local setters |
 | 21 | Buffer | partial | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`/`write`/`equals`/`copy`/`fill(value)` + common LE/BE 8/16/32/64 readers/writers. Encodings utf8/hex/base64/latin1. Deferred: ucs2/utf16le, base64url, 24-bit/float read*/write*, `swap16/32`, `indexOf`/`includes`, negative slice indices |
 | 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
@@ -52,7 +52,7 @@ read.
 | 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 5 · mostly 10 · partial 11 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 5 · mostly 12 · partial 9 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -804,7 +804,7 @@ storage lives in `zun_gc/buffers.rs`.
   `resize` would have to re-validate every outstanding view's window against the
   new length, which the view registries do not track back-references for yet.
 
-## 18. DataView — partial
+## 18. DataView — mostly
 `BufferViewKind::DataView`; core accessors in `zun_core/views.rs`.
 
 - **Present:** `getInt8/setInt8`, `getUint8/setUint8`, `getInt16/setInt16`,
@@ -823,10 +823,17 @@ storage lives in `zun_gc/buffers.rs`.
 - **64-bit naming:** JS calls these `getBigInt64`/`getBigUint64` and returns a
   BigInt. Zun has native 64-bit integers, so they are `getInt64`/`getUint64`
   returning `i64`/`u64`. A deliberate divergence, not an oversight.
+- **Endianness is now optional** and defaults to `false` (big-endian), as the
+  spec requires. `view.getUint32(0)` and `view.setFloat64(8, x)` type-check
+  and read/write big-endian; the explicit `..., true` little-endian form is
+  unchanged. Single-byte widths (`getInt8`/`getUint8`/`setInt8`/`setUint8`)
+  take no flag. Lowered by a dedicated interceptor (`check_data_view_method`)
+  that pads the default flag, since the generic method dispatch requires an
+  exact argument count.
 - **Missing:** nothing of the core surface now; `Uint8Clamped` has no DataView
   form in JS either.
 
-## 19. TypedArrays — partial
+## 19. TypedArrays — mostly
 All eleven JS kinds over a shared `ArrayBuffer`, generated from the master
 table in `zun_core/typed_elements.rs`: `Int8Array`, `Uint8Array`,
 `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`,
@@ -857,10 +864,42 @@ table in `zun_core/typed_elements.rs`: `Int8Array`, `Uint8Array`,
   `someUint8Array[Symbol.iterator]()` both route here; `DataView` is not
   iterable and reports so. The element read happens before any allocation, so
   the view handle is never held across a move.
-- **Deferred:** the bulk `set(source, offset)` — its name collides with the
-  indexed `set(index, value)`, so it needs arity/overload resolution first;
-  `slice` (copying), `copyWithin`, the functional methods, and the statics
-  `TypedArray.from/of`. `BigInt64Array`/`BigUint64Array` carry native
+- **Second-generation surface (landed).** All of the following are now
+  present, built as **kind-agnostic** `typedArray*` natives — one native per
+  method rather than eleven. The element kind is a runtime property of the
+  view for an instance method (read back via `Heap::typed_array_element`) and a
+  table-order discriminant argument (`TypedElement::index`/`from_index`) for a
+  static, so no per-kind duplication is hand-written. They live on the Tier-0
+  interpreter (`call_typed_array_ext` in `zun_interp/collections.rs`) because
+  the callback forms re-enter it, so none are JIT-eligible; appended last in
+  the `buffer` module so no existing dispatch id shifted.
+  - **Bulk `set(source, offset?)`** — the overload with the indexed
+    `set(index, value)` is resolved in the checker (`check_typed_array_method`)
+    **by the first argument's static type**: an `Array` or typed-array first
+    argument is the bulk copy, two numeric arguments are the indexed store.
+    Out-of-range reports `false` rather than throwing a RangeError (the whole
+    `set` surface here yields a bool, as the indexed form already did). Source
+    may be a plain array or any typed array.
+  - **`slice(start?, end?)`** — copying (not aliasing), JS clamping, negative
+    indices relative to the end. Returns a new view of the same kind.
+  - **`copyWithin(target, start?, end?)`** — in place; snapshots the source
+    range first so overlapping ranges are correct.
+  - **Functional methods** `map`/`filter`/`forEach`/`reduce`/`find`/
+    `findIndex`/`some`/`every`, with the spec `(value, index, array)`
+    callback (extra args dropped to the callback's arity). `map`/`filter`
+    return a new view of the same kind; the view and result are rooted across
+    callback re-entry, mirroring the `Array` functional methods.
+  - **`indexOf`/`includes`/`join`** — search (`includes` uses SameValueZero so
+    NaN matches NaN; `indexOf` strict) and string join.
+  - **Statics `from(src, mapFn?)` / `of(...items)`** per kind
+    (`check_typed_array_static`): `of` is an array literal copied into a view
+    of the kind; `from` copies an array or typed array, optionally through a
+    map function.
+- **Deferred:** the no-initial-value `reduce` (an initial value is currently
+  required; the first-element seed is not wired). `Uint8Array.slice` keeps the
+  Node Buffer (shared-type) semantics rather than the copying typed-array one,
+  since a `Uint8Array` and a `Buffer` share `Ty::BufferView(U8)` and the Buffer
+  intercept claims `slice` first. `BigInt64Array`/`BigUint64Array` carry native
   `i64`/`u64` rather than real BigInts, the same divergence as
   `DataView.getInt64` (#18).
 
@@ -1226,10 +1265,15 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
      `resolve/reject/all/allSettled/race/any` landed. Remaining: `withResolvers`,
      AggregateError for `any`, microtask deferral of a pending-source reaction.
    - TypedArrays/DataView (#18,#19): ✅ all eleven kinds, `get/set/length/
-     byteLength/subarray/fill/byteOffset/buffer` and `[Symbol.iterator]`; DataView
-     every width plus `byteOffset/buffer` — landed. Remaining (deferred): bulk
-     `set(source, offset)` (needs overload resolution), `slice/copyWithin`, the
-     functional methods, `TypedArray.from/of`, real BigInt elements.
+     byteLength/subarray/fill/byteOffset/buffer` and `[Symbol.iterator]`; **bulk
+     `set(source, offset?)` (overload resolved by first-arg type), copying
+     `slice`, in-place `copyWithin`, the functional methods
+     (`map/filter/forEach/reduce/find/findIndex/some/every`),
+     `indexOf/includes/join`, and the statics `from(src, mapFn?)`/`of(...)`** —
+     landed as kind-agnostic `typedArray*` natives (Tier 0). DataView every
+     width plus `byteOffset/buffer`, and the **endianness flag is now optional
+     (defaults big-endian)**. Remaining (deferred): no-initial `reduce`, real
+     BigInt elements, `Uint8Array.slice` uses Buffer semantics.
    - BigInt (#4): `div/rem/pow/neg`, bitwise/shift, `BigInt()` coercion, `asIntN/asUintN`.
    - Error (#22): ✅ `.stack` capture, `AggregateError(errors, message)`,
      **`cause` (via the frozen-layout `any`-field carrier)**, and **`Error` + 6

@@ -386,6 +386,26 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "generatorIteratorNext",
         "generatorIteratorDone",
         "stringIteratorNew",
+        // Kind-agnostic second-generation typed-array surface (bulk set,
+        // slice/copyWithin, functional methods, from/of). One native each;
+        // the element kind is a runtime property or a discriminant argument.
+        "typedArraySetFrom",
+        "typedArraySlice",
+        "typedArrayCopyWithin",
+        "typedArrayIndexOf",
+        "typedArrayIncludes",
+        "typedArrayJoin",
+        "typedArrayForEach",
+        "typedArrayMap",
+        "typedArrayFilter",
+        "typedArrayReduce",
+        "typedArrayFind",
+        "typedArrayFindIndex",
+        "typedArraySome",
+        "typedArrayEvery",
+        "typedArrayFrom",
+        "typedArrayFromMapped",
+        "typedArrayOf",
     ]
     .into_iter()
     // The typed-array intrinsics come from the master table, so a kind

@@ -74,6 +74,118 @@ impl ElementValue for f64 {
     }
 }
 
+/// A number crossing *into* a typed-array element from a dynamic value (a
+/// callback result, a search argument, an element of a source array). Unlike
+/// [`ElementValue::from_value`], which is strict about the `Value` variant
+/// because the checker has already coerced the operand, this accepts either
+/// numeric representation — a callback returning a bare integer literal must
+/// still store into a `Float64Array`, and vice versa.
+pub(crate) trait FromNumeric: Sized {
+    fn from_numeric(value: &Value) -> Option<Self>;
+}
+
+macro_rules! int_from_numeric {
+    ($($repr:ty),+ $(,)?) => {
+        $(
+            impl FromNumeric for $repr {
+                fn from_numeric(value: &Value) -> Option<Self> {
+                    match value {
+                        Value::Int(value, _) => Some(*value as $repr),
+                        Value::Float(value, _) => Some(*value as $repr),
+                        _ => None,
+                    }
+                }
+            }
+        )+
+    };
+}
+
+int_from_numeric!(i8, i16, i32, i64, u8, u16, u32, u64);
+
+impl FromNumeric for f32 {
+    fn from_numeric(value: &Value) -> Option<Self> {
+        match value {
+            Value::Float(value, _) => Some(*value as f32),
+            Value::Int(value, _) => Some(*value as f32),
+            _ => None,
+        }
+    }
+}
+
+impl FromNumeric for f64 {
+    fn from_numeric(value: &Value) -> Option<Self> {
+        match value {
+            Value::Float(value, _) => Some(*value),
+            Value::Int(value, _) => Some(*value as f64),
+            _ => None,
+        }
+    }
+}
+
+macro_rules! typed_array_kind_dispatch {
+    ($({
+        variant: $variant:ident, repr: $repr:ty, arg: $arg:ty, width: $width:expr,
+        js: $js:literal, native: $native:literal,
+        elem_ty: $elem_ty:literal, arg_ty: $arg_ty:literal,
+        view_ty: $view_ty:ident, elem_native: $elem_native:ident,
+        arg_native: $arg_native:ident,
+        encode: $encode:path,
+        read: $read:ident, write: $write:ident,
+        get: $get:ident, set: $set:ident
+    }),+ $(,)?) => {
+        /// Reads one element of a view of any kind as an interpreter [`Value`],
+        /// dispatching on the element kind the view carries.
+        pub(crate) fn read_element(view: zun_gc::Obj, index: usize) -> Option<Value> {
+            let element = zun_gc::with_current_heap(|heap| heap.typed_array_element(view))?;
+            match element {
+                $(zun_core::TypedElement::$variant => {
+                    let raw = zun_gc::with_current_heap(|heap| heap.$get(view, index))?;
+                    Some(ElementValue::into_value(raw))
+                })+
+            }
+        }
+
+        /// Writes one element of a view of any kind, coercing the value to the
+        /// view's element representation. `None` when the index is outside the
+        /// view; `Some(false)` when the store itself is rejected.
+        pub(crate) fn write_element(
+            view: zun_gc::Obj,
+            index: usize,
+            value: &Value,
+        ) -> Option<bool> {
+            let element = zun_gc::with_current_heap(|heap| heap.typed_array_element(view))?;
+            match element {
+                $(zun_core::TypedElement::$variant => {
+                    let coerced = <$arg as FromNumeric>::from_numeric(value)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.$set(view, index, coerced))
+                })+
+            }
+        }
+
+        /// Allocates a fresh view of `element` kind, `length` elements long,
+        /// over a new zero-filled `ArrayBuffer`.
+        pub(crate) fn alloc_of(element: zun_core::TypedElement, length: usize) -> Option<zun_gc::Obj> {
+            zun_gc::with_current_heap_mut(|heap| {
+                let bytes = length.checked_mul(element.size())?;
+                let buffer = heap.alloc_buffer(bytes);
+                heap.alloc_typed_array(buffer, 0, length, element)
+            })
+        }
+    };
+}
+
+zun_core::typed_element_table!(typed_array_kind_dispatch);
+
+/// The element count of a typed-array view, or `None` for a non-view.
+pub(crate) fn element_len(view: zun_gc::Obj) -> Option<usize> {
+    zun_gc::with_current_heap(|heap| heap.typed_array_len(view))
+}
+
+/// The element kind of a typed-array view, or `None` for a non-view.
+pub(crate) fn element_of(view: zun_gc::Obj) -> Option<zun_core::TypedElement> {
+    zun_gc::with_current_heap(|heap| heap.typed_array_element(view))
+}
+
 fn object(value: &Value) -> Option<zun_gc::Obj> {
     match value {
         Value::Object(object) => Some(*object),

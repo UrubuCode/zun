@@ -145,6 +145,19 @@ macro_rules! typed_array_surface {
             }
         }
 
+        /// The table-order discriminant of a view kind, as
+        /// [`zun_core::TypedElement::index`] numbers it. `from`/`of` carry
+        /// their target kind across the IL boundary as this integer, so the
+        /// interpreter can build a view of a kind it is told rather than one
+        /// it reads back from an existing view. Paired by shared variant name,
+        /// so the two enums cannot drift. `DataView` has no element kind.
+        pub(crate) fn element_index(kind: BufferViewKind) -> Option<u32> {
+            match kind {
+                $(BufferViewKind::$variant => Some(zun_core::TypedElement::$variant.index()),)+
+                BufferViewKind::DataView => None,
+            }
+        }
+
         /// Every kind's JavaScript constructor name, in table order — for
         /// the guards that must not fall behind the table.
         pub const CONSTRUCTOR_NAMES: &[&str] = &[$($js),+];

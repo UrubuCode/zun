@@ -342,6 +342,35 @@ macro_rules! buffer_module {
             // Reuses the array-iterator machinery over a code-point array, so only
             // the constructor is new; `next`/`done` are the `arrayIterator*` ones.
             NativeFn { name: "stringIteratorNew", params: &[Str], ret: Opaque, imp: unavailable },
+            // The second generation of the typed-array surface: bulk `set`,
+            // `slice`/`copyWithin`, the functional methods, and the `from`/`of`
+            // statics. These are **kind-agnostic** — one native each rather than
+            // eleven — because the element kind is a runtime property of the
+            // view (read back from the heap) for an instance method, and a
+            // table-order discriminant argument (`TypedElement::index`) for a
+            // static that has to build a view of a kind it is told. They route
+            // to the Tier-0 interpreter (callbacks re-enter it), so they are not
+            // JIT-eligible, and they are appended here last so no existing
+            // dispatch id shifts. The search value and reduce accumulator are
+            // `Opaque` so a value of any numeric kind crosses without a
+            // per-kind signature.
+            NativeFn { name: "typedArraySetFrom", params: &[Opaque, Opaque, U64], ret: Bool, imp: unavailable },
+            NativeFn { name: "typedArraySlice", params: &[Opaque, I64, I64], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayCopyWithin", params: &[Opaque, I64, I64, I64], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayIndexOf", params: &[Opaque, Opaque, I64], ret: I64, imp: unavailable },
+            NativeFn { name: "typedArrayIncludes", params: &[Opaque, Opaque, I64], ret: Bool, imp: unavailable },
+            NativeFn { name: "typedArrayJoin", params: &[Opaque, Str], ret: Str, imp: unavailable },
+            NativeFn { name: "typedArrayForEach", params: &[Opaque, Function], ret: Void, imp: unavailable },
+            NativeFn { name: "typedArrayMap", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayFilter", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayReduce", params: &[Opaque, Function, Opaque], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayFind", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayFindIndex", params: &[Opaque, Function], ret: I64, imp: unavailable },
+            NativeFn { name: "typedArraySome", params: &[Opaque, Function], ret: Bool, imp: unavailable },
+            NativeFn { name: "typedArrayEvery", params: &[Opaque, Function], ret: Bool, imp: unavailable },
+            NativeFn { name: "typedArrayFrom", params: &[Opaque, U32], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayFromMapped", params: &[Opaque, Function, U32], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayOf", params: &[Opaque, U32], ret: Opaque, imp: unavailable },
         ],
     };
     };
