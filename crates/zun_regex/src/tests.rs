@@ -428,6 +428,22 @@ fn prefilter_matches_naive_scan() {
         ("\\w+@\\w+\\.\\w+", ""),
         ("\\s+", ""),
         ("[A-Z]", "i"),
+        // required-literal prefixes (1a): full-literal memmem path
+        ("hello", ""),
+        ("hello world", ""),
+        ("foobar", "i"),
+        ("é猫x", ""),
+        ("(?:abc)", ""),
+        ("\\babc", ""),
+        // required-literal-after-loop (1b): class loop then literal, walk-back
+        ("\\w+@", ""),
+        ("\\w*@", ""),
+        ("\\w+@\\w+", ""),
+        ("[a-z]+:", ""),
+        ("\\d+#\\d+", ""),
+        ("\\d+5", ""),       // literal is also a class member
+        ("\\w{1,3}@", ""),   // bounded loop: must NOT use walk-back (bail to Set)
+        ("(\\w+)@", ""),     // capture group around the loop
         // quantifiers (incl. empty-match)
         ("a*", ""),
         ("a+", ""),
@@ -490,6 +506,17 @@ fn prefilter_matches_naive_scan() {
         "   \t spaces \n here",
         "aaaaaaaaaaaaaab",
         "xxxxxyyyy",
+        // required-literal corpus: literal repeated, overlapping runs, absent
+        "hello hello HELLO",
+        "say hello world now",
+        "a@b c@d word@ @lone trailing@",
+        "no at signs here at all",
+        "aaaa@bbbb@cccc",
+        "foobar foo foobar",
+        "é猫xyz é猫x end",
+        "12345#678 9#0",
+        "name: value: other:",
+        "@@@@",
     ];
     for (pat, flags) in patterns {
         // Skip patterns that are invalid under a given flag set gracefully.

@@ -107,10 +107,52 @@ pub(crate) enum Prefilter {
     Anchored,
     /// Position 0 and every index just after a line terminator (multiline `^`).
     Multiline,
-    /// A required leading ASCII literal (non-icase); scanned with `memchr`.
-    Byte(u8, char),
+    /// A required leading single literal char (non-icase); scanned with `memchr`.
+    Byte(char),
     /// A required leading first-character set.
     Set(FirstSet),
+    /// A required leading literal substring of 2+ chars (non-icase), the match
+    /// starting exactly at the literal. Scanned with `memchr::memmem`.
+    Literal(Vec<char>),
+    /// A required class loop (`<class>+` / `<class>*`, unbounded max) immediately
+    /// followed by a required literal char (non-icase). Found by locating the
+    /// literal and walking backward over the class to the earliest run start —
+    /// the .NET "literal after a greedy loop: IndexOf then walk back" technique.
+    LoopLiteral {
+        /// The looped character class.
+        class: CharClass,
+        /// Whether the loop minimum is zero (`*`); `false` means `+` (min >= 1).
+        min_zero: bool,
+        /// The required literal char that must follow the run.
+        lit: char,
+    },
+}
+
+/// Smallest index `>= from` at which `c` occurs in `input`, via `memchr` over
+/// the little-endian scalar bytes (with a char-alignment check to reject
+/// false low-byte collisions). Returns `None` if absent.
+fn memfind_char(input: &[char], from: usize, c: char) -> Option<usize> {
+    let len = input.len();
+    if from >= len {
+        return None;
+    }
+    let b = (c as u32 & 0xFF) as u8;
+    let bytes = unsafe { std::slice::from_raw_parts(input.as_ptr() as *const u8, len * 4) };
+    let mut i = from;
+    while i < len {
+        match memchr::memchr(b, &bytes[i * 4..]) {
+            None => return None,
+            Some(off) => {
+                let abs = i * 4 + off;
+                let idx = abs / 4;
+                if abs % 4 == 0 && input[idx] == c {
+                    return Some(idx);
+                }
+                i = idx + 1;
+            }
+        }
+    }
+    None
 }
 
 impl Prefilter {
@@ -133,21 +175,22 @@ impl Prefilter {
                     i += 1;
                 }
             }
-            Prefilter::Byte(b, c) => {
-                // View the char slice as raw bytes and let `memchr` find the
-                // low byte of the target; verify against the full char to reject
-                // false low-byte collisions (little-endian scalar layout).
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(input.as_ptr() as *const u8, len * 4)
-                };
+            Prefilter::Byte(c) => memfind_char(input, from, *c),
+            Prefilter::Literal(lit) => {
+                // `memmem` over the little-endian scalar bytes; a hit is a real
+                // char-sequence match iff it is char-aligned (offset % 4 == 0).
+                let needle: Vec<u8> = lit.iter().flat_map(|c| (*c as u32).to_le_bytes()).collect();
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(input.as_ptr() as *const u8, len * 4) };
+                let finder = memchr::memmem::Finder::new(&needle);
                 let mut i = from;
-                while i < len {
-                    match memchr::memchr(*b, &bytes[i * 4..]) {
+                while i <= len.saturating_sub(lit.len()) {
+                    match finder.find(&bytes[i * 4..]) {
                         None => return None,
                         Some(off) => {
                             let abs = i * 4 + off;
                             let idx = abs / 4;
-                            if abs % 4 == 0 && input[idx] == *c {
+                            if abs % 4 == 0 {
                                 return Some(idx);
                             }
                             i = idx + 1;
@@ -155,6 +198,27 @@ impl Prefilter {
                     }
                 }
                 None
+            }
+            Prefilter::LoopLiteral { class, min_zero, lit } => {
+                let mut f = from;
+                loop {
+                    let p = memfind_char(input, f, *lit)?;
+                    // Walk backward over the class to the earliest run start that
+                    // is still `>= from` (positions below `from` were already
+                    // tried by the caller's scan).
+                    let mut s = p;
+                    // `LoopLiteral` is only built when `!icase`, so plain membership.
+                    while s > from && class.matches(input[s - 1], false) {
+                        s -= 1;
+                    }
+                    if !*min_zero && s == p {
+                        // `+` needs at least one class char immediately before the
+                        // literal; none in `[from, p)`, so no match starts here.
+                        f = p + 1;
+                        continue;
+                    }
+                    return Some(s);
+                }
             }
             Prefilter::Set(fs) => {
                 let mut i = from;
@@ -208,6 +272,10 @@ enum FirstReq {
 /// pc 0. Correctness first: it must never skip a valid leftmost match, so any
 /// uncertainty becomes [`Prefilter::None`] (try every position).
 fn compute_prefilter(insts: &[Inst], classes: &[CharClass], flags: Flags) -> Prefilter {
+    // A proven-mandatory required literal is the strongest filter; try it first.
+    if let Some(pf) = required_literal(insts, classes, flags) {
+        return pf;
+    }
     match analyze(insts, classes, flags, 0, 0) {
         FirstReq::Anchored => Prefilter::Anchored,
         FirstReq::Multiline => Prefilter::Multiline,
@@ -218,7 +286,7 @@ fn compute_prefilter(insts: &[Inst], classes: &[CharClass], flags: Flags) -> Pre
             if !flags.ignore_case && members.len() == 1 {
                 if let SetMember::Char(c) = members[0] {
                     if c.is_ascii() {
-                        return Prefilter::Byte(c as u8, c);
+                        return Prefilter::Byte(c);
                     }
                 }
             }
@@ -232,6 +300,91 @@ fn compute_prefilter(insts: &[Inst], classes: &[CharClass], flags: Flags) -> Pre
             Prefilter::Set(FirstSet { ascii_mask, ..set })
         }
     }
+}
+
+/// Detects a **proven-mandatory** required literal the whole match must contain
+/// at a known offset, producing a strong [`Prefilter`]. Conservative: returns
+/// `None` (so the caller falls back to the first-char analysis) unless every
+/// match necessarily contains the literal at the deduced position.
+///
+/// Two shapes are recognized, both only at the top level of the program (so no
+/// alternation / optional group above can match without the literal), and only
+/// without the `i` flag (case-insensitive literal search would need folding):
+///
+/// * **(1a) literal prefix**: the match begins with `k >= 2` required literal
+///   chars (shorter prefixes stay on the single-char `Byte`/`Set` path).
+/// * **(1b) `<class>{+,*}` then literal**: a single unbounded class loop
+///   immediately followed by a required literal char.
+fn required_literal(insts: &[Inst], classes: &[CharClass], flags: Flags) -> Option<Prefilter> {
+    if flags.ignore_case {
+        return None; // case-insensitive literal scan is out of scope; use Set.
+    }
+    // Skip leading zero-width atoms that neither branch nor anchor. A leading
+    // `^` (Start) is handled by `analyze` (Anchored/Multiline), so bail here.
+    let mut pc = 0;
+    loop {
+        match insts.get(pc)? {
+            Inst::Save(_) => pc += 1,
+            Inst::Assert(AssertKind::Start) => return None,
+            Inst::Assert(_) => pc += 1,
+            _ => break,
+        }
+    }
+
+    // (1a) A run of consecutive required literal chars at the match start.
+    if let Inst::Char { back: false, .. } = insts[pc] {
+        let mut lit = Vec::new();
+        let mut q = pc;
+        while let Some(Inst::Char { c, back: false }) = insts.get(q) {
+            lit.push(*c);
+            q += 1;
+        }
+        if lit.len() >= 2 {
+            return Some(Prefilter::Literal(lit));
+        }
+        return None; // single char: let `analyze` produce the `Byte` filter.
+    }
+
+    // (1b) `LoopInit, LoopTest, LoopBody, Class, LoopEnd` (a single unbounded
+    // class loop), then a required literal char.
+    if let Inst::LoopInit { ctr } = insts[pc] {
+        let test = pc + 1;
+        let (min, max) = match insts.get(test)? {
+            Inst::LoopTest { ctr: c, min, max, exit, .. } if *c == ctr && *exit == pc + 5 => {
+                (*min, *max)
+            }
+            _ => return None,
+        };
+        if max != u32::MAX {
+            return None; // bounded loop: walk-back to run start is unsound.
+        }
+        let Inst::LoopBody { .. } = insts.get(pc + 2)? else { return None };
+        let Inst::Class { idx, back: false } = insts.get(pc + 3)? else { return None };
+        match insts.get(pc + 4)? {
+            Inst::LoopEnd { ctr: c, test: t, .. } if *c == ctr && *t == test => {}
+            _ => return None,
+        }
+        // After the loop (at pc + 5) a required literal char, possibly behind
+        // zero-width group opens/asserts (but not another `^`).
+        let mut q = pc + 5;
+        loop {
+            match insts.get(q)? {
+                Inst::Save(_) => q += 1,
+                Inst::Assert(AssertKind::Start) => return None,
+                Inst::Assert(_) => q += 1,
+                Inst::Char { c, back: false } => {
+                    return Some(Prefilter::LoopLiteral {
+                        class: classes[*idx].clone(),
+                        min_zero: min == 0,
+                        lit: *c,
+                    });
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    None
 }
 
 /// Walks instructions starting at `pc`, skipping zero-width atoms, until the

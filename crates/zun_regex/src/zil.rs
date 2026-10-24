@@ -1006,7 +1006,15 @@ pub fn compile_is_match(
         // Candidates are all < n (a required first char can never match at the
         // end), so `pos >= n` ends the search, exactly like the runtime
         // `Prefilter::{Byte,Set}::next`, which never returns `len`.
-        Prefilter::Byte(_, ch) => {
+        // A required leading literal (single char or a 2+ char prefix): the
+        // generated matcher keeps the simple first-char scan (the runtime engine
+        // uses full-literal `memmem`; ZIL has no memmem, so scanning the first
+        // char preserves today's behavior and correctness — the anchored
+        // `matchAt` rejects false candidates). `LoopLiteral` falls to the naive
+        // arm below (it can only arise with a loop, which the ZIL subset rejects
+        // before reaching this point, so it is never actually emitted).
+        Prefilter::Byte(..) | Prefilter::Literal(_) => {
+            let first = literal_first(&prefilter).expect("Byte/Literal carry a first char");
             let scan = a.label();
             let advance = a.label();
             a.bind(scan);
@@ -1014,11 +1022,11 @@ pub fn compile_is_match(
             a.load(N);
             a.emit(Opcode::CmpGe, Operand::None);
             a.br(Opcode::BranchTrue, on_fail);
-            // if charCodeAt(s, pos) != ch: advance
+            // if charCodeAt(s, pos) != first: advance
             a.load(S);
             a.load(POS);
             a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.char_code_at as i32));
-            a.const_u32(*ch as u32);
+            a.const_u32(first as u32);
             a.emit(Opcode::CmpNe, Operand::None);
             a.br(Opcode::BranchTrue, advance);
             emit_attempt(&mut a);
@@ -1061,7 +1069,9 @@ pub fn compile_is_match(
         // never reaches): try every start position `0..=n` inclusive, so an
         // empty match at the end of the string is found (matching `find`'s
         // `s <= input.len()` bound). Identical to the pre-prefilter behavior.
-        Prefilter::None | Prefilter::Multiline => {
+        // `LoopLiteral` cannot arise here (its loop is rejected by the ZIL
+        // subset gate), but route it to the naive scan for exhaustiveness.
+        Prefilter::None | Prefilter::Multiline | Prefilter::LoopLiteral { .. } => {
             let loop_head = a.label();
             a.bind(loop_head);
             a.load(POS);
@@ -1106,6 +1116,15 @@ pub fn compile_is_match(
         is_static: true,
     });
     Some(CompiledIsMatch { module, is_match_method, buffer_bytes, group_count })
+}
+
+/// The first required char of a `Byte` / `Literal` prefilter, if any.
+fn literal_first(pf: &Prefilter) -> Option<char> {
+    match pf {
+        Prefilter::Byte(c) => Some(*c),
+        Prefilter::Literal(lit) => lit.first().copied(),
+        _ => None,
+    }
 }
 
 /// Inclusive ranges of JS line terminators (matching [`is_line_terminator`]).
