@@ -185,6 +185,45 @@ fn a_leap_day_survives_a_round_trip() {
 }
 
 #[test]
+fn no_arg_construction_is_the_current_time() {
+    // `new Date()` builds from the `millis = time.nowMillis()` default, so its
+    // timestamp is positive and tracks `Date.now()`. `new Date(0)` still binds
+    // the epoch, proving the one-argument form is unaffected by the default.
+    let out = run_source(
+        r#"function main() {
+            let now = Date.now();
+            let d = new Date();
+            print(now > 0);
+            print(d.getTime() > 0);
+            print(d.getTime() >= now);
+            print(new Date(0).getTime());
+        }"#,
+    );
+    assert_eq!(out, vec!["true", "true", "true", "0"]);
+}
+
+#[test]
+fn local_getters_equal_utc_because_the_calendar_is_utc() {
+    // Local time is UTC (no platform timezone), so every local getter returns
+    // its UTC counterpart for a known instant: 2021-01-03T10:20:30.400Z, a
+    // Sunday (day 0), January (month 0).
+    let out = run_source(
+        r#"function main() {
+            let d = Date.fromISO("2021-01-03T10:20:30.400Z");
+            print(d.getFullYear());
+            print(d.getMonth());
+            print(d.getDate());
+            print(d.getDay());
+            print(d.getHours());
+            print(d.getMinutes());
+            print(d.getSeconds());
+            print(d.getMilliseconds());
+        }"#,
+    );
+    assert_eq!(out, vec!["2021", "0", "3", "0", "10", "20", "30", "400"]);
+}
+
+#[test]
 fn dates_before_the_epoch_work() {
     let out = run_source(
         r#"function main() {

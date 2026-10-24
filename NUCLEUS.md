@@ -44,7 +44,7 @@ read.
 | 17 | ArrayBuffer | partial | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, and the static `isView(x)`. Missing resizable buffers (deferred) |
 | 18 | DataView | partial | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints |
 | 19 | TypedArrays | partial | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. Deferred: bulk `set(source, offset)` — its name is taken by the indexed `set(index, value)`, so it needs arity overloading first — plus `slice`/`copyWithin`, functional methods, `from/of`. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
-| 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`. Missing local-time getters (UTC-only), `toLocale*`, `new Date()` |
+| 20 | Date | partial | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters (== UTC, calendar is UTC-only). Missing `toLocale*`, local setters |
 | 21 | Buffer | missing | No `Buffer` class at all — the previous "partial" pointed at the ArrayBuffer/view floor by mistake. Needs the whole Node surface plus encodings |
 | 22 | Error (+ subclasses) | partial | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` now captured** at construction (frame walk + sequence points; byte-span frames, not line:col). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). Still not a realm global; `cause` deferred (needs `any` fields + object-literal syntax) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
@@ -687,13 +687,28 @@ global through the prelude.
   setter was possible before it.
 - **`getTimezoneOffset()`** returns 0. With a UTC-only calendar local time *is*
   UTC, so this is accurate rather than a stub.
+- **`new Date()` (no-arg) = current time.** The `millis` field carries a default
+  initializer `millis = time.nowMillis()`; when no constructor argument is
+  supplied the object is built from that initializer, exactly the
+  trailing-default-initializer mechanism `Error.stackFrames` uses. `new Date(0)`
+  still binds the epoch and `new Date(millis)` is unchanged — no overload
+  dispatch was needed. `new Date(string)` is still absent (use `Date.fromISO`);
+  a string positional would not type-check against the `i64` field.
+- **Local-time getters** `getFullYear/getMonth/getDate/getDay/getHours/
+  getMinutes/getSeconds/getMilliseconds` now exist. **The VM exposes no platform
+  timezone offset** (no tz intrinsic; `getTimezoneOffset` is a hardcoded 0), so
+  local time *is* UTC and each local getter delegates to its UTC-named
+  counterpart (0-based month, 0-based-from-Sunday weekday). This is accurate for
+  a UTC-only calendar, not a fake offset; the local getters diverge from the UTC
+  getters only once a timezone intrinsic lands.
 - **Present:** millis storage, `getTime/setTime valueOf isValid
-  isBefore/isAfter/isEqual`, the UTC getters, `toISOString toJSON toString`, and
-  the statics `now/parse/fromMillis/fromISO/fromISODate`.
-- **Missing:** local-time getters (`getFullYear`, `getHours`, …), absent rather
-  than wrong because the calendar is UTC-only; `toDateString toTimeString
-  toUTCString toLocale*`; `new Date()` and `new Date(string)`, which need
-  optional construction arguments.
+  isBefore/isAfter/isEqual`, the UTC getters and UTC setters, the local getters,
+  `toISOString toJSON toString`, `getTimezoneOffset`, `new Date()`/`new
+  Date(millis)`, and the statics `now/parse/UTC/fromMillis/fromISO/fromISODate`.
+- **Missing / deferred:** `new Date(string)` (use `Date.fromISO`); local-time
+  *setters* (`setFullYear` etc. — would be identical to the UTC setters while
+  local == UTC, deferred to avoid duplicating the surface until a tz offset
+  exists); `toDateString toTimeString toUTCString`; `toLocale*` (locale/ICU).
 
 ## 21. Buffer (Node) — missing
 

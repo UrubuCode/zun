@@ -1,17 +1,24 @@
 // UTC calendar surface over a millisecond timestamp.
 //
-// Construction is `new Date(millis)` only. JS also has `new Date()` for the
-// current time and `new Date(string)`, but Zun builds an object from exactly
-// one positional argument per declared field, with no constructors and no
-// overloads, so those arrive as the `Date.now`/`Date.fromISO` statics instead.
+// Construction is `new Date(millis)` or `new Date()`. The no-argument form
+// falls out of the field default initializer `millis = time.nowMillis()`:
+// when `new Date()` supplies no argument, the object is built from the
+// initializer (the current time); `new Date(0)` still binds the epoch. This is
+// the same trailing-default-initializer mechanism `Error.stackFrames` uses.
+// JS also has `new Date(string)`; Zun builds an object from one positional
+// argument per field with no overloads, so the string form arrives as the
+// `Date.fromISO` static instead.
 //
-// The calendar is UTC-only, so the local-time getters (`getFullYear`,
-// `getHours`, ...) and `getTimezoneOffset` are absent rather than wrong.
+// The calendar is UTC-only: the VM exposes no platform timezone offset, so
+// local time *is* UTC. The local-time getters (`getFullYear`, `getHours`, ...)
+// therefore return exactly their UTC counterparts and `getTimezoneOffset`
+// returns 0. These are accurate for a UTC-only calendar, not stubs; a real
+// local offset waits on a timezone intrinsic that does not yet exist.
 
 import { date, time } from "zun:core";
 
 class Date {
-    millis: i64;
+    millis: i64 = time.nowMillis();
 
     setMillis(value: i64): Date {
         this.millis = value;
@@ -60,6 +67,19 @@ class Date {
     // UTC-only calendar, so local time is UTC and the offset is always zero.
     // Reporting 0 is accurate here; it is not a stub.
     getTimezoneOffset(): i32 { return 0; }
+
+    // Local-time getters. The VM has no platform timezone, so local == UTC and
+    // each delegates to the UTC-named getter (same 0-based month, 0-based-from-
+    // Sunday weekday conventions). They become distinct from the UTC getters
+    // only once a timezone intrinsic supplies a non-zero `getTimezoneOffset`.
+    getFullYear(): i32 { return this.getUTCFullYear(); }
+    getMonth(): i32 { return this.getUTCMonth(); }
+    getDate(): i32 { return this.getUTCDate(); }
+    getDay(): i32 { return this.getUTCDay(); }
+    getHours(): i32 { return this.getUTCHours(); }
+    getMinutes(): i32 { return this.getUTCMinutes(); }
+    getSeconds(): i32 { return this.getUTCSeconds(); }
+    getMilliseconds(): i32 { return this.getUTCMilliseconds(); }
 
     // Setters rebuild the timestamp from the components, replacing one. Each
     // returns the new timestamp, as JS does. Out-of-range values roll over
