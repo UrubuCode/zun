@@ -473,5 +473,11 @@ pub const MODULE: crate::Module = crate::Module {
         // OrdinaryToPrimitive(hint "number") via `[Symbol.toPrimitive]`.
         // Appended last so existing dispatch ids stay stable.
         NativeFn { name: "numberCoerce", params: &[Opaque], ret: F64, imp: unavailable },
+        // NUCLEUS #5: `str.match/replace/search/split(arg)` where `arg` is a
+        // dynamic value. `(receiver, arg, extra, kind)` with kind 0=match,
+        // 1=replace, 2=search, 3=split; `extra` is the replacement / limit.
+        // Invokes `arg[Symbol.<kind>](receiver, extra?)` when present, else falls
+        // back to a string-path result. Appended last so ids stay stable.
+        NativeFn { name: "stringSymbolDispatch", params: &[Str, Opaque, Opaque, I64], ret: Opaque, imp: unavailable },
     ],
 };

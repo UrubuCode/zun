@@ -2379,6 +2379,85 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Float(number, zun_il::NumKind::F64))
             }
+            "stringSymbolDispatch" => {
+                // `str.match/replace/search/split(arg)` with a dynamic `arg`:
+                // call `arg[Symbol.<kind>](str, extra?)` when the object carries
+                // the method; else fall back to the string path (replace/split
+                // with a string `arg`), `null` for match, `-1` for search.
+                let receiver = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(text) => text.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let arg = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                let extra = unbox_arg(args.get(2).ok_or(RunError::BadToken)?)?;
+                let kind = match args.get(3) {
+                    Some(Value::Int(kind, _)) => *kind,
+                    _ => return Err(RunError::BadToken),
+                };
+                let symbol = match kind {
+                    0 => zun_core::WellKnownSymbol::Match,
+                    1 => zun_core::WellKnownSymbol::Replace,
+                    2 => zun_core::WellKnownSymbol::Search,
+                    _ => zun_core::WellKnownSymbol::Split,
+                };
+                let handler = match &arg {
+                    Value::Object(obj) => {
+                        zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(*obj, symbol.id()))
+                    }
+                    _ => None,
+                };
+                let result = if let Some(handle) = handler {
+                    let mut call_args = vec![Value::Str(receiver)];
+                    // replace passes the replacement; split passes a limit only
+                    // when one was given (negative sentinel = absent).
+                    let pass_extra = match kind {
+                        1 => true,
+                        3 => !matches!(&extra, Value::Float(n, _) if *n < 0.0)
+                            && !matches!(&extra, Value::Int(n, _) if *n < 0),
+                        _ => false,
+                    };
+                    if pass_extra {
+                        call_args.push(extra);
+                    }
+                    self.invoke_function_value(handle, call_args)?
+                } else {
+                    match (kind, &arg) {
+                        (1, Value::Str(search)) => {
+                            let replacement = match &extra {
+                                Value::Str(text) => text.to_string(),
+                                other => other.display(),
+                            };
+                            Value::Str(receiver.replacen(search.as_ref(), &replacement, 1).into())
+                        }
+                        (3, Value::Str(separator)) => {
+                            let pieces: Vec<String> = if separator.is_empty() {
+                                receiver
+                                    .encode_utf16()
+                                    .map(|unit| String::from_utf16_lossy(&[unit]))
+                                    .collect()
+                            } else {
+                                receiver.split(separator.as_ref()).map(str::to_string).collect()
+                            };
+                            let array = zun_gc::with_current_heap_mut(|heap| {
+                                let array = heap.alloc_array(pieces.len());
+                                for (index, piece) in pieces.iter().enumerate() {
+                                    let value =
+                                        zun_core::Any::string(heap.intern_string(piece.as_str().into()));
+                                    heap.array_set(array, index, value);
+                                }
+                                array
+                            });
+                            Value::Object(array)
+                        }
+                        (2, _) => Value::Int(-1, zun_il::NumKind::I64),
+                        (0, _) => Value::Null,
+                        _ => Value::Str(receiver),
+                    }
+                };
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::void);
+                Ok(Value::Any(boxed))
+            }
             "functionApply" => {
                 // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
                 // the leading positional argument, spread with the array.

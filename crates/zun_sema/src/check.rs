@@ -3040,6 +3040,43 @@ impl Checker<'_> {
         }
     }
 
+    /// `str.match/replace/search/split(arg)` where `arg` is a dynamic value
+    /// (`any` / dynamic object): delegate at RUNTIME to the argument's
+    /// `[Symbol.match/replace/search/split]` method (kind 0/1/2/3) via the
+    /// `stringSymbolDispatch` intrinsic. The result is `any` because the
+    /// user method's return type is unknown. `extra` is the replacement
+    /// (replace) or limit (split); other kinds pass a placeholder.
+    fn string_symbol_dispatch(
+        &mut self,
+        span: Span,
+        kind: f64,
+        receiver: hir::Expr,
+        first: hir::Expr,
+        extra: Option<hir::Expr>,
+    ) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("collections", "stringSymbolDispatch") else {
+            self.error(span, "missing collection intrinsic `stringSymbolDispatch`");
+            return self.poison(span);
+        };
+        let boxed = |e: hir::Expr| {
+            if e.ty == Ty::Any {
+                e
+            } else {
+                hir::Expr { span: e.span, kind: hir::ExprKind::BoxAny { value: Box::new(e) }, ty: Ty::Any }
+            }
+        };
+        let extra = match extra {
+            Some(e) => boxed(e),
+            None => boxed(hir::Expr { kind: hir::ExprKind::Number(-1.0), ty: Ty::F64, span }),
+        };
+        let kind = hir::Expr { kind: hir::ExprKind::Number(kind), ty: Ty::Int(IntKind::I64), span };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, extra, kind] },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
     /// Lower a variadic `String.fromCharCode(...)` / `String.fromCodePoint(...)`
     /// static. Each code is turned into its one-code string by a single-code
     /// native and the pieces are folded together with the string `concat`
@@ -5859,6 +5896,10 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                     let first = self.check_expr(cx, &args[0]);
+                    if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
+                        let limit = args.get(1).map(|arg| self.check_expr(cx, arg));
+                        return self.string_symbol_dispatch(span, 3.0, receiver, first, limit);
+                    }
                     if first.ty == Ty::RegExp {
                         if args.len() != 1 {
                             self.error(span, "`split` with a RegExp does not accept a limit");
@@ -5911,6 +5952,9 @@ impl Checker<'_> {
                 if receiver.ty == Ty::String && mname == "replace" && args.len() == 2 {
                     let first = self.check_expr(cx, &args[0]);
                     let replacement = self.check_expr(cx, &args[1]);
+                    if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
+                        return self.string_symbol_dispatch(span, 1.0, receiver, first, Some(replacement));
+                    }
                     if replacement.ty != Ty::String && !replacement.ty.is_error() {
                         self.error(
                             replacement.span,
@@ -5950,6 +5994,10 @@ impl Checker<'_> {
                     let expected_args = 1;
                     if args.len() == expected_args {
                         let first = self.check_expr(cx, &args[0]);
+                        if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
+                            let kind = if mname == "match" { 0.0 } else { 2.0 };
+                            return self.string_symbol_dispatch(span, kind, receiver, first, None);
+                        }
                         {
                             if first.ty != Ty::RegExp && !first.ty.is_error() {
                                 self.error(
