@@ -5475,6 +5475,33 @@ impl<'a> Interp<'a> {
                 }
                 return;
             }
+            // Generic thenable: an object with a callable `then` is adopted by
+            // calling `then(resolve, reject)` with fresh settlers for `target`
+            // (the `new Promise` executor mechanism). Function values do not
+            // box into `Any`, so a callable `then` lives in the function slot.
+            // Note: the call runs synchronously here rather than as a separate
+            // microtask job.
+            if let Some(then) =
+                zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "then"))
+            {
+                let roots = [target, obj];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let resolve = self.make_promise_settler(roots[0], SETTLE_RESOLVE);
+                let reject = self.make_promise_settler(roots[0], SETTLE_REJECT);
+                match self.invoke_function_value(
+                    then,
+                    vec![Value::Function(resolve), Value::Function(reject)],
+                ) {
+                    Ok(_) => {}
+                    Err(RunError::Thrown(thrown)) => {
+                        let _ = self.invoke_promise_settler(roots[0], SETTLE_REJECT, vec![thrown]);
+                    }
+                    Err(_) => {
+                        self.settle_promise_reject(roots[0], "thenable.then failed".into());
+                    }
+                }
+                return;
+            }
         }
         let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
             .unwrap_or_else(zun_core::Any::null);

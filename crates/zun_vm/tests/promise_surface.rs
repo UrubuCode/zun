@@ -430,3 +430,29 @@ fn new_promise_without_executor_is_pending() {
     );
     assert_eq!(out, ["5"]);
 }
+
+/// Resolving with a generic (non-Promise) thenable adopts it by calling
+/// `thenable.then(resolve, reject)`.
+#[test]
+fn resolve_adopts_generic_thenable() {
+    let out = run_source(
+        "function main() { \
+            let thenable: any = { then(f: any, r: any) { f(42.0); } }; \
+            let p = new Promise((res: any) => { res(thenable); }); \
+            let v: any = await p; \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["42"]);
+}
+
+/// A thenable whose `then` throws rejects the promise.
+#[test]
+fn thenable_that_throws_rejects() {
+    let out = run_source(
+        "function main() { \
+            let thenable: any = { then(f: any, r: any) { throw \"boom\"; } }; \
+            let p = new Promise((res: any) => { res(thenable); }); \
+            try { let v: any = await p; } catch (e: string) { print(e); } }",
+    );
+    assert_eq!(out, ["boom"]);
+}
