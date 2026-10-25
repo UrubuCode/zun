@@ -6690,6 +6690,18 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if receiver.ty == Ty::F64 && mname == "toLocaleString" && args.is_empty() {
+                    let Some((id, _)) = zun_natives::resolve("number", "numberToLocaleString")
+                    else {
+                        self.error(span, "missing Number intrinsic `numberToLocaleString`".to_string());
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 // `number.valueOf()` / `string.valueOf()` — identity, returning
                 // the primitive itself. No native needed: the checked receiver
                 // expression already is the value.

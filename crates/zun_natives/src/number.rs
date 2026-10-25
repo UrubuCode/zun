@@ -377,6 +377,34 @@ fn to_precision(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
     Ok(NativeValue::Str(format!("{value:.fraction$}")))
 }
 
+/// `Number.prototype.toLocaleString()` — root-locale digit grouping via baked ICU4X.
+fn number_to_locale_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Float(v)) => *v,
+        Some(NativeArg::Int(v)) => *v as f64,
+        _ => return Err(NativeError("toLocaleString: expected a number".to_string())),
+    };
+    if value.is_nan() {
+        return Ok(NativeValue::Str("NaN".to_string()));
+    }
+    if value.is_infinite() {
+        let text = if value < 0.0 { "-∞" } else { "∞" };
+        return Ok(NativeValue::Str(text.to_string()));
+    }
+    // JS caps the default fraction digits at 3.
+    let text = format!("{value:.3}");
+    let mut decimal: icu::decimal::input::Decimal = text
+        .parse()
+        .map_err(|_| NativeError("toLocaleString: unrepresentable number".to_string()))?;
+    decimal.trim_end();
+    let formatter = icu::decimal::DecimalFormatter::try_new(
+        icu::decimal::DecimalFormatterPreferences::default(),
+        Default::default(),
+    )
+    .map_err(|_| NativeError("toLocaleString: no decimal data".to_string()))?;
+    Ok(NativeValue::Str(formatter.format(&decimal).to_string()))
+}
+
 /// Runtime-backed numeric conversion functions.
 pub const MODULE: crate::Module = crate::Module {
     name: "number",
@@ -484,6 +512,12 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[F64, I32],
             ret: Str,
             imp: to_precision,
+        },
+        NativeFn {
+            name: "numberToLocaleString",
+            params: &[F64],
+            ret: Str,
+            imp: number_to_locale_string,
         },
     ],
 };

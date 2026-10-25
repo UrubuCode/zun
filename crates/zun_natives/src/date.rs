@@ -243,5 +243,59 @@ pub const MODULE: crate::Module = crate::Module {
             ret: I64,
             imp: from_utc,
         },
+        NativeFn { name: "dateToLocaleString", params: &[I64], ret: Str, imp: to_locale_string },
+        NativeFn { name: "dateToLocaleDateString", params: &[I64], ret: Str, imp: to_locale_date_string },
+        NativeFn { name: "dateToLocaleTimeString", params: &[I64], ret: Str, imp: to_locale_time_string },
     ],
 };
+
+/// Which ICU field set a `toLocale*String` native formats with.
+#[derive(Clone, Copy)]
+enum LocaleKind {
+    DateTime,
+    Date,
+    Time,
+}
+
+fn locale_format(args: &[NativeArg], name: &str, kind: LocaleKind) -> Result<NativeValue, NativeError> {
+    use icu::datetime::{fieldsets, DateTimeFormatter};
+    let value = date(args, name)?;
+    let invalid = || NativeError(format!("{name}: invalid date"));
+    let (y, mo, d) = value.utc_date().ok_or_else(invalid)?;
+    let (h, mi, s, ms) = value.utc_time().ok_or_else(invalid)?;
+    let input = icu::time::DateTime {
+        date: icu::calendar::Date::try_new_iso(y, mo as u8, d as u8)
+            .map_err(|e| NativeError(format!("{name}: {e}")))?,
+        time: icu::time::Time::try_new(h as u8, mi as u8, s as u8, ms * 1_000_000)
+            .map_err(|e| NativeError(format!("{name}: {e}")))?,
+    };
+    let prefs = icu::locale::Locale::UNKNOWN.into();
+    let no_data = |e: icu::datetime::DateTimeFormatterLoadError| NativeError(format!("{name}: {e}"));
+    let text = match kind {
+        LocaleKind::DateTime => DateTimeFormatter::try_new(prefs, fieldsets::YMDT::medium())
+            .map_err(no_data)?
+            .format(&input)
+            .to_string(),
+        LocaleKind::Date => DateTimeFormatter::try_new(prefs, fieldsets::YMD::medium())
+            .map_err(no_data)?
+            .format(&input)
+            .to_string(),
+        LocaleKind::Time => DateTimeFormatter::try_new(prefs, fieldsets::T::medium())
+            .map_err(no_data)?
+            .format(&input)
+            .to_string(),
+    };
+    Ok(NativeValue::Str(text))
+}
+
+fn to_locale_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    locale_format(args, "dateToLocaleString", LocaleKind::DateTime)
+}
+
+fn to_locale_date_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    locale_format(args, "dateToLocaleDateString", LocaleKind::Date)
+}
+
+fn to_locale_time_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    locale_format(args, "dateToLocaleTimeString", LocaleKind::Time)
+}
