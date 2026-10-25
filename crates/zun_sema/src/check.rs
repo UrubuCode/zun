@@ -2141,9 +2141,10 @@ impl Checker<'_> {
                 );
                 return self.poison(span);
             }
-            let array = checked.pop().unwrap();
+            let mut array = checked.pop().unwrap();
             let this_arg = checked.pop().unwrap();
             let target = checked.pop().unwrap();
+            self.box_function_array_elements(&mut array);
             if array.ty != Ty::Array && !array.ty.is_error() {
                 self.error(array.span, "`Reflect.apply` expects an Array of arguments");
                 return self.poison(span);

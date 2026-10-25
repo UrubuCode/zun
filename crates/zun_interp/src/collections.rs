@@ -2582,6 +2582,14 @@ impl<'a> Interp<'a> {
                 let array = object(args.get(2).ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
                 let spread = self.read_array_values(array)?;
+                // Argument-marshalling site: restore function values that rode
+                // the `Any` lane as `functionBox` wrappers.
+                let spread = zun_gc::with_current_heap(|heap| {
+                    spread
+                        .into_iter()
+                        .map(|value| unbox_function_box(value, heap))
+                        .collect::<Vec<_>>()
+                });
                 let mut call_args = Vec::with_capacity(1 + spread.len());
                 call_args.push(this_arg);
                 call_args.extend(spread);

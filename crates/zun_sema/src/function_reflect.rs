@@ -44,6 +44,21 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Argument-marshalling site for `apply` / `Reflect.apply`: when the
+    /// arguments array is a literal, wrap each function-valued element in a
+    /// `functionBox` so it survives `StoreArray`'s `Any` boxing. The unwrap is
+    /// scoped to the `functionApply` native (not to every array read), so a
+    /// function stored in a generic array elsewhere is still not observable.
+    pub(super) fn box_function_array_elements(&mut self, array: &mut hir::Expr) {
+        if let hir::ExprKind::ArrayLiteral { elements } = &mut array.kind {
+            for slot in elements.iter_mut() {
+                if let Some(element) = slot.take() {
+                    *slot = Some(self.box_function_argument(element));
+                }
+            }
+        }
+    }
+
     pub(super) fn lower_function_reflective_call(
         &mut self,
         cx: &mut FunctionCx,
@@ -127,7 +142,8 @@ impl<'a> Checker<'a> {
                     return self.poison(span);
                 }
                 let this_arg = self.check_expr(cx, &args[0]);
-                let array = self.check_expr(cx, &args[1]);
+                let mut array = self.check_expr(cx, &args[1]);
+                self.box_function_array_elements(&mut array);
                 if array.ty != Ty::Array && !array.ty.is_error() {
                     self.error(array.span, "`apply` expects an Array of arguments");
                     return self.poison(span);
