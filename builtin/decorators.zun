@@ -1,0 +1,38 @@
+// Typed TC39 decorator context. A decorator declared as
+// `(value: any, context: DecoratorContext)` receives one of these instead of
+// the dynamic `any` context. Function values cannot be stored in `Any`, an
+// `any[]`, or a typed class field (the slot does not preserve the callable),
+// so `addInitializer` hands the callback straight to a native that queues it on
+// the interpreter side; `finish` drains and runs the queue.
+//
+// The checker lowers each typed runtime decorator to
+// `ctx = DecoratorContext.make(..); dec(null, ctx); DecoratorContext.finish(ctx)`
+// in the module initializer.
+//
+// Only class decorators run their initializers (right after the class is
+// defined). A Function value is invoked with exactly one argument, so each
+// initializer is `(target: any) => ...`; a class initializer receives `null`.
+// Method/field initializers need the per-instance `this`, which would have to
+// be threaded through every constructor lowering, so they are not queued.
+
+class DecoratorContext {
+    kind: string;
+    name: string;
+    isStatic: boolean;
+
+    addInitializer(initializer: Function): void {
+        if (this.kind == "class") {
+            decoratorAddInitializer(initializer);
+        }
+    }
+
+    static make(kind: string, name: string, isStatic: boolean): DecoratorContext {
+        return new DecoratorContext(kind, name, isStatic);
+    }
+
+    static finish(context: DecoratorContext): void {
+        if (context.kind == "class") {
+            decoratorRunInitializers();
+        }
+    }
+}

@@ -447,7 +447,13 @@ impl Checker<'_> {
             param_count: 0,
             rest_param: None,
             defaults: Vec::new(),
-            locals: Vec::new(),
+            // Slot 0 hosts the typed `DecoratorContext` of the decorator being
+            // applied (see `typed_context_decorator`).
+            locals: self
+                .classes_by_name
+                .get("DecoratorContext")
+                .map(|&class| vec![Ty::Instance(class)])
+                .unwrap_or_default(),
             return_ty: Ty::Void,
             is_async: false,
             is_static: true,
@@ -561,6 +567,28 @@ impl Checker<'_> {
     ) {
         for (class_idx, class) in program.classes.iter().enumerate() {
             let class_name = self.text(&class.name).to_string();
+            // Field decorators run at class-definition time with
+            // `kind: "field"`. Private (`#x`) fields stay deferred, and the
+            // initializer-transform a field decorator may return is not applied
+            // (no per-instance field-init hook; see NUCLEUS #25).
+            for field in &class.fields {
+                if field.is_private {
+                    continue;
+                }
+                let field_name = self.text(&field.name).to_string();
+                for decorator in field.decorators.iter().rev() {
+                    if let Some(stmt) = self.runtime_decorator_call(
+                        decorator,
+                        || decorator_null_value(span),
+                        "field",
+                        &field_name,
+                        field.is_static,
+                        span,
+                    ) {
+                        body.push(stmt);
+                    }
+                }
+            }
             // Member decorators first (TC39: before the class decorator).
             for method in &class.methods {
                 let method_name = self.text(&method.name).to_string();
@@ -624,6 +652,17 @@ impl Checker<'_> {
         // Must resolve to a top-level function value (else inert / macro).
         let dec_index = *self.by_name.get(callee)?;
         let signature = self.signatures.get(dec_index as usize)?;
+
+        // Typed context: `(value: any, context: DecoratorContext)`. Lowered to
+        // `ctx = make(..); dec(null, ctx); finish(ctx)` so `addInitializer`
+        // callbacks live in typed class fields (functions cannot cross `Any`).
+        if decorator.args.is_none() {
+            if let Some(stmt) =
+                self.typed_context_decorator(dec_index, signature, make_value(), kind, name, is_static, span)
+            {
+                return Some(stmt);
+            }
+        }
 
         let context = hir::Expr {
             kind: hir::ExprKind::DynamicObjectLiteral {
@@ -714,6 +753,58 @@ impl Checker<'_> {
                 }))
             }
         }
+    }
+
+    /// Lowering for a decorator whose second parameter is the prelude's typed
+    /// `DecoratorContext`. Uses module-initializer local slot 0.
+    #[allow(clippy::too_many_arguments)]
+    fn typed_context_decorator(
+        &self,
+        dec_index: u32,
+        signature: &Signature,
+        value: hir::Expr,
+        kind: &str,
+        name: &str,
+        is_static: bool,
+        span: Span,
+    ) -> Option<hir::Stmt> {
+        let ctx_class = *self.classes_by_name.get("DecoratorContext")?;
+        let ctx_ty = Ty::Instance(ctx_class);
+        if signature.params.len() != 2
+            || signature.rest_param.is_some()
+            || !matches!(signature.params[0], Ty::Any)
+            || signature.params[1] != ctx_ty
+        {
+            return None;
+        }
+        let make = self.method_of(ctx_class, "make")?;
+        let finish = self.method_of(ctx_class, "finish")?;
+        let expr = |kind: hir::ExprKind, ty: Ty| hir::Expr { kind, ty, span };
+        let local = || expr(hir::ExprKind::Local(0), ctx_ty);
+        Some(hir::Stmt::Group(vec![
+            hir::Stmt::Let {
+                slot: 0,
+                init: expr(
+                    hir::ExprKind::StaticCall {
+                        func: make,
+                        args: vec![
+                            expr(hir::ExprKind::String(kind.to_string()), Ty::String),
+                            expr(hir::ExprKind::String(name.to_string()), Ty::String),
+                            expr(hir::ExprKind::Boolean(is_static), Ty::Boolean),
+                        ],
+                    },
+                    ctx_ty,
+                ),
+            },
+            hir::Stmt::Expr(expr(
+                hir::ExprKind::Call { func: dec_index, args: vec![value, local()] },
+                signature.return_ty,
+            )),
+            hir::Stmt::Expr(expr(
+                hir::ExprKind::StaticCall { func: finish, args: vec![local()] },
+                Ty::Void,
+            )),
+        ]))
     }
 
     /// Lower a decorator-factory argument. Only literals are supported (the
@@ -4712,6 +4803,26 @@ impl Checker<'_> {
                     return hir::Expr {
                         kind: hir::ExprKind::CallBuiltin { id, args: built_args },
                         ty: ret,
+                        span,
+                    };
+                }
+
+                if name == "decoratorAddInitializer" || name == "decoratorRunInitializers" {
+                    // Prelude plumbing for the typed `DecoratorContext`
+                    // (builtin/decorators.zun).
+                    let expected = usize::from(name == "decoratorAddInitializer");
+                    if args.len() != expected
+                        || (expected == 1 && !matches!(args[0].ty, Ty::Function(_)))
+                    {
+                        self.error(span, format!("`{name}` has an invalid argument list"));
+                        return self.poison(span);
+                    }
+                    let Some((id, native)) = zun_natives::resolve("collections", &name) else {
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args },
+                        ty: native_ty(native.ret),
                         span,
                     };
                 }

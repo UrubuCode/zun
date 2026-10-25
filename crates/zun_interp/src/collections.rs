@@ -2216,6 +2216,23 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Void)
             }
+            "decoratorAddInitializer" => {
+                let function = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                self.decorator_initializers.push(function);
+                Ok(Value::Void)
+            }
+            "decoratorRunInitializers" => {
+                // Drain first so a callback that registers more initializers
+                // cannot extend the batch being run.
+                let pending = std::mem::take(&mut self.decorator_initializers);
+                for function in pending {
+                    self.invoke_function_value(function, vec![Value::Any(zun_core::Any::null())])?;
+                }
+                Ok(Value::Void)
+            }
             "applyDecorator" => {
                 // `applyDecorator(decoratorFn, value, context)` — invoke a
                 // decorator-factory result (a function value) with

@@ -483,5 +483,12 @@ pub const MODULE: crate::Module = crate::Module {
         // on each, then string concatenation if either is a string, else numeric
         // addition. Appended last so ids stay stable.
         NativeFn { name: "addAny", params: &[Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `decoratorAddInitializer(fn)` queues a class-decorator `addInitializer`
+        // callback; `decoratorRunInitializers()` drains and runs the queue in
+        // registration order (each callback receives `null` as its target).
+        // Backs the typed `DecoratorContext` (builtin/decorators.zun). Appended
+        // last so existing dispatch ids stay stable.
+        NativeFn { name: "decoratorAddInitializer", params: &[Function], ret: Void, imp: unavailable },
+        NativeFn { name: "decoratorRunInitializers", params: &[], ret: Void, imp: unavailable },
     ],
 };

@@ -24,6 +24,11 @@ pub(super) struct Interp<'a> {
     /// typed-class `[Symbol.hasInstance]`. The handles are environment-less
     /// (plain method rids), so they hold no managed references to root.
     pub(super) class_symbol_methods: HashMap<(u32, u64), zun_core::FunctionHandle>,
+    /// Pending class-decorator `addInitializer` callbacks, queued by
+    /// `decoratorAddInitializer` and drained by `decoratorRunInitializers`.
+    /// Closure environments are not GC-rooted here; the queue lives only
+    /// between a decorator call and the immediately following drain.
+    pub(super) decorator_initializers: Vec<zun_core::FunctionHandle>,
     /// Most recent executing frame/program counter, used for source-aware
     /// diagnostics at the public runner boundary.
     pub(super) active_frame: Option<(u32, u32)>,

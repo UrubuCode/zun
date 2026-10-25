@@ -45,6 +45,10 @@ pub const DATE: &str = include_str!("../../../builtin/date.zun");
 /// every program for the same reason as [`ERRORS`] and [`DATE`].
 pub const BOOLEAN: &str = include_str!("../../../builtin/boolean.zun");
 
+/// The typed decorator context (`builtin/decorators.zun`), compiled with every
+/// program for the same reason as [`ERRORS`].
+pub const DECORATORS: &str = include_str!("../../../builtin/decorators.zun");
+
 /// Stable content fingerprint for cache invalidation of compiled prelude data.
 ///
 /// This is deliberately a small, deterministic identifier rather than a
@@ -66,7 +70,7 @@ pub const fn fingerprint() -> u64 {
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
     let mut combined = String::with_capacity(
-        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + 4,
+        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + DECORATORS.len() + 5,
     );
     combined.push_str(user_source);
     combined.push('\n');
@@ -77,6 +81,8 @@ pub fn with_prelude(user_source: &str) -> String {
     combined.push_str(DATE);
     combined.push('\n');
     combined.push_str(BOOLEAN);
+    combined.push('\n');
+    combined.push_str(DECORATORS);
     combined
 }
 
