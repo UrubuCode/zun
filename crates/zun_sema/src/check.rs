@@ -127,6 +127,8 @@ fn check_impl(
         closures: Vec::new(),
         realm_globals: crate::realm::registry().into_iter().collect(),
         regex_matchers: Vec::new(),
+        class_symbol_methods: Vec::new(),
+        classes_with_has_instance: HashSet::new(),
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -152,6 +154,14 @@ fn check_impl(
                 m,
                 (!m.is_static).then_some(class_idx as u32),
             ));
+            next += 1;
+        }
+    }
+    // Computed-symbol-key methods, in the same (class, method) order used by
+    // `collect_signatures`, lowered as static functions (no implicit `this`).
+    for class in &program.classes {
+        for sm in &class.symbol_methods {
+            functions.push(checker.check_function(next, &sm.function, None));
             next += 1;
         }
     }
@@ -273,6 +283,13 @@ struct Checker<'a> {
     /// ZIL matcher by `zun_ilgen`; a [`hir::ExprKind::RegexMatch`] `matcher`
     /// indexes this vector.
     regex_matchers: Vec<hir::CompiledRegex>,
+    /// Class computed-symbol-key methods discovered in `collect_signatures`:
+    /// `(class index, well-known symbol id, global func index)`. The module
+    /// initializer attaches each to the per-type symbol-method side table.
+    class_symbol_methods: Vec<(u32, u64, u32)>,
+    /// Class indices that define a `[Symbol.hasInstance]` method. Such classes
+    /// force the runtime `instanceof` path (the method decides membership).
+    classes_with_has_instance: HashSet<u32>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -407,6 +424,10 @@ impl Checker<'_> {
         // 2) Runtime TC39 decorators (Stage 3), run at class-definition time.
         self.append_runtime_decorator_calls(program, &mut body, span);
 
+        // 3) Class computed-symbol-key methods: attach each to the per-type
+        //    symbol-method side table at class-definition time.
+        self.append_class_symbol_methods(&mut body, span);
+
         if body.is_empty() {
             return None;
         }
@@ -468,9 +489,59 @@ impl Checker<'_> {
     /// with the returned value would require a mutable dispatch indirection that
     /// the static-vtable model (and the interp/JIT equivalence invariant) does
     /// not support without a dispatch-model change. Also deferred: delivering a
-    /// live `value` (see [`decorator_null_value`]); `@dec(args)` decorator
-    /// factories; `context.addInitializer`; `context.access` (get/set); field
-    /// and accessor decorators; and private-element decorators.
+    /// live `value` (see [`decorator_null_value`]); `context.addInitializer`;
+    /// `context.access` (get/set); field and accessor decorators; and
+    /// private-element decorators. Decorator factories `@dec(args)` are
+    /// supported (literal arguments): the factory call is evaluated in the
+    /// initializer and its result invoked via the `applyDecorator` native.
+    /// Emit `classSetSymbolFunction(classRid, symbol, fn)` for each class
+    /// computed-symbol-key method, attaching the method (as a function value)
+    /// to the per-type symbol-method side table at class-definition time. The
+    /// class rid is `class index + 1` (one TypeDef per class, in order).
+    fn append_class_symbol_methods(&self, body: &mut Vec<hir::Stmt>, span: Span) {
+        if self.class_symbol_methods.is_empty() {
+            return;
+        }
+        let Some((set_id, _)) = zun_natives::resolve("collections", "classSetSymbolFunction") else {
+            return;
+        };
+        let Some((well_known_id, _)) = zun_natives::resolve("collections", "symbolWellKnown") else {
+            return;
+        };
+        for &(class_idx, symbol_id, func_index) in &self.class_symbol_methods {
+            let class_rid = hir::Expr {
+                kind: hir::ExprKind::Number((class_idx + 1) as f64),
+                ty: Ty::Int(IntKind::U32),
+                span,
+            };
+            let symbol = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: well_known_id,
+                    args: vec![hir::Expr {
+                        kind: hir::ExprKind::Number(symbol_id as f64),
+                        ty: Ty::F64,
+                        span,
+                    }],
+                },
+                ty: Ty::Symbol,
+                span,
+            };
+            let function = hir::Expr {
+                kind: hir::ExprKind::FunctionRef { func: func_index },
+                ty: Ty::Function(func_index),
+                span,
+            };
+            body.push(hir::Stmt::Expr(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: set_id,
+                    args: vec![class_rid, symbol, function],
+                },
+                ty: Ty::Void,
+                span,
+            }));
+        }
+    }
+
     fn append_runtime_decorator_calls(
         &self,
         program: &ast::Program,
@@ -520,9 +591,12 @@ impl Checker<'_> {
         }
     }
 
-    /// Build one `dec(value, context)` statement for a runtime decorator, or
-    /// `None` when the decorator is not a runtime-decorator (factory form, or
-    /// callee does not resolve to a `(any, any)` top-level function).
+    /// Build one statement for a runtime decorator: a direct `dec(value,
+    /// context)` call for a bare `@dec` whose callee is a `(any, any)`
+    /// top-level function, or, for a factory `@dec(args)`, `applyDecorator(
+    /// dec(args), value, context)`. Returns `None` when the decorator is inert
+    /// (callee is not a resolvable top-level function, or a factory with
+    /// non-literal arguments or a non-function return).
     fn runtime_decorator_call(
         &self,
         decorator: &ast::Decorator,
@@ -532,10 +606,6 @@ impl Checker<'_> {
         is_static: bool,
         span: Span,
     ) -> Option<hir::Stmt> {
-        // Decorator factories `@dec(args)` are deferred.
-        if decorator.args.is_some() {
-            return None;
-        }
         let callee_span = decorator.callee.span();
         let callee = self
             .source
@@ -543,14 +613,6 @@ impl Checker<'_> {
         // Must resolve to a top-level function value (else inert / macro).
         let dec_index = *self.by_name.get(callee)?;
         let signature = self.signatures.get(dec_index as usize)?;
-        // A runtime decorator is exactly `(value: any, context: any)`.
-        if signature.params.len() != 2
-            || signature.rest_param.is_some()
-            || !matches!(signature.params[0], Ty::Any)
-            || !matches!(signature.params[1], Ty::Any)
-        {
-            return None;
-        }
 
         let context = hir::Expr {
             kind: hir::ExprKind::DynamicObjectLiteral {
@@ -578,25 +640,93 @@ impl Checker<'_> {
             ty: Ty::DynamicObject,
             span,
         };
-
-        Some(hir::Stmt::Expr(hir::Expr {
-            kind: hir::ExprKind::Call {
-                func: dec_index,
-                args: vec![
-                    make_value(),
-                    hir::Expr {
-                        kind: hir::ExprKind::BoxAny {
-                            value: Box::new(context),
-                        },
-                        ty: Ty::Any,
-                        span,
-                    },
-                ],
+        let context_arg = hir::Expr {
+            kind: hir::ExprKind::BoxAny {
+                value: Box::new(context),
             },
-            // The return value is discarded by the expression statement.
-            ty: signature.return_ty.clone(),
+            ty: Ty::Any,
             span,
-        }))
+        };
+
+        match &decorator.args {
+            None => {
+                // Bare `@dec`: the callee is itself the decorator and must be
+                // exactly `(value: any, context: any)`.
+                if signature.params.len() != 2
+                    || signature.rest_param.is_some()
+                    || !matches!(signature.params[0], Ty::Any)
+                    || !matches!(signature.params[1], Ty::Any)
+                {
+                    return None;
+                }
+                Some(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func: dec_index,
+                        args: vec![make_value(), context_arg],
+                    },
+                    // The return value is discarded by the expression statement.
+                    ty: signature.return_ty,
+                    span,
+                }))
+            }
+            Some(args) => {
+                // Decorator factory `@dec(args)`: evaluate `dec(args)` to produce
+                // the actual decorator function value, then invoke it with
+                // `(value, context)` via `applyDecorator`. The factory must take
+                // exactly `args` (literal) parameters and return a function value.
+                if signature.rest_param.is_some() || signature.params.len() != args.len() {
+                    return None;
+                }
+                if !matches!(signature.return_ty, Ty::Function(_) | Ty::Any) {
+                    return None;
+                }
+                let mut lowered = Vec::with_capacity(args.len());
+                for arg in args {
+                    lowered.push(self.lower_decorator_literal_arg(arg, span)?);
+                }
+                let factory_call = hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func: dec_index,
+                        args: lowered,
+                    },
+                    ty: signature.return_ty,
+                    span,
+                };
+                let (apply_id, _) = zun_natives::resolve("collections", "applyDecorator")?;
+                Some(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: apply_id,
+                        args: vec![factory_call, make_value(), context_arg],
+                    },
+                    ty: Ty::Void,
+                    span,
+                }))
+            }
+        }
+    }
+
+    /// Lower a decorator-factory argument. Only literals are supported (the
+    /// module initializer has no local scope); anything else makes the whole
+    /// decorator inert.
+    fn lower_decorator_literal_arg(&self, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
+        Some(match arg {
+            ast::Expr::Number { value, .. } => hir::Expr {
+                kind: hir::ExprKind::Number(*value),
+                ty: Ty::F64,
+                span,
+            },
+            ast::Expr::String { value, .. } => hir::Expr {
+                kind: hir::ExprKind::String(value.clone()),
+                ty: Ty::String,
+                span,
+            },
+            ast::Expr::Bool { value, .. } => hir::Expr {
+                kind: hir::ExprKind::Boolean(*value),
+                ty: Ty::Boolean,
+                span,
+            },
+            _ => return None,
+        })
     }
 
     fn rewrite_boxed_lets(&self, statements: &mut [hir::Stmt], boxed: &HashSet<hir::LocalSlot>) {
@@ -720,6 +850,83 @@ impl Checker<'_> {
                 });
             }
         }
+
+        // Computed-symbol-key methods follow all vtable methods, in (class,
+        // method) order, so every existing func index is unchanged. Each is
+        // modeled as a static function (no implicit `this`) and recorded for
+        // the module-initializer side-table registration.
+        for (class_idx, class) in program.classes.iter().enumerate() {
+            for sm in &class.symbol_methods {
+                let mut params = Vec::new();
+                for p in &sm.function.params {
+                    params.push(match &p.ty {
+                        Some(t) => self.resolve_annotation(t),
+                        None => {
+                            self.error(p.name.span, "methods require a type on every parameter");
+                            Ty::Error
+                        }
+                    });
+                }
+                let return_ty = match &sm.function.return_type {
+                    Some(t) => self.resolve_annotation(t),
+                    None => Ty::Void,
+                };
+                let func_index = self.signatures.len() as u32;
+                self.signatures.push(Signature {
+                    name: format!("[symbol]@{class_idx}"),
+                    params,
+                    return_ty,
+                    optional_count: sm
+                        .function
+                        .params
+                        .iter()
+                        .rev()
+                        .take_while(|p| p.default_value.is_some())
+                        .count(),
+                    rest_param: sm
+                        .function
+                        .params
+                        .iter()
+                        .position(|parameter| parameter.is_rest),
+                    is_generator: false,
+                    is_static: true,
+                });
+                match self.well_known_symbol_of_key(&sm.key) {
+                    Some(symbol) => {
+                        self.class_symbol_methods.push((
+                            class_idx as u32,
+                            symbol.id().get(),
+                            func_index,
+                        ));
+                        if symbol == zun_core::WellKnownSymbol::HasInstance {
+                            self.classes_with_has_instance.insert(class_idx as u32);
+                        }
+                    }
+                    None => self.error(
+                        sm.key.span(),
+                        "a class computed member key must be a well-known Symbol \
+                         (e.g. `Symbol.hasInstance`, `Symbol.iterator`)",
+                    ),
+                }
+            }
+        }
+    }
+
+    /// Recognize a computed class-member key that is a well-known Symbol
+    /// (`Symbol.hasInstance`, `Symbol.iterator`, …).
+    fn well_known_symbol_of_key(&self, key: &ast::Expr) -> Option<zun_core::WellKnownSymbol> {
+        let (object, field) = match key {
+            ast::Expr::Field { object, field, .. } => {
+                let ast::Expr::Ident(name) = object.as_ref() else { return None };
+                (self.text(name), self.text(field))
+            }
+            ast::Expr::StaticField { class, field, .. } => (self.text(class), self.text(field)),
+            _ => return None,
+        };
+        if object != "Symbol" || self.by_name.contains_key("Symbol") {
+            return None;
+        }
+        zun_core::WellKnownSymbol::from_member(field)
     }
 
     /// Check a function or method body. `this_class` is `Some` for methods,
@@ -3484,6 +3691,9 @@ impl Checker<'_> {
                     };
                 }
                 result
+            }
+            ast::Expr::TaggedTemplate { tag, cooked: _, raw, exprs, .. } => {
+                self.check_tagged_template(cx, tag, raw, exprs, span)
             }
             ast::Expr::Bool { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Boolean(*value),
@@ -7877,6 +8087,94 @@ impl Checker<'_> {
     /// operand is not a class name, so it falls through to the `instanceofDynamic`
     /// intrinsic below. Only `[Symbol.hasInstance]` on a typed class stays deferred
     /// (needs class computed-symbol-key members).
+    /// Whether a tagged-template tag is the built-in `String.raw`.
+    fn tag_is_string_raw(&self, tag: &ast::Expr) -> bool {
+        let (object, field) = match tag {
+            ast::Expr::Field { object, field, .. } => {
+                let ast::Expr::Ident(name) = object.as_ref() else { return false };
+                (self.text(name), self.text(field))
+            }
+            ast::Expr::StaticField { class, field, .. } => {
+                (self.text(class), self.text(field))
+            }
+            _ => return false,
+        };
+        object == "String" && field == "raw" && !self.by_name.contains_key("String")
+    }
+
+    /// Lower a tagged template literal. Only `String.raw` is supported as the
+    /// tag: it stringifies each substitution and joins it between the **raw**
+    /// (un-escaped) literal chunks, so `` String.raw`a\n${1}b` `` is
+    /// `"a\\n1b"`. User-defined tags need a strings-array-with-`.raw` plus a
+    /// variadic dynamic dispatch and stay deferred.
+    fn check_tagged_template(
+        &mut self,
+        cx: &mut FunctionCx,
+        tag: &ast::Expr,
+        raw: &[String],
+        exprs: &[Box<ast::Expr>],
+        span: Span,
+    ) -> hir::Expr {
+        if !self.tag_is_string_raw(tag) {
+            self.error(
+                tag.span(),
+                "only `String.raw` is supported as a template tag",
+            );
+            return self.poison(span);
+        }
+        let string_lit = |text: &str| hir::Expr {
+            kind: hir::ExprKind::String(text.to_string()),
+            ty: Ty::String,
+            span,
+        };
+        // raw.len() == exprs.len() + 1 (the parser guarantees alignment).
+        let mut result = string_lit(raw.first().map(String::as_str).unwrap_or(""));
+        for (index, expression) in exprs.iter().enumerate() {
+            let value = self.check_expr(cx, expression);
+            let next = if value.ty == Ty::F64 {
+                match zun_natives::resolve("number", "toString") {
+                    Some((id, _)) => hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                        ty: Ty::String,
+                        span,
+                    },
+                    None => {
+                        self.error(span, "number template conversion is unavailable");
+                        self.poison(span)
+                    }
+                }
+            } else {
+                if value.ty != Ty::String && !value.ty.is_error() {
+                    self.error(
+                        value.span,
+                        "String.raw substitution must have type string or number",
+                    );
+                }
+                value
+            };
+            result = hir::Expr {
+                kind: hir::ExprKind::Binary {
+                    op: ast::BinaryOp::Add,
+                    lhs: Box::new(result),
+                    rhs: Box::new(next),
+                },
+                ty: Ty::String,
+                span,
+            };
+            let chunk = raw.get(index + 1).map(String::as_str).unwrap_or("");
+            result = hir::Expr {
+                kind: hir::ExprKind::Binary {
+                    op: ast::BinaryOp::Add,
+                    lhs: Box::new(result),
+                    rhs: Box::new(string_lit(chunk)),
+                },
+                ty: Ty::String,
+                span,
+            };
+        }
+        result
+    }
+
     fn check_instanceof_operator(
         &mut self,
         cx: &mut FunctionCx,
@@ -7928,13 +8226,20 @@ impl Checker<'_> {
         // `None` means "check at runtime": an upcast base-typed operand that may
         // hold a `target` subclass, or an `any`/dynamic operand with no static
         // class. (The old code folded these to an unsound constant `false`.)
-        let folded = match value.ty {
-            Ty::Error => return self.poison(span),
-            // A statically-known instance provably in `target`'s hierarchy.
-            Ty::Instance(c) if self.class_is_a(c, target) => Some(true),
-            Ty::Instance(_) | Ty::Any | Ty::DynamicObject => None,
-            // A primitive value is never an instance of a class.
-            _ => Some(false),
+        let folded = if self.classes_with_has_instance.contains(&target) {
+            // A custom `[Symbol.hasInstance]` always decides membership, so the
+            // answer can never be constant-folded — force the runtime path,
+            // which consults the per-type symbol-method side table.
+            None
+        } else {
+            match value.ty {
+                Ty::Error => return self.poison(span),
+                // A statically-known instance provably in `target`'s hierarchy.
+                Ty::Instance(c) if self.class_is_a(c, target) => Some(true),
+                Ty::Instance(_) | Ty::Any | Ty::DynamicObject => None,
+                // A primitive value is never an instance of a class.
+                _ => Some(false),
+            }
         };
         let Some(result) = folded else {
             // Runtime check against `target`'s metadata TypeDef rid. The rid is
@@ -8191,6 +8496,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
         IndexAssign { object, index, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(index) + count_yields_in_expr(value),
         Template { parts, .. } => parts.iter().map(|p| match p { ast::TemplatePart::Text(_) => 0, ast::TemplatePart::Expr(e) => count_yields_in_expr(e) }).sum(),
+        TaggedTemplate { tag, exprs, .. } => count_yields_in_expr(tag) + exprs.iter().map(|e| count_yields_in_expr(e)).sum::<usize>(),
         Function(_) | Number { .. } | BigInt { .. } | String { .. } | RegexLiteral { .. } | Bool { .. } | Null { .. } | Ident(_) => 0,
         StaticMethodCall { args, .. } => args.iter().map(count_yields_in_expr).sum(),
         StaticField { .. } => 0,
@@ -8261,6 +8567,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
                 ast::TemplatePart::Expr(expr) => count_awaits_in_expr(expr),
             })
             .sum(),
+        TaggedTemplate { tag, exprs, .. } => count_awaits_in_expr(tag) + exprs.iter().map(|e| count_awaits_in_expr(e)).sum::<usize>(),
         ImportCall { specifier, .. } => count_awaits_in_expr(specifier),
         Assign { value, .. } | Await { operand: value, .. } | Yield { value, .. } | Unary { operand: value, .. }
         | Spread { expr: value, .. } | Cast { expr: value, .. } => {

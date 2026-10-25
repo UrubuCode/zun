@@ -64,6 +64,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
                 }
             }
         }
+        Expr::TaggedTemplate { tag, exprs, .. } => { rebase_expression_names(tag, base); for expr in exprs { rebase_expression_names(expr, base); } }
         Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::RegexLiteral { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
     }
 }
@@ -98,6 +99,64 @@ pub(crate) fn parse_template_parts(raw: &str, span: Span, diagnostics: &mut Vec<
     }
     if cursor < inner.len() { parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..]))); }
     parts
+}
+
+/// Parse a tagged-template literal body into aligned `(cooked, raw)` literal
+/// chunks and the interpolated expressions. `cooked.len() == raw.len() ==
+/// exprs.len() + 1`: there is always a (possibly empty) chunk before the first
+/// substitution, between each pair, and after the last. `raw` chunks keep the
+/// source text as written (no escape decoding); `cooked` chunks are decoded.
+#[allow(clippy::type_complexity)]
+pub(crate) fn parse_tagged_template_parts(
+    raw: &str,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (Vec<String>, Vec<String>, Vec<Box<Expr>>) {
+    let inner = &raw[1..raw.len() - 1];
+    let mut cooked = Vec::new();
+    let mut raws = Vec::new();
+    let mut exprs = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = find_template_marker(&inner[cursor..]) {
+        let start = cursor + relative;
+        let chunk = &inner[cursor..start];
+        cooked.push(decode_template_text(chunk));
+        raws.push(chunk.to_string());
+        let expression_start = start + 2;
+        let Some(end) = find_template_interpolation_end(inner, expression_start) else {
+            diagnostics.push(
+                Diagnostic::error("unterminated template interpolation")
+                    .with_code("SYN0004")
+                    .with_span(span),
+            );
+            return (cooked, raws, exprs);
+        };
+        let expression = inner[expression_start..end].trim();
+        let mut expression_diagnostics = Vec::new();
+        match parse_expression_fragment(expression, &mut expression_diagnostics) {
+            Some(mut parsed) if expression_diagnostics.is_empty() => {
+                let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
+                rebase_expression_names(&mut parsed, span.start + offset as u32);
+                exprs.push(Box::new(parsed));
+            }
+            _ => {
+                diagnostics.extend(expression_diagnostics);
+                diagnostics.push(
+                    Diagnostic::error("invalid template interpolation")
+                        .with_code("SYN0005")
+                        .with_span(span),
+                );
+                // Keep chunk/expr alignment: emit a null placeholder so the
+                // chunk just pushed still has a trailing substitution.
+                exprs.push(Box::new(Expr::Null { span }));
+            }
+        }
+        cursor = end + 1;
+    }
+    let tail = &inner[cursor..];
+    cooked.push(decode_template_text(tail));
+    raws.push(tail.to_string());
+    (cooked, raws, exprs)
 }
 
 pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
@@ -587,6 +646,21 @@ impl Parser<'_> {
                         span: expr.span().to(close),
                         object: Box::new(expr),
                         index: Box::new(index),
+                    };
+                }
+                TokenKind::Template => {
+                    // Tagged template: `tag`...``. The template token directly
+                    // follows the tag expression with no intervening operator.
+                    let t = self.bump();
+                    let raw = self.text(t).to_string();
+                    let (cooked, raw_chunks, exprs) =
+                        parse_tagged_template_parts(&raw, t.span, &mut self.diagnostics);
+                    expr = Expr::TaggedTemplate {
+                        span: expr.span().to(t.span),
+                        tag: Box::new(expr),
+                        cooked,
+                        raw: raw_chunks,
+                        exprs,
                     };
                 }
                 _ => break,

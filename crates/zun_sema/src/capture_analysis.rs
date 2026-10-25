@@ -122,6 +122,12 @@ pub(super) fn collect_mutated_expr(
         | ast::Expr::BigInt { .. }
         | ast::Expr::String { .. } | ast::Expr::Template { .. } | ast::Expr::RegexLiteral { .. }
         | ast::Expr::Bool { .. } | ast::Expr::Null { .. } => {}
+        ast::Expr::TaggedTemplate { tag, exprs, .. } => {
+            collect_mutated_expr(checker, tag, names);
+            for expression in exprs {
+                collect_mutated_expr(checker, expression, names);
+            }
+        }
         ast::Expr::Spread { expr, .. } => collect_mutated_expr(checker, expr, names),
         ast::Expr::ArrayLiteral { elements, .. } => {
             for element in elements {

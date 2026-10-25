@@ -475,6 +475,12 @@ impl Checker<'_> {
                     }
                 }
             }
+            ast::Expr::TaggedTemplate { tag, exprs, .. } => {
+                self.collect_capture_expr(cx, parameters, tag, uses);
+                for expression in exprs {
+                    self.collect_capture_expr(cx, parameters, expression, uses);
+                }
+            }
             ast::Expr::ArrayLiteral { elements, .. } => {
                 for element in elements {
                     match element {

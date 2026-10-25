@@ -77,7 +77,24 @@ pub struct Class {
     pub fields: Vec<ClassField>,
     /// Declared methods in source order.
     pub methods: Vec<Function>,
+    /// Methods whose key is a computed expression (`[Symbol.iterator]() {}`),
+    /// in source order. Kept apart from `methods` because they carry a key
+    /// expression rather than a static name and are not vtable slots.
+    pub symbol_methods: Vec<ClassSymbolMethod>,
     /// Span of the whole declaration.
+    pub span: Span,
+}
+
+/// A class member whose key is a computed expression, e.g.
+/// `[Symbol.hasInstance](value) {}`. Only Symbol-valued well-known keys are
+/// lowered (attached to a per-type side table); other keys are diagnosed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassSymbolMethod {
+    /// The computed key expression (between the `[` and `]`).
+    pub key: Expr,
+    /// The method body, modeled as a static method (no implicit `this`).
+    pub function: Function,
+    /// Span of the whole member.
     pub span: Span,
 }
 
@@ -602,6 +619,22 @@ pub enum Expr {
         /// Source location including backticks.
         span: Span,
     },
+    /// A tagged template literal `` tag`a${x}b` ``. `cooked` holds the escape-
+    /// decoded literal chunks and `raw` the un-decoded chunks (as written);
+    /// both have `exprs.len() + 1` entries (one chunk between/around each
+    /// substitution, empty where two substitutions are adjacent).
+    TaggedTemplate {
+        /// The tag expression, invoked with `(strings, ...substitutions)`.
+        tag: Box<Expr>,
+        /// Escape-decoded literal chunks (`cooked.len() == exprs.len() + 1`).
+        cooked: Vec<String>,
+        /// Raw (un-decoded) literal chunks, matching `cooked` positionally.
+        raw: Vec<String>,
+        /// The interpolated substitution expressions, in source order.
+        exprs: Vec<Box<Expr>>,
+        /// Source location including the tag and backticks.
+        span: Span,
+    },
     /// A regular-expression literal `/pattern/flags`.
     RegexLiteral {
         /// Raw pattern source between the slashes.
@@ -840,6 +873,7 @@ impl Expr {
             | Expr::BigInt { span, .. }
             | Expr::String { span, .. }
             | Expr::Template { span, .. }
+            | Expr::TaggedTemplate { span, .. }
             | Expr::RegexLiteral { span, .. }
             | Expr::Bool { span, .. }
             | Expr::Null { span }

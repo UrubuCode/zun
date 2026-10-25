@@ -437,5 +437,19 @@ pub const MODULE: crate::Module = crate::Module {
         // then falls back to `[Symbol.toStringTag]` → `"[object <Tag>]"`, else
         // `"[object Object]"`. Appended last so existing dispatch ids stay stable.
         NativeFn { name: "stringCoerce", params: &[Opaque], ret: Str, imp: unavailable },
+        // `applyDecorator(decoratorFn, value, context)` invokes a decorator
+        // factory's result (a function value) with `(value, context)` at
+        // class-definition time, discarding its return value. Backs decorator
+        // factories `@dec(args)` (the factory call `dec(args)` is evaluated by
+        // the caller; its result is this first argument). Appended last so
+        // existing dispatch ids stay stable.
+        NativeFn { name: "applyDecorator", params: &[Opaque, Opaque, Opaque], ret: Void, imp: unavailable },
+        // `classSetSymbolFunction(classRid, symbol, fn)` attaches a method under
+        // a Symbol key to a typed class's per-type side table (the typed-class
+        // analogue of `dynamicSetSymbolFunction`). Backs class computed-symbol
+        // members (`class C { [Symbol.hasInstance](v) {} }`): the method is a
+        // function value and the class is identified by its metadata TypeDef
+        // rid. The symbol arrives as an immediate `Any`, hence `Opaque`.
+        NativeFn { name: "classSetSymbolFunction", params: &[U32, Opaque, Function], ret: Void, imp: unavailable },
     ],
 };

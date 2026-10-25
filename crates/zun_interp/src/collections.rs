@@ -2064,6 +2064,42 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Void)
             }
+            "applyDecorator" => {
+                // `applyDecorator(decoratorFn, value, context)` — invoke a
+                // decorator-factory result (a function value) with
+                // `(value, context)` at class-definition time, discarding the
+                // return. Backs decorator factories `@dec(args)`.
+                let function = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = args.get(1).ok_or(RunError::BadToken)?.clone();
+                let context = args.get(2).ok_or(RunError::BadToken)?.clone();
+                self.invoke_function_value(function, vec![value, context])?;
+                Ok(Value::Void)
+            }
+            "classSetSymbolFunction" => {
+                // `classSetSymbolFunction(classRid, symbol, fn)` — attach a
+                // method under a Symbol key to a typed class's per-type side
+                // table (the typed-class analogue of
+                // `dynamicSetSymbolFunction`).
+                let class_rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let symbol = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                let function = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                self.class_symbol_methods
+                    .insert((class_rid, symbol.get()), function);
+                Ok(Value::Void)
+            }
             "dynamicSetSymbolFunction" => {
                 // Attach a method under a Symbol key (e.g.
                 // `C[Symbol.hasInstance]`). The symbol arrives as an immediate
@@ -3522,6 +3558,25 @@ impl<'a> Interp<'a> {
                     Value::Float(value, _) => *value as u32,
                     _ => return Err(RunError::BadToken),
                 };
+                // A typed class carrying a `[Symbol.hasInstance]` method decides
+                // membership itself: call it with the operand (boxed to `any`)
+                // and return `ToBoolean` of the result.
+                if let Some(&handler) = self.class_symbol_methods.get(&(
+                    class_rid,
+                    zun_core::WellKnownSymbol::HasInstance.id().get(),
+                )) {
+                    let operand = args.first().ok_or(RunError::BadToken)?.clone();
+                    let boxed = match operand {
+                        Value::Any(_) => operand,
+                        other => zun_gc::with_current_heap_mut(|heap| {
+                            other.box_any(heap).map(Value::Any)
+                        })
+                        .ok_or(RunError::BadToken)?,
+                    };
+                    let result = self.invoke_function_value(handler, vec![boxed])?;
+                    let truthy = zun_gc::with_current_heap(|heap| is_truthy(&result, heap));
+                    return Ok(Value::Bool(truthy));
+                }
                 let found = match object(args.first().ok_or(RunError::BadToken)?) {
                     Some(obj) => self.types.is_assignable(obj.type_rid(), class_rid),
                     None => false,

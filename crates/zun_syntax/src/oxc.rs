@@ -678,6 +678,33 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 span: span(template.span),
             })
         }
+        Expression::TaggedTemplateExpression(tagged) => {
+            let tag = Box::new(convert_expression(source, &tagged.tag)?);
+            let quasi = &tagged.quasi;
+            let mut cooked = Vec::with_capacity(quasi.quasis.len());
+            let mut raw = Vec::with_capacity(quasi.quasis.len());
+            for element in &quasi.quasis {
+                let cooked_text = element
+                    .value
+                    .cooked
+                    .as_ref()
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_else(|| element.value.raw.as_str());
+                cooked.push(cooked_text.to_owned());
+                raw.push(element.value.raw.as_str().to_owned());
+            }
+            let mut exprs = Vec::with_capacity(quasi.expressions.len());
+            for expression in &quasi.expressions {
+                exprs.push(Box::new(convert_expression(source, expression)?));
+            }
+            Ok(Expr::TaggedTemplate {
+                tag,
+                cooked,
+                raw,
+                exprs,
+                span: span(tagged.span),
+            })
+        }
         Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
             span: span(identifier.span),
         })),
@@ -1275,6 +1302,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 .map_err(|error| vec![error])?;
             let mut fields = Vec::new();
             let mut methods = Vec::new();
+            let mut symbol_methods = Vec::new();
             for element in &class_declaration.body.body {
                 match element {
                     ClassElement::PropertyDefinition(property) => {
@@ -1320,7 +1348,20 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         });
                     }
                     ClassElement::MethodDefinition(method) => {
-                        let PropertyKey::StaticIdentifier(identifier) = &method.key else {
+                        // A computed key (`[Symbol.iterator]() {}`) is lowered
+                        // to a Symbol-keyed side-table entry; a plain name is a
+                        // vtable method. `name_span` carries the key span in the
+                        // computed case (used only for diagnostics).
+                        let (name_span, computed_key) = if method.computed {
+                            let key_expression = method.key.as_expression().ok_or_else(|| {
+                                vec!["OXC adapter requires an expression computed method key".to_owned()]
+                            })?;
+                            let key = convert_expression(source, key_expression)
+                                .map_err(|error| vec![error])?;
+                            (key.span(), Some(key))
+                        } else if let PropertyKey::StaticIdentifier(identifier) = &method.key {
+                            (Span::new(identifier.span.start, identifier.span.end), None)
+                        } else {
                             return Err(vec![
                                 "OXC adapter supports identifier class method names only".into(),
                             ]);
@@ -1522,16 +1563,15 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 is_rest: true,
                             });
                         }
-                        methods.push(Function {
-                            name: Name {
-                                span: Span::new(identifier.span.start, identifier.span.end),
-                            },
-                            decorators: method
-                                .decorators
-                                .iter()
-                                .map(|decorator| convert_decorator(source, decorator))
-                                .collect::<Result<Vec<_>, _>>()
-                                .map_err(|error| vec![error])?,
+                        let decorators = method
+                            .decorators
+                            .iter()
+                            .map(|decorator| convert_decorator(source, decorator))
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|error| vec![error])?;
+                        let function = Function {
+                            name: Name { span: name_span },
+                            decorators,
                             params,
                             return_type: convert_type_annotation(
                                 source,
@@ -1539,7 +1579,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             )
                             .map_err(|error| vec![error])?,
                             is_extern: false,
-                            is_static: method.r#static,
+                            // A computed-key member is modeled as a static
+                            // method (no implicit `this`).
+                            is_static: method.r#static || computed_key.is_some(),
                             accessor: match method.kind {
                                 MethodDefinitionKind::Get => Some(crate::ast::AccessorKind::Get),
                                 MethodDefinitionKind::Set => Some(crate::ast::AccessorKind::Set),
@@ -1553,7 +1595,15 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 span: Span::new(body.span.start, body.span.end),
                             },
                             span: Span::new(method.span.start, method.span.end),
-                        });
+                        };
+                        match computed_key {
+                            Some(key) => symbol_methods.push(crate::ast::ClassSymbolMethod {
+                                key,
+                                function,
+                                span: Span::new(method.span.start, method.span.end),
+                            }),
+                            None => methods.push(function),
+                        }
                     }
                     _ => {
                         return Err(vec![
@@ -1575,6 +1625,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     .map_err(|error| vec![error])?,
                 fields,
                 methods,
+                symbol_methods,
                 span: Span::new(class_declaration.span.start, class_declaration.span.end),
             });
             continue;

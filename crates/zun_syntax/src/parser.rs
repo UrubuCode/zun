@@ -235,6 +235,7 @@ impl Parser<'_> {
         self.expect(TokenKind::LBrace, "`{`");
         let mut fields = Vec::new();
         let mut methods = Vec::new();
+        let mut symbol_methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
             // Neither `expect` nor `name` consumes the token it rejects, so a
             // member the grammar cannot start leaves the cursor where it was
@@ -254,7 +255,11 @@ impl Parser<'_> {
             let member_decorators = self.decorators();
             if !matches!(
                 self.peek().kind,
-                TokenKind::Ident | TokenKind::Hash | TokenKind::KwStatic | TokenKind::KwExtern
+                TokenKind::Ident
+                    | TokenKind::Hash
+                    | TokenKind::KwStatic
+                    | TokenKind::KwExtern
+                    | TokenKind::LBracket
             ) && !self.peek().kind.is_keyword()
             {
                 let span = self.peek().span;
@@ -266,6 +271,29 @@ impl Parser<'_> {
             let is_private = self.eat(TokenKind::Hash);
             let is_static = self.eat(TokenKind::KwStatic);
             let is_extern = self.eat(TokenKind::KwExtern);
+            // Computed-key member: `[expr]() {}`. Only the method form is
+            // supported (a computed-key field would need storage not modeled
+            // here); the key expression is lowered to a Symbol-keyed side-table
+            // entry by sema.
+            if self.at(TokenKind::LBracket) {
+                let open = self.bump().span; // `[`
+                let key = self.expression();
+                self.expect(TokenKind::RBracket, "`]` after a computed member key");
+                if self.at(TokenKind::LParen) {
+                    // Model the body as a static method (no implicit `this`):
+                    // its name slot carries the key span for diagnostics.
+                    let name = Name { span: key.span() };
+                    let function = self.method(name, is_extern, true, None);
+                    let span = open.to(function.span);
+                    symbol_methods.push(ClassSymbolMethod { key, function, span });
+                } else {
+                    self.error_at(key.span(), "a computed class member must be a method");
+                }
+                if self.pos == entry {
+                    self.bump();
+                }
+                continue;
+            }
             let member_name = self.member_name("a field or method name");
             let accessor = if !is_static && !is_extern && !self.at(TokenKind::LParen)
                 && (self.text(self.tokens[self.pos - 1]) == "get" || self.text(self.tokens[self.pos - 1]) == "set")
@@ -317,6 +345,7 @@ impl Parser<'_> {
             decorators,
             fields,
             methods,
+            symbol_methods,
             span: start.to(close),
         }
     }

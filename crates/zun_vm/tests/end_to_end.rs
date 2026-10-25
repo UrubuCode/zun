@@ -2661,3 +2661,52 @@ fn void_operator_yields_undefined() {
     );
     assert_eq!(out, ["undefined", "undefined"]);
 }
+
+#[test]
+fn string_raw_tag_keeps_backslashes_literal() {
+    // `String.raw` is the built-in template tag: the raw (un-escaped) literal
+    // chunks are joined with the stringified substitutions, so `\n` stays a
+    // literal backslash-n (NUCLEUS #1).
+    let out = run_with_std(
+        "function main(): void { print(String.raw`a\n${1.0}b`); }",
+    );
+    assert_eq!(out, ["a\n1b"]);
+}
+
+#[test]
+fn decorator_factory_runs_at_definition_time() {
+    // `@wrap(2)` evaluates the factory `wrap(2)` to produce the actual
+    // decorator, which is then invoked with `(value, context)` before `main`
+    // (NUCLEUS #25). The factory argument is recorded at definition time.
+    let out = run_with_std(
+        r#"function wrap(n: number): Function {
+            return (value: any, context: any) => { print(`wrapped-${n}`); };
+        }
+        class C {
+            @wrap(2)
+            m(): void {}
+        }
+        function main(): void { print("main"); }"#,
+    );
+    assert_eq!(out, ["wrapped-2", "main"]);
+}
+
+#[test]
+fn typed_class_symbol_has_instance_drives_instanceof() {
+    // A typed class carrying `[Symbol.hasInstance]` decides `instanceof`
+    // membership itself via the per-type symbol-method side table (NUCLEUS #5).
+    let out = run_with_std(
+        r#"class Accepting {
+            [Symbol.hasInstance](value: any): boolean { return true; }
+        }
+        class Rejecting {
+            [Symbol.hasInstance](value: any): boolean { return false; }
+        }
+        function main(): void {
+            let x: any = box_any(1.0);
+            if (x instanceof Accepting) { print("accept-yes"); } else { print("accept-no"); }
+            if (x instanceof Rejecting) { print("reject-yes"); } else { print("reject-no"); }
+        }"#,
+    );
+    assert_eq!(out, ["accept-yes", "reject-no"]);
+}

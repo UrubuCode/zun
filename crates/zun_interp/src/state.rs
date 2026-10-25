@@ -18,6 +18,12 @@ pub(super) struct Interp<'a> {
     /// Value produced by a generator yield at the current suspension point.
     pub(super) yielded: Option<Value>,
     pub(super) static_fields: HashMap<(u32, u32), Value>,
+    /// Class computed-symbol-key methods: `(class TypeDef rid, symbol id)` →
+    /// the method as a function value. Populated by `classSetSymbolFunction`
+    /// in the module initializer and consulted by `instanceofClass` for a
+    /// typed-class `[Symbol.hasInstance]`. The handles are environment-less
+    /// (plain method rids), so they hold no managed references to root.
+    pub(super) class_symbol_methods: HashMap<(u32, u64), zun_core::FunctionHandle>,
     /// Most recent executing frame/program counter, used for source-aware
     /// diagnostics at the public runner boundary.
     pub(super) active_frame: Option<(u32, u32)>,
