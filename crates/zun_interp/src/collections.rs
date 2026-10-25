@@ -2233,6 +2233,61 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Void)
             }
+            "classBox" => {
+                let descriptor = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) if any.as_class_descriptor().is_some() => *any,
+                    _ => return Err(RunError::BadToken),
+                };
+                let record = zun_gc::with_current_heap_mut(|heap| {
+                    let record = heap.alloc_dynamic();
+                    heap.dynamic_set(record, "__classDesc", descriptor);
+                    record
+                });
+                Ok(Value::Object(record))
+            }
+            "reflectConstruct" => {
+                let token = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_class_descriptor().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let values = self.read_array_values(array)?;
+                self.construct_class_from_descriptor(token, values)
+            }
+            "proxyConstruct" => {
+                // `new proxy(...args)`: `handler.construct(target, argsArray,
+                // newTarget)` when present (the descriptor stands in for both
+                // `target` and `newTarget`), else default-construct the class.
+                let proxy = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let target = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                    .ok_or(RunError::BadToken)?;
+                let descriptor = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(target, "__classDesc")
+                })
+                .ok_or(RunError::BadToken)?;
+                if let Some(callback) =
+                    zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "construct"))
+                {
+                    let result = self.invoke_proxy_trap(
+                        callback,
+                        vec![
+                            Value::Any(descriptor),
+                            Value::Object(array),
+                            Value::Any(descriptor),
+                        ],
+                    )?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
+                }
+                let token = descriptor.as_class_descriptor().ok_or(RunError::BadToken)?;
+                let values = self.read_array_values(array)?;
+                self.construct_class_from_descriptor(token, values)
+            }
             "applyDecorator" => {
                 // `applyDecorator(decoratorFn, value, context)` — invoke a
                 // decorator-factory result (a function value) with
@@ -4586,6 +4641,42 @@ impl<'a> Interp<'a> {
     /// as the leading positional slot and appending `leading` (the target and
     /// the trap-specific operands). Mirrors the dispatch convention of the
     /// `get`/`set`/`has`/`deleteProperty` traps.
+    /// Construct an instance of a user class from a runtime class descriptor
+    /// token (`USER_CLASS_FLAG | TypeDef rid`) and positional field values: the
+    /// runtime twin of `NewObj` (which `new C(...)` lowers to). The value count
+    /// must equal the class's field count (no initializer defaults at runtime).
+    /// Returns the instance boxed as an `Any`.
+    fn construct_class_from_descriptor(
+        &mut self,
+        token: u32,
+        values: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        if token & zun_natives::USER_CLASS_FLAG == 0 {
+            return Err(RunError::BadToken);
+        }
+        let token = zun_metadata::Token::new(
+            zun_metadata::TableKind::TypeDef,
+            token & !zun_natives::USER_CLASS_FLAG,
+        );
+        let (field_start, field_count) = self.type_field_range(token)?;
+        if values.len() != field_count {
+            return Err(RunError::BadToken);
+        }
+        let kinds: Vec<u8> = (0..field_count as u32)
+            .map(|i| self.field_kind_at(field_start + i))
+            .collect::<Result<_, _>>()?;
+        let obj = zun_gc::with_current_heap_mut(|h| {
+            let obj = h.alloc(token.rid(), field_count);
+            for (i, value) in values.iter().enumerate() {
+                crate::value::store_field(kinds[i], obj, i, value, h);
+            }
+            obj
+        });
+        let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(obj).box_any(heap))
+            .unwrap_or_else(zun_core::Any::null);
+        Ok(Value::Any(boxed))
+    }
+
     fn invoke_proxy_trap(
         &mut self,
         callback: zun_core::FunctionHandle,

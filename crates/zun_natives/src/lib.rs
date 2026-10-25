@@ -20,6 +20,7 @@ mod boolean;
 mod buffer;
 mod node_buffer;
 mod collections;
+pub use collections::USER_CLASS_FLAG;
 mod date;
 mod error;
 mod io;

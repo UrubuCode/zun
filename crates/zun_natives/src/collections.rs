@@ -490,5 +490,23 @@ pub const MODULE: crate::Module = crate::Module {
         // last so existing dispatch ids stay stable.
         NativeFn { name: "decoratorAddInitializer", params: &[Function], ret: Void, imp: unavailable },
         NativeFn { name: "decoratorRunInitializers", params: &[], ret: Void, imp: unavailable },
+        // `Reflect.construct` / Proxy `construct` trap, CLASS targets only.
+        // A user class used as a value lowers to a class descriptor `Any`
+        // (token = `USER_CLASS_FLAG | typedef rid`). `classBox(descriptor)` wraps
+        // it in a GC record (key `__classDesc`) so it can be a proxy target;
+        // `reflectConstruct(descriptor, argsArray)` allocates an instance with
+        // the array elements as the positional field values (the same shape
+        // `new C(...)` lowers to); `proxyConstruct(proxy, argsArray)` routes
+        // `new proxy(...)` through the handler's `construct` trap, defaulting to
+        // `reflectConstruct` on the wrapped class. LIMITATION: arbitrary-function
+        // constructors are out of scope (Zun has no function.prototype/`this`
+        // construction model), and `newTarget` is approximated by the target.
+        NativeFn { name: "classBox", params: &[Opaque], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "reflectConstruct", params: &[Opaque, Array], ret: Opaque, imp: unavailable },
+        NativeFn { name: "proxyConstruct", params: &[Proxy, Array], ret: Opaque, imp: unavailable },
     ],
 };
+
+/// High bit of a class-descriptor token marking a *user* class (the low bits
+/// are the TypeDef rid); realm base-type tokens never set it.
+pub const USER_CLASS_FLAG: u32 = 0x8000_0000;

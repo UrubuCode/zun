@@ -2024,10 +2024,9 @@ impl Checker<'_> {
     /// the descriptor-dependent statics `getOwnPropertyDescriptor`,
     /// `defineProperty`, `getPrototypeOf`, `setPrototypeOf`, `isExtensible`,
     /// `preventExtensions` (NUCLEUS #6's descriptor model, proxy-aware), and
-    /// `apply(target, thisArg, argsArray)`. `construct` is deferred: `new`
-    /// emits a `NewObj <TypeDef token>` against a compile-time type, and there
-    /// is no runtime constructor value a trap could stand in for (the same
-    /// "no runtime class value" limitation as class-decorator return values).
+    /// `apply(target, thisArg, argsArray)`, and `construct` for CLASS targets
+    /// (`Reflect.construct` / `new proxy(...)` via class descriptors; arbitrary
+    /// function constructors are out of scope).
     fn check_reflect_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -2073,13 +2072,46 @@ impl Checker<'_> {
                 span,
             };
         }
+        // `Reflect.construct(target, argsArray, newTarget?)`: CLASS targets only
+        // (a class descriptor value). An arbitrary-function constructor is out
+        // of scope: Zun has no function.prototype / `this` construction model
+        // (classes are frozen typed layouts). `newTarget` is approximated by the
+        // target; the array supplies the positional field values.
         if method == "construct" {
-            self.error(
-                method_span,
-                "`Reflect.construct` is not supported in this runtime (no runtime \
-                 constructor value model; `new` targets a compile-time type)",
-            );
-            return self.poison(span);
+            let mut checked: Vec<hir::Expr> =
+                args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+            if checked.len() < 2 || checked.len() > 3 {
+                self.error(
+                    span,
+                    format!("`Reflect.construct` expects 2 or 3 argument(s), found {}", checked.len()),
+                );
+                return self.poison(span);
+            }
+            checked.truncate(2);
+            let array = checked.pop().unwrap();
+            let target = checked.pop().unwrap();
+            if array.ty != Ty::Array && !array.ty.is_error() {
+                self.error(array.span, "`Reflect.construct` expects an Array of arguments");
+                return self.poison(span);
+            }
+            let native_name = match target.ty {
+                Ty::Proxy => "proxyConstruct",
+                Ty::Any => "reflectConstruct",
+                t if t.is_error() => return self.poison(span),
+                _ => {
+                    self.error(target.span, "`Reflect.construct` target must be a class");
+                    return self.poison(span);
+                }
+            };
+            let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
+                self.error(span, format!("missing Reflect intrinsic `{native_name}`"));
+                return self.poison(span);
+            };
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![target, array] },
+                ty: Ty::Any,
+                span,
+            };
         }
         let expected = match method {
             "get" | "has" | "deleteProperty" | "getOwnPropertyDescriptor"
@@ -4008,6 +4040,13 @@ impl Checker<'_> {
                         // A declarative realm global read as a value yields its
                         // opaque class descriptor (PLAN §3.1).
                         if let Some(token) = self.realm_globals.get(&text).map(|b| b.token) {
+                            return self.realm_descriptor_expr(token, span);
+                        }
+                        // A user class read as a value yields a class descriptor
+                        // (`USER_CLASS_FLAG | TypeDef rid`) usable by
+                        // `Reflect.construct` and `new Proxy(C, handler)`.
+                        if let Some(&class_idx) = self.classes_by_name.get(&text) {
+                            let token = zun_natives::USER_CLASS_FLAG | (class_idx + 1);
                             return self.realm_descriptor_expr(token, span);
                         }
                         self.error(span, format!("unknown variable `{text}`"));
@@ -7313,6 +7352,31 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                // `new proxy(...args)`: a local of proxy type routes through
+                // `proxyConstruct` (the handler's `construct` trap, else the
+                // wrapped class's default construction).
+                if !self.classes_by_name.contains_key(&name)
+                    && !self.realm_globals.contains_key(&name)
+                    && cx.lookup(&name).is_some_and(|slot| cx.locals[slot as usize] == Ty::Proxy)
+                {
+                    let callee = self.check_expr(cx, &ast::Expr::Ident(class.clone()));
+                    let elements: Vec<Option<hir::Expr>> =
+                        args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+                    let args_array = hir::Expr {
+                        kind: hir::ExprKind::ArrayLiteral { elements },
+                        ty: Ty::Array,
+                        span,
+                    };
+                    let Some((id, _)) = zun_natives::resolve("collections", "proxyConstruct") else {
+                        self.error(span, "missing `proxyConstruct` intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![callee, args_array] },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 // Declarative realm globals (PLAN §3.1): a registered base type
                 // lowers `new <Name>()` through its recorded constructor shape.
                 // On a miss we fall through to the hardcoded paths unchanged.
@@ -7765,6 +7829,26 @@ impl Checker<'_> {
                     }
                     let target = self.check_expr(cx, &args[0]);
                     let handler = self.check_expr(cx, &args[1]);
+                    // A class descriptor target is boxed into a GC record (`classBox`)
+                    // so the proxy can hold it and `new proxy(...)` can recover it.
+                    let target = if matches!(target.kind, hir::ExprKind::CallBuiltin { id, .. }
+                        if zun_natives::resolve("collections", "realmDescriptor")
+                            .map(|(rid, _)| rid) == Some(id))
+                    {
+                        let Some((box_id, _)) = zun_natives::resolve("collections", "classBox")
+                        else {
+                            self.error(span, "missing `classBox` intrinsic");
+                            return self.poison(span);
+                        };
+                        let target_span = target.span;
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: box_id, args: vec![target] },
+                            ty: Ty::DynamicObject,
+                            span: target_span,
+                        }
+                    } else {
+                        target
+                    };
                     let (native_name, target) = if matches!(target.ty, Ty::Function(_)) {
                         let Some((box_id, _)) = zun_natives::resolve("collections", "functionBox")
                         else {

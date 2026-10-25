@@ -220,6 +220,9 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "addAny",
         "decoratorAddInitializer",
         "decoratorRunInitializers",
+        "classBox",
+        "reflectConstruct",
+        "proxyConstruct",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
