@@ -4307,8 +4307,34 @@ impl Checker<'_> {
                     }
                 }
 
-                if let Some(slot) = cx.lookup(&name) {
-                    let function_ty = cx.locals[slot as usize];
+                // A local shadows a capture of the same name. Inside a closure a captured
+                // callable is read from the environment instead of a local slot.
+                let callee_source: Option<(hir::ExprKind, Ty)> = match cx.lookup(&name) {
+                    Some(slot) => Some((hir::ExprKind::Local(slot), cx.locals[slot as usize])),
+                    None => cx.captures.get(&name).map(|capture| {
+                        (
+                            hir::ExprKind::CaptureLoad {
+                                environment_slot: capture.environment_slot,
+                                ty: capture.ty,
+                                mode: capture.mode,
+                            },
+                            capture.ty,
+                        )
+                    }),
+                };
+                if let Some((callee_proto, function_ty)) = callee_source {
+                    let callee_kind = || match &callee_proto {
+                        hir::ExprKind::CaptureLoad { environment_slot, ty, mode } => {
+                            hir::ExprKind::CaptureLoad {
+                                environment_slot: *environment_slot,
+                                ty: *ty,
+                                mode: *mode,
+                            }
+                        }
+                        hir::ExprKind::Local(slot) => hir::ExprKind::Local(*slot),
+                        _ => unreachable!(),
+                    };
+
                     // Calling an `any`-typed local performs a dynamic dispatch:
                     // the value must be callable at run time (e.g. a function
                     // read from an object's function slot via destructuring, as
@@ -4325,7 +4351,7 @@ impl Checker<'_> {
                             );
                         }
                         let callee_expr = hir::Expr {
-                            kind: hir::ExprKind::Local(slot),
+                            kind: callee_kind(),
                             ty: function_ty,
                             span,
                         };
@@ -4345,7 +4371,7 @@ impl Checker<'_> {
                     // and dispatched to `proxyApply` with an `undefined` `this`.
                     if function_ty == Ty::Proxy {
                         let callee_expr = hir::Expr {
-                            kind: hir::ExprKind::Local(slot),
+                            kind: callee_kind(),
                             ty: function_ty,
                             span,
                         };
@@ -4431,7 +4457,7 @@ impl Checker<'_> {
                                 return hir::Expr {
                                     kind: hir::ExprKind::IndirectCallRest {
                                         callee: Box::new(hir::Expr {
-                                            kind: hir::ExprKind::Local(slot),
+                                            kind: callee_kind(),
                                             ty: function_ty,
                                             span,
                                         }),
@@ -4475,7 +4501,7 @@ impl Checker<'_> {
                             return_ty
                         };
                         let callee_expr = hir::Expr {
-                            kind: hir::ExprKind::Local(slot),
+                            kind: callee_kind(),
                             ty: function_ty,
                             span,
                         };

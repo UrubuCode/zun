@@ -413,31 +413,45 @@ impl Interp<'_> {
                 Opcode::StoreDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
                     let value = pop(&mut stack)?;
-                    let Value::Any(any) = value else {
-                        return Err(RunError::BadToken);
-                    };
-                    let object = pop(&mut stack)?.as_object();
-                    // An accessor property invokes its setter; a data property
-                    // writes the value slot (rejected silently if non-writable).
-                    let setter = zun_gc::with_current_heap(|heap| {
-                        if heap.dynamic_is_accessor(object, &name) {
-                            heap.dynamic_accessor_setter(object, &name)
-                        } else {
-                            None
-                        }
-                    });
-                    let is_accessor =
-                        zun_gc::with_current_heap(|heap| heap.dynamic_is_accessor(object, &name));
-                    if is_accessor {
-                        if let Some(setter) = setter {
-                            self.invoke_function_value(setter, vec![Value::Any(any)])?;
-                        }
-                    } else {
+                    if let Value::Function(handle) = value {
+                        // Function values do not box to `Any`, so they ride the
+                        // object's function slot (a closure environment is a
+                        // DynamicObject); `LoadDynamic`'s function-slot fallback
+                        // reads them back as `Value::Function`. Capture names are
+                        // never accessors, so no accessor lookup happens here.
+                        let object = pop(&mut stack)?.as_object();
                         zun_gc::with_current_heap_mut(|heap| {
-                            heap.dynamic_set(object, name, any);
+                            heap.dynamic_set_function(object, name, handle);
                         });
+                        stack.push(Value::Function(handle));
+                    } else {
+                        let Value::Any(any) = value else {
+                            return Err(RunError::BadToken);
+                        };
+                        let object = pop(&mut stack)?.as_object();
+                        // An accessor property invokes its setter; a data property
+                        // writes the value slot (rejected silently if non-writable).
+                        let setter = zun_gc::with_current_heap(|heap| {
+                            if heap.dynamic_is_accessor(object, &name) {
+                                heap.dynamic_accessor_setter(object, &name)
+                            } else {
+                                None
+                            }
+                        });
+                        let is_accessor = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_is_accessor(object, &name)
+                        });
+                        if is_accessor {
+                            if let Some(setter) = setter {
+                                self.invoke_function_value(setter, vec![Value::Any(any)])?;
+                            }
+                        } else {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set(object, name, any);
+                            });
+                        }
+                        stack.push(Value::Any(any));
                     }
-                    stack.push(Value::Any(any));
                 }
                 Opcode::LoadDynamicValue => {
                     // A Symbol key reads the symbol-keyed slot; a string key the

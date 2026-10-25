@@ -995,7 +995,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                         }
                     } else {
                         self.expr(&capture.value);
-                        self.emit(Instruction::simple(Opcode::BoxAny));
+                        // A function value cannot box to `Any`; it stays raw and
+                        // `StoreDynamic` routes it to the environment's function
+                        // slot. (ByCell/mutated function captures stay deferred:
+                        // the `$value` cell slot is an `Any` and cannot hold one.)
+                        if !matches!(capture.capture.ty, Ty::Function(_)) {
+                            self.emit(Instruction::simple(Opcode::BoxAny));
+                        }
                     }
                     self.emit_dynamic_store(&capture_name(capture.capture.environment_slot));
                     self.emit(Instruction::simple(Opcode::Pop));
@@ -1009,7 +1015,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::CaptureLoad {
                 environment_slot,
                 mode,
-                ..
+                ty,
             } => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
                 self.emit_dynamic_load(&capture_name(*environment_slot));
@@ -1017,7 +1023,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.emit(Instruction::simple(Opcode::UnboxAny));
                     self.emit_dynamic_load("$value");
                 }
-                self.emit(Instruction::simple(Opcode::UnboxAny));
+                // A by-value function capture lives in the function slot and
+                // `LoadDynamic` already yields `Value::Function`: no unbox.
+                if *mode == CaptureMode::ByCell || !matches!(ty, Ty::Function(_)) {
+                    self.emit(Instruction::simple(Opcode::UnboxAny));
+                }
             }
             ExprKind::CaptureStore {
                 environment_slot,

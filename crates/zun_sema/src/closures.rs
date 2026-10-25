@@ -383,7 +383,9 @@ impl Checker<'_> {
             ast::Expr::Yield { value, .. } => {
                 self.collect_capture_expr(cx, parameters, value, uses)
             }
-            ast::Expr::Call { args, .. } => {
+            ast::Expr::Call { callee, args, .. } => {
+                // A bare-name callee may be a captured callable value.
+                add_name(callee, false);
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
