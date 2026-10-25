@@ -187,16 +187,15 @@ the `fromCodePoint` static operate on Unicode code points (surrogate pairs kept 
     iterator objects via the iteration protocol).
   - `valueOf()` — identity, returning the string primitive itself. No native: the sema
     intercept returns the checked receiver expression directly (like `number.valueOf()`).
-- **Deferred — externally gated (documented, not faked):**
-  - `normalize(form?)` — needs Unicode normalization tables (a dependency such as
-    `unicode-normalization`). **Flagged as a dependency decision for the user**, not added
-    unilaterally.
-  - `localeCompare`/`toLocaleLowerCase`/`toLocaleUpperCase` — need a locale/ICU model Zun
-    does not have.
-  - `String.raw` — needs tagged-template literals in the front-end (a syntax feature not
-    yet lexed/parsed).
-  - `charAt` (superseded by `at`). Replace-with-a-function replacer is also not supported
-    (replacement must be a string).
+- **Landed via baked ICU4X** (`icu` crate, `compiled_data`; dep on `zun_natives`):
+  - `normalize(form?)` — ICU4X normalizer (NFC/NFD/NFKC/NFKD; default NFC synthesized by a
+    sema hand-lowering for the optional arg; an unknown form is a runtime RangeError-equivalent).
+  - `localeCompare(that)` — ICU4X collator, returns the ECMAScript -1/0/1 (v1 root collation).
+  - `toLocaleLowerCase()`/`toLocaleUpperCase()` — ICU4X case mapper (v1 root `und` locale).
+  - Follow-up: per-locale argument selection and `Intl` options.
+- **Deferred:**
+  - `String.raw` landed (built-in template tag). `charAt` (superseded by `at`).
+    Replace-with-a-function replacer is not supported (replacement must be a string).
 - **Notes:** the string-dispatched `split`/`replace`/`replaceAll`/`concat`/`slice`/`at`/
   `codePointAt` and the statics all allocate/branch only (Tier-0 floor), so they are not
   in the JIT allowlist — no second path to keep in sync.
@@ -239,8 +238,9 @@ the `ast::Expr::Field` arm) and lowered to `zun:number` natives on the Tier-0 fl
     (covered by tests), differing only in rare exact-half ties.
   - `valueOf()` — identity, returning the number itself. No native: the sema intercept
     returns the checked receiver expression directly.
-- **Missing / deferred (externally gated):** `toLocaleString` — needs an ICU/locale model
-  Zun does not have.
+- **Landed via baked ICU4X:** `toLocaleString()` — `icu` decimal formatting (root locale,
+  grouping, max 3 fraction digits; NaN/∞ handled) as the `zun:number` native
+  `numberToLocaleString`. Follow-up: per-locale argument + `Intl` options.
 - **Notes:** the instance predicates (`x.isNaN()`) remain for Zun-style call sites; the
   new statics are the idiomatic `Number.isNaN(x)` surface. All of these allocate/branch
   only and are not JIT-lowered — Tier-0 only, no second path to keep in sync.
@@ -1171,10 +1171,11 @@ global through the prelude.
   AND local setters, `toISOString toJSON toString`, `getTimezoneOffset`, `new
   Date()`/`new Date(millis)`, and the statics
   `now/parse/UTC/fromMillis/fromISO/fromISODate`.
+- **Landed via baked ICU4X:** `toLocaleString`/`toLocaleDateString`/`toLocaleTimeString`
+  — `icu` datetime (root `und` locale, medium length, UTC) as `zun:date` natives.
+  Follow-up: per-locale argument, `Intl` options, local time zones (the calendar is UTC-only).
 - **Missing / deferred:** `new Date(string)` (use `Date.fromISO`);
-  `toDateString toTimeString toUTCString`; `toLocale*` (`toLocaleDateString`/
-  `toLocaleTimeString`/`toLocaleString`) — **GATED** on a locale/ICU model the VM
-  does not have.
+  `toDateString toTimeString toUTCString`.
 
 ## 21. Buffer (Node) — mostly  *(built on the Uint8Array byte-view floor)*
 
