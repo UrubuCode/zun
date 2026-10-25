@@ -55,7 +55,9 @@ pub const MODULE: crate::Module = crate::Module {
         // `buf.equals(other)`.
         NativeFn { name: "nodeBufferEquals", params: &[U8Array, U8Array], ret: Bool, imp: unavailable },
         // `buf.copy(target, targetStart?, sourceStart?, sourceEnd?)` -> copied.
-        NativeFn { name: "nodeBufferCopy", params: &[U8Array, U8Array, U64, U64, U64], ret: U64, imp: unavailable },
+        // Signed indices so negatives count from the end (Node/ES), mirroring
+        // `nodeBufferSlice` (NUCLEUS #21).
+        NativeFn { name: "nodeBufferCopy", params: &[U8Array, U8Array, I64, I64, I64], ret: U64, imp: unavailable },
 
         // Fixed-width readers/writers (common LE/BE 8/16/32/64 set). A reader
         // is `(view, offset) -> elem`; a writer `(view, offset, value) -> u64`

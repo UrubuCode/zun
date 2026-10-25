@@ -386,6 +386,13 @@ macro_rules! buffer_module {
             NativeFn { name: "bufferMaxByteLength", params: &[Buffer], ret: U64, imp: unavailable },
             NativeFn { name: "bufferResizable", params: &[Buffer], ret: Bool, imp: unavailable },
             NativeFn { name: "typedArrayTrackingNew", params: &[Opaque, U64, U32], ret: Opaque, imp: unavailable },
+            // No-initial-value `reduce`/`reduceRight` (NUCLEUS #19): seed from
+            // the first/last element, throwing a TypeError-equivalent on an
+            // empty typed array. `typedArrayReduceRight` is the initialized
+            // right fold. Appended last so no existing dispatch id shifts.
+            NativeFn { name: "typedArrayReduceNoInit", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayReduceRight", params: &[Opaque, Function, Opaque], ret: Opaque, imp: unavailable },
+            NativeFn { name: "typedArrayReduceRightNoInit", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
         ],
     };
     };

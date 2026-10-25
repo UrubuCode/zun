@@ -935,6 +935,81 @@ fn array_at_relative_index() {
 }
 
 #[test]
+fn array_to_sorted_returns_copy_and_leaves_original() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(3); a[0]=3.0; a[1]=1.0; a[2]=2.0; \
+            let s = a.toSorted(); \
+            print(s[0] as number); print(s[1] as number); print(s[2] as number); \
+            print(a[0] as number); print(a[1] as number); print(a[2] as number); }",
+    );
+    // Default string order sorts [3,1,2] -> [1,2,3]; original stays [3,1,2].
+    assert_eq!(out, ["1", "2", "3", "3", "1", "2"]);
+}
+
+#[test]
+fn array_to_sorted_with_comparator() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(3); a[0]=1.0; a[1]=2.0; a[2]=3.0; \
+            let s = a.toSorted((x: any, y: any) => (y as number) - (x as number)); \
+            print(s[0] as number); print(s[1] as number); print(s[2] as number); }",
+    );
+    // Descending comparator -> [3,2,1].
+    assert_eq!(out, ["3", "2", "1"]);
+}
+
+#[test]
+fn array_to_reversed_returns_copy() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let r = a.toReversed(); \
+            print(r[0] as number); print(r[1] as number); print(r[2] as number); \
+            print(a[0] as number); }}",
+        array_123()
+    ));
+    // [1,2,3] -> [3,2,1]; original first element unchanged.
+    assert_eq!(out, ["3", "2", "1", "1"]);
+}
+
+#[test]
+fn array_with_replaces_index_including_negative() {
+    let out = run_source(&format!(
+        "function main() {{ {} \
+            let b = a.with(1, 9.0); \
+            print(b[0] as number); print(b[1] as number); print(b[2] as number); \
+            let c = a.with(-1, 9.0); \
+            print(c[2] as number); print(a[1] as number); }}",
+        array_123()
+    ));
+    // with(1,9) -> [1,9,3]; with(-1,9) replaces last -> c[2]=9; original a[1] stays 2.
+    assert_eq!(out, ["1", "9", "3", "9", "2"]);
+}
+
+#[test]
+fn array_with_out_of_range_throws() {
+    let error = run_source_expect_error(&format!(
+        "function main() {{ {} \
+            let b = a.with(10, 9.0); print(b[0] as number); }}",
+        array_123()
+    ));
+    assert!(error.contains("out of range"), "unexpected error: {error}");
+}
+
+#[test]
+fn array_to_spliced_returns_copy() {
+    let out = run_source(
+        "function main() { \
+            let a = new Array(4); a[0]=1.0; a[1]=2.0; a[2]=3.0; a[3]=4.0; \
+            let b = a.toSpliced(1 as u64, 2 as u64, \"x\"); \
+            print(b.length); print(b[0] as number); print(b[1] as string); \
+            print(b[2] as number); print(a.length); }",
+    );
+    // [1,2,3,4] splice(1,2,'x') -> [1,'x',4]; original length unchanged.
+    assert_eq!(out, ["3", "1", "x", "4", "4"]);
+}
+
+#[test]
 fn array_keys_values_entries() {
     let out = run_source(
         "function main() { \

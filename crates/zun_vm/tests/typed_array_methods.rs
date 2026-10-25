@@ -246,6 +246,55 @@ fn reduce_folds_with_an_initial_value() {
 }
 
 #[test]
+fn reduce_without_initial_value_seeds_from_first_element() {
+    let out = run_source(
+        "function main() {
+            let a = Int32Array.of(1, 2, 3);
+            let sum = a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number));
+            print(sum as number);
+        }",
+    );
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
+fn reduce_right_without_initial_value_seeds_from_last_element() {
+    let out = run_source(
+        "function main() {
+            let a = Int32Array.of(1, 2, 3);
+            let r = a.reduceRight((acc: any, v: any, i: any, arr: any) => (acc as number) * 10.0 + (v as number));
+            print(r as number);
+        }",
+    );
+    // Seeds with 3, then 3*10+2=32, 32*10+1=321.
+    assert_eq!(out, vec!["321"]);
+}
+
+#[test]
+fn reduce_empty_without_initial_value_throws() {
+    let src = zun_prelude::with_prelude(
+        "function main(): number {
+            let a = Int32Array.of();
+            return a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number)) as number;
+        }",
+    );
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(&src, &mut diags);
+    assert!(diags.is_empty(), "parse errors: {diags:?}");
+    let hir = zun_sema::check(&src, &ast, &mut diags);
+    assert!(diags.is_empty(), "sema errors: {diags:?}");
+    let module = zun_ilgen::lower(&hir);
+    let bytes = module.write();
+    let mut out = CaptureOutput::default();
+    let error = zun_vm::execute_with(&bytes, &mut out)
+        .expect_err("empty reduce without initial value should throw");
+    assert!(
+        format!("{error:?}").contains("Reduce of empty array"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn find_and_find_index() {
     let out = run_source(
         "function main() {

@@ -449,9 +449,15 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let target = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let source_bytes = view_bytes(source).ok_or(RunError::BadToken)?;
             let target_len = view_len(target).ok_or(RunError::BadToken)?;
-            let target_start = as_usize(args.get(2)).unwrap_or(0);
-            let source_start = as_usize(args.get(3)).unwrap_or(0).min(source_bytes.len());
-            let source_end = as_usize(args.get(4)).unwrap_or(source_bytes.len()).min(source_bytes.len());
+            // Signed indices: a negative counts from the end (NUCLEUS #21).
+            // `target_start` is relative to the target length; the source
+            // bounds are relative to the source length and clamped to it.
+            let target_start = relative(as_i64(args.get(2)).unwrap_or(0), target_len);
+            let source_start = relative(as_i64(args.get(3)).unwrap_or(0), source_bytes.len());
+            let source_end = relative(
+                as_i64(args.get(4)).unwrap_or(source_bytes.len() as i64),
+                source_bytes.len(),
+            );
             let mut copied = 0usize;
             zun_gc::with_current_heap_mut(|heap| {
                 let mut si = source_start;

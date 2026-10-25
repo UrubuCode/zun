@@ -2212,19 +2212,31 @@ impl Checker<'_> {
                 Some(callback) => call(self, "typedArrayEvery", vec![receiver, callback], Ty::Boolean),
                 None => self.poison(span),
             },
-            "reduce" => {
-                // The initial value is required (the no-initial form, which
-                // seeds from the first element, is deferred).
-                if args.len() != 2 {
-                    self.error(span, "`reduce` expects a callback and an initial value".to_string());
+            "reduce" | "reduceRight" => {
+                // Both the initialized form `(cb, init)` and the no-initial
+                // form `(cb)` (which seeds from the first/last element and
+                // throws on an empty typed array, NUCLEUS #19).
+                if args.is_empty() || args.len() > 2 {
+                    self.error(span, format!("`{mname}` expects a callback and an optional initial value"));
                     return self.poison(span);
                 }
                 let callback = self.check_expr(cx, &args[0]);
                 if !matches!(callback.ty, Ty::Function(_)) && !callback.ty.is_error() {
-                    self.error(callback.span, "typed-array `reduce` callback must be a function");
+                    self.error(callback.span, format!("typed-array `{mname}` callback must be a function"));
                 }
-                let initial = box_any(self.check_expr(cx, &args[1]));
-                call(self, "typedArrayReduce", vec![receiver, callback, initial], Ty::Any)
+                let (native, call_args) = match (mname, args.len()) {
+                    ("reduce", 2) => (
+                        "typedArrayReduce",
+                        vec![receiver, callback, box_any(self.check_expr(cx, &args[1]))],
+                    ),
+                    ("reduce", _) => ("typedArrayReduceNoInit", vec![receiver, callback]),
+                    ("reduceRight", 2) => (
+                        "typedArrayReduceRight",
+                        vec![receiver, callback, box_any(self.check_expr(cx, &args[1]))],
+                    ),
+                    (_, _) => ("typedArrayReduceRightNoInit", vec![receiver, callback]),
+                };
+                call(self, native, call_args, Ty::Any)
             }
             _ => {
                 self.error(span, format!("`{mname}` is not a typed-array method"));
@@ -2690,9 +2702,30 @@ impl Checker<'_> {
                 if target.ty != u8_view && !target.ty.is_error() {
                     self.error(target.span, "`copy` target must be a Buffer");
                 }
-                let target_start = opt_int!(1, 0);
-                let source_start = opt_int!(2, 0);
-                let source_end = opt_int!(3, u64::MAX);
+                // Signed indices so a negative counts from the end (consistent
+                // with `slice`). The `sourceEnd` default is a large positive
+                // sentinel the floor clamps to the real length (NUCLEUS #21).
+                let i64_ty = Ty::Int(IntKind::I64);
+                let opt_signed = |checker: &mut Self, cx: &mut FunctionCx, pos: usize, default: f64| {
+                    match args.get(pos) {
+                        Some(arg) => {
+                            let mut value = checker.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut value, i64_ty);
+                            if !value.ty.is_int() && !value.ty.is_error() {
+                                checker.error(value.span, "Buffer offset/index must be an integer");
+                            }
+                            value
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(default),
+                            ty: i64_ty,
+                            span,
+                        },
+                    }
+                };
+                let target_start = opt_signed(self, cx, 1, 0.0);
+                let source_start = opt_signed(self, cx, 2, 0.0);
+                let source_end = opt_signed(self, cx, 3, (1i64 << 53) as f64);
                 call(
                     self,
                     "nodeBufferCopy",
@@ -5268,6 +5301,138 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if receiver.ty == Ty::Array && mname == "toReversed" {
+                    if !args.is_empty() {
+                        self.error(
+                            span,
+                            format!("`Array.toReversed` expects 0 arguments, found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayToReversed") else {
+                        self.error(span, "missing Array intrinsic `arrayToReversed`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
+                if receiver.ty == Ty::Array && mname == "toSorted" {
+                    // `toSorted(cmp?)`: a sorted copy, optionally by comparator
+                    // (default ascending string order). The receiver is untouched.
+                    if args.len() > 1 {
+                        self.error(
+                            span,
+                            format!("`Array.toSorted` accepts at most 1 argument, found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let (native_name, call_args) = match args.first() {
+                        Some(arg) => {
+                            let value = self.check_expr(cx, arg);
+                            if !value.ty.is_error()
+                                && !self.is_assignable(value.ty, Ty::Function(hir::DYNAMIC_FUNCTION))
+                            {
+                                self.error(value.span, "`Array.toSorted` comparator must be a function");
+                            }
+                            ("arrayToSortedBy", vec![receiver, value])
+                        }
+                        None => ("arrayToSorted", vec![receiver]),
+                    };
+                    let Some((id, _)) = zun_natives::resolve("array", native_name) else {
+                        self.error(span, format!("missing Array intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
+                if receiver.ty == Ty::Array && mname == "with" {
+                    // `with(index, value)`: a copy with `index` replaced; the
+                    // index is a (possibly negative) integer, the value any.
+                    if args.len() != 2 {
+                        self.error(
+                            span,
+                            format!("`Array.with` expects 2 arguments, found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let mut index = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut index, Ty::Int(IntKind::I64));
+                    if !index.ty.is_error() && !self.is_assignable(index.ty, Ty::Int(IntKind::I64)) {
+                        self.error(index.span, "`Array.with` index must be an integer");
+                    }
+                    let value = self.check_expr(cx, &args[1]);
+                    let value = if value.ty == Ty::Any || value.ty.is_error() {
+                        value
+                    } else {
+                        let vspan = value.span;
+                        hir::Expr {
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                            span: vspan,
+                        }
+                    };
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayWith") else {
+                        self.error(span, "missing Array intrinsic `arrayWith`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, index, value] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
+                if receiver.ty == Ty::Array && mname == "toSpliced" {
+                    // `toSpliced(start, deleteCount, ...items)`: a copy with the
+                    // splice applied, mirroring `splice`'s index resolution but
+                    // leaving the receiver untouched.
+                    if args.len() < 2 {
+                        self.error(
+                            span,
+                            format!(
+                                "`Array.toSpliced` expects at least 2 argument(s), found {}",
+                                args.len()
+                            ),
+                        );
+                        return self.poison(span);
+                    }
+                    let mut start = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut start, Ty::Int(IntKind::U64));
+                    if !start.ty.is_error() && !self.is_assignable(start.ty, Ty::Int(IntKind::U64)) {
+                        self.error(start.span, "`Array.toSpliced` start must be an integer");
+                    }
+                    let mut delete_count = self.check_expr(cx, &args[1]);
+                    coerce_numeric_literal(&mut delete_count, Ty::Int(IntKind::U64));
+                    if !delete_count.ty.is_error()
+                        && !self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64))
+                    {
+                        self.error(delete_count.span, "`Array.toSpliced` deleteCount must be an integer");
+                    }
+                    let items: Vec<Option<hir::Expr>> =
+                        args[2..].iter().map(|item| Some(self.check_expr(cx, item))).collect();
+                    let items = hir::Expr {
+                        kind: hir::ExprKind::ArrayLiteral { elements: items },
+                        ty: Ty::Array,
+                        span,
+                    };
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayToSpliced") else {
+                        self.error(span, "missing Array intrinsic `arrayToSpliced`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![receiver, start, delete_count, items],
+                        },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
                 if receiver.ty == Ty::Array && mname == "flat" {
                     // `flat(depth=1)` — the depth defaults to 1 when omitted.
                     if args.len() > 1 {
@@ -5770,6 +5935,7 @@ impl Checker<'_> {
                                 | "map"
                                 | "filter"
                                 | "reduce"
+                                | "reduceRight"
                                 | "find"
                                 | "findIndex"
                                 | "some"

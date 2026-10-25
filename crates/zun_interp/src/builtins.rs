@@ -342,6 +342,11 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arraySlice",
         "coalesceUndefined",
         "objectRest",
+        "arrayToSorted",
+        "arrayToSortedBy",
+        "arrayToReversed",
+        "arrayWith",
+        "arrayToSpliced",
     ] {
         if zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
@@ -447,6 +452,9 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "bufferMaxByteLength",
         "bufferResizable",
         "typedArrayTrackingNew",
+        "typedArrayReduceNoInit",
+        "typedArrayReduceRight",
+        "typedArrayReduceRightNoInit",
     ]
     .into_iter()
     // The typed-array intrinsics come from the master table, so a kind

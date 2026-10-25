@@ -211,3 +211,24 @@ fn negative_slice_indices() {
     );
     assert_eq!(out, vec!["llo", "ell", "el"]);
 }
+
+#[test]
+fn copy_with_negative_source_indices() {
+    let out = run_source(
+        r#"function main() {
+            let src = Buffer.from("hello");
+            let dst = Buffer.alloc(5 as u64);
+            // src.copy(dst, targetStart, sourceStart): sourceStart = -3 -> index
+            // 2 ("llo"), sourceEnd default = length.
+            let n = src.copy(dst, 0, -3);
+            print(n);
+            print(dst.toString("utf8", 0, n));
+            let dst2 = Buffer.alloc(5 as u64);
+            // sourceStart 1, sourceEnd -1 -> "ell".
+            let m = src.copy(dst2, 0, 1, -1);
+            print(m);
+            print(dst2.toString("utf8", 0, m));
+        }"#,
+    );
+    assert_eq!(out, vec!["3", "llo", "3", "ell"]);
+}

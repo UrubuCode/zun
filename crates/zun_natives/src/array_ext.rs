@@ -68,5 +68,22 @@ pub const MODULE: crate::Module = crate::Module {
         // holding every own-enumerable string key of `source` except those
         // named in the `excludedKeys` Array. Backs object-pattern `...rest`.
         NativeFn { name: "objectRest", params: &[Opaque, Array], ret: DynamicObject, imp: unavailable },
+        // ES2023 change-array-by-copy methods (NUCLEUS #7 remaining). Each
+        // returns a FRESH managed Array and leaves the receiver untouched.
+        // Appended last so existing dispatch ids stay stable.
+        //
+        // `toSorted(cmp?)` — a sorted copy (default string order, or the
+        // comparator); `toReversed()` — a reversed copy. The comparator
+        // re-enters the interpreter like `sort`.
+        NativeFn { name: "arrayToSorted", params: &[Array], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayToSortedBy", params: &[Array, Function], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayToReversed", params: &[Array], ret: Array, imp: unavailable },
+        // `with(index, value)` — a copy with `index` replaced; a negative
+        // index counts from the end, and an out-of-range index throws a
+        // RangeError-equivalent.
+        NativeFn { name: "arrayWith", params: &[Array, I64, Opaque], ret: Array, imp: unavailable },
+        // `toSpliced(start, deleteCount, ...items)` — a copy with the splice
+        // applied; the variadic inserts are gathered into a managed Array.
+        NativeFn { name: "arrayToSpliced", params: &[Array, U64, U64, Array], ret: Array, imp: unavailable },
     ],
 };
