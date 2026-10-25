@@ -1,0 +1,16 @@
+// `new Boolean(x)` wrapper object. The bare call `Boolean(x)` stays a
+// `boolean` primitive (sema plain-Call path); `new Boolean(x)` is lowered by
+// the checker to `new BooleanObject(<truthiness of x>)`. The class is named
+// `BooleanObject` because `Boolean` is the primitive's annotation/coercion
+// name and must not resolve to a user-visible class.
+
+class BooleanObject {
+    value: boolean;
+
+    valueOf(): boolean { return this.value; }
+
+    toString(): string {
+        if (this.value) { return "true"; }
+        return "false";
+    }
+}

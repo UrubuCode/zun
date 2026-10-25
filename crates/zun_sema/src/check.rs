@@ -7270,6 +7270,38 @@ impl Checker<'_> {
                             return self.check_array_buffer_new(cx, args, span);
                         }
                         CtorLowering::BufferView { native, kind } => {
+                            // `new DataView(buffer)` / `new DataView(buffer,
+                            // offset)` with no explicit length is
+                            // length-tracking (ES2024): its `byteLength`
+                            // follows the buffer's current length.
+                            if matches!(kind, hir::BufferViewKind::DataView)
+                                && (args.len() == 1 || args.len() == 2)
+                            {
+                                let buffer = self.check_expr(cx, &args[0]);
+                                let offset = match args.get(1) {
+                                    Some(arg) => {
+                                        let mut offset = self.check_expr(cx, arg);
+                                        coerce_numeric_literal(&mut offset, Ty::INT);
+                                        offset
+                                    }
+                                    None => hir::Expr {
+                                        kind: hir::ExprKind::Number(0.0),
+                                        ty: Ty::Int(IntKind::U64),
+                                        span,
+                                    },
+                                };
+                                let Some((id, _)) =
+                                    zun_natives::resolve("buffer", "dataViewTrackingNew")
+                                else {
+                                    self.error(span, "missing DataView intrinsic `dataViewTrackingNew`");
+                                    return self.poison(span);
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: vec![buffer, offset] },
+                                    ty: Ty::BufferView(kind),
+                                    span,
+                                };
+                            }
                             // A typed array (not `DataView`) created with the
                             // length omitted (`new Uint8Array(buffer)` or
                             // `… (buffer, offset)`) is a length-tracking view
@@ -7595,6 +7627,51 @@ impl Checker<'_> {
                             length: Box::new(length),
                         },
                         ty: Ty::Array,
+                        span,
+                    };
+                }
+                // `new Boolean(x)`: the wrapper object. Lowered to
+                // `new BooleanObject(<truthiness of x>)` (the prelude class in
+                // `builtin/boolean.zun`); bare `Boolean(x)` stays a primitive.
+                if name == "Boolean" && !self.classes_by_name.contains_key(&name) {
+                    let Some(&wrapper) = self.classes_by_name.get("BooleanObject") else {
+                        self.error(class.span, "missing `BooleanObject` wrapper class");
+                        return self.poison(span);
+                    };
+                    if args.len() > 1 {
+                        self.error(span, "`Boolean` expects at most one argument");
+                        return self.poison(span);
+                    }
+                    let flag = match args.first() {
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Boolean(false),
+                            ty: Ty::Boolean,
+                            span,
+                        },
+                        Some(arg) => {
+                            let arg = self.check_expr(cx, arg);
+                            if arg.ty.is_error() {
+                                return self.poison(span);
+                            }
+                            if arg.ty == Ty::Boolean {
+                                arg
+                            } else {
+                                let Some((id, _)) = zun_natives::resolve("boolean", "booleanCoerce")
+                                else {
+                                    self.error(span, "missing Boolean intrinsic `booleanCoerce`");
+                                    return self.poison(span);
+                                };
+                                hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                                    ty: Ty::Boolean,
+                                    span,
+                                }
+                            }
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::New { class: wrapper, args: vec![flag] },
+                        ty: Ty::Instance(wrapper),
                         span,
                     };
                 }
