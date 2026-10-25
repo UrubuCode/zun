@@ -3630,6 +3630,15 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Bool(found))
             }
+            // Binary ser/de PRIMITIVE (NUCLEUS #27). `serialize` inspects the
+            // raw operand (so a function value is rejected cleanly, not boxed
+            // away); `deserialize` reads a byte view and rebuilds the graph.
+            "serialize" => self.serialize_value(args.first().ok_or(RunError::BadToken)?),
+            "deserialize" => {
+                let view = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                self.deserialize_value(view)
+            }
             _ => Err(RunError::BadToken),
         }
     }

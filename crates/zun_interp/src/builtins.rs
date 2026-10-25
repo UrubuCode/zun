@@ -209,9 +209,12 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "stringCoerce",
         "applyDecorator",
         "classSetSymbolFunction",
+        "serialize",
+        "deserialize",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
+            .or_else(|| zun_natives::resolve("serde", name))
             .map(|(candidate, _)| candidate)
             == Some(id)
         {

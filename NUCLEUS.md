@@ -11,9 +11,13 @@ not merely "a class exists".
 `crates/zun_sema/src/{check.rs,native_types.rs,types.rs}`, `crates/zun_core/src/*.rs`,
 `crates/zun_il/src/opcode.rs`.
 
-**JSON is NOT nucleus.** PLAN §3.2 lists JSON under A, but GOAL.md overrides this: JSON
-ser/de lives in `@urubucode/common` (bucket C, ZIL), so it is **excluded** from this
-audit.
+**The binary ser/de PRIMITIVE is nucleus (#27); the JSON surface is not.** PLAN §3.2
+lists "JSON/ser-de" under A as "a core machine concern … rides on the nucleus
+shape/field walk". That split is now explicit: the low-level binary
+**serialize/deserialize PRIMITIVE** (Erlang `term_to_binary`-style, imported from
+`"zun:core"`) IS nucleus — item **#27** — because it is the shape/field-walk machine
+concern. The high-level, human-facing **JSON** text surface (`JSON.parse`/`stringify`)
+stays in `@urubucode/common` (bucket C, ZIL) and remains **excluded** from this audit.
 
 Legend: **done** = standard-common surface present; **partial** = exists but material
 gaps; **missing** = not implemented. "verify" marks claims not fully confirmed from the
@@ -51,8 +55,11 @@ read.
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | mostly | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback; proving macro `@autoToString`. **Runtime TC39 decorators — tractable core landed** (Stage 3): a `@dec` whose callee resolves to an ordinary top-level `(any, any)` function (not a macro) is invoked once at class-definition time via the module-initializer seam with `(value, context)`, `context = { kind: "class"\|"method", name, static }`, TC39 order (members before class, bottom-to-top); callee-resolves-to-a-function is the registry-free macro-vs-runtime rule, so `@sealed`/`@trace` stay inert. Deferred (documented): return-value replacement + live `value` (needs dispatch-model change; `Value::Function` excluded from `Any`, no runtime class value → `value` is `null`); `addInitializer`; `access`; field/accessor/private-element decorators. **Decorator factories `@dec(args)` landed**: the factory call `dec(args)` (literal args) is evaluated in the initializer and its returned decorator is invoked with `(value, context)` via `applyDecorator`. Separately: in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
+| 27 | Binary ser/de primitive | done | `serialize(value): Uint8Array` / `deserialize(bytes): any`, imported from `"zun:core"` (bare names, not globals). Version-tagged CBOR-ish wire format (`zun_core::serde`) covering null/undefined/bool/int-kinds/f32/f64/bigint/string/array/dynamic object/**typed class instance (metadata type token + layout-order field walk)**/Map/Set/Date/ArrayBuffer/TypedArray(+Buffer) with a **ref/memo** tag; shared & cyclic graphs round-trip (allocate-shell-then-fill, memo on both sides). Engine on the Tier-0 floor (`zun_interp::serde`), reusing `object_own_entries` (the `Object.keys` walk). Safe-by-construction: no code exec; a function value, unknown tag, truncated stream, or unresolved type token is a clean error. Deferred: symbol-keyed dynamic entries (no heap enumeration API, as with `getOwnPropertySymbols` #6), DataView, cross-program/versioned type identity (type tokens are program-local, an approved follow-up) |
 
-**Counts:** done 6 · mostly 20 · partial 0 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 7 · mostly 20 · partial 0 · missing 0 (of 27 nucleus items; the JSON
+text surface stays excluded — see the note at the top). Recounted from the table above;
+it has to sum to 27.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -1415,6 +1422,71 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
 `zun_vm/tests/math_machine_ops.rs` (end to end).
 
 (Math as a `Math` *global object* is bucket B, not audited here.)
+
+## 27. Binary ser/de primitive — done
+The ser/de PRIMITIVE (Erlang `term_to_binary`/`binary_to_term`-style), **not** a JSON
+API; a future pickle-style object-graph layer and the `@urubucode/common` JSON surface
+build on it. Imported from `"zun:core"` as bare names (not globals), exactly like
+`mapSet`/`classDescriptorToken`:
+
+```ts
+import { serialize, deserialize } from "zun:core";
+const bytes = serialize(value);   // -> Uint8Array
+const value = deserialize(bytes); // Uint8Array -> reconstructed value
+```
+
+### Wire format (`zun_core::serde`)
+A version byte (`SERDE_VERSION = 1`) then one tagged value. Tags (CBOR-ish, compact):
+`Null, Undefined, False, True, Int` (kind byte + i64 LE), `Float64, Float32, Str`
+(uvarint length + UTF-8), `BigInt` (decimal text), `Array, Object` (dynamic object),
+`Instance` (typed class), `Map, Set, Date, ArrayBuffer, TypedArray`, and `Ref` (a memo
+index). Lengths/counts/tokens/indices are unsigned LEB128 varints; fixed numbers are
+little-endian. The format crate owns the contract (version byte + tag list + reader),
+dependency-free, so the compiler and both tiers share one definition.
+
+### Shape/field walk (metadata, not reflection)
+A **typed class instance** rides on the nucleus shape walk (PLAN §3.2): the engine writes
+its metadata **type token** (`type_rid`) then walks its declared instance fields in
+layout order (base classes first, `static`/`private` excluded), reusing
+`Interp::object_own_entries` — the exact enumeration `Object.keys` /
+`getOwnPropertyDescriptor` use — and reads each field via `value::load_field`. A
+**dynamic object** walks its own entry map (`heap.dynamic_entries`). TypedArray/Buffer
+copy raw bytes via the backing buffer (Buffer round-trips as its `Uint8Array` kind).
+
+### Cycles + sharing
+A memo keyed by object identity gives every heap object one index at first sight;
+later sights emit a `Ref`. Deserialize keeps a parallel memo and, for a container,
+**allocates the shell and records it BEFORE filling children**, so a back-reference —
+including a self-cycle (`o.self = o`) or a shared child (`{ x: a, y: a }`) — resolves to
+the object under construction, with no infinite recursion.
+
+### Safety model (fixes pickle/BinaryFormatter RCE)
+Deserialize reconstructs **only data and metadata-known types**; it never runs code,
+invokes a constructor body, or instantiates an arbitrary callable. A **function value**
+on serialize, an **unknown tag**, a **truncated stream**, or a **type token that does not
+resolve** in the deserializing program (`self.types.get(type_rid) == None`) is a clean
+`RunError`, never undefined behavior.
+
+### Approved decisions
+Functions are not data (serialize errors on them); type tokens are **program-local** (a
+typed object round-trips within the same program — cross-program/versioned identity is a
+documented follow-up); output is `Uint8Array`, input a byte view.
+
+### Wiring & tests
+Natives `serialize`/`deserialize` live in a new `serde` module appended **last** in
+`zun_natives` (no existing dispatch id shifts); the import + call lowering is the generic
+bare-name path (no sema change); the engine is `zun_interp::serde` on the Tier-0 floor
+(allocates/walks the heap → not JIT-eligible, correct), routed via `builtins.rs`.
+`zun_core/src/serde.rs` tests cover the varint/tag codec; `zun_vm/tests/serde.rs` covers
+end-to-end round-trips (primitives, int kinds, bigint, nested array, dynamic object,
+Map/Set, Date, typed class instance with exact-type reconstruction, ArrayBuffer/
+Uint8Array bytes, shared reference, self-cycle) plus the garbage-bytes and
+function-value clean-error cases.
+
+### Deferred
+Symbol-keyed dynamic-object entries (no heap enumeration API, same gap as
+`getOwnPropertySymbols` #6); DataView (errors as unsupported); cross-program/versioned
+type identity (a name/version registry).
 
 ---
 

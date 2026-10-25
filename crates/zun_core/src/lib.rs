@@ -22,6 +22,7 @@ mod symbols;
 mod promise_value;
 mod regexp;
 mod bigint;
+pub mod serde;
 
 pub use ordered_map::OrderedMap;
 pub use collection_iterators::{MapIterator, SetIterator};

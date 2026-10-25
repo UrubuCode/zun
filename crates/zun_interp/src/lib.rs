@@ -19,6 +19,7 @@ mod output;
 mod operands;
 mod roots;
 mod runner;
+mod serde;
 mod stack;
 mod state;
 mod unwind;

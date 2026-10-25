@@ -29,6 +29,7 @@ mod string;
 mod time;
 mod timers;
 mod promise;
+mod serde;
 mod typeinfo;
 
 use std::collections::HashMap;
@@ -266,6 +267,9 @@ pub static MODULES: &[Module] = &[
     // Extended Array surface (NUCLEUS #7). Appended last so every existing
     // dispatch id stays stable.
     array_ext::MODULE,
+    // The binary ser/de PRIMITIVE (NUCLEUS #27). Appended last so every
+    // existing dispatch id stays stable.
+    serde::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.
