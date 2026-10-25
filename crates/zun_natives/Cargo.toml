@@ -11,3 +11,7 @@ workspace = true
 
 [dependencies]
 zun_core = { path = "../zun_core" }
+# ECMA-402 / Unicode surface (NUCLEUS: locale + normalization). `compiled_data`
+# (default) bakes the CLDR "modern" data into the binary — the modern analog of
+# Boa's `boa_icu_provider`, with no runtime data-provider plumbing.
+icu = "2"

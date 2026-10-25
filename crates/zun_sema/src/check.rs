@@ -6186,6 +6186,42 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `String.prototype.normalize(form?)` (NUCLEUS #1). Hand-lowered
+                // because `form` is optional: the ECMAScript default `"NFC"` is
+                // synthesized when it is omitted. The ICU4X-backed
+                // `stringNormalize` native validates the form at run time.
+                if receiver.ty == Ty::String && mname == "normalize" {
+                    if args.len() > 1 {
+                        self.error(
+                            span,
+                            format!("`normalize` expects 0 or 1 argument(s), found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let form = match args.first() {
+                        Some(arg) => {
+                            let checked = self.check_expr(cx, arg);
+                            if !checked.ty.is_error() && checked.ty != Ty::String {
+                                self.error(checked.span, "normalize form must be a string");
+                            }
+                            checked
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::String("NFC".to_string()),
+                            ty: Ty::String,
+                            span,
+                        },
+                    };
+                    let Some((id, _)) = zun_natives::resolve("string", "stringNormalize") else {
+                        self.error(span, "missing string intrinsic `stringNormalize`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, form] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 let typed_array_method = match receiver.ty {
                     Ty::BufferView(kind) => crate::typed_arrays::method(kind, mname.as_str()),
                     _ => None,
@@ -6313,6 +6349,18 @@ impl Checker<'_> {
                     (Ty::String, "toUpperCase") => Some(("toUpperCase", Ty::String, vec![])),
                     (Ty::String, "toLowerCase") => Some(("toLowerCase", Ty::String, vec![])),
                     (Ty::String, "trim") => Some(("trim", Ty::String, vec![])),
+                    // ECMA-402 locale surface (NUCLEUS #1), ICU4X-backed.
+                    // `localeCompare` returns the ECMAScript -1/0/1; v1 uses
+                    // root collation and the root (`und`) locale for casing.
+                    (Ty::String, "localeCompare") => {
+                        Some(("localeCompare", Ty::Int(IntKind::I32), vec![Ty::String]))
+                    }
+                    (Ty::String, "toLocaleLowerCase") => {
+                        Some(("toLocaleLowerCase", Ty::String, vec![]))
+                    }
+                    (Ty::String, "toLocaleUpperCase") => {
+                        Some(("toLocaleUpperCase", Ty::String, vec![]))
+                    }
                     (Ty::String, "includes") => Some(("includes", Ty::Boolean, vec![Ty::String])),
                     // Index is a `number` so a negative value (from the end) can
                     // cross the boundary; out of range yields `undefined`.
