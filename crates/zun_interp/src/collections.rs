@@ -277,6 +277,19 @@ impl<'a> Interp<'a> {
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(view))
             }
+            "dataViewTrackingNew" => {
+                let buffer =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let offset = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let view = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_data_view_tracking(buffer, offset)
+                })
+                .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(view))
+            }
             "dataViewLength" => {
                 let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_len(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))

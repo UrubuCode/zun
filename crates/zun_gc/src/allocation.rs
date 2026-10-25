@@ -197,6 +197,16 @@ impl Heap {
         Some(object)
     }
 
+    /// A length-tracking `DataView` (no explicit length): its `byteLength`
+    /// follows the buffer's current length minus `offset`.
+    pub fn alloc_data_view_tracking(&mut self, buffer: Obj, offset: usize) -> Option<Obj> {
+        let view = zun_core::DataView::new_tracking(self.buffer_len(buffer)?, offset)?;
+        let object = self.alloc(0, 1);
+        object.set_field(0, buffer.addr() as u64);
+        self.data_views.insert(object.addr() as usize, view);
+        Some(object)
+    }
+
     pub fn alloc_array_iterator(&mut self, array: Obj) -> Option<Obj> {
         self.array_len(array)?;
         let iterator = self.alloc(0, 1);

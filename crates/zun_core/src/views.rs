@@ -89,6 +89,15 @@ impl DataView {
         })
     }
 
+    /// A length-tracking view (no explicit length): spans from `offset` to the
+    /// end of the buffer now and follows the buffer's length on resize.
+    pub fn new_tracking(buffer_length: usize, offset: usize) -> Option<Self> {
+        (offset <= buffer_length).then(|| Self {
+            view: ByteView { offset, length: buffer_length - offset },
+            track: true,
+        })
+    }
+
     /// The effective view against a (possibly resized) buffer of
     /// `buffer_length` bytes, or `None` when a fixed-length view no longer
     /// fits (ES2024: the view is out-of-bounds — length 0, access throws).

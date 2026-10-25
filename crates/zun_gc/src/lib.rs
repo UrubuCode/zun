@@ -1009,7 +1009,7 @@ impl Heap {
         little_endian: bool,
     ) -> Option<f64> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        self.data_views.get(&(object.addr() as usize))?.get_f64(
+        self.resolved_data_view(object)?.get_f64(
             self.buffers.get(&(buffer.addr() as usize))?,
             relative,
             little_endian,
@@ -1024,7 +1024,7 @@ impl Heap {
         little_endian: bool,
     ) -> Option<bool> {
         let buffer = unsafe { Obj::from_addr(object.field(0) as *mut u64) };
-        let view = *self.data_views.get(&(object.addr() as usize))?;
+        let view = self.resolved_data_view(object)?;
         Some(view.set_f64(
             self.buffers.get_mut(&(buffer.addr() as usize))?,
             relative,

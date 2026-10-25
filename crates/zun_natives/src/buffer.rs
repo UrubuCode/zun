@@ -403,6 +403,9 @@ macro_rules! buffer_module {
             NativeFn { name: "bufferTransfer", params: &[Buffer, I64], ret: Buffer, imp: unavailable },
             NativeFn { name: "bufferTransferFixed", params: &[Buffer, I64], ret: Buffer, imp: unavailable },
             NativeFn { name: "bufferDetached", params: &[Buffer], ret: Bool, imp: unavailable },
+            // Length-tracking `DataView` (NUCLEUS #17/#18): `new DataView(buffer,
+            // offset?)` with no explicit length follows the buffer on resize.
+            NativeFn { name: "dataViewTrackingNew", params: &[Opaque, U64], ret: Opaque, imp: unavailable },
         ],
     };
     };

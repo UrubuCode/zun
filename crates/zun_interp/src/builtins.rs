@@ -465,6 +465,7 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "bufferTransfer",
         "bufferTransferFixed",
         "bufferDetached",
+        "dataViewTrackingNew",
     ]
     .into_iter()
     // The typed-array intrinsics come from the master table, so a kind
