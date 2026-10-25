@@ -151,6 +151,11 @@ pub(super) enum ReactionKind {
     Finally { on_finally: Option<Value> },
     /// One input of a combinator; updates `aggregates[aggregate]` at `index`.
     Combinator { aggregate: usize, index: usize },
+    /// Thenable-adoption job (ECMAScript NewPromiseResolveThenableJob): calls
+    /// `thenable.then(resolve, reject)` with fresh settlers for the reaction's
+    /// target. `then` is the callable (`Value::Function`), `thenable` its
+    /// receiver object (kept alive here).
+    ThenableJob { thenable: Value, then: Value },
 }
 
 /// A scheduled reaction: the control ids the scheduler holds, the heap promises
@@ -261,6 +266,10 @@ impl AsyncState {
                     }
                 }
                 ReactionKind::Combinator { .. } => {}
+                ReactionKind::ThenableJob { thenable, then } => {
+                    rewritten += usize::from(thenable.rewrite_managed_reference(relocation));
+                    rewritten += usize::from(then.rewrite_managed_reference(relocation));
+                }
             }
         }
         for aggregate in self.aggregates.iter_mut() {
@@ -307,6 +316,10 @@ impl<'a> Interp<'a> {
                 }
                 ReactionKind::Finally { on_finally } => values.extend(on_finally.clone()),
                 ReactionKind::Combinator { .. } => {}
+                ReactionKind::ThenableJob { thenable, then } => {
+                    values.push(thenable.clone());
+                    values.push(then.clone());
+                }
             }
             super::roots::collect_frame_roots(&values, &[], roots);
         }

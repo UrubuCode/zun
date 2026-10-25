@@ -456,3 +456,19 @@ fn thenable_that_throws_rejects() {
     );
     assert_eq!(out, ["boom"]);
 }
+
+/// Thenable adoption is a microtask job: `then` does not run synchronously at
+/// resolve time, and it runs before a zero-delay timer macrotask.
+#[test]
+fn thenable_adoption_is_a_microtask_before_timers() {
+    let out = run_source(
+        "function main() { \
+            let thenable: any = { then(f: any, r: any) { print(\"then\"); f(1.0); } }; \
+            let p = new Promise((res: any) => { res(thenable); }); \
+            print(\"sync\"); \
+            setTimeout(() => { print(\"timer\"); }, 0.0); \
+            let v: any = await p; \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["sync", "then", "1", "timer"]);
+}

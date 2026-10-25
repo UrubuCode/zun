@@ -2376,20 +2376,8 @@ impl<'a> Interp<'a> {
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let text = match value {
                     Value::Object(obj) => {
-                        let to_prim = zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get_symbol_function(
-                                obj,
-                                zun_core::WellKnownSymbol::ToPrimitive.id(),
-                            )
-                        });
-                        if let Some(handle) = to_prim {
-                            let hint = zun_gc::with_current_heap_mut(|heap| {
-                                Value::Any(zun_core::Any::string(
-                                    heap.intern_string("string".into()),
-                                ))
-                            });
-                            let result = self.invoke_function_value(handle, vec![hint])?;
-                            unbox_arg(&result)?.display()
+                        if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
+                            prim.display()
                         } else {
                             let tag = zun_gc::with_current_heap(|heap| {
                                 heap.dynamic_get_symbol(
@@ -2426,20 +2414,8 @@ impl<'a> Interp<'a> {
                     Value::Void => f64::NAN,
                     Value::Str(text) => js_string_to_number(&text),
                     Value::Object(obj) => {
-                        let to_prim = zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get_symbol_function(
-                                obj,
-                                zun_core::WellKnownSymbol::ToPrimitive.id(),
-                            )
-                        });
-                        if let Some(handle) = to_prim {
-                            let hint = zun_gc::with_current_heap_mut(|heap| {
-                                Value::Any(zun_core::Any::string(
-                                    heap.intern_string("number".into()),
-                                ))
-                            });
-                            let result = self.invoke_function_value(handle, vec![hint])?;
-                            match unbox_arg(&result)? {
+                        if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
+                            match prim {
                                 Value::Str(text) => js_string_to_number(&text),
                                 other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
                             }
@@ -2538,22 +2514,8 @@ impl<'a> Interp<'a> {
                     let value = unbox_arg(args.get(index).ok_or(RunError::BadToken)?)?;
                     let prim = match value {
                         Value::Object(obj) => {
-                            let to_prim = zun_gc::with_current_heap(|heap| {
-                                heap.dynamic_get_symbol_function(
-                                    obj,
-                                    zun_core::WellKnownSymbol::ToPrimitive.id(),
-                                )
-                            });
-                            match to_prim {
-                                Some(handle) => {
-                                    let hint = zun_gc::with_current_heap_mut(|heap| {
-                                        Value::Any(zun_core::Any::string(
-                                            heap.intern_string("default".into()),
-                                        ))
-                                    });
-                                    let result = self.invoke_function_value(handle, vec![hint])?;
-                                    unbox_arg(&result)?
-                                }
+                            match self.ordinary_to_primitive(obj, "default")? {
+                                Some(prim) => prim,
                                 None => Value::Str("[object Object]".into()),
                             }
                         }
@@ -5761,6 +5723,45 @@ impl<'a> Interp<'a> {
         settled
     }
 
+    /// OrdinaryToPrimitive for an object operand. Consults
+    /// `[Symbol.toPrimitive]` (dynamic symbol slot, or the typed-class
+    /// symbol-method table for an instance), then the ordered
+    /// `valueOf`/`toString` dynamic function slots (hint "string" tries
+    /// `toString` first). Returns the first primitive, or `None`.
+    /// Typed-instance `valueOf`/`toString` have no name->method lookup here.
+    fn ordinary_to_primitive(
+        &mut self,
+        obj: zun_gc::Obj,
+        hint: &str,
+    ) -> Result<Option<Value>, RunError> {
+        let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
+        let handle = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(obj, tp))
+            .or_else(|| self.class_symbol_methods.get(&(obj.type_rid(), tp.get())).copied());
+        if let Some(handle) = handle {
+            let hint_value = zun_gc::with_current_heap_mut(|heap| {
+                Value::Any(zun_core::Any::string(heap.intern_string(hint.into())))
+            });
+            let result = self.invoke_function_value(handle, vec![hint_value])?;
+            return Ok(Some(unbox_arg(&result)?));
+        }
+        let order: [&str; 2] = if hint == "string" {
+            ["toString", "valueOf"]
+        } else {
+            ["valueOf", "toString"]
+        };
+        for name in order {
+            let method = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name));
+            if let Some(method) = method {
+                let result = self.invoke_function_value(method, vec![])?;
+                let result = unbox_arg(&result)?;
+                if !matches!(result, Value::Object(_) | Value::Function(_)) {
+                    return Ok(Some(result));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Settle `target` with a reaction callback's return value, adopting a
     /// returned Promise (chaining, not wrapping). A still-pending returned
     /// Promise is adopted by attaching a pass-through reaction, so `target`
@@ -5799,27 +5800,26 @@ impl<'a> Interp<'a> {
             // calling `then(resolve, reject)` with fresh settlers for `target`
             // (the `new Promise` executor mechanism). Function values do not
             // box into `Any`, so a callable `then` lives in the function slot.
-            // Note: the call runs synchronously here rather than as a separate
-            // microtask job.
+            // The call is scheduled as a microtask job: a pre-resolved dummy
+            // promise carries a `ThenableJob` reaction, which the scheduler
+            // enqueues (ReadyNow) and the turn-drain runs.
             if let Some(then) =
                 zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "then"))
             {
-                let roots = [target, obj];
+                let dummy = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                let roots = [target, obj, dummy];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                let resolve = self.make_promise_settler(roots[0], SETTLE_RESOLVE);
-                let reject = self.make_promise_settler(roots[0], SETTLE_REJECT);
-                match self.invoke_function_value(
-                    then,
-                    vec![Value::Function(resolve), Value::Function(reject)],
-                ) {
-                    Ok(_) => {}
-                    Err(RunError::Thrown(thrown)) => {
-                        let _ = self.invoke_promise_settler(roots[0], SETTLE_REJECT, vec![thrown]);
-                    }
-                    Err(_) => {
-                        self.settle_promise_reject(roots[0], "thenable.then failed".into());
-                    }
-                }
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.promise_resolve(roots[2], zun_core::Any::null())
+                });
+                self.attach_reaction(
+                    roots[2],
+                    roots[0],
+                    ReactionKind::ThenableJob {
+                        thenable: Value::Object(roots[1]),
+                        then: Value::Function(then),
+                    },
+                );
                 return;
             }
         }
@@ -5944,6 +5944,26 @@ impl<'a> Interp<'a> {
             ReactionKind::Combinator { aggregate, index } => {
                 let settlement = self.promise_settlement_of(roots[0])?;
                 self.combinator_input_settled(aggregate, index, settlement);
+            }
+            ReactionKind::ThenableJob { thenable, then } => {
+                let _ = thenable;
+                if let Some(then) = as_function(&Some(then)) {
+                    let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
+                    let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
+                    match self.invoke_function_value(
+                        then,
+                        vec![Value::Function(resolve), Value::Function(reject)],
+                    ) {
+                        Ok(_) => {}
+                        Err(RunError::Thrown(thrown)) => {
+                            let _ =
+                                self.invoke_promise_settler(roots[1], SETTLE_REJECT, vec![thrown]);
+                        }
+                        Err(_) => {
+                            self.settle_promise_reject(roots[1], "thenable.then failed".into());
+                        }
+                    }
+                }
             }
         }
         Ok(())
