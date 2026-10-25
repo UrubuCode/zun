@@ -4724,9 +4724,8 @@ impl Checker<'_> {
                     }
                     if let Ty::Function(func) = function_ty {
                         let return_ty = if func == hir::DYNAMIC_FUNCTION {
-                            if args.len() != 1 {
-                                self.error(span, format!("generic Function callback expects exactly one argument, found {}", args.len()));
-                            }
+                            // Any arity: a bound function (`f.bind(..)`) forwards N call
+                            // arguments (lowered to `call.indirect.n` when N != 1).
                             Ty::Any
                         } else if func == hir::DYNAMIC_PREDICATE {
                             if args.len() != 1 {

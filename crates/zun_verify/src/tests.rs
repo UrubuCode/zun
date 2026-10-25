@@ -36,6 +36,10 @@ fn resolver(opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
             Operand::Token(token) if token.table() == Some(TableKind::MemberRef) => Some((3, 1)),
             _ => Some((2, 1)),
         },
+        Opcode::CallIndirectN => match operand {
+            Operand::Imm32(count) if *count >= 0 => Some((*count as u8 + 1, 1)),
+            _ => None,
+        },
         Opcode::CallIndirectRest => match operand {
             Operand::TokenImm32(_, count) if *count >= 0 => Some((*count as u8 + 1, 1)),
             _ => None,
@@ -266,6 +270,39 @@ fn fixture_invalid_indirect_rest_call_with_negative_argument_count() {
         check(&code, VOID),
         Err(VerifyError { kind: ErrorKind::UnknownCallArity, .. })
     ));
+}
+
+#[test]
+fn fixture_valid_indirect_n_call_with_explicit_argument_count() {
+    let code = asm(&[
+        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(3)),
+        Instruction::new(Opcode::CallIndirectN, Operand::Imm32(3)),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    check(&code, RETURNS).expect("valid counted indirect call");
+}
+
+#[test]
+fn fixture_invalid_indirect_n_call_with_negative_argument_count() {
+    let code = asm(&[Instruction::new(Opcode::CallIndirectN, Operand::Imm32(-1))]);
+    assert!(matches!(
+        check(&code, VOID),
+        Err(VerifyError { kind: ErrorKind::UnknownCallArity, .. })
+    ));
+}
+
+#[test]
+fn fixture_invalid_indirect_n_call_with_too_few_operands() {
+    let code = asm(&[
+        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::new(Opcode::CallIndirectN, Operand::Imm32(3)),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert!(check(&code, RETURNS).is_err());
 }
 
 #[test]

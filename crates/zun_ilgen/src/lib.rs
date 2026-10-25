@@ -1296,17 +1296,26 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 for a in args {
                     self.expr(a);
                 }
-                let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
-                    Token::null(TableKind::MethodDef)
-                } else if *func == hir::DYNAMIC_REDUCER {
-                    Token::null(TableKind::MemberRef)
+                // A dynamic function value called with other than one argument
+                // (e.g. a multi-argument bound call) carries its count.
+                if *func == hir::DYNAMIC_FUNCTION && args.len() != 1 {
+                    self.emit(Instruction::new(
+                        Opcode::CallIndirectN,
+                        Operand::Imm32(args.len() as i32),
+                    ));
                 } else {
-                    Token::new(TableKind::MethodDef, *func + 1)
-                };
-                self.emit(Instruction::new(
-                    Opcode::CallIndirect,
-                    Operand::Token(token),
-                ));
+                    let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
+                        Token::null(TableKind::MethodDef)
+                    } else if *func == hir::DYNAMIC_REDUCER {
+                        Token::null(TableKind::MemberRef)
+                    } else {
+                        Token::new(TableKind::MethodDef, *func + 1)
+                    };
+                    self.emit(Instruction::new(
+                        Opcode::CallIndirect,
+                        Operand::Token(token),
+                    ));
+                }
             }
             ExprKind::IndirectCallRest { callee, args, func } => {
                 self.expr(callee);

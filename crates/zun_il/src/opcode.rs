@@ -403,6 +403,12 @@ define_opcodes! {
     /// value after its operand is evaluated and discarded. Tier 0 only: the
     /// typed JIT does not list it, so a method using it stays on the interpreter.
     ConstUndef = 0xAD, None, "const.undef", StackEffect::Fixed { pops: 0, pushes: 1 };
+
+    /// Invoke a dynamic function value (e.g. a `bind` result) with an explicit
+    /// argument count N (the `Imm32` operand). Pops N arguments and the callee
+    /// handle; pushes the result. Tier 0 only: not JIT-eligible, so a method
+    /// using it stays on the interpreter.
+    CallIndirectN = 0xAE, Imm32, "call.indirect.n", StackEffect::Call;
 }
 
 #[cfg(test)]

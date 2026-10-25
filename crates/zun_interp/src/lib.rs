@@ -1023,8 +1023,15 @@ impl Interp<'_> {
                     };
                     stack.push(result);
                 }
-                Opcode::CallIndirect => {
-                    let token = operand_token(&instr.operand);
+                Opcode::CallIndirect | Opcode::CallIndirectN => {
+                    // `call.indirect.n` is the dynamic form with an explicit
+                    // argument count (operand) instead of a signature token.
+                    let counted = instr.opcode == Opcode::CallIndirectN;
+                    let token = if counted {
+                        zun_metadata::Token::null(TableKind::MethodDef)
+                    } else {
+                        operand_token(&instr.operand)
+                    };
                     if !matches!(
                         token.table(),
                         Some(TableKind::MethodDef | TableKind::MemberRef)
@@ -1033,7 +1040,13 @@ impl Interp<'_> {
                     }
                     let dynamic = token.rid() == 0;
                     let reducer = dynamic && token.table() == Some(TableKind::MemberRef);
-                    let expected_params = if dynamic {
+                    let expected_params = if counted {
+                        let count = operand_i32(&instr.operand);
+                        if count < 0 {
+                            return Err(RunError::BadToken);
+                        }
+                        count as usize
+                    } else if dynamic {
                         if reducer {
                             2
                         } else {

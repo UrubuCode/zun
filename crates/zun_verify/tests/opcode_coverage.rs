@@ -118,6 +118,7 @@ const SHAPES: &[(Opcode, Shape)] = &[
     (Opcode::CallVirtRestArray, Shape::Call),
     (Opcode::CallVirtRestArrayFixed, Shape::Call),
     (Opcode::CallIndirectRest, Shape::Call),
+    (Opcode::CallIndirectN, Shape::Call),
     (Opcode::Await, Shape::Fixed(1, 1)),
     // Publishes the value on the iterator result rather than returning it.
     (Opcode::Yield, Shape::Fixed(1, 0)),
@@ -176,6 +177,10 @@ fn resolver(opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
         Opcode::CallVirtRestArray => Some((2, 1)),
         Opcode::CallRest | Opcode::CallVirtRest => Some((count, 1)),
         Opcode::CallIndirectRest => Some((count + 1, 1)),
+        Opcode::CallIndirectN => match operand {
+            Operand::Imm32(n) if *n >= 0 => Some((*n as u8 + 1, 1)),
+            _ => None,
+        },
         Opcode::CallRestArrayFixed => Some((count + 1, 1)),
         Opcode::CallVirtRestArrayFixed => Some((count + 2, 1)),
         _ => None,

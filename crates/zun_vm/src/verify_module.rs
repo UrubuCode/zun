@@ -120,6 +120,11 @@ fn resolve_loaded_call(
 /// Resolve a call-family opcode's `(pops, pushes)` from module metadata.
 fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u8, u8)> {
     match opcode {
+        // `call.indirect.n` pops its counted arguments plus the callee handle.
+        Opcode::CallIndirectN => match operand {
+            Operand::Imm32(count) if (0..255).contains(count) => Some((*count as u8 + 1, 1)),
+            _ => None,
+        },
         // A direct or virtual call pops the (statically named) callee's
         // parameters and pushes its single result value. For callvirt the
         // static method's arity matches every override's, so it is exact.
