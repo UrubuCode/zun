@@ -2324,6 +2324,35 @@ impl<'a> Interp<'a> {
                     .insert((class_rid, symbol.get()), function);
                 Ok(Value::Void)
             }
+            "classSetMethod" => {
+                let class_rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let function = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                self.class_named_methods.insert((class_rid, name), function);
+                Ok(Value::Void)
+            }
+            "classSetFieldDefault" => {
+                let as_u32 = |value: &Value| match value {
+                    Value::Int(value, _) => Ok(*value as u32),
+                    Value::Float(value, _) => Ok(*value as u32),
+                    _ => Err(RunError::BadToken),
+                };
+                let class_rid = as_u32(args.first().ok_or(RunError::BadToken)?)?;
+                let slot = as_u32(args.get(1).ok_or(RunError::BadToken)?)?;
+                let value = unbox_arg(args.get(2).ok_or(RunError::BadToken)?)?;
+                self.class_field_defaults.insert((class_rid, slot), value);
+                Ok(Value::Void)
+            }
             "dynamicSetSymbolFunction" => {
                 // Attach a method under a Symbol key (e.g.
                 // `C[Symbol.hasInstance]`). The symbol arrives as an immediate
@@ -4606,12 +4635,17 @@ impl<'a> Interp<'a> {
     /// Construct an instance of a user class from a runtime class descriptor
     /// token (`USER_CLASS_FLAG | TypeDef rid`) and positional field values: the
     /// runtime twin of `NewObj` (which `new C(...)` lowers to). The value count
-    /// must equal the class's field count (no initializer defaults at runtime).
+    /// may be shorter than the class's field count: trailing slots take the
+    /// literal initializer default recorded by `classSetFieldDefault` (non-literal
+    /// initializers are not reachable here and make the call fail).
+    /// Design boundary: only typed classes are constructible (no
+    /// `function.prototype` + `this` model for arbitrary function constructors),
+    /// and `newTarget` is approximated by the target class.
     /// Returns the instance boxed as an `Any`.
     fn construct_class_from_descriptor(
         &mut self,
         token: u32,
-        values: Vec<Value>,
+        mut values: Vec<Value>,
     ) -> Result<Value, RunError> {
         if token & zun_natives::USER_CLASS_FLAG == 0 {
             return Err(RunError::BadToken);
@@ -4621,8 +4655,19 @@ impl<'a> Interp<'a> {
             token & !zun_natives::USER_CLASS_FLAG,
         );
         let (field_start, field_count) = self.type_field_range(token)?;
-        if values.len() != field_count {
+        if values.len() > field_count {
             return Err(RunError::BadToken);
+        }
+        // Trailing absent args take the class's literal field-initializer
+        // default (registered by `classSetFieldDefault`); an absent arg with no
+        // recorded default is an error.
+        for slot in values.len()..field_count {
+            let default = self
+                .class_field_defaults
+                .get(&(token.rid(), slot as u32))
+                .cloned()
+                .ok_or(RunError::BadToken)?;
+            values.push(default);
         }
         let kinds: Vec<u8> = (0..field_count as u32)
             .map(|i| self.field_kind_at(field_start + i))
@@ -5728,7 +5773,8 @@ impl<'a> Interp<'a> {
     /// symbol-method table for an instance), then the ordered
     /// `valueOf`/`toString` dynamic function slots (hint "string" tries
     /// `toString` first). Returns the first primitive, or `None`.
-    /// Typed-instance `valueOf`/`toString` have no name->method lookup here.
+    /// A typed instance's `valueOf`/`toString` come from `class_named_methods`
+    /// (registered by `classSetMethod`) and receive the instance as `this`.
     fn ordinary_to_primitive(
         &mut self,
         obj: zun_gc::Obj,
@@ -5750,9 +5796,20 @@ impl<'a> Interp<'a> {
             ["valueOf", "toString"]
         };
         for name in order {
-            let method = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name));
-            if let Some(method) = method {
-                let result = self.invoke_function_value(method, vec![])?;
+            // A typed class instance's own `valueOf`/`toString` method is bound
+            // with the instance as the leading `this` argument; a dynamic
+            // object's function slot is invoked as a plain closure.
+            let typed = self
+                .class_named_methods
+                .get(&(obj.type_rid(), name.to_string()))
+                .copied();
+            let method = match typed {
+                Some(method) => Some((method, vec![Value::Object(obj)])),
+                None => zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name))
+                    .map(|method| (method, vec![])),
+            };
+            if let Some((method, call_args)) = method {
+                let result = self.invoke_function_value(method, call_args)?;
                 let result = unbox_arg(&result)?;
                 if !matches!(result, Value::Object(_) | Value::Function(_)) {
                     return Ok(Some(result));

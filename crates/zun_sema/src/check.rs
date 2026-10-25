@@ -439,6 +439,10 @@ impl Checker<'_> {
         //    symbol-method side table at class-definition time.
         self.append_class_symbol_methods(&mut body, span);
 
+        // 4) Named `valueOf`/`toString` methods and literal field defaults, for
+        //    ToPrimitive and runtime class construction.
+        self.append_class_named_methods_and_defaults(&mut body, span);
+
         if body.is_empty() {
             return None;
         }
@@ -556,6 +560,94 @@ impl Checker<'_> {
                 ty: Ty::Void,
                 span,
             }));
+        }
+    }
+
+    /// Register, at class-definition time, (a) each class's zero-parameter
+    /// instance `valueOf`/`toString` (own or inherited) via `classSetMethod`,
+    /// so the interpreter floor can resolve them by name for ToPrimitive, and
+    /// (b) each literal field-initializer default via `classSetFieldDefault`, so
+    /// runtime construction (`Reflect.construct`, proxy `construct`) can fill
+    /// absent trailing args. Non-literal initializers are not registered.
+    fn append_class_named_methods_and_defaults(&self, body: &mut Vec<hir::Stmt>, span: Span) {
+        let class_rid = |class_idx: usize| hir::Expr {
+            kind: hir::ExprKind::Number((class_idx + 1) as f64),
+            ty: Ty::Int(IntKind::U32),
+            span,
+        };
+        if let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") {
+            for class_idx in 0..self.classes.len() {
+                for name in ["valueOf", "toString"] {
+                    let Some(func) = self.method_of(class_idx as u32, name) else { continue };
+                    let sig = &self.signatures[func as usize];
+                    if sig.is_static || sig.params.len() != 1 {
+                        continue;
+                    }
+                    body.push(hir::Stmt::Expr(hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id: set_method,
+                            args: vec![
+                                class_rid(class_idx),
+                                hir::Expr {
+                                    kind: hir::ExprKind::String(name.to_string()),
+                                    ty: Ty::String,
+                                    span,
+                                },
+                                hir::Expr {
+                                    kind: hir::ExprKind::FunctionRef { func },
+                                    ty: Ty::Function(func),
+                                    span,
+                                },
+                            ],
+                        },
+                        ty: Ty::Void,
+                        span,
+                    }));
+                }
+            }
+        }
+        if let Some((set_default, _)) = zun_natives::resolve("collections", "classSetFieldDefault") {
+            for class_idx in 0..self.classes.len() {
+                let fields = self.full_fields(class_idx as u32);
+                let initializers = self.full_initializers(class_idx as u32);
+                for (slot, (_, field_ty, _, _)) in fields.iter().enumerate() {
+                    let Some(Some(init)) = initializers.get(slot) else { continue };
+                    let (kind, ty) = match (init.as_ref(), *field_ty) {
+                        (ast::Expr::Number { value, .. }, Ty::F64) => {
+                            (hir::ExprKind::Number(*value), Ty::F64)
+                        }
+                        (ast::Expr::String { value, .. }, Ty::String) => {
+                            (hir::ExprKind::String(value.clone()), Ty::String)
+                        }
+                        (ast::Expr::Bool { value, .. }, Ty::Boolean) => {
+                            (hir::ExprKind::Boolean(*value), Ty::Boolean)
+                        }
+                        _ => continue,
+                    };
+                    body.push(hir::Stmt::Expr(hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id: set_default,
+                            args: vec![
+                                class_rid(class_idx),
+                                hir::Expr {
+                                    kind: hir::ExprKind::Number(slot as f64),
+                                    ty: Ty::Int(IntKind::U32),
+                                    span,
+                                },
+                                hir::Expr {
+                                    kind: hir::ExprKind::BoxAny {
+                                        value: Box::new(hir::Expr { kind, ty, span }),
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                },
+                            ],
+                        },
+                        ty: Ty::Void,
+                        span,
+                    }));
+                }
+            }
         }
     }
 
@@ -7389,6 +7481,35 @@ impl Checker<'_> {
                     span,
                 }
             }
+            ast::Expr::NewDynamic { callee, args, .. } => {
+                // `new (expr)(...args)`: any expression of proxy type is
+                // evaluated to a value, then routed through `proxyConstruct`.
+                // Design boundary: only class targets are constructible
+                // (Zun has typed classes, no `function.prototype` + `this`
+                // construction model), and `newTarget` is approximated by the
+                // target (subclass newTarget selection needs a prototype model).
+                let callee = self.check_expr(cx, callee);
+                if callee.ty != Ty::Proxy {
+                    self.error(span, "`new (expr)(...)` requires a Proxy-typed expression");
+                    return self.poison(span);
+                }
+                let elements: Vec<Option<hir::Expr>> =
+                    args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+                let args_array = hir::Expr {
+                    kind: hir::ExprKind::ArrayLiteral { elements },
+                    ty: Ty::Array,
+                    span,
+                };
+                let Some((id, _)) = zun_natives::resolve("collections", "proxyConstruct") else {
+                    self.error(span, "missing `proxyConstruct` intrinsic");
+                    return self.poison(span);
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![callee, args_array] },
+                    ty: Ty::Any,
+                    span,
+                };
+            }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
                 // `new proxy(...args)`: a local of proxy type routes through
@@ -9506,7 +9627,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         Binary { lhs, rhs, .. } => count_yields_in_expr(lhs) + count_yields_in_expr(rhs),
         Conditional { condition, when_true, when_false, .. } => count_yields_in_expr(condition) + count_yields_in_expr(when_true) + count_yields_in_expr(when_false),
         Call { args, .. } | New { args, .. } => args.iter().map(count_yields_in_expr).sum(),
-        ComputedCall { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
+        ComputedCall { callee, args, .. } | NewDynamic { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         MethodCall { receiver, args, .. } | OptionalMethodCall { object: receiver, args, .. } => count_yields_in_expr(receiver) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         OptionalField { object, .. } | Field { object, .. } | PrivateField { object, .. } => count_yields_in_expr(object),
         OptionalIndex { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
@@ -9599,7 +9720,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
                 + count_awaits_in_expr(when_false)
         }
         Call { args, .. } => args.iter().map(count_awaits_in_expr).sum(),
-        ComputedCall { callee, args, .. } => {
+        ComputedCall { callee, args, .. } | NewDynamic { callee, args, .. } => {
             count_awaits_in_expr(callee) + args.iter().map(count_awaits_in_expr).sum::<usize>()
         }
         MethodCall { receiver, args, .. } => {

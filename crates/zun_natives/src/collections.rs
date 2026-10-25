@@ -504,6 +504,14 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "classBox", params: &[Opaque], ret: DynamicObject, imp: unavailable },
         NativeFn { name: "reflectConstruct", params: &[Opaque, Array], ret: Opaque, imp: unavailable },
         NativeFn { name: "proxyConstruct", params: &[Proxy, Array], ret: Opaque, imp: unavailable },
+        // `classSetMethod(classRid, name, fn)` registers a typed class's
+        // `valueOf`/`toString` instance method by name so the interpreter floor
+        // can invoke it (with `this`) from OrdinaryToPrimitive.
+        // `classSetFieldDefault(classRid, slot, value)` records a literal field
+        // initializer so runtime construction (`Reflect.construct`, proxy
+        // `construct`) can fill trailing absent args.
+        NativeFn { name: "classSetMethod", params: &[U32, Str, Function], ret: Void, imp: unavailable },
+        NativeFn { name: "classSetFieldDefault", params: &[U32, U32, Opaque], ret: Void, imp: unavailable },
     ],
 };
 

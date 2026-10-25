@@ -223,6 +223,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "classBox",
         "reflectConstruct",
         "proxyConstruct",
+        "classSetMethod",
+        "classSetFieldDefault",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))

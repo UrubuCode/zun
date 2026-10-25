@@ -24,6 +24,12 @@ pub(super) struct Interp<'a> {
     /// typed-class `[Symbol.hasInstance]`. The handles are environment-less
     /// (plain method rids), so they hold no managed references to root.
     pub(super) class_symbol_methods: HashMap<(u32, u64), zun_core::FunctionHandle>,
+    /// Typed-class `valueOf`/`toString` instance methods by name, keyed
+    /// `(class TypeDef rid, method name)`; populated by `classSetMethod`.
+    pub(super) class_named_methods: HashMap<(u32, String), zun_core::FunctionHandle>,
+    /// Literal field-initializer defaults `(class rid, field slot)`; populated
+    /// by `classSetFieldDefault`, applied by runtime construction.
+    pub(super) class_field_defaults: HashMap<(u32, u32), Value>,
     /// Pending class-decorator `addInitializer` callbacks, queued by
     /// `decoratorAddInitializer` and drained by `decoratorRunInitializers`.
     /// Closure environments are not GC-rooted here; the queue lives only

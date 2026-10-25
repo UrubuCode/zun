@@ -46,3 +46,29 @@ fn class_instance_symbol_to_primitive() {
     }"#);
     assert_eq!(out, vec!["8", "7"]);
 }
+
+#[test]
+fn class_value_of_method_reads_this_in_add() {
+    let out = run(r#"class Box {
+        n: number;
+        valueOf(): number { return this.n; }
+    }
+    function main() {
+        let b: any = new Box(10.0);
+        print((b + 5.0) as number);
+    }"#);
+    assert_eq!(out, vec!["15"]);
+}
+
+#[test]
+fn class_to_string_method_reads_this_in_template() {
+    let out = run(r#"class Tag {
+        name: string;
+        toString(): string { return "tag:" + this.name; }
+    }
+    function main() {
+        let t: any = new Tag("x");
+        print(`v=${t}`);
+    }"#);
+    assert_eq!(out, vec!["v=tag:x"]);
+}
