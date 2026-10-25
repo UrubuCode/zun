@@ -6637,15 +6637,6 @@ impl Checker<'_> {
                     // ECMA-402 locale surface (NUCLEUS #1), ICU4X-backed.
                     // `localeCompare` returns the ECMAScript -1/0/1; v1 uses
                     // root collation and the root (`und`) locale for casing.
-                    (Ty::String, "localeCompare") => {
-                        Some(("localeCompare", Ty::Int(IntKind::I32), vec![Ty::String]))
-                    }
-                    (Ty::String, "toLocaleLowerCase") => {
-                        Some(("toLocaleLowerCase", Ty::String, vec![]))
-                    }
-                    (Ty::String, "toLocaleUpperCase") => {
-                        Some(("toLocaleUpperCase", Ty::String, vec![]))
-                    }
                     (Ty::String, "includes") => Some(("includes", Ty::Boolean, vec![Ty::String])),
                     // Index is a `number` so a negative value (from the end) can
                     // cross the boundary; out of range yields `undefined`.
@@ -6977,22 +6968,70 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                if receiver.ty == Ty::F64 && mname == "toLocaleString" && args.is_empty() {
-                    let Some((id, _)) = zun_natives::resolve("number", "numberToLocaleString")
-                    else {
-                        self.error(span, "missing Number intrinsic `numberToLocaleString`".to_string());
+                // Optional trailing BCP-47 `locale` (ECMA-402) for the root-locale
+                // `toLocale*` family. Hand-lowered because `managed_method` is
+                // fixed-arity: an omitted locale is the sentinel `""` (root).
+                if (receiver.ty == Ty::String
+                    && matches!(mname.as_str(), "localeCompare" | "toLocaleLowerCase" | "toLocaleUpperCase"))
+                    || (receiver.ty == Ty::F64 && mname == "toLocaleString")
+                {
+                    let (module, native, leading) = match (receiver.ty, mname.as_str()) {
+                        (Ty::String, "localeCompare") => ("string", "localeCompare", 1usize),
+                        (Ty::String, "toLocaleLowerCase") => ("string", "toLocaleLowerCase", 0),
+                        (Ty::String, _) => ("string", "toLocaleUpperCase", 0),
+                        _ => ("number", "intlNumberFormat", 0),
+                    };
+                    if args.len() < leading || args.len() > leading + 1 {
+                        self.error(
+                            span,
+                            format!("`{mname}` expects {leading} or {} argument(s), found {}", leading + 1, args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let mut call_args = Vec::new();
+                    if leading == 1 {
+                        let that = self.check_expr(cx, &args[0]);
+                        if !that.ty.is_error() && that.ty != Ty::String {
+                            self.error(that.span, "`localeCompare` argument must be a string");
+                        }
+                        call_args.push(that);
+                    }
+                    let locale = match args.get(leading) {
+                        Some(arg) => {
+                            let checked = self.check_expr(cx, arg);
+                            if !checked.ty.is_error() && checked.ty != Ty::String {
+                                self.error(checked.span, format!("`{mname}` locale must be a string"));
+                            }
+                            checked
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::String(String::new()),
+                            ty: Ty::String,
+                            span,
+                        },
+                    };
+                    let Some((id, _)) = zun_natives::resolve(module, native) else {
+                        self.error(span, format!("missing intrinsic `{native}`"));
                         return self.poison(span);
                     };
-                    return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
-                        ty: Ty::String,
-                        span,
-                    };
+                    // `intlNumberFormat(locale, n)` takes the locale first; the
+                    // string natives take `(receiver, [that,] locale)`.
+                    let mut all = Vec::new();
+                    if receiver.ty == Ty::F64 {
+                        all.push(locale);
+                        all.push(receiver);
+                    } else {
+                        all.push(receiver);
+                        all.extend(call_args);
+                        all.push(locale);
+                    }
+                    let ty = if native == "localeCompare" { Ty::Int(IntKind::I32) } else { Ty::String };
+                    return hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: all }, ty, span };
                 }
                 // `number.valueOf()` / `string.valueOf()` — identity, returning
                 // the primitive itself. No native needed: the checked receiver
                 // expression already is the value.
-                if matches!(receiver.ty, Ty::F64 | Ty::String)
+                if matches!(receiver.ty, Ty::F64 | Ty::String | Ty::BigInt)
                     && mname == "valueOf"
                     && args.is_empty()
                 {

@@ -541,17 +541,19 @@ fn normalize(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     Ok(NativeValue::Str(normalized.into_owned()))
 }
 
-/// `String.prototype.localeCompare(that)` — locale-aware comparison via the
-/// baked ICU4X collator. v1 uses root (locale-independent) collation and
-/// returns the ECMAScript -1 / 0 / 1.
+/// `String.prototype.localeCompare(that, locale?)` — locale-aware comparison via
+/// the baked ICU4X collator. The trailing locale is a BCP-47 string; `""`
+/// selects the root collation. Returns the ECMAScript -1 / 0 / 1.
 fn locale_compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     use core::cmp::Ordering;
-    use icu::collator::{options::CollatorOptions, Collator};
-    let (Some(NativeArg::Str(value)), Some(NativeArg::Str(that))) = (args.first(), args.get(1))
+    use icu::collator::{options::CollatorOptions, Collator, CollatorPreferences};
+    let (Some(NativeArg::Str(value)), Some(NativeArg::Str(that)), Some(NativeArg::Str(locale))) =
+        (args.first(), args.get(1), args.get(2))
     else {
-        return Err(NativeError("localeCompare: expected (string, string)".to_string()));
+        return Err(NativeError("localeCompare: expected (string, string, string)".to_string()));
     };
-    let collator = Collator::try_new(Default::default(), CollatorOptions::default())
+    let locale = intl_locale(locale);
+    let collator = Collator::try_new(CollatorPreferences::from(&locale), CollatorOptions::default())
         .map_err(|e| NativeError(format!("localeCompare: collator init failed: {e:?}")))?;
     let ordering = match collator.compare(value, that) {
         Ordering::Less => -1,
@@ -561,33 +563,31 @@ fn locale_compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
     Ok(NativeValue::Int(ordering))
 }
 
-/// `String.prototype.toLocaleLowerCase()` — locale-aware lowercasing via the
-/// baked ICU4X case mapper. v1 uses the root (`und`) locale.
+/// `String.prototype.toLocaleLowerCase(locale?)` — locale-aware lowercasing via
+/// the baked ICU4X case mapper; `""` is the root (`und`) locale.
 fn to_locale_lower_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     use icu::casemap::CaseMapper;
-    use icu::locale::langid;
-    match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
+    match (args.first(), args.get(1)) {
+        (Some(NativeArg::Str(value)), Some(NativeArg::Str(locale))) => Ok(NativeValue::Str(
             CaseMapper::new()
-                .lowercase_to_string(value, &langid!("und"))
+                .lowercase_to_string(value, &intl_locale(locale).id)
                 .into_owned(),
         )),
-        _ => Err(NativeError("toLocaleLowerCase: expected a string".to_string())),
+        _ => Err(NativeError("toLocaleLowerCase: expected (string, string)".to_string())),
     }
 }
 
-/// `String.prototype.toLocaleUpperCase()` — locale-aware uppercasing via the
-/// baked ICU4X case mapper. v1 uses the root (`und`) locale.
+/// `String.prototype.toLocaleUpperCase(locale?)` — locale-aware uppercasing via
+/// the baked ICU4X case mapper; `""` is the root (`und`) locale.
 fn to_locale_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     use icu::casemap::CaseMapper;
-    use icu::locale::langid;
-    match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
+    match (args.first(), args.get(1)) {
+        (Some(NativeArg::Str(value)), Some(NativeArg::Str(locale))) => Ok(NativeValue::Str(
             CaseMapper::new()
-                .uppercase_to_string(value, &langid!("und"))
+                .uppercase_to_string(value, &intl_locale(locale).id)
                 .into_owned(),
         )),
-        _ => Err(NativeError("toLocaleUpperCase: expected a string".to_string())),
+        _ => Err(NativeError("toLocaleUpperCase: expected (string, string)".to_string())),
     }
 }
 
@@ -819,19 +819,19 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "localeCompare",
-            params: &[Str, Str],
+            params: &[Str, Str, Str],
             ret: I32,
             imp: locale_compare,
         },
         NativeFn {
             name: "toLocaleLowerCase",
-            params: &[Str],
+            params: &[Str, Str],
             ret: Str,
             imp: to_locale_lower_case,
         },
         NativeFn {
             name: "toLocaleUpperCase",
-            params: &[Str],
+            params: &[Str, Str],
             ret: Str,
             imp: to_locale_upper_case,
         },

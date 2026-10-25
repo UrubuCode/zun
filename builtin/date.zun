@@ -147,9 +147,9 @@ class Date {
         this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, milli as i64);
         return this.millis;
     }
-    toLocaleString(): string { return date.dateToLocaleString(this.millis); }
-    toLocaleDateString(): string { return date.dateToLocaleDateString(this.millis); }
-    toLocaleTimeString(): string { return date.dateToLocaleTimeString(this.millis); }
+    toLocaleString(locale: string = ""): string { return date.dateToLocaleString(this.millis, locale); }
+    toLocaleDateString(locale: string = ""): string { return date.dateToLocaleDateString(this.millis, locale); }
+    toLocaleTimeString(locale: string = ""): string { return date.dateToLocaleTimeString(this.millis, locale); }
     toISOString(): string { return this.isoDateTime(); }
     toJSON(): string { return this.toISOString(); }
     toString(): string { return this.isoDateTime(); }

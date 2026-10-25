@@ -267,9 +267,9 @@ pub const MODULE: crate::Module = crate::Module {
             ret: I64,
             imp: from_utc,
         },
-        NativeFn { name: "dateToLocaleString", params: &[I64], ret: Str, imp: to_locale_string },
-        NativeFn { name: "dateToLocaleDateString", params: &[I64], ret: Str, imp: to_locale_date_string },
-        NativeFn { name: "dateToLocaleTimeString", params: &[I64], ret: Str, imp: to_locale_time_string },
+        NativeFn { name: "dateToLocaleString", params: &[I64, Str], ret: Str, imp: to_locale_string },
+        NativeFn { name: "dateToLocaleDateString", params: &[I64, Str], ret: Str, imp: to_locale_date_string },
+        NativeFn { name: "dateToLocaleTimeString", params: &[I64, Str], ret: Str, imp: to_locale_time_string },
         NativeFn { name: "intlDateTimeFormat", params: &[Str, I64], ret: Str, imp: intl_date_time_format },
     ],
 };
@@ -294,7 +294,11 @@ fn locale_format(args: &[NativeArg], name: &str, kind: LocaleKind) -> Result<Nat
         time: icu::time::Time::try_new(h as u8, mi as u8, s as u8, ms * 1_000_000)
             .map_err(|e| NativeError(format!("{name}: {e}")))?,
     };
-    let prefs = icu::locale::Locale::UNKNOWN.into();
+    let locale = match args.get(1) {
+        Some(NativeArg::Str(text)) => crate::string::intl_locale(text),
+        _ => icu::locale::Locale::UNKNOWN,
+    };
+    let prefs = (&locale).into();
     let no_data = |e: icu::datetime::DateTimeFormatterLoadError| NativeError(format!("{name}: {e}"));
     let text = match kind {
         LocaleKind::DateTime => DateTimeFormatter::try_new(prefs, fieldsets::YMDT::medium())
