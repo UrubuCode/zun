@@ -184,12 +184,14 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
-            // `(registry, target, heldValue, unregisterToken)`. The unregister
-            // token is an opaque object identity; a non-object value (the
-            // sentinel the surface synthesizes when the caller omits the token)
-            // means the registration can never be unregistered.
+            // `(registry, target, heldValue, unregisterToken)`. The held value
+            // is an arbitrary immediate `Any` (`Opaque`), GC-traced and
+            // delivered to the cleanup callback. The unregister token is an
+            // opaque object identity; a non-object value (the sentinel the
+            // surface synthesizes when the caller omits the token) means the
+            // registration can never be unregistered.
             name: "finalizationRegister",
-            params: &[FinalizationRegistry, Opaque, U64, Opaque],
+            params: &[FinalizationRegistry, Opaque, Opaque, Opaque],
             ret: Void,
             imp: unavailable,
         },
@@ -461,5 +463,15 @@ pub const MODULE: crate::Module = crate::Module {
         // existing dispatch ids stay stable.
         NativeFn { name: "proxyNewCallable", params: &[Opaque, DynamicObject], ret: Proxy, imp: unavailable },
         NativeFn { name: "proxyApply", params: &[Proxy, Opaque, Array], ret: Opaque, imp: unavailable },
+        // NUCLEUS #6: `Object.getOwnPropertySymbols(obj)` — the object's own
+        // symbol keys as an array of `Any` symbol values (empty for a typed
+        // object). Touches the managed heap, intercepted by name. Appended last
+        // so existing dispatch ids stay stable.
+        NativeFn { name: "objectGetOwnPropertySymbols", params: &[Opaque], ret: Array, imp: unavailable },
+        // NUCLEUS #5: `Number(x)` coercion (ECMAScript ToNumber). The argument
+        // arrives as an immediate `Any` (`Opaque`); an object runs
+        // OrdinaryToPrimitive(hint "number") via `[Symbol.toPrimitive]`.
+        // Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "numberCoerce", params: &[Opaque], ret: F64, imp: unavailable },
     ],
 };

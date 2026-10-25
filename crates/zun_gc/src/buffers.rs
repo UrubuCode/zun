@@ -31,6 +31,38 @@ impl Heap {
         Some(self.buffers.get_mut(&(object.addr() as usize))?.resize(new_length))
     }
 
+    /// `ArrayBuffer.prototype.detached`.
+    pub fn buffer_detached(&self, object: Obj) -> Option<bool> {
+        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::detached)
+    }
+
+    /// `ArrayBuffer.prototype.transfer(newLength?)` /
+    /// `transferToFixedLength(newLength?)`. Detaches `source` and moves its
+    /// bytes into a freshly allocated buffer of `new_length` bytes (the source
+    /// length when `new_length` is `None`), preserving the surviving prefix.
+    /// `fixed` forces a fixed-length destination (`transferToFixedLength`);
+    /// otherwise the destination keeps the source's resizability and growth
+    /// cap. Returns `None` (a runtime error) when the source is already
+    /// detached, is not a buffer, or the destination would exceed its cap.
+    pub fn buffer_transfer(&mut self, source: Obj, new_length: Option<usize>, fixed: bool) -> Option<Obj> {
+        let (old_bytes, old_max) = self
+            .buffers
+            .get_mut(&(source.addr() as usize))?
+            .detach()?;
+        let target_len = new_length.unwrap_or(old_bytes.len());
+        let max = if fixed { None } else { old_max };
+        let mut buffer = zun_core::ByteBuffer::with_capacity(target_len, max)?;
+        let copy = target_len.min(old_bytes.len());
+        for (index, byte) in old_bytes.iter().take(copy).enumerate() {
+            buffer.set(index, *byte);
+        }
+        // Allocation may move objects, so `buffer` holds no managed address and
+        // is inserted only after the allocation settles.
+        let object = self.alloc(0, 0);
+        self.buffers.insert(object.addr() as usize, buffer);
+        Some(object)
+    }
+
     pub fn buffer_get(&self, object: Obj, index: usize) -> Option<u8> {
         self.buffers.get(&(object.addr() as usize))?.get(index)
     }

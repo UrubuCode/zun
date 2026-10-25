@@ -301,7 +301,7 @@ impl Heap {
         let id = FinalizationId(self.finalizers.len() as u32);
         self.finalizers.push(FinalizerEntry {
             target: target.addr() as usize,
-            token,
+            held: zun_core::Any::int(token as i64),
             callback_id,
             callback: None,
             unregister_token: 0,
@@ -318,24 +318,31 @@ impl Heap {
         token: u64,
         callback: zun_core::FunctionHandle,
     ) -> FinalizationId {
-        self.finalization_register_with_function_and_token(target, token, callback, 0)
+        self.finalization_register_with_held(
+            target,
+            zun_core::Any::int(token as i64),
+            callback,
+            0,
+        )
     }
 
-    /// Register a closure callback together with an unregister-token object
-    /// identity. `unregister_token` is the address of the token object, or `0`
-    /// when the registration was made without one (and so can never be
-    /// unregistered, per the ECMAScript spec). The token is held weakly.
-    pub fn finalization_register_with_function_and_token(
+    /// Register a closure callback together with an arbitrary held value and an
+    /// unregister-token object identity. `unregister_token` is the address of
+    /// the token object, or `0` when the registration was made without one (and
+    /// so can never be unregistered, per the ECMAScript spec). The held value
+    /// is delivered to the cleanup callback on collection; an object reference
+    /// it carries is kept alive until then and rewritten on compaction.
+    pub fn finalization_register_with_held(
         &mut self,
         target: Obj,
-        token: u64,
+        held: zun_core::Any,
         callback: zun_core::FunctionHandle,
         unregister_token: usize,
     ) -> FinalizationId {
         let id = FinalizationId(self.finalizers.len() as u32);
         self.finalizers.push(FinalizerEntry {
             target: target.addr() as usize,
-            token,
+            held,
             callback_id: callback.method_rid() as u64,
             callback: Some(callback),
             unregister_token,

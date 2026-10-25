@@ -738,6 +738,13 @@ impl Heap {
         for finalizer in &mut self.finalizers {
             let mapped = map(finalizer.target);
             if mapped != finalizer.target { rewritten += 1; finalizer.target = mapped; }
+            if let Some(address) = finalizer.held.as_object() {
+                let mapped_held = map(address);
+                if mapped_held != address {
+                    rewritten += 1;
+                    finalizer.held = zun_core::Any::object(mapped_held);
+                }
+            }
             if finalizer.unregister_token != 0 {
                 let mapped_token = map(finalizer.unregister_token);
                 if mapped_token != finalizer.unregister_token {
@@ -758,6 +765,13 @@ impl Heap {
             }
         }
         for record in &mut self.finalization_queue {
+            if let Some(address) = record.held.as_object() {
+                let mapped_held = map(address);
+                if mapped_held != address {
+                    rewritten += 1;
+                    record.held = zun_core::Any::object(mapped_held);
+                }
+            }
             if let Some(callback) = record.callback {
                 if let Some(environment) = callback.environment() {
                     let mapped_environment = map(environment);
@@ -1410,7 +1424,7 @@ mod tests {
         unsafe { heap.collect(&[], &|_| Vec::new()) };
         assert_eq!(
             heap.finalization_drain_records(),
-            vec![FinalizationRecord { token: 99, callback_id: 7, callback: None }]
+            vec![FinalizationRecord { held: zun_core::Any::int(99), callback_id: 7, callback: None }]
         );
     }
 
@@ -1425,6 +1439,29 @@ mod tests {
         let records = heap.finalization_drain_records();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].callback, Some(callback));
+    }
+
+    #[test]
+    fn finalization_delivers_an_object_held_value() {
+        // An arbitrary (object) held value survives until delivery and is
+        // carried on the drained record (NUCLEUS #16).
+        let mut heap = Heap::new();
+        let target = heap.alloc(1, 0);
+        let held = heap.alloc(2, 0);
+        let callback = zun_core::FunctionHandle::new(5, None);
+        heap.finalization_register_with_held(
+            target,
+            zun_core::Any::object(held.addr() as usize),
+            callback,
+            0,
+        );
+        // The target has no root, so it is swept and the registration queued;
+        // the held object must still be alive for the pending cleanup.
+        unsafe { heap.collect(&[], &|_| Vec::new()) };
+        assert!(heap.by_addr.contains_key(&(held.addr() as usize)));
+        let records = heap.finalization_drain_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].held.as_object(), Some(held.addr() as usize));
     }
 
     #[test]

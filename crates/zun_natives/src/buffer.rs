@@ -393,6 +393,16 @@ macro_rules! buffer_module {
             NativeFn { name: "typedArrayReduceNoInit", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
             NativeFn { name: "typedArrayReduceRight", params: &[Opaque, Function, Opaque], ret: Opaque, imp: unavailable },
             NativeFn { name: "typedArrayReduceRightNoInit", params: &[Opaque, Function], ret: Opaque, imp: unavailable },
+            // NUCLEUS #17: `ArrayBuffer.prototype.transfer(newLength?)` and
+            // `transferToFixedLength(newLength?)` detach the source buffer and
+            // move its bytes into a new buffer. `newLength` is an `I64`: a
+            // negative value (`-1`) is the sentinel the surface synthesizes
+            // when the caller omits it, meaning "keep the source length".
+            // `bufferDetached` is the `detached` getter. Appended last so no
+            // existing dispatch id shifts.
+            NativeFn { name: "bufferTransfer", params: &[Buffer, I64], ret: Buffer, imp: unavailable },
+            NativeFn { name: "bufferTransferFixed", params: &[Buffer, I64], ret: Buffer, imp: unavailable },
+            NativeFn { name: "bufferDetached", params: &[Buffer], ret: Bool, imp: unavailable },
         ],
     };
     };

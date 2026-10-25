@@ -128,6 +128,32 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Bool(true))
             }
+            "bufferTransfer" | "bufferTransferFixed" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A negative value is the sentinel the surface synthesizes for
+                // an omitted `newLength` ("keep the source length").
+                let new_length = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => (*value >= 0).then_some(*value as usize),
+                    _ => return Err(RunError::BadToken),
+                };
+                let fixed = name == "bufferTransferFixed";
+                // A detached source, or a destination length that exceeds a
+                // resizable cap, is a `TypeError`/`RangeError`, surfaced through
+                // the project's native-error convention.
+                let transferred =
+                    zun_gc::with_current_heap_mut(|heap| heap.buffer_transfer(object, new_length, fixed))
+                        .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(transferred))
+            }
+            "bufferDetached" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| heap.buffer_detached(object))
+                        .ok_or(RunError::BadToken)?,
+                ))
+            }
             "bufferMaxByteLength" => {
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -1896,10 +1922,13 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 let target = object(args.get(1).ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                let held = match args.get(2).ok_or(RunError::BadToken)? {
-                    Value::Int(value, _) => *value as u64,
-                    _ => return Err(RunError::BadToken),
-                };
+                // The held value is an arbitrary immediate `Any` carrier; box a
+                // non-`any` operand into one so an object held value is traced.
+                let held = zun_gc::with_current_heap_mut(|heap| {
+                    args.get(2)
+                        .ok_or(RunError::BadToken)
+                        .and_then(|value| value.clone().box_any(heap).ok_or(RunError::BadToken))
+                })?;
                 // The unregister token is an object identity. A non-object
                 // value (the surface's sentinel for an omitted token) leaves
                 // the registration permanently un-unregisterable, per spec.
@@ -1912,7 +1941,7 @@ impl<'a> Interp<'a> {
                     let cleanup = heap
                         .finalization_registry_cleanup(registry)
                         .ok_or(RunError::BadToken)?;
-                    heap.finalization_register_with_function_and_token(
+                    heap.finalization_register_with_held(
                         target,
                         held,
                         cleanup,
@@ -2296,6 +2325,46 @@ impl<'a> Interp<'a> {
                     other => other.display(),
                 };
                 Ok(Value::Str(text.into()))
+            }
+            "numberCoerce" => {
+                // `Number(x)` — ECMAScript ToNumber. A number is itself; a
+                // string parses (NaN on failure); a boolean is 0/1; `null`→0,
+                // `undefined`→NaN. An object runs OrdinaryToPrimitive with hint
+                // "number": call `[Symbol.toPrimitive]("number")` if present and
+                // ToNumber its result, else ToNumber of its string coercion.
+                let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let number = match value {
+                    Value::Int(number, _) => number as f64,
+                    Value::Float(number, _) => number,
+                    Value::Bool(flag) => if flag { 1.0 } else { 0.0 },
+                    Value::Null => 0.0,
+                    Value::Void => f64::NAN,
+                    Value::Str(text) => js_string_to_number(&text),
+                    Value::Object(obj) => {
+                        let to_prim = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol_function(
+                                obj,
+                                zun_core::WellKnownSymbol::ToPrimitive.id(),
+                            )
+                        });
+                        if let Some(handle) = to_prim {
+                            let hint = zun_gc::with_current_heap_mut(|heap| {
+                                Value::Any(zun_core::Any::string(
+                                    heap.intern_string("number".into()),
+                                ))
+                            });
+                            let result = self.invoke_function_value(handle, vec![hint])?;
+                            match unbox_arg(&result)? {
+                                Value::Str(text) => js_string_to_number(&text),
+                                other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
+                            }
+                        } else {
+                            f64::NAN
+                        }
+                    }
+                    _ => f64::NAN,
+                };
+                Ok(Value::Float(number, zun_il::NumKind::F64))
             }
             "functionApply" => {
                 // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
@@ -3817,6 +3886,21 @@ impl<'a> Interp<'a> {
                             .box_any(heap)
                             .unwrap_or_else(zun_core::Any::null);
                         let _ = heap.array_set(array, index, item);
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
+            "objectGetOwnPropertySymbols" => {
+                // `Object.getOwnPropertySymbols(obj)` — an array of the object's
+                // own symbol keys (as `Any` symbol values), in insertion-stable
+                // id order. A non-dynamic/typed object has no symbol keys.
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(obj));
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(symbols.len());
+                    for (index, symbol) in symbols.iter().enumerate() {
+                        let _ = heap.array_set(array, index, zun_core::Any::symbol(*symbol));
                     }
                     array
                 });
@@ -5993,6 +6077,38 @@ fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
 /// Coerce a comparator result (unboxing an `Any` carrier) to the number whose
 /// sign decides the ordering. Non-numeric results yield `NaN`, treated by the
 /// caller as "already ordered" (a stable no-swap).
+/// ECMAScript ToNumber applied to a string: trim leading/trailing whitespace,
+/// an empty result is `0`, `0x`/`0o`/`0b` prefixes parse in their radix, and
+/// everything else (decimal, scientific, `Infinity`) goes through Rust's `f64`
+/// parser; a failed parse is `NaN`.
+fn js_string_to_number(text: &str) -> f64 {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return 0.0;
+    }
+    let radix = |prefix: &str, base: u32| -> Option<f64> {
+        trimmed
+            .strip_prefix(prefix)
+            .filter(|rest| !rest.is_empty())
+            .and_then(|rest| i64::from_str_radix(rest, base).ok())
+            .map(|value| value as f64)
+    };
+    if let Some(value) = radix("0x", 16).or_else(|| radix("0X", 16)) {
+        return value;
+    }
+    if let Some(value) = radix("0o", 8).or_else(|| radix("0O", 8)) {
+        return value;
+    }
+    if let Some(value) = radix("0b", 2).or_else(|| radix("0B", 2)) {
+        return value;
+    }
+    match trimmed {
+        "Infinity" | "+Infinity" => f64::INFINITY,
+        "-Infinity" => f64::NEG_INFINITY,
+        _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
+    }
+}
+
 fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {
     let concrete = match value {
         Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),

@@ -2615,6 +2615,22 @@ fn error_cause_carries_a_non_number() {
 }
 
 #[test]
+fn error_cause_can_be_assigned_after_construction() {
+    // `err.cause = x` stores through the declared `any` field on a typed Error
+    // instance, independent of the `new Error(msg, { cause })` form (NUCLEUS #22).
+    let out = run_with_std(
+        r#"function main() {
+            let e = new Error("boom");
+            e.cause = 99;
+            if ((e.cause as number) === 99) { print("num"); }
+            e.cause = "root";
+            print(e.cause);
+        }"#,
+    );
+    assert_eq!(out, ["num", "root"]);
+}
+
+#[test]
 fn error_cause_on_a_subclass() {
     // Subclasses inherit the `message`/`stackFrames`/`cause` layout, so the
     // options-object cause works for them too.

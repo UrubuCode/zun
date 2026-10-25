@@ -352,6 +352,12 @@ impl DynamicObject {
     pub fn get_symbol(&self, symbol: SymbolId) -> Option<Any> {
         self.symbol_properties.get(&symbol).copied()
     }
+    /// The object's own symbol keys in a stable order (the id order of the
+    /// backing store). Backs `Object.getOwnPropertySymbols` and, later,
+    /// symbol-key copying for object spread and serialization.
+    pub fn symbol_keys(&self) -> impl Iterator<Item = SymbolId> + '_ {
+        self.symbol_properties.keys().copied()
+    }
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
         self.symbol_properties.insert(symbol, value)
     }

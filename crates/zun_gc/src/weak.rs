@@ -121,10 +121,13 @@ impl Heap {
             .collect()
     }
 
+    /// Drain the queue, projecting each held value back to the integer token
+    /// it was registered with (the convenience `u64` register path). Held
+    /// values that are not integers project to `0`.
     pub fn finalization_drain(&mut self) -> Vec<u64> {
         self.finalization_drain_records()
             .into_iter()
-            .map(|record| record.token)
+            .map(|record| record.held.as_int().map(|value| value as u64).unwrap_or(0))
             .collect()
     }
 

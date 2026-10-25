@@ -1785,8 +1785,8 @@ impl Checker<'_> {
         let fixed = match method {
             "keys" | "values" | "entries" | "freeze" | "isFrozen" | "create"
             | "getPrototypeOf" | "fromEntries" | "getOwnPropertyDescriptors"
-            | "getOwnPropertyNames" | "seal" | "isSealed" | "preventExtensions"
-            | "isExtensible" => Some(1usize),
+            | "getOwnPropertyNames" | "getOwnPropertySymbols" | "seal" | "isSealed"
+            | "preventExtensions" | "isExtensible" => Some(1usize),
             "setPrototypeOf" | "is" | "getOwnPropertyDescriptor"
             | "defineProperties" => Some(2usize),
             "defineProperty" => Some(3usize),
@@ -1838,6 +1838,9 @@ impl Checker<'_> {
                 builtin(self, "objectGetOwnPropertyDescriptors", checked, Ty::DynamicObject)
             }
             "getOwnPropertyNames" => builtin(self, "objectGetOwnPropertyNames", checked, Ty::Array),
+            "getOwnPropertySymbols" => {
+                builtin(self, "objectGetOwnPropertySymbols", checked, Ty::Array)
+            }
             "seal" => builtin(self, "objectSeal", checked, Ty::Any),
             "isSealed" => builtin(self, "objectIsSealed", checked, Ty::Boolean),
             "preventExtensions" => builtin(self, "objectPreventExtensions", checked, Ty::Any),
@@ -4248,6 +4251,48 @@ impl Checker<'_> {
                     };
                 }
 
+                // `Number(x)` coercion when called as a plain function (JS
+                // `Number` as a coercion, not a constructor): the ECMAScript
+                // ToNumber of `x` as a `number` primitive. A value already typed
+                // numeric is returned unchanged; every other operand is boxed
+                // into `Any` and run through the `numberCoerce` native, which
+                // performs string parsing and object→primitive coercion
+                // (`[Symbol.toPrimitive]("number")`) at run time.
+                if name == "Number" && !self.by_name.contains_key(&name) {
+                    if args.len() != 1 {
+                        self.error(span, "`Number` expects one argument");
+                        return self.poison(span);
+                    }
+                    let arg = args.into_iter().next().expect("one argument");
+                    if arg.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    // A value already typed `number`/`float` is its own ToNumber.
+                    if arg.ty == Ty::F64 {
+                        return arg;
+                    }
+                    let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") else {
+                        self.error(span, "missing `numberCoerce` intrinsic");
+                        return self.poison(span);
+                    };
+                    // The native reads its operand as `any`, so box a non-`any`
+                    // operand (primitive or object) into an `Any` carrier.
+                    let arg = if arg.ty == Ty::Any {
+                        arg
+                    } else {
+                        hir::Expr {
+                            span: arg.span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                            ty: Ty::Any,
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::F64,
+                        span,
+                    };
+                }
+
                 if let Some(&func) = self.by_name.get(&name) {
                     if self.signatures[func as usize].is_generator {
                         let Some((native_id, _)) = zun_natives::resolve("buffer", "generatorIteratorNewArgs") else {
@@ -5926,13 +5971,22 @@ impl Checker<'_> {
                             return self.poison(span);
                         }
                         let target = self.check_expr(cx, &args[0]);
-                        let mut held = self.check_expr(cx, &args[1]);
-                        coerce_numeric_literal(&mut held, Ty::Int(IntKind::U64));
-                        if !held.ty.is_error()
-                            && !self.is_assignable(held.ty, Ty::Int(IntKind::U64))
-                        {
-                            self.error(held.span, "`register` held value must be a u64");
+                        let held = self.check_expr(cx, &args[1]);
+                        if held.ty.is_error() {
+                            return self.poison(span);
                         }
+                        // The held value is arbitrary: it is boxed into `Any`,
+                        // GC-traced while the registration is pending, and
+                        // delivered to the cleanup callback on collection.
+                        let held = if held.ty == Ty::Any {
+                            held
+                        } else {
+                            hir::Expr {
+                                span: held.span,
+                                kind: hir::ExprKind::BoxAny { value: Box::new(held) },
+                                ty: Ty::Any,
+                            }
+                        };
                         let token = match args.get(2) {
                             Some(arg) => self.check_expr(cx, arg),
                             None => null_sentinel(span),
@@ -6050,6 +6104,52 @@ impl Checker<'_> {
                     && data_view_accessor(mname.as_str())
                 {
                     return self.check_data_view_method(cx, receiver, mname.as_str(), args, span);
+                }
+                // `ArrayBuffer.prototype.transfer(newLength?)` and
+                // `transferToFixedLength(newLength?)` (NUCLEUS #17). Hand-lowered
+                // rather than routed through the fixed-arity `managed_method`
+                // table because `newLength` is optional: when omitted, a `-1`
+                // sentinel is synthesized meaning "keep the source length".
+                // Both detach the source and yield a fresh `Buffer`.
+                if receiver.ty == Ty::Buffer
+                    && (mname == "transfer" || mname == "transferToFixedLength")
+                {
+                    if args.len() > 1 {
+                        self.error(
+                            span,
+                            format!("`{mname}` expects 0 or 1 argument(s), found {}", args.len()),
+                        );
+                        return self.poison(span);
+                    }
+                    let new_length = match args.first() {
+                        Some(arg) => {
+                            let mut length = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut length, Ty::Int(IntKind::I64));
+                            if !length.ty.is_error() && !length.ty.is_int() {
+                                self.error(length.span, "transfer length must be an integer");
+                            }
+                            length
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(-1.0),
+                            ty: Ty::Int(IntKind::I64),
+                            span,
+                        },
+                    };
+                    let native = if mname == "transfer" {
+                        "bufferTransfer"
+                    } else {
+                        "bufferTransferFixed"
+                    };
+                    let Some((id, _)) = zun_natives::resolve("buffer", native) else {
+                        self.error(span, format!("missing buffer intrinsic `{native}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, new_length] },
+                        ty: Ty::Buffer,
+                        span,
+                    };
                 }
                 let typed_array_method = match receiver.ty {
                     Ty::BufferView(kind) => crate::typed_arrays::method(kind, mname.as_str()),
@@ -6330,6 +6430,9 @@ impl Checker<'_> {
                     }
                     (Ty::Buffer, "resizable") => {
                         Some(("bufferResizable", Ty::Boolean, vec![]))
+                    }
+                    (Ty::Buffer, "detached") => {
+                        Some(("bufferDetached", Ty::Boolean, vec![]))
                     }
                     (Ty::Buffer, "resize") => Some((
                         "bufferResize",

@@ -214,6 +214,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "deserialize",
         "proxyNewCallable",
         "proxyApply",
+        "objectGetOwnPropertySymbols",
+        "numberCoerce",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
@@ -458,6 +460,9 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "typedArrayReduceNoInit",
         "typedArrayReduceRight",
         "typedArrayReduceRightNoInit",
+        "bufferTransfer",
+        "bufferTransferFixed",
+        "bufferDetached",
     ]
     .into_iter()
     // The typed-array intrinsics come from the master table, so a kind

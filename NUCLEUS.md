@@ -33,8 +33,8 @@ read.
 | 2 | Number | mostly | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants), instance `toString(radix)/toFixed/toExponential/toPrecision/valueOf`; only `toLocaleString` remains (locale/ICU — gated) |
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
-| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). **Object-literal computed Symbol methods landed** (§6b): `{ [Symbol.hasInstance](v){…} }` / `{ [Symbol.toPrimitive](h){…} }` lower to `dynamicSetSymbolFunction`, so user well-known-symbol methods can be written as literals (not only installed by hand). **Class computed symbol-key members landed**: `class C { [Symbol.hasInstance](v){…} }` parses and each such method is attached (as a function value) to a per-type symbol-method side table at class-definition time (`classSetSymbolFunction`); a typed-class `[Symbol.hasInstance]` now drives `instanceof` (forced runtime path consulting the side table). **Iteration protocol landed**: `for..of` over a non-built-in now desugars to `it[Symbol.iterator]().next()` driving, so a user object literal `{ [Symbol.iterator](){…} }`, a **typed-class `[Symbol.iterator]`** (the stored computed-symbol method is now consumed), and built-in iterator objects are all iterable; `Array`/`Map`/`Set` `keys/values/entries` return a real iterator object (`next()→{value,done}`, itself for-of-able); `new Set(x)`/`new Map(x)`/`[...x]` accept any protocol iterable. Remaining (all front-end/structural): operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
-| 6 | Object | mostly | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. Remaining: `getOwnPropertySymbols` |
+| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). **Object-literal computed Symbol methods landed** (§6b): `{ [Symbol.hasInstance](v){…} }` / `{ [Symbol.toPrimitive](h){…} }` lower to `dynamicSetSymbolFunction`, so user well-known-symbol methods can be written as literals (not only installed by hand). **Class computed symbol-key members landed**: `class C { [Symbol.hasInstance](v){…} }` parses and each such method is attached (as a function value) to a per-type symbol-method side table at class-definition time (`classSetSymbolFunction`); a typed-class `[Symbol.hasInstance]` now drives `instanceof` (forced runtime path consulting the side table). **Iteration protocol landed**: `for..of` over a non-built-in now desugars to `it[Symbol.iterator]().next()` driving, so a user object literal `{ [Symbol.iterator](){…} }`, a **typed-class `[Symbol.iterator]`** (the stored computed-symbol method is now consumed), and built-in iterator objects are all iterable; `Array`/`Map`/`Set` `keys/values/entries` return a real iterator object (`next()→{value,done}`, itself for-of-able); `new Set(x)`/`new Map(x)`/`[...x]` accept any protocol iterable. **`Number(x)` coercion landed** — the ToNumber site (`numberCoerce` native): strings parse (NaN on failure, `0x`/`0o`/`0b` radices, whitespace-trimmed), booleans map to 0/1, and an object runs OrdinaryToPrimitive(hint "number") via `[Symbol.toPrimitive]`, completing the toPrimitive dispatch surface. Remaining (all front-end/structural): operator-position auto-coercion (`+`/templates), and behavior for the seeded `match/replace/…` symbols |
+| 6 | Object | done | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. **`getOwnPropertySymbols` landed** — `Object.getOwnPropertySymbols(obj)` returns the object's own symbol keys (new `DynamicObject::symbol_keys` enumeration → heap `dynamic_symbol_keys` → `objectGetOwnPropertySymbols` native), in stable id order. Done |
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. **Binding destructuring landed** (declarations + for-of heads), so `for (const [i, v] of arr.entries())` works directly. **`keys/values/entries` now return a real iterator object** (`next()→{value,done}`, itself for-of-able), and `[...x]` spread drains any protocol iterable. **Change-array-by-copy landed**: `toSorted(cmp?)/toReversed()/with(index,value)` (negative index; out-of-range throws) `/toSpliced(start,deleteCount,...items)` all return fresh arrays and leave the receiver untouched. Remaining: `group/groupToMap` (deferred — return a null-proto object keyed by callback result; lower priority) |
 | 8 | Function | mostly | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0). **Function-valued `bind` partial/`this` arguments now work**: a function cannot box into `Any`, so each function-typed prepended argument is wrapped by a `functionBox` intrinsic (a GC-traced object carrying the callable in a `__boxedFn` function slot, keeping its captured environment visible to precise root handling) and `resolve_call_target` unwraps it before dispatch — order among prepended args is preserved. Deferred: **`Function` constructor** (`new Function(args, body)` evaluates a source string ⇒ needs a runtime compiler; the VM links no compiler and this conflicts with AOT reachability/trimming — structural); **a function inside `apply`'s arguments array** / functions in generic arrays (would require letting `box_any` carry functions globally — a deliberate GC-root-precision invariant, broad arg-marshalling rework); **multi-argument bound calls** (bound functions are typed `Function` and dynamic calls use the single-trailing-arg IL arity model — carrying an argument count for a dynamic `CallIndirect` is an opcode-set + verifier change) |
 | 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }`; **destructuring the resolver functions now works** (`const { resolve, reject } = Promise.withResolvers(); resolve(v)`) — object destructuring reads the function slot as a callable value and an `any`-typed local is now dynamically callable; `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. **`new Promise(executor)` now lands** (`new Promise((res, rej) => …)`): the constructor allocates a pending promise, builds its `resolve`/`reject` settlers via the exact `withResolvers` mechanism (`make_promise_settler`/`settler_of`), and synchronously invokes the executor with them (Tier 0 callback re-entry, promise rooted); an executor throw rejects the promise with the thrown value (object reason first-class via `settle_promise_reject_value`, string reason keeps its message surface) and is swallowed; the `resolve` settler now adopts a Promise argument (chaining, not wrapping — shared with `withResolvers`). `new Promise()` zero-arg stays the empty-pending path. Remaining: — (minor deferred: the `resolve` settler adopts managed Promises but not generic non-Promise thenables; and the textbook `new Promise((res) => setTimeout(() => res(1), 0))` form is blocked only by a pre-existing closure gap — calling a captured variable by bare name inside a nested closure — orthogonal to Promise) |
@@ -44,20 +44,20 @@ read.
 | 13 | WeakMap | done | `set/get/has/delete`; semantics OK (ephemeron floor). ECMAScript WeakMap has no iteration/size/clear by design, so this is the complete surface, not a gap |
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
-| 16 | FinalizationRegistry | mostly | Spec-shaped `new FinalizationRegistry(cleanup)` / `register(target, heldValue, unregisterToken?)` / `unregister(unregisterToken)`; `unregister` keyed by unregister-token object identity (weak key); cleanup callback delivered on collection. Deferred: `heldValue` is a `u64`, not an arbitrary value |
-| 17 | ArrayBuffer | mostly | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, the static `isView(x)`, and now **resizable buffers (ES2024)**: `new ArrayBuffer(n, { maxByteLength })`, `resize(newLength)` (grow zero-fills the tail, shrink preserves the prefix), `maxByteLength()`/`resizable()`. Out-of-bounds / length-tracking view semantics are **lazy-resolved**: typed-array/DataView windows re-resolve against the buffer's current length at access time (no buffer→view back-reference registry), so a resize walks no views — a length-tracking typed array (`new Uint8Array(rab)`, no explicit length) follows the new length, and a fixed-length view that no longer fits reports length 0 and fails on access. Rejected `resize` (fixed buffer or `newLength > maxByteLength`) errs as `BadToken` (project convention, not JS `RangeError`). Deferred: `transfer`/`transferToFixedLength` (buffer detachment), length-tracking `DataView` |
+| 16 | FinalizationRegistry | done | Spec-shaped `new FinalizationRegistry(cleanup)` / `register(target, heldValue, unregisterToken?)` / `unregister(unregisterToken)`; `unregister` keyed by unregister-token object identity (weak key); cleanup callback delivered on collection. **`heldValue` is now an arbitrary value** — boxed into `Any`, GC-traced (marked and relocated) while the registration is pending, and delivered to the cleanup callback on collection (register/queue/deliver path carries an `Any`, not a `u64`). Done |
+| 17 | ArrayBuffer | mostly | `new ArrayBuffer(n)`, `byteLength()`, copying `slice()` with JS clamping, the static `isView(x)`, and now **resizable buffers (ES2024)**: `new ArrayBuffer(n, { maxByteLength })`, `resize(newLength)` (grow zero-fills the tail, shrink preserves the prefix), `maxByteLength()`/`resizable()`. Out-of-bounds / length-tracking view semantics are **lazy-resolved**: typed-array/DataView windows re-resolve against the buffer's current length at access time (no buffer→view back-reference registry), so a resize walks no views — a length-tracking typed array (`new Uint8Array(rab)`, no explicit length) follows the new length, and a fixed-length view that no longer fits reports length 0 and fails on access. Rejected `resize` (fixed buffer or `newLength > maxByteLength`) errs as `BadToken` (project convention, not JS `RangeError`). **`transfer`/`transferToFixedLength` landed (ES2024)**: a `detached` flag on `ByteBuffer` (checked in `resize` and surfaced via `detached()`); `transfer(newLength?)` detaches the source (clears its bytes → `byteLength` 0, every view sees length 0 through the existing lazy-resolve) and moves the surviving prefix into a fresh buffer that keeps the source's resizability; `transferToFixedLength(newLength?)` yields a fixed-length buffer. `newLength` defaults to the source length (a `-1` sentinel). Deferred: length-tracking `DataView` |
 | 18 | DataView | mostly | All element widths present, signed included (`Int8`..`Int64`, `Float32`), plus `byteLength()`/`byteOffset()`/`buffer()`. 64-bit named `getInt64`/`getUint64` since Zun has native 64-bit ints. **Endianness flag is now optional and defaults to `false` (big-endian) per spec** — `getUint32(0)` type-checks and reads big-endian; single-byte widths still take none |
 | 19 | TypedArrays | mostly | All eleven JS kinds, generated from one master table in `zun_core` (`Int8`/`Uint8`/`Uint8Clamped`/`Int16`/`Uint16`/`Int32`/`Uint32`/`Float32`/`Float64`/`BigInt64`/`BigUint64`), each with `length()`/`byteLength()`/`get`/`set`/`subarray`/`fill`/`byteOffset`/`buffer` and `[Symbol.iterator]`/`for...of`. **Bulk `set(source, offset?)`** (overloaded against the indexed `set(index, value)` by first-argument type), **copying `slice(start?, end?)`**, **in-place `copyWithin(target, start?, end?)`**, the functional methods **`map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`** (spec `(value, index, array)` callback, Tier 0), **`indexOf`/`includes`/`join`**, and the statics **`from(src, mapFn?)`/`of(...)`** all landed, as kind-agnostic `typedArray*` natives (one each, not per-kind). `Uint8ClampedArray` takes a `number` and clamps per `ToUint8Clamp`; the 64-bit pair carries native `i64`/`u64`, not BigInts. No-initial-value `reduce(cb)`/`reduceRight(cb)` now landed (seed from the first/last element; empty typed array throws a TypeError-equivalent), alongside initialized `reduceRight(cb, init)`. `Uint8Array.slice` keeps Buffer (shared-type) semantics. Note: elements above 2^53 are not writable as literals — bare numeric literals are `f64` |
 | 20 | Date | mostly | JS-correct `getUTCMonth`/`getUTCDay` (both were off by one), all UTC setters, `Date.UTC`, `getTimezoneOffset`, `Date.now`, `new Date()` (current time), local-time getters AND local-time setters (`setFullYear/setMonth/setDate/setHours/setMinutes/setSeconds/setMilliseconds` with ECMAScript optional trailing args, == their UTC counterparts since the calendar is UTC-only). Only `toLocale*` remains (locale/ICU — gated) |
 | 21 | Buffer | mostly | Built on the `Uint8Array` byte-view floor (Buffer IS a U8 view, as in Node); realm global via `builtin/realm.zun` + `base_type_facets`. Statics `from`(string/array/ArrayBuffer)/`alloc`/`allocUnsafe`/`concat`/`isBuffer`/`byteLength`; instance `length`, indexed `buf[i]` get/set, `toString`/`slice`(negative indices)/`write`/`equals`/`copy`/`fill(value)`, common LE/BE 8/16/32/64 readers/writers, `readFloat*`/`readDouble*`/`writeFloat*`/`writeDouble*`, variable-width `read{U,}Int*`/`write{U,}Int*` (1..6 bytes, incl. 24-bit), `swap16/32/64`, and `indexOf`/`lastIndexOf`/`includes` (number/string/Buffer needle + byteOffset/encoding). Encodings utf8/hex/base64/base64url/ucs2/utf16le/latin1. Length-mismatch swap + OOB access err as `BadToken` (project convention, not JS `RangeError`). `copy(target, targetStart?, sourceStart?, sourceEnd?)` now accepts negative start/end indices (counted from the end, like `slice`); shared-memory/view semantics intact |
-| 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
+| 22 | Error (+ subclasses) | done | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). **`err.cause = x` dynamic set landed** — assigning the declared `any` `cause` field on a typed Error instance type-checks and stores through the any-field carrier (field store on `Ty::Instance`), independent of the `(message, options)` construction form. Done |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
 | 25 | Decorators | mostly | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback; proving macro `@autoToString`. **Runtime TC39 decorators — tractable core landed** (Stage 3): a `@dec` whose callee resolves to an ordinary top-level `(any, any)` function (not a macro) is invoked once at class-definition time via the module-initializer seam with `(value, context)`, `context = { kind: "class"\|"method", name, static }`, TC39 order (members before class, bottom-to-top); callee-resolves-to-a-function is the registry-free macro-vs-runtime rule, so `@sealed`/`@trace` stay inert. Deferred (documented): return-value replacement + live `value` (needs dispatch-model change; `Value::Function` excluded from `Any`, no runtime class value → `value` is `null`); `addInitializer`; `access`; field/accessor/private-element decorators. **Decorator factories `@dec(args)` landed**: the factory call `dec(args)` (literal args) is evaluated in the initializer and its returned decorator is invoked with `(value, context)` via `applyDecorator`. Separately: in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
-| 27 | Binary ser/de primitive | done | `serialize(value): Uint8Array` / `deserialize(bytes): any`, imported from `"zun:core"` (bare names, not globals). Version-tagged CBOR-ish wire format (`zun_core::serde`) covering null/undefined/bool/int-kinds/f32/f64/bigint/string/array/dynamic object/**typed class instance (metadata type token + layout-order field walk)**/Map/Set/Date/ArrayBuffer/TypedArray(+Buffer) with a **ref/memo** tag; shared & cyclic graphs round-trip (allocate-shell-then-fill, memo on both sides). Engine on the Tier-0 floor (`zun_interp::serde`), reusing `object_own_entries` (the `Object.keys` walk). Safe-by-construction: no code exec; a function value, unknown tag, truncated stream, or unresolved type token is a clean error. Deferred: symbol-keyed dynamic entries (no heap enumeration API, as with `getOwnPropertySymbols` #6), DataView, cross-program/versioned type identity (type tokens are program-local, an approved follow-up) |
+| 27 | Binary ser/de primitive | done | `serialize(value): Uint8Array` / `deserialize(bytes): any`, imported from `"zun:core"` (bare names, not globals). Version-tagged CBOR-ish wire format (`zun_core::serde`) covering null/undefined/bool/int-kinds/f32/f64/bigint/string/array/dynamic object/**typed class instance (metadata type token + layout-order field walk)**/Map/Set/Date/ArrayBuffer/TypedArray(+Buffer) with a **ref/memo** tag; shared & cyclic graphs round-trip (allocate-shell-then-fill, memo on both sides). Engine on the Tier-0 floor (`zun_interp::serde`), reusing `object_own_entries` (the `Object.keys` walk). Safe-by-construction: no code exec; a function value, unknown tag, truncated stream, or unresolved type token is a clean error. Deferred: symbol-keyed dynamic entries (the heap enumeration API now exists — `dynamic_symbol_keys`, via `getOwnPropertySymbols` #6 — so this is now a straightforward follow-up, not blocked), DataView, cross-program/versioned type identity (type tokens are program-local, an approved follow-up) |
 
-**Counts:** done 7 · mostly 20 · partial 0 · missing 0 (of 27 nucleus items; the JSON
+**Counts:** done 10 · mostly 17 · partial 0 · missing 0 (of 27 nucleus items; the JSON
 text surface stays excluded — see the note at the top). Recounted from the table above;
 it has to sum to 27.
 
@@ -366,10 +366,12 @@ in sync.
     a type error). The explicit `String(x)` call is the sufficient, spec-correct site; wiring
     `toPrimitive` into operators is a broader type-system change, not needed to observe the
     dispatch.
-  - **`Number(obj)` number-hint coercion** is not built: it would reuse the same
-    `[Symbol.toPrimitive]` machinery with hint `"number"`/`"default"`, but ToNumber of the
-    resulting primitive (parsing arbitrary strings) is a larger surface than the `String(x)`
-    deliverable. The storage/dispatch primitive is in place should it be added later.
+  - **`Number(x)` coercion landed** (`numberCoerce` native, sema plain-Call path alongside
+    `String(x)`/`Boolean(x)`/`BigInt(x)`): a number → itself; a string → ToNumber (whitespace
+    trim, `0x`/`0o`/`0b` radices, decimal/scientific, `NaN` on failure, `""` → 0); a boolean
+    → 0/1; `null` → 0, `undefined` → NaN; an object → OrdinaryToPrimitive(hint `"number"`)
+    via `[Symbol.toPrimitive]`, then ToNumber of its result (else NaN). Completes the
+    toPrimitive dispatch surface.
   - **`Object.prototype.toString`** as a canonical stringification site is still absent; the
     `print` native keeps the generic `"[object]"` (it runs on a heap-free `NativeArg`).
     `String(obj)` is the heap-aware stringification site; a shared `toString` would route
@@ -454,9 +456,12 @@ configurable; `Object.defineProperty` defaults each omitted flag to **false**.
 - **`Object.is`:** ECMAScript `SameValue` (NaN equals NaN; +0 distinct from −0;
   numbers compared by IEEE-754 bits after the NaN check; strings by content; objects by
   identity).
-- **Still deferred:** `getOwnPropertySymbols` (symbol-keyed own properties are stored but
-  not yet enumerated); descriptor-dependent **Proxy** traps / **Reflect** statics
-  (§10) can now build on this model; computed-key accessor access (see above).
+- **`getOwnPropertySymbols` landed:** `DynamicObject::symbol_keys` exposes the ordered
+  symbol-key list the store already held; heap `dynamic_symbol_keys` + the
+  `objectGetOwnPropertySymbols` native build the array of `Any` symbol values. This also
+  unblocks symbol-key copying for object spread and serialization later.
+- **Still available to build on:** descriptor-dependent **Proxy** traps / **Reflect** statics
+  (§10) can build on this model; computed-key accessor access (see above).
 - **Notes:** these builtins allocate/throw, so per the centralized JIT-eligibility rule
   (`zun_codegen/src/eligible.rs`) they are **not** in the Tier-1 allowlist and run on the
   always-correct Tier-0 interpreter; there is no separate JIT path to keep in sync.
@@ -934,7 +939,7 @@ reclaims the target).
   `undefined` once collected). Registered declaratively.
 - **Missing:** nothing material.
 
-## 16. FinalizationRegistry — mostly
+## 16. FinalizationRegistry — done
 `builtin/finalization_registry.zun` → GC finalization queue.
 - **Present (spec-shaped):** `new FinalizationRegistry(cleanup)`,
   `register(target, heldValue, unregisterToken?)`, `unregister(unregisterToken)`.
@@ -954,14 +959,16 @@ reclaims the target).
   held value at the next safepoint. Callback environments are strong GC roots (both
   the per-registry callback and the per-registration copy); targets and unregister
   tokens are weak.
-- **Scoping note:** `heldValue` is currently a `u64` (it reuses the existing
-  `token: u64` held-value slot threaded through the GC `FinalizerEntry` /
-  `FinalizationRecord`); arbitrary-value held values would require widening that
-  slot to a boxed `Value` and are deferred. The vestigial `builtin/*.zun` class
+- **`heldValue` is now arbitrary:** the GC `FinalizerEntry` / `FinalizationRecord`
+  carry a `held: Any` (was `token: u64`). A pending registration's held value is
+  marked during collection (so an object held value stays alive) and its object
+  address is rewritten on compaction; on collection the record is delivered to the
+  cleanup callback as its unboxed runtime value. The surface boxes the argument into
+  `Any` (sema) / at the `finalizationRegister` native. The vestigial `builtin/*.zun` class
   mirrors the surface so the module type-checks but is not the dispatch path — the
   checker lowers `FinalizationRegistry` methods directly against the builtin type.
 
-## 17. ArrayBuffer — mostly
+## 17. ArrayBuffer — mostly (transfer landed)
 `Ty::Buffer` is what the realm registers under the name `ArrayBuffer`; the byte
 storage lives in `zun_gc/buffers.rs` (`ByteBuffer` in `zun_core`).
 
@@ -987,8 +994,18 @@ storage lives in `zun_gc/buffers.rs` (`ByteBuffer` in `zun_core`).
   out-of-bounds — length 0, access fails — exactly as the spec requires. This is
   sound because every access already borrows the backing buffer, so re-reading
   its length costs nothing and no stale window can outlive a resize.
-- **Deferred:** `transfer`/`transferToFixedLength` (buffer detachment — would
-  need a detached-state on every view access), length-tracking `DataView`
+- **`transfer`/`transferToFixedLength` landed:** a `detached: bool` on
+  `ByteBuffer` (checked in `resize`, surfaced via `detached()` / the
+  `bufferDetached` native). `detach()` takes the bytes + growth cap out, leaving a
+  zero-length detached husk — so the source's `byteLength` becomes 0 and every
+  outstanding view sees length 0 through the **existing lazy-resolve** path (no new
+  per-access check). `buffer_transfer(source, newLength?, fixed)` detaches the
+  source and moves the surviving prefix into a fresh buffer: `transfer` keeps the
+  source's resizability/cap, `transferToFixedLength` forces a fixed-length result.
+  `newLength` defaults to the source length (`-1` sentinel from the surface). A
+  detached source, or a destination exceeding a resizable cap, errs as `BadToken`
+  (project convention).
+- **Deferred:** length-tracking `DataView`
   (constructor still requires an explicit length; fixed DataViews do resolve for
   out-of-bounds), `SharedArrayBuffer` (fine).
 - **`ArrayBuffer.isView(x)`** — `true` for a `DataView` or any typed array,
@@ -1220,7 +1237,7 @@ There is no parallel `builtin/buffer.zun` class.
   reachable on a bare `Uint8Array` too, and `slice` is a shared-memory view
   rather than a copy — the visible consequences of the shared representation.
 
-## 22. Error (+ subclasses) — mostly
+## 22. Error (+ subclasses) — done
 `builtin/error.zun` (module `zun:std:error`): `Error` + `EvalError RangeError
 ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
 
@@ -1306,9 +1323,11 @@ ReferenceError SyntaxError TypeError URIError`. `error_value.rs` in core.
     (number/string/object/…) through the heap side table instead of being stored
     as zero, and absent-vs-present is a missing side-table entry (`undefined`)
     vs. a stored `Any`.
-  - Remaining: no `err.cause = x` **dynamic set** on a typed instance (the field
-    is read-only through the typed path, like `name`); that is the same
-    dynamic-path concern as `e.name = "..."`.
+  - **`err.cause = x` dynamic set landed** — assigning the `cause` field on a typed
+    Error instance type-checks (it is a declared `any` field) and stores through the
+    any-field carrier (`FieldSet` on `Ty::Instance`; `store_field` boxes into the
+    `any_fields` side table), independent of the `(message, options)` construction
+    form. Any value round-trips (number/string/object).
 - **Frozen-layout `any` fields (the transversal enabler).** A class field is one
   8-byte slot, but a runtime `Any` is 16 bytes (`zun_core::Any` = tag + payload),
   so an `any`-typed field could not be carried: `field_kind_byte(Ty::Any)` mapped
@@ -1596,9 +1615,9 @@ type identity (a name/version registry).
    - BigInt (#4): `div/rem/pow/neg`, bitwise/shift, `BigInt()` coercion, `asIntN/asUintN`.
    - Error (#22): ✅ `.stack` capture, `AggregateError(errors, message)`,
      **`cause` (via the frozen-layout `any`-field carrier)**, and **`Error` + 6
-     subclasses as realm globals** (`ClassFallThrough`) landed. Remaining:
-     `err.cause = x` dynamic set on a typed instance, `aggregate instanceof
-     Error`.
+     subclasses as realm globals** (`ClassFallThrough`) landed, and
+     **`err.cause = x` dynamic set** on a typed instance. Remaining:
+     `aggregate instanceof Error`.
    - ArrayBuffer (#17): ✅ `byteLength slice isView` landed. Remaining (deferred):
      resizable buffers (`resize/maxByteLength`), `SharedArrayBuffer`.
    - Proxy/Reflect (#10): full trap set + `Reflect` global.

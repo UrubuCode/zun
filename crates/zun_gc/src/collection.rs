@@ -166,6 +166,18 @@ impl Heap {
         // target is weak, but a captured callback environment must survive
         // until the registration is removed or delivered.
         for entry in &self.finalizers {
+            // A pending registration's held value is delivered to the cleanup
+            // callback, so an object it references must survive until then.
+            if !entry.queued {
+                if let Some(address) = entry.held.as_object() {
+                    if let Some(&idx) = self.by_addr.get(&address) {
+                        if !self.records[idx].marked {
+                            self.records[idx].marked = true;
+                            work.push(idx);
+                        }
+                    }
+                }
+            }
             let Some(environment) = entry.callback.and_then(|callback| callback.environment())
             else {
                 continue;
@@ -175,6 +187,26 @@ impl Heap {
                 if !self.records[idx].marked {
                     self.records[idx].marked = true;
                     work.push(idx);
+                }
+            }
+        }
+        // Already-queued-but-not-yet-delivered records keep their held value
+        // (and callback environment) alive until the runtime drains them.
+        for record in &self.finalization_queue {
+            if let Some(address) = record.held.as_object() {
+                if let Some(&idx) = self.by_addr.get(&address) {
+                    if !self.records[idx].marked {
+                        self.records[idx].marked = true;
+                        work.push(idx);
+                    }
+                }
+            }
+            if let Some(environment) = record.callback.and_then(|callback| callback.environment()) {
+                if let Some(&idx) = self.by_addr.get(&environment) {
+                    if !self.records[idx].marked {
+                        self.records[idx].marked = true;
+                        work.push(idx);
+                    }
                 }
             }
         }
@@ -536,7 +568,7 @@ impl Heap {
             if entry.target != 0 && !entry.queued && self.by_addr.get(&entry.target).is_none() {
                 entry.queued = true;
                 self.finalization_queue.push(super::FinalizationRecord {
-                    token: entry.token,
+                    held: entry.held,
                     callback_id: entry.callback_id,
                     callback: entry.callback,
                 });

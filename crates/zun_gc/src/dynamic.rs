@@ -163,6 +163,15 @@ impl Heap {
         result
     }
 
+    /// The object's own symbol keys in a stable order (backs
+    /// `Object.getOwnPropertySymbols`). An unknown/non-dynamic object has none.
+    pub fn dynamic_symbol_keys(&self, object: Obj) -> Vec<zun_core::SymbolId> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .map(|properties| properties.symbol_keys().collect())
+            .unwrap_or_default()
+    }
+
     pub fn dynamic_get_symbol_function(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_function(symbol))
     }

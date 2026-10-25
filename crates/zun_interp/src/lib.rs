@@ -1909,6 +1909,73 @@ mod method_tests {
     }
 
     #[test]
+    fn number_coercion_parses_strings_and_primitives() {
+        // `Number(x)` (ECMAScript ToNumber): strings parse (NaN on failure),
+        // booleans map to 0/1, and the result stringifies like any number.
+        assert_eq!(typeof_of("function main(): string { return String(Number(\"42\")); }"), "42");
+        assert_eq!(typeof_of("function main(): string { return String(Number(\"  3.5 \")); }"), "3.5");
+        assert_eq!(typeof_of("function main(): string { return String(Number(\"0x10\")); }"), "16");
+        assert_eq!(typeof_of("function main(): string { return String(Number(\"nope\")); }"), "NaN");
+        assert_eq!(typeof_of("function main(): string { return String(Number(true)); }"), "1");
+        assert_eq!(typeof_of("function main(): string { return String(Number(\"\")); }"), "0");
+    }
+
+    #[test]
+    fn number_coercion_invokes_symbol_to_primitive_with_number_hint() {
+        // `Number(obj)` runs OrdinaryToPrimitive(hint "number"): the stored
+        // `[Symbol.toPrimitive]` method is called and its result ToNumber'd.
+        let source = "import { dynamicSetSymbolFunction } from \"zun:core\";\n\
+             function toPrim(hint: any): any { return box_any(7); }\n\
+             function main(): string {\n\
+               let o = dynamic_new();\n\
+               dynamicSetSymbolFunction(o, Symbol.toPrimitive, toPrim);\n\
+               let x: any = o;\n\
+               return String(Number(x));\n\
+             }";
+        assert_eq!(typeof_of(source), "7");
+    }
+
+    #[test]
+    fn object_get_own_property_symbols_lists_symbol_keys() {
+        // `Object.getOwnPropertySymbols(obj)` returns the object's own symbol
+        // keys, which index back into the object.
+        let source = "function main(): u64 {\n\
+               let a = Symbol(\"a\");\n\
+               let b = Symbol(\"b\");\n\
+               let o = dynamic_new();\n\
+               o[a] = box_any(5);\n\
+               o[b] = box_any(9);\n\
+               let syms = Object.getOwnPropertySymbols(o);\n\
+               let count: u64 = 0;\n\
+               if (typeof syms[0] === \"symbol\") { count = count + 1; }\n\
+               if (typeof syms[1] === \"symbol\") { count = count + 1; }\n\
+               return (syms.length as u64) * 10 + count;\n\
+             }";
+        let module = zun_compiler::compile(source).expect("compile getOwnPropertySymbols");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run getOwnPropertySymbols") {
+            Value::Int(value, _) => assert_eq!(value, 22),
+            other => panic!("expected an integer result, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_get_own_property_symbols_is_empty_without_symbol_keys() {
+        let source = "function main(): u64 {\n\
+               let o = dynamic_new();\n\
+               o[Symbol(\"only\")] = box_any(1);\n\
+               let syms = Object.getOwnPropertySymbols(dynamic_new());\n\
+               return syms.length as u64;\n\
+             }";
+        let module = zun_compiler::compile(source).expect("compile empty getOwnPropertySymbols");
+        let mut output = CaptureOutput::default();
+        match run(&module, &mut output).expect("run empty getOwnPropertySymbols") {
+            Value::Int(value, _) => assert_eq!(value, 0),
+            other => panic!("expected an integer result, found {other:?}"),
+        }
+    }
+
+    #[test]
     fn well_known_symbols_are_distinct_stable_values() {
         // The newly-seeded well-known symbols are distinct identities: using
         // two of them as keys on one object keeps both slots independent.

@@ -118,3 +118,64 @@ fn is_view_is_true_for_views_and_false_for_everything_else() {
     );
     assert_eq!(out, vec!["true", "true", "false", "false", "false"]);
 }
+
+// --- transfer / transferToFixedLength / detached (NUCLEUS #17) ---
+
+#[test]
+fn transfer_detaches_the_source_and_keeps_the_length() {
+    let out = run_source(
+        r#"function main() {
+            let b = new ArrayBuffer(8);
+            print(b.detached());
+            let moved = b.transfer();
+            print(moved.byteLength());
+            print(b.byteLength());
+            print(b.detached());
+            print(moved.detached());
+        }"#,
+    );
+    assert_eq!(out, vec!["false", "8", "0", "true", "false"]);
+}
+
+#[test]
+fn transfer_can_resize_the_backing_store() {
+    let out = run_source(
+        r#"function main() {
+            print(new ArrayBuffer(8).transfer(16).byteLength());
+            print(new ArrayBuffer(8).transfer(4).byteLength());
+        }"#,
+    );
+    assert_eq!(out, vec!["16", "4"]);
+}
+
+#[test]
+fn transfer_preserves_the_surviving_bytes() {
+    let out = run_with_prelude(
+        r#"function main() {
+            let b = new ArrayBuffer(8);
+            let src = new Uint8Array(b, 0, 8);
+            src.set(0, 42);
+            src.set(7, 99);
+            let moved = b.transfer();
+            let dst = new Uint8Array(moved, 0, 8);
+            print(dst.get(0));
+            print(dst.get(7));
+        }"#,
+    );
+    assert_eq!(out, vec!["42", "99"]);
+}
+
+#[test]
+fn transfer_to_fixed_length_yields_a_non_resizable_buffer() {
+    let out = run_source(
+        r#"function main() {
+            let b = new ArrayBuffer(8, { maxByteLength: 16 });
+            print(b.resizable());
+            let kept = b.transfer();
+            print(kept.resizable());
+            let fixed = new ArrayBuffer(8, { maxByteLength: 16 }).transferToFixedLength();
+            print(fixed.resizable());
+        }"#,
+    );
+    assert_eq!(out, vec!["true", "true", "false"]);
+}

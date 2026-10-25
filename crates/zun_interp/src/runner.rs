@@ -591,7 +591,13 @@ impl Interp<'_> {
                 let Some(callback) = record.callback else {
                     continue;
                 };
-                let token = Value::Int(record.token as i64, zun_il::NumKind::U64);
+                // The held value is delivered as it was registered: an `Any`
+                // carrier unboxed back into a runtime value (object, string,
+                // number, …), falling back to the raw `Any` if it cannot unbox.
+                let held = zun_gc::with_current_heap(|heap| {
+                    Value::unbox_any(record.held, heap)
+                })
+                .unwrap_or(Value::Any(record.held));
                 let environment = callback
                     .environment()
                     .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
@@ -599,7 +605,7 @@ impl Interp<'_> {
                 if let Some(environment) = environment {
                     args.push(Value::Object(environment));
                 }
-                args.push(token);
+                args.push(held);
                 self.call(callback.method_rid(), args, None)?;
             }
         }

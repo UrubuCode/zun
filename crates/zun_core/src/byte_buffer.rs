@@ -9,20 +9,53 @@ pub struct ByteBuffer {
     bytes: Vec<u8>,
     /// `Some(max)` for a resizable buffer, `None` for a fixed-length one.
     max: Option<usize>,
+    /// Set once the buffer has been detached (its backing store moved out by
+    /// `transfer`/`transferToFixedLength`). A detached buffer has byte length 0
+    /// and rejects every further access, as ES2024 requires.
+    detached: bool,
 }
 
 impl ByteBuffer {
-    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length], max: None } }
+    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length], max: None, detached: false } }
 
     /// A resizable buffer of initial byte length `length` that can grow to at
     /// most `max`. Returns `None` when `length > max`, matching the TypeError
     /// the JS constructor throws for `maxByteLength < byteLength`.
     pub fn new_resizable(length: usize, max: usize) -> Option<Self> {
-        (length <= max).then(|| Self { bytes: vec![0; length], max: Some(max) })
+        (length <= max).then(|| Self { bytes: vec![0; length], max: Some(max), detached: false })
     }
 
-    /// Whether this buffer was created resizable.
-    pub fn resizable(&self) -> bool { self.max.is_some() }
+    /// Build a buffer from an exact byte length and growth cap. The bytes are
+    /// zero-initialized; `transfer` then copies the surviving prefix in. `max`
+    /// is `Some(cap)` for a resizable destination, `None` for a fixed-length
+    /// one. Returns `None` when `length` exceeds a resizable cap.
+    pub fn with_capacity(length: usize, max: Option<usize>) -> Option<Self> {
+        if let Some(cap) = max {
+            if length > cap {
+                return None;
+            }
+        }
+        Some(Self { bytes: vec![0; length], max, detached: false })
+    }
+
+    /// Whether this buffer was created resizable. A detached buffer is never
+    /// resizable.
+    pub fn resizable(&self) -> bool { !self.detached && self.max.is_some() }
+
+    /// Whether this buffer has been detached.
+    pub fn detached(&self) -> bool { self.detached }
+
+    /// Detach the buffer: take its bytes and growth cap out, leaving a
+    /// zero-length detached husk behind. Returns the former `(bytes, max)` so a
+    /// `transfer` can rebuild them into the destination buffer. Detaching an
+    /// already-detached buffer yields nothing.
+    pub fn detach(&mut self) -> Option<(Vec<u8>, Option<usize>)> {
+        if self.detached {
+            return None;
+        }
+        self.detached = true;
+        Some((std::mem::take(&mut self.bytes), self.max.take()))
+    }
 
     /// `ArrayBuffer.prototype.maxByteLength`: the growth cap for a resizable
     /// buffer, or the current (fixed) byte length otherwise.
@@ -33,6 +66,7 @@ impl ByteBuffer {
     /// `new_length` exceeds `maxByteLength`. Growing zero-fills the new tail;
     /// shrinking preserves the surviving prefix.
     pub fn resize(&mut self, new_length: usize) -> bool {
+        if self.detached { return false; }
         let Some(max) = self.max else { return false; };
         if new_length > max { return false; }
         self.bytes.resize(new_length, 0);
