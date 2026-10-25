@@ -499,8 +499,8 @@
 
     #[test]
     fn any_does_not_implicitly_enable_arithmetic() {
-        let msg = first_error("function f(value: any) { let result = value + 1; }");
-        assert!(msg.contains("cannot add"), "{msg}");
+        let msg = first_error("function f(value: any) { let result = value - 1; }");
+        assert!(msg.contains("arithmetic requires"), "{msg}");
     }
 
     #[test]

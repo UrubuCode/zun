@@ -2458,6 +2458,56 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::void);
                 Ok(Value::Any(boxed))
             }
+            "addAny" => {
+                // ECMAScript `+`: ToPrimitive(default) on each operand, then
+                // string concat if either is a string, else numeric add.
+                let mut prims = Vec::with_capacity(2);
+                for index in 0..2 {
+                    let value = unbox_arg(args.get(index).ok_or(RunError::BadToken)?)?;
+                    let prim = match value {
+                        Value::Object(obj) => {
+                            let to_prim = zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_get_symbol_function(
+                                    obj,
+                                    zun_core::WellKnownSymbol::ToPrimitive.id(),
+                                )
+                            });
+                            match to_prim {
+                                Some(handle) => {
+                                    let hint = zun_gc::with_current_heap_mut(|heap| {
+                                        Value::Any(zun_core::Any::string(
+                                            heap.intern_string("default".into()),
+                                        ))
+                                    });
+                                    let result = self.invoke_function_value(handle, vec![hint])?;
+                                    unbox_arg(&result)?
+                                }
+                                None => Value::Str("[object Object]".into()),
+                            }
+                        }
+                        other => other,
+                    };
+                    prims.push(prim);
+                }
+                let result = if prims.iter().any(|p| matches!(p, Value::Str(_))) {
+                    let text: String = prims
+                        .iter()
+                        .map(|p| match p {
+                            Value::Str(text) => text.to_string(),
+                            other => other.display(),
+                        })
+                        .collect();
+                    Value::Str(text.into())
+                } else {
+                    let sum = zun_gc::with_current_heap(|heap| {
+                        to_number(&prims[0], heap) + to_number(&prims[1], heap)
+                    });
+                    Value::Float(sum, zun_il::NumKind::F64)
+                };
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::void);
+                Ok(Value::Any(boxed))
+            }
             "functionApply" => {
                 // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
                 // the leading positional argument, spread with the array.

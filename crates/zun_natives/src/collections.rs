@@ -479,5 +479,9 @@ pub const MODULE: crate::Module = crate::Module {
         // Invokes `arg[Symbol.<kind>](receiver, extra?)` when present, else falls
         // back to a string-path result. Appended last so ids stay stable.
         NativeFn { name: "stringSymbolDispatch", params: &[Str, Opaque, Opaque, I64], ret: Opaque, imp: unavailable },
+        // NUCLEUS #5: ECMAScript `+` on two `Any` operands: ToPrimitive(default)
+        // on each, then string concatenation if either is a string, else numeric
+        // addition. Appended last so ids stay stable.
+        NativeFn { name: "addAny", params: &[Opaque, Opaque], ret: Opaque, imp: unavailable },
     ],
 };

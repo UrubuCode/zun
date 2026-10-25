@@ -3828,6 +3828,25 @@ impl Checker<'_> {
                                     self.error(span, "number template conversion is unavailable");
                                     self.poison(span)
                                 }
+                            } else if matches!(value.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_))
+                                && zun_natives::resolve("collections", "stringCoerce").is_some()
+                            {
+                                let (id, _) = zun_natives::resolve("collections", "stringCoerce")
+                                    .expect("checked above");
+                                let arg = if value.ty == Ty::Any {
+                                    value
+                                } else {
+                                    hir::Expr {
+                                        span: value.span,
+                                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                        ty: Ty::Any,
+                                    }
+                                };
+                                hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                                    ty: Ty::String,
+                                    span,
+                                }
                             } else {
                                 if value.ty != Ty::String && !value.ty.is_error() {
                                     self.error(value.span, "template interpolation must have type string or number");
@@ -4029,6 +4048,44 @@ impl Checker<'_> {
                                     args: vec![lhs, rhs],
                                 },
                                 ty: native_ty(native.ret),
+                                span,
+                            };
+                        }
+                    }
+                }
+                // `+` with an object/any operand: ECMAScript ToPrimitive(default)
+                // on both sides, then string concat or numeric add, at run time.
+                if let ast::BinaryOp::Add = op {
+                    let objectish =
+                        |t: Ty| matches!(t, Ty::Any | Ty::DynamicObject | Ty::Instance(_));
+                    let operable = |t: Ty| {
+                        objectish(t)
+                            || t == Ty::String
+                            || t == Ty::F64
+                            || t == Ty::Boolean
+                    };
+                    if (objectish(lhs.ty) || objectish(rhs.ty))
+                        && operable(lhs.ty)
+                        && operable(rhs.ty)
+                    {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "addAny") {
+                            let to_any = |e: hir::Expr| {
+                                if e.ty == Ty::Any {
+                                    e
+                                } else {
+                                    hir::Expr {
+                                        span: e.span,
+                                        kind: hir::ExprKind::BoxAny { value: Box::new(e) },
+                                        ty: Ty::Any,
+                                    }
+                                }
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![to_any(lhs), to_any(rhs)],
+                                },
+                                ty: Ty::Any,
                                 span,
                             };
                         }
