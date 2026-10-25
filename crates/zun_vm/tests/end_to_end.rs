@@ -150,6 +150,72 @@ fn a_decorated_class_runs_identically_to_the_undecorated_version() {
 }
 
 #[test]
+fn a_runtime_method_decorator_runs_at_definition_time_with_context() {
+    // PLAN §3.5 Stage 3 (runtime TC39 flavor): a `@decorator` whose callee is
+    // an ordinary top-level function (not a compile-time macro) is invoked once
+    // at class-definition time with `(value, context)`. The decorator records a
+    // side effect (printing) before `main` runs, and `context` carries the
+    // element kind, name, and static flag. The method itself is unchanged
+    // (return-value replacement is deferred), so `bump()` still returns 42.
+    let out = run_source(
+        "function record(value: any, context: any): void {\n\
+            print(context.kind as string);\n\
+            print(context.name as string);\n\
+            print((context[\"static\"] as boolean) ? \"static\" : \"instance\");\n\
+         }\n\
+         class Counter { value: number;\n\
+            @record\n\
+            bump(): number { return this.value + 1.0; }\n\
+         }\n\
+         function main() {\n\
+            let c = new Counter(41.0);\n\
+            print(c.bump());\n\
+         }",
+    );
+    // Decorator side effect precedes `main` (the module initializer runs first).
+    assert_eq!(out, ["method", "bump", "instance", "42"]);
+}
+
+#[test]
+fn a_runtime_class_decorator_runs_at_definition_time() {
+    // A class decorator is called with `context.kind === "class"` and the class
+    // name. There is no first-class runtime class value in the typed-class
+    // model, so `value` is `null` and return-value replacement is deferred; the
+    // call still runs for its observable side effect.
+    let out = run_source(
+        "function register(value: any, context: any): void {\n\
+            print(context.kind as string);\n\
+            print(context.name as string);\n\
+         }\n\
+         @register\n\
+         class Widget { id: number; }\n\
+         function main() {\n\
+            let w = new Widget(7.0);\n\
+            print(w.id);\n\
+         }",
+    );
+    assert_eq!(out, ["class", "Widget", "7"]);
+}
+
+#[test]
+fn an_undefined_runtime_decorator_stays_inert() {
+    // A decorator whose callee resolves to neither a macro nor a top-level
+    // function stays inert (Phase-1 behavior), so the class runs normally.
+    let out = run_source(
+        "@sealed\n\
+         class Box { n: number;\n\
+            @trace\n\
+            get(): number { return this.n; }\n\
+         }\n\
+         function main() {\n\
+            let b = new Box(5.0);\n\
+            print(b.get());\n\
+         }",
+    );
+    assert_eq!(out, ["5"]);
+}
+
+#[test]
 fn object_keys_and_values_on_a_typed_object_use_declared_fields() {
     let out = run_source(
         "class Point { x: number; y: number; }\n\

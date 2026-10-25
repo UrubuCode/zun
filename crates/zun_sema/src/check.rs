@@ -161,7 +161,7 @@ fn check_impl(
     // `main`). It is appended last so every existing function, method, and
     // class-method index is unchanged — `main`'s IL in particular is untouched.
     let module_init = main.and_then(|_| {
-        checker.build_module_initializer().map(|function| {
+        checker.build_module_initializer(program).map(|function| {
             let index = functions.len() as u32;
             functions.push(function);
             index
@@ -186,6 +186,50 @@ struct Signature {
     rest_param: Option<usize>,
     is_generator: bool,
     is_static: bool,
+}
+
+/// The `value` argument passed to a runtime decorator, as a `null` of type
+/// `Any`.
+///
+/// Ideally a method decorator would receive the method as a first-class
+/// function value (a handle to its MethodDef RID) and a class decorator the
+/// constructor. Neither can cross the `Any` boundary here: `Value::Function` is
+/// deliberately excluded from `Any` (so closure environments stay visible to
+/// precise GC-root handling, see `Value::box_any`), and there is no first-class
+/// runtime class/constructor value in this typed-class model. Delivering a live
+/// `value` is therefore deferred together with return-value replacement (both
+/// need the dispatch-model change). The decorator still receives the full
+/// `context`, which is the observable Stage-3 behavior.
+fn decorator_null_value(span: Span) -> hir::Expr {
+    hir::Expr {
+        kind: hir::ExprKind::Null,
+        ty: Ty::Any,
+        span,
+    }
+}
+
+/// One named property of a runtime decorator's `context` object. The value is
+/// boxed to `Any`, as `DynamicObjectLiteral` stores require.
+fn decorator_context_entry(
+    name: &str,
+    value: hir::ExprKind,
+    value_ty: Ty,
+    span: Span,
+) -> hir::ObjectEntry {
+    hir::ObjectEntry {
+        key: hir::ObjectKey::Named(name.to_string()),
+        value: hir::Expr {
+            kind: hir::ExprKind::BoxAny {
+                value: Box::new(hir::Expr {
+                    kind: value,
+                    ty: value_ty,
+                    span,
+                }),
+            },
+            ty: Ty::Any,
+            span,
+        },
+    }
 }
 
 /// A collected class: its base and its own (not inherited) fields.
@@ -315,22 +359,29 @@ impl Checker<'_> {
     /// — without the program calling `global.set` itself. The compiler keeps
     /// this out of `main`, so `main`'s IL and JIT/AOT eligibility are unchanged.
     ///
-    /// Returns `None` when the realm registry is empty (nothing to seed). A
-    /// future user-facing `@module_init` attribute would extend this same seam
-    /// by appending user statements to the initializer body.
-    fn build_module_initializer(&self) -> Option<hir::Function> {
-        let registry = crate::realm::registry();
-        if registry.is_empty() {
-            return None;
-        }
+    /// Returns `None` when there is nothing to run (empty realm registry and no
+    /// runtime decorators). A future user-facing `@module_init` attribute would
+    /// extend this same seam by appending user statements to the initializer
+    /// body.
+    ///
+    /// The initializer also hosts **runtime TC39 decorator** invocations
+    /// (PLAN §3.5 Stage 3): a `@decorator` whose callee resolves to an ordinary
+    /// top-level function (not a compile-time macro) is called here, once, at
+    /// class-definition time, with `(value, context)`. See
+    /// [`Self::append_runtime_decorator_calls`] for the protocol and its
+    /// documented deferrals.
+    fn build_module_initializer(&self, program: &ast::Program) -> Option<hir::Function> {
         let span = Span::new(0, 0);
-        let (set_id, _) = zun_natives::resolve("collections", "globalSet")
-            .expect("globalSet intrinsic must exist");
-        let body = registry
-            .into_iter()
-            .map(|(name, binding)| {
+        let mut body: Vec<hir::Stmt> = Vec::new();
+
+        // 1) Declarative realm seed (base-type class descriptors).
+        let registry = crate::realm::registry();
+        if !registry.is_empty() {
+            let (set_id, _) = zun_natives::resolve("collections", "globalSet")
+                .expect("globalSet intrinsic must exist");
+            for (name, binding) in registry {
                 let descriptor = self.realm_descriptor_expr(binding.token, span);
-                hir::Stmt::Expr(hir::Expr {
+                body.push(hir::Stmt::Expr(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
                         id: set_id,
                         args: vec![
@@ -349,9 +400,16 @@ impl Checker<'_> {
                     },
                     ty: Ty::Void,
                     span,
-                })
-            })
-            .collect();
+                }));
+            }
+        }
+
+        // 2) Runtime TC39 decorators (Stage 3), run at class-definition time.
+        self.append_runtime_decorator_calls(program, &mut body, span);
+
+        if body.is_empty() {
+            return None;
+        }
         Some(hir::Function {
             name: "<module-init>".to_string(),
             param_count: 0,
@@ -366,6 +424,179 @@ impl Checker<'_> {
             generator_plan: None,
             body,
         })
+    }
+
+    /// Emit the runtime TC39 decorator (PLAN §3.5 Stage 3, the "runtime flavor")
+    /// invocations into the module-initializer `body`.
+    ///
+    /// ## What runs
+    ///
+    /// For each decorated class and each decorated method whose decorator callee
+    /// is a bare `@dec` resolving to an ordinary top-level function value, this
+    /// appends a single call `dec(value, context)` that executes once, before
+    /// the entry point, at class-definition time. `context` is a `DynamicObject`
+    /// `{ kind, name, static }`:
+    ///
+    /// * method decorator — `kind: "method"`, `name: <methodName>`,
+    ///   `static: <bool>`.
+    /// * class decorator — `kind: "class"`, `name: <className>`,
+    ///   `static: false`.
+    ///
+    /// `value` is `null` in both cases: see [`decorator_null_value`] for why a
+    /// live method/class value cannot be delivered in the current model.
+    ///
+    /// ## Evaluation order (TC39)
+    ///
+    /// Member decorators run before the class decorator, and the decorators of a
+    /// single element run bottom-to-top (nearest the declaration last), so each
+    /// element's list is applied in reverse source order.
+    ///
+    /// ## Macro-vs-runtime disambiguation
+    ///
+    /// Compile-time macro decorators (e.g. `@autoToString`) are consumed earlier,
+    /// in `zun_compiler`'s macro-expansion pass, and their callee names are not
+    /// declared functions, so they never resolve here. A decorator whose callee
+    /// resolves to a top-level function value takes this runtime path; anything
+    /// else (a macro name, an unknown name, `@sealed`/`@trace`) resolves to no
+    /// function and stays inert — exactly the Phase-1 behavior. `zun_sema` cannot
+    /// depend on `zun_compiler`'s macro registry, so "resolves to a function" is
+    /// the registry-free equivalent of the coordinator's rule.
+    ///
+    /// ## Deferred (documented)
+    ///
+    /// The decorator's **return value is ignored**: replacing a method or class
+    /// with the returned value would require a mutable dispatch indirection that
+    /// the static-vtable model (and the interp/JIT equivalence invariant) does
+    /// not support without a dispatch-model change. Also deferred: delivering a
+    /// live `value` (see [`decorator_null_value`]); `@dec(args)` decorator
+    /// factories; `context.addInitializer`; `context.access` (get/set); field
+    /// and accessor decorators; and private-element decorators.
+    fn append_runtime_decorator_calls(
+        &self,
+        program: &ast::Program,
+        body: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) {
+        for (class_idx, class) in program.classes.iter().enumerate() {
+            let class_name = self.text(&class.name).to_string();
+            // Member decorators first (TC39: before the class decorator).
+            for method in &class.methods {
+                let method_name = self.text(&method.name).to_string();
+                let Some(&func_index) = self
+                    .methods_by_class
+                    .get(class_idx)
+                    .and_then(|m| m.get(&method_name))
+                else {
+                    continue;
+                };
+                // Bottom-to-top per element.
+                let _ = func_index;
+                for decorator in method.decorators.iter().rev() {
+                    if let Some(stmt) = self.runtime_decorator_call(
+                        decorator,
+                        || decorator_null_value(span),
+                        "method",
+                        &method_name,
+                        method.is_static,
+                        span,
+                    ) {
+                        body.push(stmt);
+                    }
+                }
+            }
+            // Class decorators after members, bottom-to-top.
+            for decorator in class.decorators.iter().rev() {
+                if let Some(stmt) = self.runtime_decorator_call(
+                    decorator,
+                    || decorator_null_value(span),
+                    "class",
+                    &class_name,
+                    false,
+                    span,
+                ) {
+                    body.push(stmt);
+                }
+            }
+        }
+    }
+
+    /// Build one `dec(value, context)` statement for a runtime decorator, or
+    /// `None` when the decorator is not a runtime-decorator (factory form, or
+    /// callee does not resolve to a `(any, any)` top-level function).
+    fn runtime_decorator_call(
+        &self,
+        decorator: &ast::Decorator,
+        make_value: impl Fn() -> hir::Expr,
+        kind: &str,
+        name: &str,
+        is_static: bool,
+        span: Span,
+    ) -> Option<hir::Stmt> {
+        // Decorator factories `@dec(args)` are deferred.
+        if decorator.args.is_some() {
+            return None;
+        }
+        let callee_span = decorator.callee.span();
+        let callee = self
+            .source
+            .get(callee_span.start as usize..callee_span.end as usize)?;
+        // Must resolve to a top-level function value (else inert / macro).
+        let dec_index = *self.by_name.get(callee)?;
+        let signature = self.signatures.get(dec_index as usize)?;
+        // A runtime decorator is exactly `(value: any, context: any)`.
+        if signature.params.len() != 2
+            || signature.rest_param.is_some()
+            || !matches!(signature.params[0], Ty::Any)
+            || !matches!(signature.params[1], Ty::Any)
+        {
+            return None;
+        }
+
+        let context = hir::Expr {
+            kind: hir::ExprKind::DynamicObjectLiteral {
+                entries: vec![
+                    decorator_context_entry(
+                        "kind",
+                        hir::ExprKind::String(kind.to_string()),
+                        Ty::String,
+                        span,
+                    ),
+                    decorator_context_entry(
+                        "name",
+                        hir::ExprKind::String(name.to_string()),
+                        Ty::String,
+                        span,
+                    ),
+                    decorator_context_entry(
+                        "static",
+                        hir::ExprKind::Boolean(is_static),
+                        Ty::Boolean,
+                        span,
+                    ),
+                ],
+            },
+            ty: Ty::DynamicObject,
+            span,
+        };
+
+        Some(hir::Stmt::Expr(hir::Expr {
+            kind: hir::ExprKind::Call {
+                func: dec_index,
+                args: vec![
+                    make_value(),
+                    hir::Expr {
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(context),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    },
+                ],
+            },
+            // The return value is discarded by the expression statement.
+            ty: signature.return_ty.clone(),
+            span,
+        }))
     }
 
     fn rewrite_boxed_lets(&self, statements: &mut [hir::Stmt], boxed: &HashSet<hir::LocalSlot>) {

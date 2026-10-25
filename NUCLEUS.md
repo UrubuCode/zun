@@ -49,10 +49,10 @@ read.
 | 22 | Error (+ subclasses) | mostly | `Error` + 6 subclasses with JS-shaped `new Error(message)`, per-class `name` getter, JS `toString()`. **`.stack` captured** at construction (frame walk + sequence points; byte-span frames). **`AggregateError(errors, message)` carries its `errors`** (standalone class, not `extends Error`). **`new Error(message, { cause })` landed** — `cause` read from the options object into an `any` field (absent ⇒ `undefined`); applies to the subclasses. **`Error` + 6 subclasses are realm globals** (`globalThis.Error` resolves; class-backed `ClassFallThrough` binding). Remaining: `cause` only via the `(message, options)` shape (no `err.cause = x` dynamic set on a typed instance) |
 | 23 | globalThis / global | done | `globalThis`/`global` → `RealmGlobal` opcode (`Ty::DynamicObject`), realm singleton per §3.1 |
 | 24 | Typed numeric lattice | done | `i8..i64/u8..u64/f32/f64` in `IntKind`/`Ty`; int/float TS types + coercions |
-| 25 | Decorators | partial | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback. Proving macro `@autoToString` emits a `toString()` returning the class name, observable at runtime. Deferred: runtime TC39 `(value, context)` decorators (Stage 3); in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place flag with runtime enforcement (needs metadata/format + runtime work) |
+| 25 | Decorators | mostly | Syntax done (lexer `@`, parse on class/method/field, AST+HIR carry). **Compile-time macro-expansion hook landed** (PLAN §3.5 Stage 2, the .NET source-generator model): a `class_macro` registry keyed by decorator name, a `macros::expand` pass after parse / before sema that reads a value-model (`ClassModel`/`FieldModel`), runs the macro to an emit-model (`MacroExpansion`), and lowers it to AST via source-suffix interning (no HIR/module injection); failure contract = diagnostic (`MACRO0001`) + unchanged-target fallback; proving macro `@autoToString`. **Runtime TC39 decorators — tractable core landed** (Stage 3): a `@dec` whose callee resolves to an ordinary top-level `(any, any)` function (not a macro) is invoked once at class-definition time via the module-initializer seam with `(value, context)`, `context = { kind: "class"\|"method", name, static }`, TC39 order (members before class, bottom-to-top); callee-resolves-to-a-function is the registry-free macro-vs-runtime rule, so `@sealed`/`@trace` stay inert. Deferred (documented): return-value replacement + live `value` (needs dispatch-model change; `Value::Function` excluded from `Any`, no runtime class value → `value` is `null`); `@dec(args)` factories; `addInitializer`; `access`; field/accessor/private-element decorators. Separately: in-language/user-defined macros; field/method-level built-ins; `@sealed`-style in-place runtime enforcement (needs metadata/format + runtime work) |
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 
-**Counts:** done 6 · mostly 19 · partial 1 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
+**Counts:** done 6 · mostly 20 · partial 0 · missing 0 (of 26 nucleus items, JSON excluded). Recounted from the table above; it has to sum to 26.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
@@ -1210,10 +1210,11 @@ typed `Ty::DynamicObject` — the per-realm singleton of §3.1.
 types with saturating coercions per the Cranelift rules. (Per MEMORY: JIT currently
 f64-everything is scaffolding; the *type surface* is present.)
 
-## 25. Decorators — partial
-Listed in A ("language feature + macro"). **Stage 1 (syntax)** and **Stage 2 (the
-compile-time macro-expansion hook)** are landed; **Stage 3 (runtime TC39 decorators)**
-is deferred.
+## 25. Decorators — mostly
+Listed in A ("language feature + macro"). **Stage 1 (syntax)**, **Stage 2 (the
+compile-time macro-expansion hook)**, and the **tractable core of Stage 3 (runtime TC39
+decorators)** are landed; the Stage-3 remainder (return-value replacement + the rest of
+the `context` surface) is deferred with documented reasons.
 
 **Stage 1 — syntax (done).** Lexer `@`, parser accepts `@expr` / `@expr(args)` on
 classes and class members, AST nodes carry the decorator list, and sema lowers them to
@@ -1237,13 +1238,38 @@ panic, never a silent miscompile. **Proving macro:** `@autoToString` generates a
 `toString()` returning the class name, observable end-to-end at run time
 (`crates/zun_vm/tests/decorator_macros.rs`).
 
-**Deferred.** Stage 3 runtime TC39 `(value, context)` decorators; in-language /
-user-defined macros (the registry is Rust-only for v1); field- and method-level built-in
-macros (the pass walks those decorator lists but no built-in is registered); incremental
-caching of the pipeline; and a `@sealed`-style **in-place flag with runtime enforcement**
-— a class-level flag that lowering honors so instances reject new dynamic properties
-needs a TypeDef/metadata-format flag + verifier fixtures + runtime enforcement, a
-separate piece of work from the expansion hook proven here.
+**Stage 3 — runtime TC39 decorators, tractable core (done).** A `@decorator` whose
+callee resolves to an ordinary top-level function value (not a compile-time macro) is a
+runtime TC39 decorator and is now invoked for real, once, at class-definition time.
+`crates/zun_sema/src/check.rs` (`append_runtime_decorator_calls` /
+`runtime_decorator_call`) emits the invocations into the **module-initializer seam**
+(`build_module_initializer`, run before the entry point) — the seam its own doc reserved
+for a future `@module_init`. For each decorated **class** and **method** it emits
+`dec(value, context)` where `context` is a `DynamicObject` `{ kind: "class"|"method",
+name: <string>, static: <bool> }`. **Evaluation order** matches TC39: member decorators
+before the class decorator, and each element's decorators bottom-to-top (reverse source
+order). **Macro-vs-runtime disambiguation:** macro decorators (e.g. `@autoToString`) are
+consumed in Stage 2 and their names are not declared functions, so they never resolve
+here; a callee that resolves to a `(any, any)` top-level function takes the runtime path;
+anything else (`@sealed`/`@trace`, unknown names) resolves to no function and stays inert
+— the registry-free equivalent of "callee ∉ macro registry" (zun_sema cannot depend on
+zun_compiler's registry). Proven end-to-end in `crates/zun_vm/tests/end_to_end.rs`
+(method decorator runs with correct `kind`/`name`/`static`; class decorator runs with
+`kind === "class"`; an undefined decorator stays inert).
+
+**Deferred (Stage-3 remainder, documented).** The decorator's **return value is
+ignored** — replacing a method/class with the returned value needs a mutable dispatch
+indirection the static-vtable model cannot host without a dispatch-model change (would
+also have to be mirrored in the JIT CallVirt path to keep the interp/JIT equivalence
+invariant). Delivering a **live `value`** is deferred for the same family of reasons:
+`Value::Function` is deliberately excluded from `Any` (so closure environments stay
+visible to precise GC roots, see `Value::box_any`) and there is no first-class runtime
+class/constructor value, so `value` is `null` in both cases. Also deferred: `@dec(args)`
+decorator factories; `context.addInitializer`; `context.access` (get/set); field and
+accessor decorators; private-element decorators. **Separately** (not Stage 3):
+in-language / user-defined macros (the registry is Rust-only for v1); field/method-level
+built-in macros; incremental caching; and a `@sealed`-style in-place flag with runtime
+enforcement (needs a TypeDef/metadata-format flag + verifier fixtures + runtime work).
 
 ## 26. ZIL math opcodes — done
 Fifteen machine ops covering all of PLAN §3 criterion (d).
