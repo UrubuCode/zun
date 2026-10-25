@@ -154,6 +154,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "promiseAllSettled",
         "promiseRace",
         "promiseAny",
+        "promiseNewExecutor",
         "objectKeys",
         "objectValues",
         "objectEntries",

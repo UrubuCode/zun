@@ -3268,6 +3268,47 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(roots[1]))
             }
+            "promiseNewExecutor" => {
+                // `new Promise(executor)`: build a pending promise plus its
+                // resolve/reject settlers (the exact `withResolvers` mechanism —
+                // see `make_promise_settler`/`settler_of`), then synchronously
+                // invoke the executor with them. An executor throw rejects the
+                // promise with the thrown value and is swallowed (ECMAScript).
+                let executor = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                let roots = [promise];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let resolve = self.make_promise_settler(roots[0], SETTLE_RESOLVE);
+                let reject = self.make_promise_settler(roots[0], SETTLE_REJECT);
+                match self.invoke_function_value(
+                    executor,
+                    vec![Value::Function(resolve), Value::Function(reject)],
+                ) {
+                    Ok(_) => {}
+                    Err(RunError::Thrown(value)) => {
+                        // Carry an object reason first-class; keep a string
+                        // reason's message surface — the same split the reject
+                        // settler uses (see `invoke_promise_settler`).
+                        match &value {
+                            Value::Str(message) => {
+                                self.settle_promise_reject(roots[0], message.to_string());
+                            }
+                            other => {
+                                let reason =
+                                    zun_gc::with_current_heap_mut(|heap| other.clone().box_any(heap))
+                                        .unwrap_or_else(zun_core::Any::null);
+                                let message = value_to_error_string(other);
+                                self.settle_promise_reject_value(roots[0], reason, message);
+                            }
+                        }
+                    }
+                    Err(other) => return Err(other),
+                }
+                Ok(Value::Object(roots[0]))
+            }
             "promiseResolve" => {
                 let promise = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
@@ -4277,9 +4318,11 @@ impl<'a> Interp<'a> {
                 }
             }
         } else {
-            let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
-                .unwrap_or_else(zun_core::Any::null);
-            self.settle_promise_resolve(promise, boxed);
+            // Resolving with a Promise adopts it (chaining, not wrapping): the
+            // settled promise tracks the adopted one. Any other value fulfils
+            // directly. Generic (non-Promise) thenables are not yet detected —
+            // only managed Promise adoption is handled here.
+            self.settle_target_with(promise, value);
         }
         Ok(Value::Void)
     }

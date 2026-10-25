@@ -6888,6 +6888,59 @@ impl Checker<'_> {
                                 span,
                             };
                         }
+                        CtorLowering::Promise => {
+                            // `new Promise()` → an empty pending promise;
+                            // `new Promise(executor)` → create the promise plus
+                            // its resolve/reject settlers and synchronously run
+                            // the executor (reusing the `withResolvers` settler
+                            // mechanism in the interpreter floor).
+                            match args.len() {
+                                0 => {
+                                    let Some((id, _)) = zun_natives::resolve("promise", "promiseNew") else {
+                                        self.error(span, "missing Promise intrinsic `promiseNew`");
+                                        return self.poison(span);
+                                    };
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                                        ty: Ty::Promise,
+                                        span,
+                                    };
+                                }
+                                1 => {
+                                    let executor = self.check_expr(cx, &args[0]);
+                                    if !executor.ty.is_error()
+                                        && !self.is_assignable(
+                                            executor.ty,
+                                            Ty::Function(hir::DYNAMIC_FUNCTION),
+                                        )
+                                    {
+                                        self.error(
+                                            executor.span,
+                                            "`new Promise` expects an executor function",
+                                        );
+                                    }
+                                    let Some((id, _)) = zun_natives::resolve("promise", "promiseNewExecutor") else {
+                                        self.error(span, "missing Promise intrinsic `promiseNewExecutor`");
+                                        return self.poison(span);
+                                    };
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id, args: vec![executor] },
+                                        ty: Ty::Promise,
+                                        span,
+                                    };
+                                }
+                                _ => {
+                                    self.error(
+                                        span,
+                                        format!(
+                                            "`new Promise` expects at most one executor argument, found {}",
+                                            args.len()
+                                        ),
+                                    );
+                                    return self.poison(span);
+                                }
+                            }
+                        }
                         CtorLowering::CollectionFrom { module, empty, from, from_iterable, ty } => {
                             // `new Map()`/`new Set()` → the empty allocator;
                             // `new Map(array)`/`new Set(array)` → the array fast

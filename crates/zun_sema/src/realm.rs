@@ -52,6 +52,12 @@ pub(crate) enum CtorLowering {
         from_iterable: &'static str,
         ty: Ty,
     },
+    /// `new Promise()` → `promiseNew` (an empty pending promise); `new
+    /// Promise(executor)` → `promiseNewExecutor`, which creates the promise plus
+    /// its resolve/reject settlers (the `withResolvers` mechanism) and
+    /// synchronously invokes the executor with them (an executor throw rejects
+    /// the promise). Yields `Ty::Promise`.
+    Promise,
     /// `new Array(len)` → an `ArrayNew` node (`Ty::Array`).
     ArrayNew,
     /// `new ArrayBuffer(len)` → `bufferNew` (`Ty::Buffer`).
@@ -153,10 +159,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
                 pad_empty_flags: false,
             },
         ),
-        "Promise" => (
-            Ty::Promise,
-            CtorLowering::Intrinsic0 { module: "promise", native: "promiseNew", ty: Ty::Promise },
-        ),
+        "Promise" => (Ty::Promise, CtorLowering::Promise),
         // Argument-taking intrinsics.
         "RegExp" => (
             Ty::RegExp,

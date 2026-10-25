@@ -57,5 +57,12 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "promiseAllSettled", params: &[Array], ret: Promise, imp: unavailable },
         NativeFn { name: "promiseRace", params: &[Array], ret: Promise, imp: unavailable },
         NativeFn { name: "promiseAny", params: &[Array], ret: Promise, imp: unavailable },
+        // `new Promise(executor)`: build a pending promise plus its resolve/reject
+        // settlers (the `withResolvers` mechanism) and synchronously invoke the
+        // executor with them; an executor throw rejects the promise. The executor
+        // arrives as a raw value (a function), so the parameter type is `Opaque`.
+        // Appended at the end of the table so existing native dispatch ids are
+        // left unshifted.
+        NativeFn { name: "promiseNewExecutor", params: &[Opaque], ret: Promise, imp: unavailable },
     ],
 };

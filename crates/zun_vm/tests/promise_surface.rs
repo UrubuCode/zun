@@ -334,3 +334,99 @@ fn promise_resolve_returns_an_existing_promise_unchanged() {
     );
     assert_eq!(out, ["3"]);
 }
+
+// --- `new Promise(executor)` constructor (NUCLEUS #9) ---
+
+/// `new Promise((res: any) => res(v))`: the executor runs synchronously and its
+/// `resolve` settler fulfils the promise, observed through `await`.
+#[test]
+fn new_promise_executor_resolves() {
+    let out = run_source(
+        "function main() { \
+            let p: any = new Promise((res: any) => { res(42.0); }); \
+            let v: any = await p; \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["42"]);
+}
+
+/// `new Promise((_, rej) => rej(reason))`: the `reject` settler rejects the
+/// promise; `.catch` receives the string reason.
+#[test]
+fn new_promise_executor_rejects() {
+    let out = run_source(
+        "function main() { \
+            let p = new Promise((res: any, rej: any) => { rej(\"boom\"); }); \
+            let v: any = await p.catch((e: any) => e); \
+            print(v as string); }",
+    );
+    assert_eq!(out, ["boom"]);
+}
+
+/// A throw inside the executor rejects the promise with the thrown value and is
+/// swallowed (ECMAScript: the throw does not propagate out of `new Promise`).
+#[test]
+fn new_promise_executor_throw_rejects() {
+    let out = run_source(
+        "function main() { \
+            let p = new Promise((res: any, rej: any) => { throw \"x\"; }); \
+            let v: any = await p.catch((e: any) => e); \
+            print(v as string); }",
+    );
+    assert_eq!(out, ["x"]);
+}
+
+/// Asynchronous resolution driving the event loop: the executor resolves the
+/// promise with a still-pending `withResolvers` promise (adoption), which a
+/// later `setTimeout` macrotask settles. `await` observes the value only after
+/// the timer fires, so the whole chain is driven through the loop.
+///
+/// (The textbook form `new Promise((res) => setTimeout(() => res(1), 0))` cannot
+/// be expressed yet: calling a captured variable by bare name inside a nested
+/// closure is a pre-existing sema gap — `cx.lookup` does not see captures in the
+/// inner arrow — orthogonal to the Promise constructor. Settling through a
+/// captured object's own function slot, as here with `hub.resolve`, is the
+/// working shape, the same dispatch `Promise.withResolvers` relies on.)
+#[test]
+fn new_promise_executor_resolves_asynchronously() {
+    let out = run_source(
+        "function main() { \
+            let hub: any = Promise.withResolvers(); \
+            let p = new Promise((res: any) => { res(hub.promise); }); \
+            setTimeout(() => { hub.resolve(1.0); }, 0.0); \
+            let v: any = await p; \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["1"]);
+}
+
+/// Resolving with another Promise adopts it (chaining, not wrapping): the outer
+/// promise settles to the inner promise's eventual value.
+#[test]
+fn new_promise_executor_adopts_a_promise() {
+    let out = run_source(
+        "function main() { \
+            let inner: any = new Promise((res: any) => { res(7.0); }); \
+            let p: any = new Promise((res: any) => { res(inner); }); \
+            let v: any = await p; \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["7"]);
+}
+
+/// `new Promise()` with no executor is an empty pending promise (the legacy
+/// zero-argument path). It never settles on its own, so a `race` against an
+/// already-resolved promise observes it staying pending.
+#[test]
+fn new_promise_without_executor_is_pending() {
+    let out = run_source(
+        "function main() { \
+            let pending: any = new Promise(); \
+            let a = new Array(2); \
+            a[0] = pending; \
+            a[1] = Promise.resolve(5.0); \
+            let v: any = await Promise.race(a); \
+            print(v as number); }",
+    );
+    assert_eq!(out, ["5"]);
+}
