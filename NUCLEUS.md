@@ -38,7 +38,7 @@ read.
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. **Binding destructuring landed** (declarations + for-of heads), so `for (const [i, v] of arr.entries())` works directly. **`keys/values/entries` now return a real iterator object** (`next()→{value,done}`, itself for-of-able), and `[...x]` spread drains any protocol iterable. **Change-array-by-copy landed**: `toSorted(cmp?)/toReversed()/with(index,value)` (negative index; out-of-range throws) `/toSpliced(start,deleteCount,...items)` all return fresh arrays and leave the receiver untouched. Remaining: `group/groupToMap` (deferred — return a null-proto object keyed by callback result; lower priority) |
 | 8 | Function | mostly | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0). **Function-valued `bind` partial/`this` arguments now work**: a function cannot box into `Any`, so each function-typed prepended argument is wrapped by a `functionBox` intrinsic (a GC-traced object carrying the callable in a `__boxedFn` function slot, keeping its captured environment visible to precise root handling) and `resolve_call_target` unwraps it before dispatch — order among prepended args is preserved. Deferred: **`Function` constructor** (`new Function(args, body)` evaluates a source string ⇒ needs a runtime compiler; the VM links no compiler and this conflicts with AOT reachability/trimming — structural); **a function inside `apply`'s arguments array** / functions in generic arrays (would require letting `box_any` carry functions globally — a deliberate GC-root-precision invariant, broad arg-marshalling rework); **multi-argument bound calls** (bound functions are typed `Function` and dynamic calls use the single-trailing-arg IL arity model — carrying an argument count for a dynamic `CallIndirect` is an opcode-set + verifier change) |
 | 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }`; **destructuring the resolver functions now works** (`const { resolve, reject } = Promise.withResolvers(); resolve(v)`) — object destructuring reads the function slot as a callable value and an `any`-typed local is now dynamically callable; `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. Remaining: `new Promise(executor)` constructor |
-| 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
+| 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Descriptor traps (`getOwnPropertyDescriptor`/`defineProperty`/`getPrototypeOf`/`setPrototypeOf`/`isExtensible`/`preventExtensions`/`ownKeys`) now fire via the proxy-aware `Object`/`Reflect` statics (built on #6's descriptor model); the `apply` trap + callable proxies (`proxy(...args)`, `Reflect.apply`) work via `proxyNewCallable`/`proxyApply`. Deferred: `construct` trap + `Reflect.construct` (no runtime constructor value — `new` targets a compile-time TypeDef) |
 | 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. **`keys/values/entries` now return a real iterator object** (for-of-able, `next()→{value,done}`); `new Map(x)` accepts arbitrary user `[Symbol.iterator]` sources through the protocol. Remaining: — |
 | 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. **`keys/values/entries` now return a real iterator object** (for-of-able, `next()→{value,done}`); `new Set(x)` accepts arbitrary user `[Symbol.iterator]` sources through the protocol. Remaining: — |
 | 13 | WeakMap | done | `set/get/has/delete`; semantics OK (ephemeron floor). ECMAScript WeakMap has no iteration/size/clear by design, so this is the complete surface, not a gap |
@@ -821,13 +821,36 @@ global calls in `zun_sema/src/check.rs` (like `print`, shadowable by a user symb
   `ownKeys(target)`→`objectKeys`. These are the default operations the Proxy traps fall
   back to. No new natives were added (existing `proxy*`/`reflect*`/`objectKeys`
   intrinsics reused), so native dispatch ids are unchanged.
-- **Deferred (documented, not faked):** the descriptor-dependent traps/statics
-  (`getOwnPropertyDescriptor`/`defineProperty`/`getPrototypeOf`/`setPrototypeOf`/
-  `isExtensible`/`preventExtensions`) — they need the property-descriptor model still
-  deferred (NUCLEUS §6) — and the `apply`/`construct` traps. The `has`/`deleteProperty`
-  traps are reachable via `Reflect.has`/`Reflect.deleteProperty` and the `proxyHas`/
-  `proxyDelete` natives, but **not** via the `in`/`delete` operators: those operator
-  tokens are not in the lexer (a language-wide feature, like BigInt's `** & | ^`).
+- **Descriptor-dependent traps (NUCLEUS #10 closure, built on #6's descriptor
+  model):** the proxy-aware `object*` natives in `collections.rs` classify the
+  receiver via `ProxyRoute` — a proxy with the matching trap invokes it (target
+  as leading param, like the other traps); a proxy without it falls back to its
+  target through the #6 descriptor machinery; a plain object operates on itself.
+  Traps wired: `getOwnPropertyDescriptor` (via `Object.getOwnPropertyDescriptor`/
+  `Reflect.getOwnPropertyDescriptor`), `defineProperty` (`Object.defineProperty`/
+  `Reflect.defineProperty`), `getPrototypeOf`/`setPrototypeOf`, `isExtensible`/
+  `preventExtensions`, and `ownKeys` (via `objectGetOwnPropertyNames`, which
+  `Reflect.ownKeys` now routes to so all own keys — not just enumerable — are
+  reported).
+- **`apply` trap + callable proxies:** `new Proxy(fn, handler)` over a *function*
+  target boxes the function into a GC record (`functionBox`) and builds the proxy
+  with the new `proxyNewCallable` native, so the stored target stays a GC object.
+  A direct call `proxy(...args)` on a `Ty::Proxy` local lowers (`check.rs`) to the
+  new `proxyApply(proxy, thisArg, argsArray)` native: an `apply` trap →
+  `handler.apply(target, thisArg, args)`; no trap → the underlying boxed function
+  with the arguments forwarded verbatim. `Reflect.apply(target, thisArg, args)`
+  routes a function target to the existing `functionApply` and a proxy target to
+  `proxyApply`. Two natives appended at the end of the `collections` module so
+  dispatch ids stay stable.
+- **Deferred (documented, not faked):** the `construct` trap and `Reflect.construct`.
+  `new` emits `NewObj <TypeDef token>` against a compile-time type; there is no
+  runtime constructor value a trap could stand in for (the same "no runtime class
+  value" limitation that defers class-decorator return-value replacement), so
+  `Reflect.construct` raises a diagnostic rather than pretending to work. Also
+  still: the `has`/`deleteProperty` traps are reachable via `Reflect.has`/
+  `Reflect.deleteProperty`, the `proxyHas`/`proxyDelete` natives, and the
+  `in`/`delete` operators, but `Reflect.has`/`Reflect.deleteProperty` themselves
+  do not consult proxy traps (they read the receiver directly) — unchanged here.
 
 ## 11. Map — mostly
 `std/map.zun` → `zun:collections` (`collections.rs`, `ordered_map.rs`). Ordered hash

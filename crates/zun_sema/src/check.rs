@@ -1917,12 +1917,14 @@ impl Checker<'_> {
     /// property operations the Proxy traps fall back to.
     ///
     /// Supported: `get(target, key)`, `set(target, key, value)`,
-    /// `has(target, key)`, `deleteProperty(target, key)`, `ownKeys(target)`.
-    /// The descriptor-dependent reflection statics
-    /// (`getOwnPropertyDescriptor`/`defineProperty`/`getPrototypeOf`/
-    /// `setPrototypeOf`/`isExtensible`/`preventExtensions`) and the
-    /// `apply`/`construct` invokers are deferred (no property-descriptor model
-    /// yet — NUCLEUS §6).
+    /// `has(target, key)`, `deleteProperty(target, key)`, `ownKeys(target)`,
+    /// the descriptor-dependent statics `getOwnPropertyDescriptor`,
+    /// `defineProperty`, `getPrototypeOf`, `setPrototypeOf`, `isExtensible`,
+    /// `preventExtensions` (NUCLEUS #6's descriptor model, proxy-aware), and
+    /// `apply(target, thisArg, argsArray)`. `construct` is deferred: `new`
+    /// emits a `NewObj <TypeDef token>` against a compile-time type, and there
+    /// is no runtime constructor value a trap could stand in for (the same
+    /// "no runtime class value" limitation as class-decorator return values).
     fn check_reflect_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -1931,10 +1933,56 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        // `Reflect.apply(target, thisArg, argsArray)`: invoke a callable (an
+        // ordinary function, or a callable proxy routed through its `apply`
+        // trap) with a spread arguments array. Handled before the object-target
+        // path because the target is a function or proxy, not a plain object.
+        if method == "apply" {
+            let mut checked: Vec<hir::Expr> =
+                args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+            if checked.len() != 3 {
+                self.error(
+                    span,
+                    format!("`Reflect.apply` expects 3 argument(s), found {}", checked.len()),
+                );
+                return self.poison(span);
+            }
+            let array = checked.pop().unwrap();
+            let this_arg = checked.pop().unwrap();
+            let target = checked.pop().unwrap();
+            if array.ty != Ty::Array && !array.ty.is_error() {
+                self.error(array.span, "`Reflect.apply` expects an Array of arguments");
+                return self.poison(span);
+            }
+            if !matches!(target.ty, Ty::Function(_) | Ty::Proxy | Ty::Any)
+                && !target.ty.is_error()
+            {
+                self.error(target.span, "`Reflect.apply` target must be callable");
+            }
+            let native_name = if target.ty == Ty::Proxy { "proxyApply" } else { "functionApply" };
+            let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
+                self.error(span, format!("missing Reflect intrinsic `{native_name}`"));
+                return self.poison(span);
+            };
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![target, this_arg, array] },
+                ty: Ty::Any,
+                span,
+            };
+        }
+        if method == "construct" {
+            self.error(
+                method_span,
+                "`Reflect.construct` is not supported in this runtime (no runtime \
+                 constructor value model; `new` targets a compile-time type)",
+            );
+            return self.poison(span);
+        }
         let expected = match method {
-            "get" | "has" | "deleteProperty" => 2usize,
-            "set" => 3,
-            "ownKeys" => 1,
+            "get" | "has" | "deleteProperty" | "getOwnPropertyDescriptor"
+            | "setPrototypeOf" => 2usize,
+            "set" | "defineProperty" => 3,
+            "ownKeys" | "getPrototypeOf" | "isExtensible" | "preventExtensions" => 1,
             other => {
                 self.error(
                     method_span,
@@ -2004,7 +2052,17 @@ impl Checker<'_> {
             }
             "has" => builtin(self, "reflectHas", checked, Ty::Boolean),
             "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean),
-            "ownKeys" => builtin(self, "objectKeys", checked, Ty::Array),
+            // `ownKeys` reports all own string keys (not just enumerable ones),
+            // and consults a proxy's `ownKeys` trap via the proxy-aware native.
+            "ownKeys" => builtin(self, "objectGetOwnPropertyNames", checked, Ty::Array),
+            "getOwnPropertyDescriptor" => {
+                builtin(self, "objectGetOwnPropertyDescriptor", checked, Ty::Any)
+            }
+            "defineProperty" => builtin(self, "objectDefineProperty", checked, Ty::Any),
+            "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
+            "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),
+            "isExtensible" => builtin(self, "objectIsExtensible", checked, Ty::Boolean),
+            "preventExtensions" => builtin(self, "objectPreventExtensions", checked, Ty::Any),
             _ => unreachable!(),
         }
     }
@@ -4231,6 +4289,37 @@ impl Checker<'_> {
                                 callee: Box::new(callee_expr),
                                 args,
                                 func: hir::DYNAMIC_FUNCTION,
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
+                    // Calling a proxy value: `proxy(...args)` routes through the
+                    // handler's `apply` trap (NUCLEUS #10). The arguments are
+                    // packed into an array (each boxed to `Any` by `StoreArray`)
+                    // and dispatched to `proxyApply` with an `undefined` `this`.
+                    if function_ty == Ty::Proxy {
+                        let callee_expr = hir::Expr {
+                            kind: hir::ExprKind::Local(slot),
+                            ty: function_ty,
+                            span,
+                        };
+                        let args_array = hir::Expr {
+                            kind: hir::ExprKind::ArrayLiteral {
+                                elements: args.into_iter().map(Some).collect(),
+                            },
+                            ty: Ty::Array,
+                            span,
+                        };
+                        let this_arg = hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span };
+                        let Some((id, _)) = zun_natives::resolve("collections", "proxyApply") else {
+                            self.error(span, "missing `proxyApply` intrinsic");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![callee_expr, this_arg, args_array],
                             },
                             ty: Ty::Any,
                             span,
@@ -7121,6 +7210,44 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `new Proxy(target, handler)`: a proxy over a *callable* target
+                // boxes the function into a GC record (functions do not box into
+                // `Any`) and is built with `proxyNewCallable`, so the `apply`
+                // trap and direct `proxy(...)` calls can recover the function; a
+                // proxy over data uses the plain `proxyNew`.
+                if name == "Proxy" {
+                    if args.len() != 2 {
+                        self.error(span, "`Proxy` expects a target and a handler");
+                        return self.poison(span);
+                    }
+                    let target = self.check_expr(cx, &args[0]);
+                    let handler = self.check_expr(cx, &args[1]);
+                    let (native_name, target) = if matches!(target.ty, Ty::Function(_)) {
+                        let Some((box_id, _)) = zun_natives::resolve("collections", "functionBox")
+                        else {
+                            self.error(span, "missing `functionBox` intrinsic");
+                            return self.poison(span);
+                        };
+                        let target_span = target.span;
+                        let boxed = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: box_id, args: vec![target] },
+                            ty: Ty::Any,
+                            span: target_span,
+                        };
+                        ("proxyNewCallable", boxed)
+                    } else {
+                        ("proxyNew", target)
+                    };
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
+                        self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![target, handler] },
+                        ty: Ty::Proxy,
+                        span,
+                    };
+                }
                 let managed_collection = match name.as_str() {
                     "Map" => Some(("mapNew", Ty::Map)),
                     "Set" => Some(("setNew", Ty::Set)),
@@ -7132,7 +7259,6 @@ impl Checker<'_> {
                         "finalizationRegistryNew",
                         Ty::FinalizationRegistry,
                     )),
-                    "Proxy" => Some(("proxyNew", Ty::Proxy)),
                     "Promise" => Some(("promiseNew", Ty::Promise)),
                     _ => None,
                 };

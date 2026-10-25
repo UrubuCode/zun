@@ -2892,3 +2892,195 @@ fn typed_class_symbol_has_instance_drives_instanceof() {
     );
     assert_eq!(out, ["accept-yes", "reject-no"]);
 }
+
+// --- NUCLEUS #10: Proxy descriptor traps + apply + Reflect statics ---------
+
+#[test]
+fn proxy_get_own_property_descriptor_trap_fires() {
+    // `Object.getOwnPropertyDescriptor(proxy, key)` consults the handler's
+    // `getOwnPropertyDescriptor` trap; its return value is the descriptor.
+    let out = run_source(
+        r#"import { dynamicSetFunction } from "zun:core";
+        function descTrap(target: any, key: string): any {
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(42.0));
+            return box_any(d);
+        }
+        function main() {
+            let target = dynamic_new();
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "getOwnPropertyDescriptor", descTrap);
+            let proxy = new Proxy(target, handler);
+            let d: any = Object.getOwnPropertyDescriptor(proxy, "x");
+            print((d.value) as number);
+        }"#,
+    );
+    assert_eq!(out, ["42"]);
+}
+
+#[test]
+fn proxy_get_own_property_descriptor_falls_back_to_target() {
+    // Without the trap, the descriptor is read from the proxy's target through
+    // the NUCLEUS #6 descriptor machinery.
+    let out = run_source(
+        r#"function main() {
+            let target = dynamic_new();
+            dynamic_set(target, "k", box_any(5.0));
+            let proxy = new Proxy(target, dynamic_new());
+            let d: any = Object.getOwnPropertyDescriptor(proxy, "k");
+            print((d.value) as number);
+        }"#,
+    );
+    assert_eq!(out, ["5"]);
+}
+
+#[test]
+fn proxy_define_property_trap_fires() {
+    // `Object.defineProperty(proxy, …)` routes to the `defineProperty` trap.
+    let out = run_source(
+        r#"import { global, dynamicSetFunction } from "zun:core";
+        function defTrap(target: any, key: string, desc: any): boolean {
+            global.set("defined", box_any(true), false);
+            return true;
+        }
+        function main() {
+            let target = dynamic_new();
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "defineProperty", defTrap);
+            let proxy = new Proxy(target, handler);
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(7.0));
+            Object.defineProperty(proxy, "x", d);
+            print(Boolean(dynamic_get(global, "defined")));
+        }"#,
+    );
+    assert_eq!(out, ["true"]);
+}
+
+#[test]
+fn proxy_get_prototype_of_trap_fires() {
+    let out = run_source(
+        r#"import { dynamicSetFunction } from "zun:core";
+        function protoTrap(target: any): any { return box_any(123.0); }
+        function main() {
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "getPrototypeOf", protoTrap);
+            let proxy = new Proxy(dynamic_new(), handler);
+            print((Object.getPrototypeOf(proxy)) as number);
+        }"#,
+    );
+    assert_eq!(out, ["123"]);
+}
+
+#[test]
+fn proxy_is_extensible_trap_fires() {
+    let out = run_source(
+        r#"import { dynamicSetFunction } from "zun:core";
+        function extTrap(target: any): boolean { return false; }
+        function main() {
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "isExtensible", extTrap);
+            let proxy = new Proxy(dynamic_new(), handler);
+            print(Object.isExtensible(proxy));
+        }"#,
+    );
+    assert_eq!(out, ["false"]);
+}
+
+#[test]
+fn proxy_prevent_extensions_trap_fires() {
+    let out = run_source(
+        r#"import { global, dynamicSetFunction } from "zun:core";
+        function prevTrap(target: any): boolean {
+            global.set("prevented", box_any(true), false);
+            return true;
+        }
+        function main() {
+            let target = dynamic_new();
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "preventExtensions", prevTrap);
+            let proxy = new Proxy(target, handler);
+            Object.preventExtensions(proxy);
+            print(Boolean(dynamic_get(global, "prevented")));
+        }"#,
+    );
+    assert_eq!(out, ["true"]);
+}
+
+#[test]
+fn proxy_apply_trap_intercepts_a_direct_call() {
+    // A proxy over a function, called directly, routes through the `apply`
+    // trap (NUCLEUS #10).
+    let out = run_source(
+        r#"import { dynamicSetFunction } from "zun:core";
+        function applyTrap(target: any, thisArg: any, args: any): number { return 99.0; }
+        function base(a: number, b: number): number { return a + b; }
+        function main() {
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "apply", applyTrap);
+            let proxy = new Proxy(base, handler);
+            print((proxy(1.0, 2.0)) as number);
+        }"#,
+    );
+    assert_eq!(out, ["99"]);
+}
+
+#[test]
+fn proxy_apply_falls_back_to_the_underlying_function() {
+    // Without an `apply` trap, a direct call forwards its arguments to the
+    // proxy's underlying function target.
+    let out = run_source(
+        r#"function base(a: number, b: number): number { return a + b; }
+        function main() {
+            let proxy = new Proxy(base, dynamic_new());
+            print((proxy(3.0, 4.0)) as number);
+        }"#,
+    );
+    assert_eq!(out, ["7"]);
+}
+
+#[test]
+fn reflect_apply_over_a_plain_function() {
+    // `Reflect.apply(fn, thisArg, argsArray)` reuses the `functionApply` path
+    // (`thisArg` binds to the function's first parameter, per Zun's model).
+    let out = run_source(
+        r#"function greet(base: number, x: number): number { return base + x; }
+        function main() {
+            let a = [5.0];
+            print((Reflect.apply(greet, 10.0, a)) as number);
+        }"#,
+    );
+    assert_eq!(out, ["15"]);
+}
+
+#[test]
+fn reflect_apply_over_a_callable_proxy() {
+    let out = run_source(
+        r#"import { dynamicSetFunction } from "zun:core";
+        function applyTrap(target: any, thisArg: any, args: any): number { return 7.0; }
+        function base(a: number): number { return a; }
+        function main() {
+            let handler = dynamic_new();
+            dynamicSetFunction(handler, "apply", applyTrap);
+            let proxy = new Proxy(base, handler);
+            print((Reflect.apply(proxy, 0.0, [1.0])) as number);
+        }"#,
+    );
+    assert_eq!(out, ["7"]);
+}
+
+#[test]
+fn reflect_get_own_property_descriptor_and_own_keys() {
+    let out = run_source(
+        r#"function main() {
+            let target = dynamic_new();
+            dynamic_set(target, "a", box_any(1.0));
+            dynamic_set(target, "b", box_any(2.0));
+            let proxy = new Proxy(target, dynamic_new());
+            let d: any = Reflect.getOwnPropertyDescriptor(proxy, "a");
+            print((d.value) as number);
+            print(Reflect.ownKeys(proxy).length);
+        }"#,
+    );
+    assert_eq!(out, ["1", "2"]);
+}

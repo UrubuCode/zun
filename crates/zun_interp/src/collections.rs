@@ -11,6 +11,24 @@ use zun_module::read_body;
 pub(super) const SETTLE_RESOLVE: f64 = 0.0;
 pub(super) const SETTLE_REJECT: f64 = 1.0;
 
+/// How a reflective `Object`/`Reflect` operation on a possible proxy resolves.
+/// The descriptor-dependent statics (`getOwnPropertyDescriptor`,
+/// `defineProperty`, `getPrototypeOf`, `setPrototypeOf`, `isExtensible`,
+/// `preventExtensions`, `ownKeys`) consult this before touching the
+/// property-descriptor machinery (NUCLEUS #6): a proxy with the matching trap
+/// invokes it; a proxy without it, or any non-proxy object, operates on the
+/// underlying target directly.
+enum ProxyRoute {
+    /// The handler defines the trap; invoke it with the target as the leading
+    /// positional argument (closure environment threaded first, as with the
+    /// `get`/`set`/`has`/`deleteProperty` traps).
+    Trap(zun_core::FunctionHandle, zun_gc::Obj),
+    /// A proxy without the trap: the operation falls back to its target.
+    Target(zun_gc::Obj),
+    /// Not a proxy: the operation runs on the object itself.
+    NotProxy,
+}
+
 impl<'a> Interp<'a> {
     pub(crate) fn call_managed_collection(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
         // The typed-array intrinsics are generated from the master table in
@@ -2039,6 +2057,56 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Bool(result))
             }
+            "proxyNewCallable" => {
+                // A proxy over a callable: the target is a `functionBox` record
+                // (a GC object carrying the function under `__boxedFn`), so the
+                // proxy's stored target stays a GC object like every other
+                // proxy. The handler is an ordinary dynamic object.
+                let target = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let handler = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let proxy = zun_gc::with_current_heap_mut(|heap| heap.alloc_proxy(target, handler));
+                Ok(Value::Object(proxy))
+            }
+            "proxyApply" => {
+                // `proxy(...args)` / `Reflect.apply(proxy, thisArg, args)`. With
+                // an `apply` trap: `handler.apply(target, thisArg, argsArray)`.
+                // Without one: invoke the underlying boxed function with the
+                // `this` argument threaded as the leading positional slot (the
+                // same convention `functionApply` uses).
+                let proxy = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();
+                let array = object(args.get(2).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                    return Err(RunError::BadToken);
+                };
+                if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "apply")) {
+                    let result = self.invoke_proxy_trap(
+                        callback,
+                        vec![Value::Object(target), this_arg, Value::Object(array)],
+                    )?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
+                }
+                // No `apply` trap: invoke the underlying boxed function with the
+                // spread arguments. The `thisArg` is not prepended (a callable
+                // proxy called directly, `proxy(...args)`, forwards exactly its
+                // arguments to the target).
+                let handle = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(target, "__boxedFn")
+                })
+                .ok_or(RunError::BadToken)?;
+                let _ = &this_arg;
+                let spread = self.read_array_values(array)?;
+                let result = self.invoke_function_value(handle, spread)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                Ok(Value::Any(boxed))
+            }
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" => {
                 let namespace = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
@@ -3512,12 +3580,35 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectGetPrototypeOf" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj = match self.proxy_route(proxy, "getPrototypeOf") {
+                    ProxyRoute::Trap(callback, target) => {
+                        let result =
+                            self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null);
+                        return Ok(Value::Any(boxed));
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
+                };
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
                 Ok(Value::Any(prototype.unwrap_or_else(zun_core::Any::null)))
             }
             "objectSetPrototypeOf" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj = match self.proxy_route(proxy, "setPrototypeOf") {
+                    ProxyRoute::Trap(callback, target) => {
+                        let prototype = args.get(1).ok_or(RunError::BadToken)?.clone();
+                        self.invoke_proxy_trap(
+                            callback,
+                            vec![Value::Object(target), prototype],
+                        )?;
+                        return Ok(Value::Object(proxy));
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
+                };
                 let prototype = prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?);
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 Ok(Value::Object(obj))
@@ -3586,12 +3677,27 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(found))
             }
             "objectDefineProperty" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
                 let desc = object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj = match self.proxy_route(proxy, "defineProperty") {
+                    ProxyRoute::Trap(callback, target) => {
+                        self.invoke_proxy_trap(
+                            callback,
+                            vec![
+                                Value::Object(target),
+                                Value::Str(key.clone().into()),
+                                Value::Object(desc),
+                            ],
+                        )?;
+                        return Ok(Value::Object(proxy));
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
+                };
                 self.object_define_one(obj, &key, desc);
                 Ok(Value::Object(obj))
             }
@@ -3614,10 +3720,21 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectGetOwnPropertyDescriptor" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.to_string(),
                     _ => return Err(RunError::BadToken),
+                };
+                let obj = match self.proxy_route(proxy, "getOwnPropertyDescriptor") {
+                    ProxyRoute::Trap(callback, target) => {
+                        let result = self.invoke_proxy_trap(
+                            callback,
+                            vec![Value::Object(target), Value::Str(key.clone().into())],
+                        )?;
+                        return Ok(result);
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
                 };
                 match self.build_descriptor(obj, &key)? {
                     Some(descriptor) => Ok(Value::Object(descriptor)),
@@ -3639,7 +3756,18 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(out))
             }
             "objectGetOwnPropertyNames" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // `Reflect.ownKeys(proxy)` consults the `ownKeys` trap; the trap
+                // returns the key array directly.
+                let obj = match self.proxy_route(proxy, "ownKeys") {
+                    ProxyRoute::Trap(callback, target) => {
+                        let result =
+                            self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                        return Ok(result);
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
+                };
                 let names = self.object_own_names(obj)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(names.len());
@@ -3670,12 +3798,29 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(sealed))
             }
             "objectPreventExtensions" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj = match self.proxy_route(proxy, "preventExtensions") {
+                    ProxyRoute::Trap(callback, target) => {
+                        self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                        return Ok(Value::Object(proxy));
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
+                };
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_prevent_extensions(obj));
                 Ok(Value::Object(obj))
             }
             "objectIsExtensible" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj = match self.proxy_route(proxy, "isExtensible") {
+                    ProxyRoute::Trap(callback, target) => {
+                        let result =
+                            self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                        return Ok(Value::Bool(matches!(result, Value::Bool(true))));
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => proxy,
+                };
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let extensible = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_extensible(obj))
@@ -4007,6 +4152,39 @@ impl<'a> Interp<'a> {
             });
             Ok(Some(out))
         }
+    }
+
+    /// Classify how a reflective operation on `obj` resolves for a given trap
+    /// name (see [`ProxyRoute`]). A proxy with the trap routes through it; a
+    /// proxy without it falls back to its target; a plain object operates on
+    /// itself.
+    fn proxy_route(&self, obj: zun_gc::Obj, trap: &str) -> ProxyRoute {
+        match zun_gc::with_current_heap(|heap| heap.proxy_target(obj)) {
+            Some(target) => match zun_gc::with_current_heap(|heap| heap.proxy_trap(obj, trap)) {
+                Some(callback) => ProxyRoute::Trap(callback, target),
+                None => ProxyRoute::Target(target),
+            },
+            None => ProxyRoute::NotProxy,
+        }
+    }
+
+    /// Invoke a proxy handler trap, threading its closure environment (if any)
+    /// as the leading positional slot and appending `leading` (the target and
+    /// the trap-specific operands). Mirrors the dispatch convention of the
+    /// `get`/`set`/`has`/`deleteProperty` traps.
+    fn invoke_proxy_trap(
+        &mut self,
+        callback: zun_core::FunctionHandle,
+        leading: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let mut call_args = Vec::with_capacity(leading.len() + 1);
+        if let Some(address) = callback.environment() {
+            call_args.push(Value::Object(unsafe {
+                zun_gc::Obj::from_addr(address as *mut u64)
+            }));
+        }
+        call_args.extend(leading);
+        self.call(callback.method_rid(), call_args, None)
     }
 
     /// Read every element of a managed array, unboxing each `Any` slot to its

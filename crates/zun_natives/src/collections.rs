@@ -451,5 +451,15 @@ pub const MODULE: crate::Module = crate::Module {
         // function value and the class is identified by its metadata TypeDef
         // rid. The symbol arrives as an immediate `Any`, hence `Opaque`.
         NativeFn { name: "classSetSymbolFunction", params: &[U32, Opaque, Function], ret: Void, imp: unavailable },
+        // NUCLEUS #10: Proxy `apply` trap + callable proxy targets. A proxy's
+        // target is stored as a GC object; `proxyNewCallable` wraps a *function*
+        // target (boxed via `functionBox` into a GC record carrying `__boxedFn`)
+        // so a proxy can stand in for a callable. `proxyApply` routes
+        // `proxy(...args)` and `Reflect.apply(proxy, thisArg, args)` through the
+        // handler's `apply` trap (absent trap → the underlying function). The
+        // thisArg arrives as an immediate `Any` (`Opaque`). Appended last so
+        // existing dispatch ids stay stable.
+        NativeFn { name: "proxyNewCallable", params: &[Opaque, DynamicObject], ret: Proxy, imp: unavailable },
+        NativeFn { name: "proxyApply", params: &[Proxy, Opaque, Array], ret: Opaque, imp: unavailable },
     ],
 };
