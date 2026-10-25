@@ -393,9 +393,18 @@ impl Interp<'_> {
                         self.invoke_function_value(getter, Vec::new())?
                     } else {
                         zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get(object, &name)
-                                .map(Value::Any)
-                                .unwrap_or(Value::Void)
+                            if let Some(any) = heap.dynamic_get(object, &name) {
+                                Value::Any(any)
+                            } else if let Some(handle) = heap.dynamic_get_function(object, &name) {
+                                // No data slot, but a function slot exists (an
+                                // object method, or a `Promise.withResolvers`
+                                // settler). Read it out as a callable value so a
+                                // binding such as `const { resolve } = ...` is
+                                // callable (function values do not box to `Any`).
+                                Value::Function(handle)
+                            } else {
+                                Value::Void
+                            }
                         })
                     };
                     stack.push(value);

@@ -440,40 +440,14 @@ impl Parser<'_> {
 
     fn let_statement(&mut self) -> Stmt {
         let start = self.bump().span; // `let`
-        if self.eat(TokenKind::LBracket) {
-            let mut names = Vec::new();
-            while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
-                names.push(self.name("an array destructuring binding"));
-                if !self.eat(TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenKind::RBracket, "`]` after array destructuring pattern");
-            self.expect(TokenKind::Eq, "`=` after array destructuring pattern");
+        if self.at(TokenKind::LBracket) || self.at(TokenKind::LBrace) {
+            let pattern = self.binding_pattern();
+            self.expect(TokenKind::Eq, "`=` after destructuring pattern");
             let init = self.expression();
             let end = self.peek().span;
             self.expect(TokenKind::Semi, "`;`");
-            return Stmt::ArrayDestructure {
-                names,
-                init,
-                span: start.to(end),
-            };
-        }
-        if self.eat(TokenKind::LBrace) {
-            let mut names = Vec::new();
-            while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-                names.push(self.name("an object destructuring binding"));
-                if !self.eat(TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenKind::RBrace, "`}` after object destructuring pattern");
-            self.expect(TokenKind::Eq, "`=` after object destructuring pattern");
-            let init = self.expression();
-            let end = self.peek().span;
-            self.expect(TokenKind::Semi, "`;`");
-            return Stmt::ObjectDestructure {
-                names,
+            return Stmt::Destructure {
+                pattern,
                 init,
                 span: start.to(end),
             };
@@ -490,6 +464,117 @@ impl Parser<'_> {
             init,
             span: start.to(end),
         }
+    }
+
+    /// Parse a binding pattern: a bare identifier, an array pattern `[..]`, or
+    /// an object pattern `{..}`. Supports holes, `...rest`, `= default`,
+    /// renaming (`key: target`) and nesting.
+    pub(crate) fn binding_pattern(&mut self) -> Pattern {
+        if self.at(TokenKind::LBracket) {
+            return self.array_pattern();
+        }
+        if self.at(TokenKind::LBrace) {
+            return self.object_pattern();
+        }
+        let name = self.name("a binding name");
+        let ty = self.optional_type_annotation();
+        Pattern::Ident { name, ty }
+    }
+
+    /// Parse a property key shared by object literals and object patterns:
+    /// a computed `[expr]`, a string/number literal, or an identifier/keyword.
+    fn property_key(&mut self) -> PropertyKey {
+        if self.eat(TokenKind::LBracket) {
+            let key = self.assignment();
+            self.expect(TokenKind::RBracket, "`]` after computed property key");
+            return PropertyKey::Computed(Box::new(key));
+        }
+        match self.peek().kind {
+            TokenKind::String => {
+                let token = self.bump();
+                PropertyKey::String {
+                    value: decode_string(self.text(token)),
+                    span: token.span,
+                }
+            }
+            TokenKind::Number => {
+                let token = self.bump();
+                let value = self.text(token).parse::<f64>().unwrap_or(f64::NAN);
+                PropertyKey::Number { value, span: token.span }
+            }
+            kind if kind == TokenKind::Ident || kind.is_keyword() => {
+                let token = self.bump();
+                PropertyKey::Ident(Name { span: token.span })
+            }
+            _ => {
+                self.error_at(self.peek().span, "expected a property name");
+                let token = self.bump();
+                PropertyKey::Ident(Name { span: token.span })
+            }
+        }
+    }
+
+    fn array_pattern(&mut self) -> Pattern {
+        let start = self.bump().span; // `[`
+        let mut elements = Vec::new();
+        let mut rest = None;
+        while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
+            if self.at(TokenKind::Comma) {
+                // A hole / elision: `[, b]`.
+                elements.push(None);
+                self.bump();
+                continue;
+            }
+            if self.eat(TokenKind::Ellipsis) {
+                rest = Some(Box::new(self.binding_pattern()));
+                let _ = self.eat(TokenKind::Comma);
+                break;
+            }
+            let pattern = self.binding_pattern();
+            let default = self.eat(TokenKind::Eq).then(|| self.assignment());
+            elements.push(Some(PatternElement { pattern, default }));
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let end = self.peek().span;
+        self.expect(TokenKind::RBracket, "`]` after array pattern");
+        Pattern::Array { elements, rest, span: start.to(end) }
+    }
+
+    fn object_pattern(&mut self) -> Pattern {
+        let start = self.bump().span; // `{`
+        let mut properties = Vec::new();
+        let mut rest = None;
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            if self.eat(TokenKind::Ellipsis) {
+                rest = Some(Box::new(self.binding_pattern()));
+                let _ = self.eat(TokenKind::Comma);
+                break;
+            }
+            let key = self.property_key();
+            let value = if self.eat(TokenKind::Colon) {
+                // `key: target` renaming / nested pattern.
+                self.binding_pattern()
+            } else {
+                // Shorthand `{ x }`: the key identifier is also the binding.
+                match &key {
+                    PropertyKey::Ident(name) => Pattern::Ident { name: *name, ty: None },
+                    _ => {
+                        self.error_at(self.peek().span, "a renamed binding (`key: target`) is required here");
+                        Pattern::Ident { name: self.name("a binding name"), ty: None }
+                    }
+                }
+            };
+            let default = self.eat(TokenKind::Eq).then(|| self.assignment());
+            properties.push(PatternProperty { key, value, default });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let end = self.peek().span;
+        self.expect(TokenKind::RBrace, "`}` after object pattern");
+        Pattern::Object { properties, rest, span: start.to(end) }
     }
 
     /// Parse switch cases and reduce them to the existing if/else AST.
@@ -608,6 +693,17 @@ impl Parser<'_> {
         let start = self.bump().span;
         self.expect(TokenKind::LParen, "`(` after for");
         if self.eat(TokenKind::KwLet) {
+            // A `[`/`{` head is always a destructuring for-of binding; a bare
+            // identifier head may be either a for-of or a C-style for.
+            if self.at(TokenKind::LBracket) || self.at(TokenKind::LBrace) {
+                let pattern = self.binding_pattern();
+                self.expect(TokenKind::KwOf, "`of` after for destructuring binding");
+                let iterable = self.expression();
+                self.expect(TokenKind::RParen, "`)` after for-of iterable");
+                let body = self.block();
+                let span = start.to(body.span);
+                return Stmt::ForOf { pattern, iterable, body, span };
+            }
             let name = self.name("a for binding name");
             let ty = self.optional_type_annotation();
             if self.eat(TokenKind::KwOf) {
@@ -616,7 +712,7 @@ impl Parser<'_> {
                 let body = self.block();
                 let span = start.to(body.span);
                 return Stmt::ForOf {
-                    name,
+                    pattern: Pattern::Ident { name, ty },
                     iterable,
                     body,
                     span,

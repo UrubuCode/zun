@@ -55,5 +55,18 @@ pub const MODULE: crate::Module = crate::Module {
         // spread (`[a, ...xs]`). Appended last so existing dispatch ids stay
         // stable.
         NativeFn { name: "arraySpreadAppend", params: &[Array, Opaque], ret: Array, imp: unavailable },
+        // `arraySlice(source, start)` returns a fresh managed Array holding the
+        // elements of `source` from index `start` to the end. Backs the
+        // `...rest` element of array destructuring. Appended last so existing
+        // dispatch ids stay stable.
+        NativeFn { name: "arraySlice", params: &[Array, U64], ret: Array, imp: unavailable },
+        // `coalesceUndefined(value, fallback)` returns `fallback` when `value`
+        // reads as `undefined`, else `value`. Backs destructuring defaults
+        // (`[a = 1]`, `{ x = 1 }`); both operands are evaluated (eager default).
+        NativeFn { name: "coalesceUndefined", params: &[Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `objectRest(source, excludedKeys)` returns a fresh dynamic object
+        // holding every own-enumerable string key of `source` except those
+        // named in the `excludedKeys` Array. Backs object-pattern `...rest`.
+        NativeFn { name: "objectRest", params: &[Opaque, Array], ret: DynamicObject, imp: unavailable },
     ],
 };

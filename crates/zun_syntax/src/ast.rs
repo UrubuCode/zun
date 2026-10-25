@@ -291,6 +291,68 @@ pub struct CatchClause {
     pub body: Block,
 }
 
+/// A binding pattern on the left-hand side of a `let`/`const` declaration or
+/// a `for-of` head. A bare `Ident` is the common single-name binding; `Array`
+/// and `Object` introduce destructuring.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// A simple identifier binding, optionally type-annotated (`x`, `x: T`).
+    Ident {
+        /// The declared name.
+        name: Name,
+        /// Optional type annotation.
+        ty: Option<TypeAnnotation>,
+    },
+    /// An array pattern `[a, , b, ...rest]`. A `None` element is a hole.
+    Array {
+        /// Positional elements; `None` skips (elision).
+        elements: Vec<Option<PatternElement>>,
+        /// Optional trailing `...rest` collecting remaining elements.
+        rest: Option<Box<Pattern>>,
+        /// Span of the pattern.
+        span: Span,
+    },
+    /// An object pattern `{ x, y: alias, [k]: v, ...rest }`.
+    Object {
+        /// Bound properties.
+        properties: Vec<PatternProperty>,
+        /// Optional trailing `...rest` collecting remaining own keys.
+        rest: Option<Box<Pattern>>,
+        /// Span of the pattern.
+        span: Span,
+    },
+}
+
+/// One element of an array pattern: a sub-pattern with an optional default.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternElement {
+    /// The binding target for this position.
+    pub pattern: Pattern,
+    /// Default applied when the element reads `undefined`.
+    pub default: Option<Expr>,
+}
+
+/// One bound property of an object pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternProperty {
+    /// The property key read from the source object.
+    pub key: PropertyKey,
+    /// The binding target for the property value.
+    pub value: Pattern,
+    /// Default applied when the property reads `undefined`.
+    pub default: Option<Expr>,
+}
+
+impl Pattern {
+    /// Source span of the pattern.
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Ident { name, .. } => name.span,
+            Pattern::Array { span, .. } | Pattern::Object { span, .. } => *span,
+        }
+    }
+}
+
 /// A statement.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
@@ -305,20 +367,14 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
-    /// `let [a, b] = array;` fixed-length array destructuring.
-    ArrayDestructure {
-        /// Declared binding names in index order.
-        names: Vec<Name>,
-        /// The source array expression.
-        init: Expr,
-        /// Span of the whole statement.
-        span: Span,
-    },
-    /// `let {a, b} = object;` dynamic-property destructuring.
-    ObjectDestructure {
-        /// Declared binding names; each name is also the property key.
-        names: Vec<Name>,
-        /// The source object expression.
+    /// `let [a, b] = array;` / `let { x, y } = object;` — a binding pattern
+    /// bound from an initializer. Covers array patterns (holes, rest,
+    /// defaults, nesting) and object patterns (rename, computed keys, rest,
+    /// defaults, nesting).
+    Destructure {
+        /// The binding pattern on the left-hand side.
+        pattern: Pattern,
+        /// The initializer evaluated once on the right-hand side.
         init: Expr,
         /// Span of the whole statement.
         span: Span,
@@ -369,8 +425,8 @@ pub enum Stmt {
     },
     /// `for (let name of iterable) { body }`.
     ForOf {
-        /// The loop binding.
-        name: Name,
+        /// The loop binding; a bare identifier or a destructuring pattern.
+        pattern: Pattern,
         /// The iterable expression.
         iterable: Expr,
         /// The loop body.

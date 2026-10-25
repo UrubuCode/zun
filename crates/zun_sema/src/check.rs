@@ -976,42 +976,234 @@ impl Checker<'_> {
         }
     }
 
-    fn check_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        match stmt {
-            ast::Stmt::ArrayDestructure { names, init, .. } => {
-                let init = self.check_expr(cx, init);
-                if init.ty != Ty::Array && !init.ty.is_error() {
-                    self.error(init.span, "array destructuring requires an Array initializer");
-                }
-                let slots = names
-                    .iter()
-                    .map(|name| {
-                        let name = self.text(name).to_string();
-                        cx.declare(&name, Ty::Any)
-                    })
-                    .collect();
-                hir::Stmt::ArrayDestructure { slots, init }
+    /// A collision-free hidden local name (contains a space, which no source
+    /// identifier can), unique per slot index within the function.
+    fn fresh_temp_name(&self, cx: &FunctionCx) -> String {
+        format!(" destr#{}", cx.locals.len())
+    }
+
+    /// Wrap a read with a destructuring default: `coalesceUndefined(read, d)`
+    /// returns `d` when `read` is `undefined` (eager default evaluation).
+    fn apply_default(
+        &mut self,
+        cx: &mut FunctionCx,
+        read: hir::Expr,
+        default: Option<&ast::Expr>,
+    ) -> hir::Expr {
+        let Some(default) = default else { return read };
+        let span = read.span;
+        let default = self.check_expr(cx, default);
+        let default = Self::box_to_any(default);
+        let Some((id, _)) = zun_natives::resolve("array", "coalesceUndefined") else {
+            self.error(span, "missing `coalesceUndefined` intrinsic");
+            return read;
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(read), default] },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
+    /// Bind a declaration/for-of pattern from the value produced by `value`,
+    /// appending the lowered binding statements to `out`. Array and object
+    /// patterns stash `value` into a hidden temp and read each sub-binding
+    /// from it; nested patterns recurse.
+    fn bind_pattern(
+        &mut self,
+        cx: &mut FunctionCx,
+        pattern: &ast::Pattern,
+        value: hir::Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        let span = value.span;
+        match pattern {
+            ast::Pattern::Ident { name, ty } => {
+                let declared = ty.as_ref().map(|t| self.resolve_annotation(t));
+                let slot_ty = declared.unwrap_or(value.ty);
+                let text = self.text(name).to_string();
+                let slot = cx.declare(&text, slot_ty);
+                out.push(hir::Stmt::Let { slot, init: value });
             }
-            ast::Stmt::ObjectDestructure { names, init, .. } => {
-                let init = self.check_expr(cx, init);
-                if init.ty != Ty::Any
-                    && init.ty != Ty::DynamicObject
-                    && !init.ty.is_error()
-                {
-                    self.error(
-                        init.span,
-                        "object destructuring requires a dynamic object initializer",
+            ast::Pattern::Array { elements, rest, .. } => {
+                if !matches!(value.ty, Ty::Array | Ty::Any | Ty::Error) {
+                    self.error(span, "array destructuring requires an Array or any value");
+                }
+                let temp = cx.declare(&self.fresh_temp_name(cx), value.ty);
+                let temp_ty = value.ty;
+                out.push(hir::Stmt::Let { slot: temp, init: value });
+                for (index, element) in elements.iter().enumerate() {
+                    let Some(element) = element else { continue };
+                    let read = self.array_element_read(temp, temp_ty, index, span);
+                    let read = self.apply_default(cx, read, element.default.as_ref());
+                    self.bind_pattern(cx, &element.pattern, read, out);
+                }
+                if let Some(rest) = rest {
+                    let read = self.array_rest_read(temp, temp_ty, elements.len(), span);
+                    self.bind_pattern(cx, rest, read, out);
+                }
+            }
+            ast::Pattern::Object { properties, rest, .. } => {
+                if !matches!(value.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_) | Ty::Error) {
+                    self.error(span, "object destructuring requires an object value");
+                }
+                let temp = cx.declare(&self.fresh_temp_name(cx), value.ty);
+                let temp_ty = value.ty;
+                out.push(hir::Stmt::Let { slot: temp, init: value });
+                let mut excluded: Vec<String> = Vec::new();
+                for property in properties {
+                    let (read, static_key) = self.object_member_read(cx, temp, temp_ty, &property.key, span);
+                    if let Some(key) = static_key {
+                        excluded.push(key);
+                    }
+                    let read = self.apply_default(cx, read, property.default.as_ref());
+                    self.bind_pattern(cx, &property.value, read, out);
+                }
+                if let Some(rest) = rest {
+                    let read = self.object_rest_read(temp, temp_ty, &excluded, span);
+                    self.bind_pattern(cx, rest, read, out);
+                }
+            }
+        }
+    }
+
+    /// Read array element `index` from the temp holding the source array.
+    /// Uses `arrayAt`, which yields `undefined` for an out-of-range index
+    /// (so trailing holes and defaults read `undefined` rather than trapping).
+    fn array_element_read(&mut self, temp: hir::LocalSlot, temp_ty: Ty, index: usize, span: Span) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("array", "arrayAt") else {
+            self.error(span, "missing `arrayAt` intrinsic");
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![
+                    hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span },
+                    hir::Expr { kind: hir::ExprKind::Number(index as f64), ty: Ty::F64, span },
+                ],
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
+    /// Collect array elements from `start` to the end into a fresh Array.
+    fn array_rest_read(&mut self, temp: hir::LocalSlot, temp_ty: Ty, start: usize, span: Span) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("array", "arraySlice") else {
+            self.error(span, "missing `arraySlice` intrinsic");
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![
+                    hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::Number(start as f64),
+                        ty: Ty::Int(IntKind::U64),
+                        span,
+                    },
+                ],
+            },
+            ty: Ty::Array,
+            span,
+        }
+    }
+
+    /// Read one property from the temp. Returns the read expression and, for a
+    /// statically-known string key, that key (for object-rest exclusion).
+    fn object_member_read(
+        &mut self,
+        cx: &mut FunctionCx,
+        temp: hir::LocalSlot,
+        temp_ty: Ty,
+        key: &ast::PropertyKey,
+        span: Span,
+    ) -> (hir::Expr, Option<String>) {
+        let object = hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span };
+        let name = match key {
+            ast::PropertyKey::Ident(name) => Some(self.text(name).to_string()),
+            ast::PropertyKey::String { value, .. } => Some(value.clone()),
+            ast::PropertyKey::Number { value, .. } => Some(value.to_string()),
+            ast::PropertyKey::Computed(_) => None,
+        };
+        if let Some(name) = name {
+            // A typed instance reads its declared field directly.
+            if let Ty::Instance(class) = temp_ty {
+                if let Some((field_slot, ty)) = self.field_of(class, &name) {
+                    return (
+                        hir::Expr {
+                            kind: hir::ExprKind::FieldGet { object: Box::new(object), class, field_slot },
+                            ty,
+                            span,
+                        },
+                        Some(name),
                     );
                 }
-                let bindings = names
-                    .iter()
-                    .map(|name| {
-                        let text = self.text(name).to_string();
-                        let slot = cx.declare(&text, Ty::Any);
-                        (slot, text)
-                    })
-                    .collect();
-                hir::Stmt::ObjectDestructure { bindings, init }
+            }
+            return (
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicGet { object: Box::new(object), name: name.clone() },
+                    ty: Ty::Any,
+                    span,
+                },
+                Some(name),
+            );
+        }
+        // Computed key: evaluate the key expression and read dynamically.
+        let ast::PropertyKey::Computed(expr) = key else { unreachable!() };
+        let key_expr = self.check_expr(cx, expr);
+        (
+            hir::Expr {
+                kind: hir::ExprKind::DynamicGetValue { object: Box::new(object), key: Box::new(key_expr) },
+                ty: Ty::Any,
+                span,
+            },
+            None,
+        )
+    }
+
+    /// Collect the source object's remaining own keys into a fresh object.
+    fn object_rest_read(&mut self, temp: hir::LocalSlot, temp_ty: Ty, excluded: &[String], span: Span) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("array", "objectRest") else {
+            self.error(span, "missing `objectRest` intrinsic");
+            return self.poison(span);
+        };
+        let excluded_elements = excluded
+            .iter()
+            .map(|key| {
+                Some(hir::Expr {
+                    kind: hir::ExprKind::String(key.clone()),
+                    ty: Ty::String,
+                    span,
+                })
+            })
+            .collect();
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![
+                    hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::ArrayLiteral { elements: excluded_elements },
+                        ty: Ty::Array,
+                        span,
+                    },
+                ],
+            },
+            ty: Ty::DynamicObject,
+            span,
+        }
+    }
+
+    fn check_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
+        match stmt {
+            ast::Stmt::Destructure { pattern, init, .. } => {
+                let value = self.check_expr(cx, init);
+                let mut out = Vec::new();
+                self.bind_pattern(cx, pattern, value, &mut out);
+                hir::Stmt::Group(out)
             }
             ast::Stmt::Let { name, ty, init, .. } => {
                 let mut init = self.check_expr(cx, init);
@@ -1110,7 +1302,7 @@ impl Checker<'_> {
                 }
             }
             ast::Stmt::ForOf {
-                name,
+                pattern,
                 iterable,
                 body,
                 span: _,
@@ -1193,8 +1385,34 @@ impl Checker<'_> {
                     span,
                 };
                 cx.scopes.push(Scope::new());
-                let binding = cx.declare(self.text(name), Ty::Any);
-                let body = self.check_block(cx, body);
+                // The loop binding is a pattern. For a bare identifier the
+                // iteration value stores directly into its slot; for a
+                // destructuring pattern it stores into a hidden element temp
+                // that the prelude statements then destructure each iteration.
+                let (binding, prelude) = match pattern {
+                    ast::Pattern::Ident { name, ty } => {
+                        let declared =
+                            ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
+                        (cx.declare(self.text(name), declared), Vec::new())
+                    }
+                    _ => {
+                        let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+                        let mut prelude = Vec::new();
+                        let element_expr = hir::Expr {
+                            kind: hir::ExprKind::Local(element),
+                            ty: Ty::Any,
+                            span,
+                        };
+                        self.bind_pattern(cx, pattern, element_expr, &mut prelude);
+                        (element, prelude)
+                    }
+                };
+                let mut body = self.check_block(cx, body);
+                if !prelude.is_empty() {
+                    let mut combined = prelude;
+                    combined.append(&mut body);
+                    body = combined;
+                }
                 cx.scopes.pop();
                 hir::Stmt::ForOf {
                     iterator,
@@ -3729,6 +3947,36 @@ impl Checker<'_> {
 
                 if let Some(slot) = cx.lookup(&name) {
                     let function_ty = cx.locals[slot as usize];
+                    // Calling an `any`-typed local performs a dynamic dispatch:
+                    // the value must be callable at run time (e.g. a function
+                    // read from an object's function slot via destructuring, as
+                    // `const { resolve } = Promise.withResolvers()` produces).
+                    // Lowered like a generic `Function` callback (single arg).
+                    if function_ty == Ty::Any {
+                        if args.len() != 1 {
+                            self.error(
+                                span,
+                                format!(
+                                    "a dynamic (`any`) callee expects exactly one argument, found {}",
+                                    args.len()
+                                ),
+                            );
+                        }
+                        let callee_expr = hir::Expr {
+                            kind: hir::ExprKind::Local(slot),
+                            ty: function_ty,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::IndirectCall {
+                                callee: Box::new(callee_expr),
+                                args,
+                                func: hir::DYNAMIC_FUNCTION,
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
                     if let Ty::Function(func) = function_ty {
                         let return_ty = if func == hir::DYNAMIC_FUNCTION {
                             if args.len() != 1 {
@@ -7910,7 +8158,7 @@ fn count_yields_in_block(block: &ast::Block) -> usize {
 fn count_yields_in_stmt(stmt: &ast::Stmt) -> usize {
     use ast::Stmt::*;
     match stmt {
-        Let { init, .. } | ArrayDestructure { init, .. } | ObjectDestructure { init, .. } => count_yields_in_expr(init),
+        Let { init, .. } | Destructure { init, .. } => count_yields_in_expr(init),
         Expr(expr) => count_yields_in_expr(expr),
         If { cond, then_block, else_block, .. } => count_yields_in_expr(cond) + count_yields_in_block(then_block) + else_block.as_ref().map_or(0, count_yields_in_block),
         While { cond, body, .. } => count_yields_in_expr(cond) + count_yields_in_block(body),
@@ -7974,9 +8222,7 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
 fn count_awaits_in_stmt(stmt: &ast::Stmt) -> usize {
     use ast::Stmt::*;
     match stmt {
-        Let { init, .. } | ArrayDestructure { init, .. } | ObjectDestructure { init, .. } => {
-            count_awaits_in_expr(init)
-        }
+        Let { init, .. } | Destructure { init, .. } => count_awaits_in_expr(init),
         Expr(expr) => count_awaits_in_expr(expr),
         If { cond, then_block, else_block, .. } => {
             count_awaits_in_expr(cond)

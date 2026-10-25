@@ -8,8 +8,7 @@ pub(super) fn collect_mutated_names(
     for statement in statements {
         match statement {
             ast::Stmt::Let { init, .. }
-            | ast::Stmt::ArrayDestructure { init, .. }
-            | ast::Stmt::ObjectDestructure { init, .. }
+            | ast::Stmt::Destructure { init, .. }
             | ast::Stmt::Expr(init) => collect_mutated_expr(checker, init, names),
             ast::Stmt::If { cond, then_block, else_block, .. } => {
                 collect_mutated_expr(checker, cond, names);

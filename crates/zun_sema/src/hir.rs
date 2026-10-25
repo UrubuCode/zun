@@ -418,20 +418,10 @@ pub enum Stmt {
         /// The initializer.
         init: Expr,
     },
-    /// Initialize consecutive locals from an Array by index.
-    ArrayDestructure {
-        /// Destination local slots in index order.
-        slots: Vec<LocalSlot>,
-        /// Source array expression.
-        init: Expr,
-    },
-    /// Initialize locals from dynamic properties by matching their names.
-    ObjectDestructure {
-        /// Destination local slots and property names in order.
-        bindings: Vec<(LocalSlot, String)>,
-        /// Source dynamic object expression.
-        init: Expr,
-    },
+    /// A flat sequence of statements lowered from one source construct
+    /// (e.g. a destructuring declaration desugared into a temp plus per-name
+    /// binding stores). Emitted inline; introduces no new scope.
+    Group(Vec<Stmt>),
     /// Initialize a local whose storage is a shared closure cell.
     BoxedLet {
         /// Destination local slot containing the cell object.

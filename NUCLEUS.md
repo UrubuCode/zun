@@ -31,9 +31,9 @@ read.
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
 | 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). **Object-literal computed Symbol methods landed** (§6b): `{ [Symbol.hasInstance](v){…} }` / `{ [Symbol.toPrimitive](h){…} }` lower to `dynamicSetSymbolFunction`, so user well-known-symbol methods can be written as literals (not only installed by hand). Remaining (all front-end/structural): typed-class `hasInstance`/class computed symbol-key members, operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
 | 6 | Object | mostly | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. Remaining: `getOwnPropertySymbols` |
-| 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
+| 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. **Binding destructuring landed** (declarations + for-of heads), so `for (const [i, v] of arr.entries())` works directly. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries` |
 | 8 | Function | mostly | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0). **Function-valued `bind` partial/`this` arguments now work**: a function cannot box into `Any`, so each function-typed prepended argument is wrapped by a `functionBox` intrinsic (a GC-traced object carrying the callable in a `__boxedFn` function slot, keeping its captured environment visible to precise root handling) and `resolve_call_target` unwraps it before dispatch — order among prepended args is preserved. Deferred: **`Function` constructor** (`new Function(args, body)` evaluates a source string ⇒ needs a runtime compiler; the VM links no compiler and this conflicts with AOT reachability/trimming — structural); **a function inside `apply`'s arguments array** / functions in generic arrays (would require letting `box_any` carry functions globally — a deliberate GC-root-precision invariant, broad arg-marshalling rework); **multi-argument bound calls** (bound functions are typed `Function` and dynamic calls use the single-trailing-arg IL arity model — carrying an argument count for a dynamic `CallIndirect` is an opcode-set + verifier change) |
-| 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }` (resolve/reject callable via dynamic method call); `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. Remaining: `new Promise(executor)` constructor; destructuring the resolver functions (front-end gap, see §9) |
+| 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }`; **destructuring the resolver functions now works** (`const { resolve, reject } = Promise.withResolvers(); resolve(v)`) — object destructuring reads the function slot as a callable value and an `any`-typed local is now dynamically callable; `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. Remaining: `new Promise(executor)` constructor |
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
 | 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
 | 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
@@ -536,11 +536,10 @@ dispatch (`check.rs`, `Ty::Array` arm of the managed-method table plus the
   iterator object — pragmatic for v1; a proper iterator-protocol object is a
   follow-up. `Array.from` consumes an array or string (and anything with array
   storage); arbitrary iterator-protocol sources are deferred (documented). **Note:
-  `for (const [i, v] of arr.entries())` is blocked by a separate front-end gap —
-  for-of binds a single identifier, not a destructuring pattern** (ast/parser/oxc
-  `ForOf.name` is a `Name`); `entries()` itself works (iterate with one binding and
-  index the pair). That loop-binding destructuring is orthogonal to the Array
-  surface and left for a front-end change.
+  `for (const [i, v] of arr.entries())` now works — binding destructuring landed in
+  the front-end (see §Destructuring). The for-of head accepts an array/object
+  pattern; `ForOf` carries a `Pattern` and the loop body destructures a hidden
+  element temp each iteration.**
 - **Notes:** these callback methods are Tier 0 (they re-enter the interpreter via
   `self.call`, like proxy traps / `functionApply`); `CallIndirect` is not
   JIT-lowered, so there is no new JIT path. The non-callback additions (`at`,
@@ -552,6 +551,29 @@ dispatch (`check.rs`, `Ty::Array` arm of the managed-method table plus the
   receiver name `Array` for `isArray`/`of`/`from` (the Number/String precedent).
   `indexOf`/`lastIndexOf`/`includes` stay value-based (spec) and `indexOf` returns
   `int`.
+
+### 7c. Binding destructuring — landed  *(declarations + for-of heads)*
+`const`/`let` declarations and `for-of` heads accept array and object patterns.
+The AST carries a `Pattern` (`Ident | Array | Object`) with `PatternElement`
+(sub-pattern + optional default) and `PatternProperty` (key + sub-pattern +
+default); `Stmt::Destructure` replaces the old flat `ArrayDestructure`/
+`ObjectDestructure` nodes, and `ForOf` carries a `Pattern`. Both the hand parser
+(`binding_pattern`/`array_pattern`/`object_pattern`) and the OXC adapter
+(`convert_binding_pattern` over `ArrayPattern`/`ObjectPattern`/`AssignmentPattern`/
+`BindingRestElement`) build it.
+- **Supported:** array elements, holes/elisions `[, b]`, `...rest` (new `arraySlice`
+  native), defaults `[a = 1]` / `{ x = 1 }` (new `coalesceUndefined` native — eager
+  default evaluation, not lazy), object shorthand/rename (`{ x, y: alias }`), computed
+  keys `{ [k]: v }`, object `...rest` (new `objectRest` native, remaining own
+  string keys), and arbitrary nesting (`[[a], { b }]`). Object patterns read
+  `DynamicObject`/`any` via `LoadDynamic` and typed `Instance` fields via `FieldGet`.
+- **Lowering:** sema desugars a pattern into a hidden temp (`Let`) plus per-binding
+  `Let`s inside a new `hir::Stmt::Group`; array elements read through `arrayAt`
+  (out-of-range → `undefined`, so trailing holes/defaults don't trap). No new
+  opcodes. for-of binds a hidden element temp and prepends the destructuring
+  statements to the loop body.
+- **Scope:** declarations + for-of heads only. Function-parameter and
+  assignment-target destructuring are a deliberate follow-up (not implemented).
 
 ### 7b. Array literals — partial  *(expression syntax landed)*
 `[ e1, e2, ... ]` now parses and lowers in the front-end (both the hand parser —
@@ -696,13 +718,13 @@ implemented on the Tier-0 floor in `zun_interp/src/collections.rs`; `await` opco
   path (`dynamicCall0/1/2`) now checks the function slot first (invoking the stored handle),
   falling back to the import-namespace loader. `reject(e)` carries an object/boxed `e` as a
   first-class reason, a string `e` as a message.
-  - **Deferred (front-end gap, not faked):** *destructuring* the resolver functions
-    (`const { promise, resolve, reject } = Promise.withResolvers()`) does not bind the
-    function slots — object destructuring reads the dynamic *value* slot into `Any`-typed
-    locals, and an `Any` local is not callable. Use field/method form
-    (`const r: any = Promise.withResolvers(); r.resolve(v);`). Destructuring the
-    `promise` value alone works. Closing this needs either function-typed dynamic bindings +
-    indirect call, or function-aware destructuring — a front-end change, out of scope here.
+  - **Resolver destructuring (landed).** `const { promise, resolve, reject } =
+    Promise.withResolvers(); resolve(v)` now works. Two front-end changes close the former
+    gap: (1) `LoadDynamic` falls back to the function slot when the data slot is absent,
+    returning the settler as a callable `Value::Function` (object methods read the same way);
+    (2) a call of an `any`-typed local now lowers to a dynamic indirect call
+    (`DYNAMIC_FUNCTION`, single arg), so the destructured `resolve`/`reject` binding is
+    callable. The field/method form (`const r: any = …; r.resolve(v)`) still works too.
 - **Unhandled rejection at turn end (landed).** `zun_sched`'s `PromiseTable` tracks an
   `unnoticed` set: a promise that settles `Rejected` with **no waiter attached** is marked;
   any later handler attaching (`attach`/`adopt`, i.e. a `.catch`/`.then`/an adopting

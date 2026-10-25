@@ -77,6 +77,128 @@ fn convert_decorator(source: &str, decorator: &OxcDecorator<'_>) -> Result<crate
     })
 }
 
+/// Convert an OXC property key used in an object binding pattern.
+fn convert_binding_key(source: &str, property: &oxc_ast::ast::BindingProperty<'_>)
+    -> Result<crate::ast::PropertyKey, String>
+{
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    if property.computed {
+        let Some(key_expression) = property.key.as_expression() else {
+            return Err("OXC adapter requires an expression computed key".into());
+        };
+        return Ok(crate::ast::PropertyKey::Computed(Box::new(convert_expression(
+            source,
+            key_expression,
+        )?)));
+    }
+    match &property.key {
+        PropertyKey::StaticIdentifier(identifier) => {
+            Ok(crate::ast::PropertyKey::Ident(Name { span: span(identifier.span) }))
+        }
+        PropertyKey::StringLiteral(string) => {
+            let Some(value) = string.value.as_str() else {
+                return Err("OXC adapter cannot represent non-UTF-8 string keys".into());
+            };
+            Ok(crate::ast::PropertyKey::String { value: value.to_owned(), span: span(string.span) })
+        }
+        PropertyKey::NumericLiteral(number) => {
+            Ok(crate::ast::PropertyKey::Number { value: number.value, span: span(number.span) })
+        }
+        _ => Err("OXC adapter supports identifier, string, and numeric property keys only".into()),
+    }
+}
+
+/// Convert an OXC binding pattern (identifier, array, object, assignment) into
+/// the Zun [`crate::ast::Pattern`]. Nested patterns recurse naturally.
+fn convert_binding_pattern(
+    source: &str,
+    pattern: &BindingPattern<'_>,
+) -> Result<crate::ast::Pattern, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    match pattern {
+        BindingPattern::BindingIdentifier(identifier) => Ok(crate::ast::Pattern::Ident {
+            name: Name { span: span(identifier.span) },
+            ty: None,
+        }),
+        BindingPattern::ArrayPattern(array) => {
+            let mut elements = Vec::with_capacity(array.elements.len());
+            for element in &array.elements {
+                match element {
+                    None => elements.push(None),
+                    Some(binding) => {
+                        let (pattern, default) = split_assignment(source, binding)?;
+                        elements.push(Some(crate::ast::PatternElement { pattern, default }));
+                    }
+                }
+            }
+            let rest = match &array.rest {
+                Some(rest) => Some(Box::new(convert_binding_pattern(source, &rest.argument)?)),
+                None => None,
+            };
+            Ok(crate::ast::Pattern::Array { elements, rest, span: span(array.span) })
+        }
+        BindingPattern::ObjectPattern(object) => {
+            let mut properties = Vec::with_capacity(object.properties.len());
+            for property in &object.properties {
+                let key = convert_binding_key(source, property)?;
+                let (value, default) = split_assignment(source, &property.value)?;
+                properties.push(crate::ast::PatternProperty { key, value, default });
+            }
+            let rest = match &object.rest {
+                Some(rest) => Some(Box::new(convert_binding_pattern(source, &rest.argument)?)),
+                None => None,
+            };
+            Ok(crate::ast::Pattern::Object { properties, rest, span: span(object.span) })
+        }
+        BindingPattern::AssignmentPattern(_) => {
+            // A top-level `=` default is only meaningful attached to its
+            // enclosing element/property, handled by `split_assignment`.
+            Err("OXC adapter: unexpected default outside an element or property".into())
+        }
+    }
+}
+
+/// Split a binding pattern that may carry a top-level default (`x = 1`,
+/// `{a} = obj`) into its inner pattern and optional default expression.
+fn split_assignment(
+    source: &str,
+    pattern: &BindingPattern<'_>,
+) -> Result<(crate::ast::Pattern, Option<Expr>), String> {
+    match pattern {
+        BindingPattern::AssignmentPattern(assignment) => Ok((
+            convert_binding_pattern(source, &assignment.left)?,
+            Some(convert_expression(source, &assignment.right)?),
+        )),
+        other => Ok((convert_binding_pattern(source, other)?, None)),
+    }
+}
+
+/// Convert one variable declarator into either a `Stmt::Let` (identifier head)
+/// or a `Stmt::Destructure` (array/object pattern head).
+fn convert_declarator(
+    source: &str,
+    declarator: &oxc_ast::ast::VariableDeclarator<'_>,
+) -> Result<Stmt, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let Some(initializer) = declarator.init.as_ref() else {
+        return Err("OXC adapter requires an initializer for local bindings".into());
+    };
+    let init = convert_expression(source, initializer)?;
+    match &declarator.id {
+        BindingPattern::BindingIdentifier(identifier) => Ok(Stmt::Let {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+            init,
+            span: span(declarator.span),
+        }),
+        other => Ok(Stmt::Destructure {
+            pattern: convert_binding_pattern(source, other)?,
+            init,
+            span: span(declarator.span),
+        }),
+    }
+}
+
 fn convert_argument(source: &str, argument: &Argument<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match argument {
@@ -130,22 +252,7 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
             Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
-                    let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
-                        return Err(
-                            "OXC adapter currently supports identifier local bindings".into()
-                        );
-                    };
-                    let Some(initializer) = declarator.init.as_ref() else {
-                        return Err("OXC adapter requires an initializer for local bindings".into());
-                    };
-                    statements.push(Stmt::Let {
-                        name: Name {
-                            span: span(identifier.span),
-                        },
-                        ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                        init: convert_expression(source, initializer)?,
-                        span: span(declarator.span),
-                    });
+                    statements.push(convert_declarator(source, declarator)?);
                 }
             }
             Statement::ReturnStatement(return_statement) => statements.push(Stmt::Return {
@@ -291,20 +398,7 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
         Statement::VariableDeclaration(declaration) => {
             let mut statements = Vec::with_capacity(declaration.declarations.len());
             for declarator in &declaration.declarations {
-                let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
-                    return Err("OXC adapter currently supports identifier local bindings".into());
-                };
-                let Some(initializer) = declarator.init.as_ref() else {
-                    return Err("OXC adapter requires an initializer for local bindings".into());
-                };
-                statements.push(Stmt::Let {
-                    name: Name {
-                        span: Span::new(identifier.span.start, identifier.span.end),
-                    },
-                    ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                    init: convert_expression(source, initializer)?,
-                    span: Span::new(declarator.span.start, declarator.span.end),
-                });
+                statements.push(convert_declarator(source, declarator)?);
             }
             Ok(Block {
                 span: Span::new(declaration.span.start, declaration.span.end),
@@ -421,34 +515,44 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 }],
             })
         }
-        Statement::ForOfStatement(for_of_statement) => {
-            if for_of_statement.r#await {
-                return Err("OXC adapter does not support await in for-of loops yet".into());
-            }
-            let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left else {
-                return Err("OXC adapter supports identifier for-of bindings only".into());
-            };
-            if declaration.declarations.len() != 1 {
-                return Err("OXC adapter supports one for-of binding".into());
-            }
-            let declarator = &declaration.declarations[0];
-            let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
-                return Err("OXC adapter supports identifier for-of bindings only".into());
-            };
-            Ok(Block {
-                span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
-                statements: vec![Stmt::ForOf {
-                    name: Name {
-                        span: Span::new(identifier.span.start, identifier.span.end),
-                    },
-                    iterable: convert_expression(source, &for_of_statement.right)?,
-                    body: convert_if_branch(source, &for_of_statement.body)?,
-                    span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
-                }],
-            })
-        }
+        Statement::ForOfStatement(for_of_statement) => Ok(Block {
+            span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
+            statements: vec![convert_for_of(source, for_of_statement)?],
+        }),
         _ => Err("OXC adapter requires a supported statement branch".into()),
     }
+}
+
+/// Convert a `for (… of …)` statement, with an identifier or destructuring
+/// pattern binding.
+fn convert_for_of(
+    source: &str,
+    for_of_statement: &oxc_ast::ast::ForOfStatement<'_>,
+) -> Result<Stmt, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    if for_of_statement.r#await {
+        return Err("OXC adapter does not support await in for-of loops yet".into());
+    }
+    let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left else {
+        return Err("OXC adapter supports declared for-of bindings only".into());
+    };
+    if declaration.declarations.len() != 1 {
+        return Err("OXC adapter supports one for-of binding".into());
+    }
+    let declarator = &declaration.declarations[0];
+    let pattern = match &declarator.id {
+        BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+        },
+        other => convert_binding_pattern(source, other)?,
+    };
+    Ok(Stmt::ForOf {
+        pattern,
+        iterable: convert_expression(source, &for_of_statement.right)?,
+        body: convert_if_branch(source, &for_of_statement.body)?,
+        span: span(for_of_statement.span),
+    })
 }
 
 fn convert_if_statement(
@@ -1506,25 +1610,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
                 Statement::VariableDeclaration(declaration) => {
                     for declarator in &declaration.declarations {
-                        let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
-                            return Err(vec![
-                                "OXC adapter currently supports identifier local bindings".into(),
-                            ]);
-                        };
-                        let Some(initializer) = declarator.init.as_ref() else {
-                            return Err(vec![
-                                "OXC adapter requires an initializer for local bindings".into(),
-                            ]);
-                        };
-                        statements.push(Stmt::Let {
-                            name: Name {
-                                span: span(identifier.span),
-                            },
-                            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())
-                                .map_err(|error| vec![error])?,
-                            init: convert_expression(source, initializer).map_err(|error| vec![error])?,
-                            span: span(declarator.span),
-                        });
+                        statements.push(
+                            convert_declarator(source, declarator).map_err(|error| vec![error])?,
+                        );
                     }
                 }
                 Statement::ReturnStatement(return_statement) => {
@@ -1668,17 +1756,20 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         ]);
                     }
                     let declarator = &declaration.declarations[0];
-                    let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
-                        return Err(vec![
-                            "OXC adapter supports identifier for-of bindings only".into(),
-                        ]);
+                    let pattern = match &declarator.id {
+                        BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
+                            name: Name { span: span(identifier.span) },
+                            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())
+                                .map_err(|error| vec![error])?,
+                        },
+                        other => {
+                            convert_binding_pattern(source, other).map_err(|error| vec![error])?
+                        }
                     };
                     let body = convert_block_statement(source, &for_of_statement.body)
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::ForOf {
-                        name: Name {
-                            span: span(identifier.span),
-                        },
+                        pattern,
                         iterable: convert_expression(source, &for_of_statement.right)
                             .map_err(|error| vec![error])?,
                         body,

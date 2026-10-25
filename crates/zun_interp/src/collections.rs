@@ -2679,6 +2679,74 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(removed))
             }
+            "arraySlice" => {
+                // `source.slice(start..)` into a fresh managed Array. Backs the
+                // `...rest` element of array destructuring.
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let start = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    let start = start.min(length);
+                    let result = heap.alloc_array(length - start);
+                    for offset in 0..(length - start) {
+                        let element = heap
+                            .array_get(source, start + offset)
+                            .unwrap_or_else(zun_core::Any::void);
+                        heap.array_set(result, offset, element);
+                    }
+                    result
+                });
+                Ok(Value::Object(result))
+            }
+            "coalesceUndefined" => {
+                // Destructuring default: `fallback` when `value` is undefined.
+                let value = args.first().ok_or(RunError::BadToken)?.clone();
+                let is_undefined = match &value {
+                    Value::Void => true,
+                    Value::Any(any) => any.tag() == zun_core::AnyTag::Void,
+                    _ => false,
+                };
+                if is_undefined {
+                    Ok(args.get(1).ok_or(RunError::BadToken)?.clone())
+                } else {
+                    Ok(value)
+                }
+            }
+            "objectRest" => {
+                // Copy every own-enumerable string key of `source` except the
+                // names listed in `excludedKeys` into a fresh dynamic object.
+                let source = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let excluded =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let excluded_count = heap.array_len(excluded).unwrap_or(0);
+                    let mut excluded_names = Vec::with_capacity(excluded_count);
+                    for index in 0..excluded_count {
+                        if let Some(any) = heap.array_get(excluded, index) {
+                            if let Some(handle) = any.as_string() {
+                                if let Some(key) = heap.try_string(handle) {
+                                    excluded_names.push(key.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let result = heap.alloc_dynamic();
+                    for key in heap.dynamic_keys(source).unwrap_or_default() {
+                        if !excluded_names.iter().any(|name| name == &key) {
+                            if let Some(value) = heap.dynamic_get(source, &key) {
+                                heap.dynamic_set(result, key, value);
+                            }
+                        }
+                    }
+                    result
+                });
+                Ok(Value::Object(result))
+            }
             "arrayReduceNoInit" | "arrayReduceRightNoInit" => {
                 let source =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

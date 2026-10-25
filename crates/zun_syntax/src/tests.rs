@@ -158,7 +158,8 @@
         let p = parse_ok("function main() { let [first, second] = values; }");
         assert!(matches!(
             p.functions[0].body.statements[0],
-            Stmt::ArrayDestructure { ref names, .. } if names.len() == 2
+            Stmt::Destructure { pattern: Pattern::Array { ref elements, .. }, .. }
+                if elements.len() == 2
         ));
     }
     #[test]
@@ -166,7 +167,8 @@
         let p = parse_ok("function main() { let {answer, other} = object; }");
         assert!(matches!(
             p.functions[0].body.statements[0],
-            Stmt::ObjectDestructure { ref names, .. } if names.len() == 2
+            Stmt::Destructure { pattern: Pattern::Object { ref properties, .. }, .. }
+                if properties.len() == 2
         ));
     }
     #[test]
@@ -180,13 +182,16 @@
         let src = "function main() { for (let value of values) { print(value); } }";
         let p = parse_ok(src);
         let Stmt::ForOf {
-            name,
+            pattern,
             iterable,
             body,
             ..
         } = &p.functions[0].body.statements[0]
         else {
             panic!("expected for-of statement");
+        };
+        let Pattern::Ident { name, .. } = pattern else {
+            panic!("expected identifier for-of binding");
         };
         assert_eq!(ident_text(src, name), "value");
         assert!(matches!(iterable, Expr::Ident(_)));

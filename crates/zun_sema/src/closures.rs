@@ -233,8 +233,7 @@ impl Checker<'_> {
     ) {
         match statement {
             ast::Stmt::Let { init, .. }
-            | ast::Stmt::ArrayDestructure { init, .. }
-            | ast::Stmt::ObjectDestructure { init, .. }
+            | ast::Stmt::Destructure { init, .. }
             | ast::Stmt::Expr(init) => {
                 self.collect_capture_expr(cx, parameters, init, uses)
             }

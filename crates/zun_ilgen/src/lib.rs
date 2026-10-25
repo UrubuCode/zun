@@ -663,31 +663,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(init);
                 self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
             }
-            Stmt::ArrayDestructure { slots, init } => {
-                self.expr(init);
-                for (index, slot) in slots.iter().enumerate() {
-                    self.emit(Instruction::simple(Opcode::Dup));
-                    self.emit(Instruction::new(
-                        Opcode::ConstI32,
-                        Operand::Imm32(index as i32),
-                    ));
-                    self.emit(Instruction::simple(Opcode::LoadArray));
-                    self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
+            Stmt::Group(statements) => {
+                for statement in statements {
+                    self.stmt(statement);
                 }
-                self.emit(Instruction::simple(Opcode::Pop));
-            }
-            Stmt::ObjectDestructure { bindings, init } => {
-                self.expr(init);
-                for (slot, name) in bindings {
-                    self.emit(Instruction::simple(Opcode::Dup));
-                    let property = self.module.strings.intern(name);
-                    self.emit(Instruction::new(
-                        Opcode::LoadDynamic,
-                        Operand::StringRef(property.0),
-                    ));
-                    self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(*slot)));
-                }
-                self.emit(Instruction::simple(Opcode::Pop));
             }
             Stmt::BoxedLet { slot, init } => {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
