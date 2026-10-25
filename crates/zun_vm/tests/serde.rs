@@ -223,3 +223,24 @@ fn serialize_of_a_function_is_a_clean_error() {
         "expected a function-not-serializable error, got: {error}"
     );
 }
+
+/// Registered `Symbol.for` keys round-trip; a unique `Symbol()` key is dropped.
+#[test]
+fn symbol_keyed_entries_registered_round_trip_unique_dropped() {
+    let out = run(
+        r#"import { serialize, deserialize } from "zun:core";
+function main() {
+    let k = Symbol.for("k");
+    let u = Symbol("u");
+    let o = dynamic_new();
+    dynamic_set(o, "a", box_any(1));
+    o[k] = box_any(7);
+    o[u] = box_any(9);
+    let back = deserialize(serialize(box_any(o)));
+    let syms = Object.getOwnPropertySymbols(back);
+    print(syms.length);
+    print(back[Symbol.for("k")] as number);
+}"#,
+    );
+    assert_eq!(out, ["1", "7"]);
+}

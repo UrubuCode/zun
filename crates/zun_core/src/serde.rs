@@ -80,6 +80,14 @@ pub enum Tag {
     TypedArray = 16,
     /// A back-reference to an already-encoded object: a uvarint memo index.
     Ref = 17,
+    /// A dynamic object (memoized) that also carries symbol-keyed entries: the
+    /// [`Tag::Object`] body (count + string-keyed entries), then a uvarint
+    /// symbol-entry count and, per entry, a kind byte (`0` = registered
+    /// `Symbol.for` key: a length-prefixed string; `1` = well-known: a uvarint
+    /// id) then the value. Unique `Symbol()` keys are not encoded (they have no
+    /// cross-deserialize identity). An object with no encodable symbol key is
+    /// still written as plain [`Tag::Object`], keeping that path byte-compatible.
+    ObjectSym = 18,
 }
 
 impl Tag {
@@ -105,6 +113,7 @@ impl Tag {
             15 => Self::ArrayBuffer,
             16 => Self::TypedArray,
             17 => Self::Ref,
+            18 => Self::ObjectSym,
             _ => return None,
         })
     }
@@ -228,7 +237,7 @@ mod tests {
 
     #[test]
     fn tag_bytes_round_trip_and_reject_unknown() {
-        for raw in 0u8..=17 {
+        for raw in 0u8..=18 {
             let tag = Tag::from_u8(raw).expect("known tag");
             assert_eq!(tag.to_u8(), raw);
         }

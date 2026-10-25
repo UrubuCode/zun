@@ -233,7 +233,29 @@ impl Interp<'_> {
             ObjKind::Dynamic => {
                 let entries = zun_gc::with_current_heap(|heap| heap.dynamic_entries(obj))
                     .ok_or(RunError::BadToken)?;
-                out.push(Tag::Object.to_u8());
+                // Symbol-keyed entries: only registered (`Symbol.for`) and
+                // well-known symbols have an identity that survives a
+                // deserialize. Unique `Symbol()` keys cannot be reconstructed, so
+                // they are silently omitted (the rest of the graph still
+                // round-trips).
+                let symbol_entries: Vec<(u8, Option<String>, u64, zun_core::Any)> =
+                    zun_gc::with_current_heap(|heap| {
+                        let mut found = Vec::new();
+                        for symbol in heap.dynamic_symbol_keys(obj) {
+                            let Some(value) = heap.dynamic_get_symbol(obj, symbol) else { continue };
+                            if let Some(key) = heap.symbol_key_for(symbol) {
+                                found.push((0u8, Some(key.to_string()), 0, value));
+                            } else if zun_core::WellKnownSymbol::ALL
+                                .iter()
+                                .any(|w| w.id() == symbol)
+                            {
+                                found.push((1u8, None, symbol.get(), value));
+                            }
+                        }
+                        found
+                    });
+                let tag = if symbol_entries.is_empty() { Tag::Object } else { Tag::ObjectSym };
+                out.push(tag.to_u8());
                 write_uvarint(out, entries.len() as u64);
                 for (key, value) in entries {
                     // The key is a bare length-prefixed string (no value tag);
@@ -241,6 +263,18 @@ impl Interp<'_> {
                     write_bytes(out, key.as_bytes());
                     let value = self.any_to_value(value)?;
                     self.ser_value(&value, out, memo)?;
+                }
+                if !symbol_entries.is_empty() {
+                    write_uvarint(out, symbol_entries.len() as u64);
+                    for (kind, key, id, value) in symbol_entries {
+                        out.push(kind);
+                        match key {
+                            Some(key) => write_bytes(out, key.as_bytes()),
+                            None => write_uvarint(out, id),
+                        }
+                        let value = self.any_to_value(value)?;
+                        self.ser_value(&value, out, memo)?;
+                    }
                 }
             }
             ObjKind::Instance(type_rid) => {
@@ -452,7 +486,7 @@ impl Interp<'_> {
                 }
                 Ok(Value::Object(obj))
             }
-            Tag::Object => {
+            Tag::Object | Tag::ObjectSym => {
                 let len = reader.read_uvarint().ok_or_else(bad)? as usize;
                 let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                 memo.push(Value::Object(obj));
@@ -461,6 +495,32 @@ impl Interp<'_> {
                     let value = self.de_value(reader, memo)?;
                     let any = self.value_to_any(&value)?;
                     zun_gc::with_current_heap_mut(|heap| heap.dynamic_set(obj, key, any));
+                }
+                if tag == Tag::ObjectSym {
+                    let count = reader.read_uvarint().ok_or_else(bad)? as usize;
+                    for _ in 0..count {
+                        let kind = reader.read_u8().ok_or_else(bad)?;
+                        let symbol = match kind {
+                            0 => {
+                                let key = reader.read_str().ok_or_else(bad)?;
+                                zun_gc::with_current_heap_mut(|heap| heap.symbol_for(key))
+                            }
+                            1 => {
+                                let id = reader.read_uvarint().ok_or_else(bad)?;
+                                let known = zun_core::WellKnownSymbol::ALL
+                                    .iter()
+                                    .find(|w| w.id().get() == id)
+                                    .ok_or_else(bad)?;
+                                known.id()
+                            }
+                            _ => return Err(bad()),
+                        };
+                        let value = self.de_value(reader, memo)?;
+                        let any = self.value_to_any(&value)?;
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set_symbol(obj, symbol, any)
+                        });
+                    }
                 }
                 Ok(Value::Object(obj))
             }
