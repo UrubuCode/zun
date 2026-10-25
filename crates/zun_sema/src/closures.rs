@@ -18,6 +18,10 @@ impl Checker<'_> {
         if function.is_generator {
             self.error(span, "generator closures are not implemented yet");
         }
+        // Contextual typing (TS-style): take any parameter-type hint parked by
+        // the argument-checking site. It applies only to THIS closure — taken
+        // once so a nested/sibling closure does not inherit it.
+        let param_hint = self.closure_param_hint.take();
         let captures = self.analyze_closure_captures(outer, function);
         let mut saw_default = false;
         for parameter in &function.params {
@@ -61,11 +65,15 @@ impl Checker<'_> {
         // The hidden environment is always local zero. User parameters and
         // ordinary locals follow it, matching the indirect-call ABI.
         inner.declare("__closure_environment", Ty::DynamicObject);
-        for parameter in &function.params {
+        for (index, parameter) in function.params.iter().enumerate() {
+            // Explicit annotation wins; otherwise a contextual hint types the
+            // parameter (e.g. a Promise executor's `res`/`rej` become
+            // `Function`); otherwise the `F64` default is kept.
             let ty = parameter
                 .ty
                 .as_ref()
                 .map(|annotation| self.resolve_annotation(annotation))
+                .or_else(|| param_hint.as_ref().and_then(|hints| hints.get(index).copied()))
                 .unwrap_or(Ty::F64);
             inner.declare(self.text(&parameter.name), ty);
         }

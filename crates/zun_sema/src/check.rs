@@ -130,6 +130,7 @@ fn check_impl(
         class_symbol_methods: Vec::new(),
         classes_with_has_instance: HashSet::new(),
         classes_with_iterator: HashSet::new(),
+        closure_param_hint: None,
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -292,6 +293,14 @@ struct Checker<'a> {
     /// force the runtime `instanceof` path (the method decides membership).
     classes_with_has_instance: HashSet<u32>,
     classes_with_iterator: HashSet<u32>,
+    /// Contextual typing hint for the NEXT closure literal checked (TS-style):
+    /// when a closure argument sits in a known function-typed parameter
+    /// position, its expected parameter types are parked here so an
+    /// *unannotated* closure parameter adopts the hinted type instead of the
+    /// `F64` default. Consumed (taken) once at the top of `check_closure_expr`,
+    /// so it never leaks to a nested or sibling closure. `None` keeps the
+    /// `F64` default — numeric callbacks (`arr.map(x => x + 1)`) are unchanged.
+    closure_param_hint: Option<Vec<Ty>>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -7036,7 +7045,19 @@ impl Checker<'_> {
                                     };
                                 }
                                 1 => {
+                                    // Contextual typing: the executor receives
+                                    // the `resolve`/`reject` settlers, so an
+                                    // unannotated `(res, rej) => …` gets both
+                                    // params typed `Function` (callable) instead
+                                    // of the `F64` default — this is what makes
+                                    // the textbook `new Promise((res) =>
+                                    // setTimeout(() => res(1), 0))` form work.
+                                    self.closure_param_hint = Some(vec![
+                                        Ty::Function(hir::DYNAMIC_FUNCTION),
+                                        Ty::Function(hir::DYNAMIC_FUNCTION),
+                                    ]);
                                     let executor = self.check_expr(cx, &args[0]);
+                                    self.closure_param_hint = None;
                                     if !executor.ty.is_error()
                                         && !self.is_assignable(
                                             executor.ty,
