@@ -3326,6 +3326,76 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(result))
             }
+            "arrayConcat" => {
+                // `concat(...items)`: a FRESH array of the receiver's elements
+                // then each item. An item is spread when it is a managed Array
+                // (unless its `[Symbol.isConcatSpreadable]` is explicitly
+                // false) or a dynamic object whose `[Symbol.isConcatSpreadable]`
+                // is true (read via `length` + index keys); otherwise it is
+                // appended as a single element.
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let items =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let mut flat: Vec<zun_core::Any> = Vec::new();
+                    let source_len = heap.array_len(source).unwrap_or(0);
+                    for index in 0..source_len {
+                        flat.push(heap.array_get(source, index).unwrap_or_else(zun_core::Any::void));
+                    }
+                    let item_count = heap.array_len(items).unwrap_or(0);
+                    for item_index in 0..item_count {
+                        let item = heap.array_get(items, item_index).unwrap_or_else(zun_core::Any::void);
+                        let obj = item
+                            .as_object()
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                        let Some(obj) = obj else {
+                            flat.push(item);
+                            continue;
+                        };
+                        let flag = heap
+                            .dynamic_get_symbol(obj, zun_core::WellKnownSymbol::IsConcatSpreadable.id())
+                            .and_then(|any| match Value::unbox_any(any, heap) {
+                                Some(Value::Bool(b)) => Some(b),
+                                _ => None,
+                            });
+                        if let Some(length) = heap.array_len(obj) {
+                            if flag == Some(false) {
+                                flat.push(item);
+                            } else {
+                                for index in 0..length {
+                                    flat.push(
+                                        heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void),
+                                    );
+                                }
+                            }
+                        } else if flag == Some(true) && heap.is_dynamic_object(obj) {
+                            let length = heap
+                                .dynamic_get(obj, "length")
+                                .and_then(|any| match Value::unbox_any(any, heap) {
+                                    Some(Value::Float(n, _)) if n >= 0.0 => Some(n as usize),
+                                    Some(Value::Int(n, _)) if n >= 0 => Some(n as usize),
+                                    _ => None,
+                                })
+                                .unwrap_or(0);
+                            for index in 0..length {
+                                flat.push(
+                                    heap.dynamic_get(obj, &index.to_string())
+                                        .unwrap_or_else(zun_core::Any::void),
+                                );
+                            }
+                        } else {
+                            flat.push(item);
+                        }
+                    }
+                    let result = heap.alloc_array(flat.len());
+                    for (index, value) in flat.into_iter().enumerate() {
+                        heap.array_set(result, index, value);
+                    }
+                    result
+                });
+                Ok(Value::Object(result))
+            }
             "arrayIsArray" => {
                 let value = args.first().ok_or(RunError::BadToken)?;
                 let is_array = object(value)

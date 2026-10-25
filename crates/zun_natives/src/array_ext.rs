@@ -91,5 +91,9 @@ pub const MODULE: crate::Module = crate::Module {
         // arrays of the grouped elements.
         NativeFn { name: "arrayGroup", params: &[Array, Function], ret: DynamicObject, imp: unavailable },
         NativeFn { name: "arrayGroupToMap", params: &[Array, Function], ret: Map, imp: unavailable },
+        // `concat(...items)` - the receiver followed by each gathered item;
+        // arrays (and objects whose `[Symbol.isConcatSpreadable]` is `true`)
+        // are spread, anything else is appended as one element.
+        NativeFn { name: "arrayConcat", params: &[Array, Array], ret: Array, imp: unavailable },
     ],
 };

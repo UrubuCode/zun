@@ -29,7 +29,7 @@ pub enum WellKnownSymbol {
     //
     // Behavior status: `Match`/`Replace`/`Search`/`Split` are wired on the
     // String methods for dynamic arguments (`stringSymbolDispatch`).
-    // `IsConcatSpreadable` is not wired: Zun has no `Array.prototype.concat`.
+    // `IsConcatSpreadable` is honored by `Array.prototype.concat` (`arrayConcat`).
     Match = 5,
     Replace = 6,
     Search = 7,

@@ -5639,6 +5639,26 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if receiver.ty == Ty::Array && mname == "concat" {
+                    // `concat(...items)`: the variadic items are gathered into
+                    // a managed Array; the native spreads or appends each.
+                    let items: Vec<Option<hir::Expr>> =
+                        args.iter().map(|item| Some(self.check_expr(cx, item))).collect();
+                    let items = hir::Expr {
+                        kind: hir::ExprKind::ArrayLiteral { elements: items },
+                        ty: Ty::Array,
+                        span,
+                    };
+                    let Some((id, _)) = zun_natives::resolve("array", "arrayConcat") else {
+                        self.error(span, "missing Array intrinsic `arrayConcat`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, items] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
                 if receiver.ty == Ty::Array && mname == "flat" {
                     // `flat(depth=1)` — the depth defaults to 1 when omitted.
                     if args.len() > 1 {
