@@ -85,5 +85,11 @@ pub const MODULE: crate::Module = crate::Module {
         // `toSpliced(start, deleteCount, ...items)` — a copy with the splice
         // applied; the variadic inserts are gathered into a managed Array.
         NativeFn { name: "arrayToSpliced", params: &[Array, U64, U64, Array], ret: Array, imp: unavailable },
+        // `group(cb)` / `groupToMap(cb)` (array grouping proposal). `group`
+        // returns a dynamic object keyed by `String(cb(v, i, arr))`;
+        // `groupToMap` returns a Map keyed by the callback result. Values are
+        // arrays of the grouped elements.
+        NativeFn { name: "arrayGroup", params: &[Array, Function], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "arrayGroupToMap", params: &[Array, Function], ret: Map, imp: unavailable },
     ],
 };

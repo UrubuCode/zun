@@ -6278,6 +6278,16 @@ impl Checker<'_> {
                         Ty::Array,
                         vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
                     )),
+                    (Ty::Array, "group") => Some((
+                        "arrayGroup",
+                        Ty::DynamicObject,
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
+                    (Ty::Array, "groupToMap") => Some((
+                        "arrayGroupToMap",
+                        Ty::Map,
+                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                    )),
                     (Ty::Array, "keys") => Some(("arrayKeys", Ty::Any, vec![])),
                     (Ty::Array, "values") => Some(("arrayValues", Ty::Any, vec![])),
                     (Ty::Array, "entries") => Some(("arrayEntries", Ty::Any, vec![])),
@@ -6577,6 +6587,8 @@ impl Checker<'_> {
                             | "arrayFindLastIndex"
                             | "arrayFlat"
                             | "arrayFlatMap"
+                            | "arrayGroup"
+                            | "arrayGroupToMap"
                             | "arrayKeys"
                             | "arrayValues"
                             | "arrayEntries"

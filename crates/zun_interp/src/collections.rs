@@ -2833,6 +2833,66 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Object(roots[1]))
             }
+            "arrayGroup" | "arrayGroupToMap" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let callback = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let to_map = name == "arrayGroupToMap";
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    .ok_or(RunError::BadToken)?;
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    if to_map { heap.alloc_map() } else { heap.alloc_dynamic() }
+                });
+                let roots = [source, result];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for index in 0..length {
+                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                        .ok_or(RunError::BadToken)?;
+                    let callback_args = vec![
+                        Value::Any(element),
+                        Value::Any(zun_core::Any::float(index as f64)),
+                        Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                    ];
+                    let produced = self.invoke_callback(callback, callback_args)?;
+                    let key_text = if to_map { None } else { Some(unbox_arg(&produced)?.display()) };
+                    let boxed = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let existing = match &key_text {
+                            Some(key) => heap.dynamic_get(roots[1], key),
+                            None => heap.map_get(roots[1], boxed),
+                        };
+                        let bucket = existing
+                            .and_then(|any| any.as_object())
+                            .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) });
+                        let bucket = match bucket {
+                            Some(bucket) => bucket,
+                            None => {
+                                let bucket = heap.alloc_array(0);
+                                let any = zun_core::Any::object(bucket.addr() as usize);
+                                match &key_text {
+                                    Some(key) => {
+                                        heap.dynamic_set(roots[1], key.clone(), any);
+                                    }
+                                    None => {
+                                        heap.map_insert(roots[1], boxed, any);
+                                    }
+                                }
+                                bucket
+                            }
+                        };
+                        heap.array_push(bucket, element);
+                    });
+                }
+                if to_map {
+                    Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+                } else {
+                    Ok(Value::Object(roots[1]))
+                }
+            }
             "arrayKeys" | "arrayValues" | "arrayEntries" => {
                 let source =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
