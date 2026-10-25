@@ -26,12 +26,22 @@ pub enum WellKnownSymbol {
     // Seeded as stable *values* only (no behavioral dispatch yet): they let
     // user code read `Symbol.match` etc. as distinct identities. Appended at
     // the end so ids 0..4 stay fixed.
+    //
+    // Behavior status: `Match`/`Replace`/`Search`/`Split` are wired on the
+    // String methods for dynamic arguments (`stringSymbolDispatch`).
+    // `IsConcatSpreadable` is not wired: Zun has no `Array.prototype.concat`.
     Match = 5,
     Replace = 6,
     Search = 7,
     Split = 8,
+    /// Intentionally a no-op: Array is a frozen built-in and its copy methods
+    /// (`map/filter/slice/...`) always produce a plain `Array`, so a
+    /// species-constructor override has no expressible effect in the typed
+    /// model.
     Species = 9,
     IsConcatSpreadable = 10,
+    /// N/A: `Symbol.unscopables` only affects the `with` statement, which Zun
+    /// does not have.
     Unscopables = 11,
 }
 
