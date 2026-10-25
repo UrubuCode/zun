@@ -926,10 +926,62 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             })
         }
         Expression::AssignmentExpression(assignment) => {
-            if assignment.operator != AssignmentOperator::Assign {
-                return Err("OXC adapter currently supports only simple assignments".into());
+            let compound = match assignment.operator {
+                AssignmentOperator::Assign => None,
+                AssignmentOperator::Addition => Some(BinaryOp::Add),
+                AssignmentOperator::Subtraction => Some(BinaryOp::Sub),
+                AssignmentOperator::Multiplication => Some(BinaryOp::Mul),
+                AssignmentOperator::Division => Some(BinaryOp::Div),
+                AssignmentOperator::Remainder => Some(BinaryOp::Rem),
+                AssignmentOperator::Exponential => Some(BinaryOp::Pow),
+                AssignmentOperator::BitwiseAnd => Some(BinaryOp::BitAnd),
+                AssignmentOperator::BitwiseOR => Some(BinaryOp::BitOr),
+                AssignmentOperator::BitwiseXOR => Some(BinaryOp::BitXor),
+                AssignmentOperator::ShiftLeft => Some(BinaryOp::Shl),
+                AssignmentOperator::ShiftRight => Some(BinaryOp::Shr),
+                AssignmentOperator::ShiftRightZeroFill => Some(BinaryOp::UShr),
+                _ => {
+                    return Err("OXC adapter does not support logical assignments yet".into());
+                }
+            };
+            let mut value = convert_expression(source, &assignment.right)?;
+            if let Some(op) = compound {
+                // `a OP= b` desugars to `a = (a OP b)`. Known v1 limitation: a
+                // target with side-effecting sub-expressions is evaluated twice.
+                let read = match &assignment.left {
+                    AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+                        Expr::Ident(Name { span: span(identifier.span) })
+                    }
+                    AssignmentTarget::StaticMemberExpression(member) => Expr::Field {
+                        object: Box::new(convert_expression(source, &member.object)?),
+                        field: Name { span: span(member.property.span) },
+                        span: span(member.span),
+                    },
+                    AssignmentTarget::ComputedMemberExpression(member) => Expr::Index {
+                        object: Box::new(convert_expression(source, &member.object)?),
+                        index: Box::new(convert_expression(source, &member.expression)?),
+                        span: span(member.span),
+                    },
+                    AssignmentTarget::PrivateFieldExpression(member) => Expr::PrivateField {
+                        object: Box::new(convert_expression(source, &member.object)?),
+                        field: Name { span: span(member.field.span) },
+                        span: span(member.span),
+                    },
+                    _ => {
+                        return Err(
+                            "OXC adapter supports identifier, field, and index assignments only"
+                                .into(),
+                        );
+                    }
+                };
+                value = Expr::Binary {
+                    op,
+                    lhs: Box::new(read),
+                    rhs: Box::new(value),
+                    span: span(assignment.span),
+                };
             }
-            let value = Box::new(convert_expression(source, &assignment.right)?);
+            let value = Box::new(value);
             match &assignment.left {
                 AssignmentTarget::AssignmentTargetIdentifier(identifier) => Ok(Expr::Assign {
                     target: Name {

@@ -168,6 +168,18 @@ pub enum TokenKind {
     Bang,
     /// `**`
     StarStar,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
+    StarStarEq,
+    AmpEq,
+    PipeEq,
+    CaretEq,
+    ShlEq,
+    ShrEq,
+    UShrEq,
     /// `&`
     Amp,
     /// `|`
@@ -377,19 +389,62 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                             TokenKind::Dot
                         }
                     }
-                    b'+' => TokenKind::Plus,
-                    b'-' => TokenKind::Minus,
+                    b'+' => {
+                        if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::PlusEq
+                        } else {
+                            TokenKind::Plus
+                        }
+                    }
+                    b'-' => {
+                        if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::MinusEq
+                        } else {
+                            TokenKind::Minus
+                        }
+                    }
                     b'*' => {
                         if bytes.get(pos) == Some(&b'*') {
                             pos += 1;
-                            TokenKind::StarStar
+                            if bytes.get(pos) == Some(&b'=') {
+                                pos += 1;
+                                TokenKind::StarStarEq
+                            } else {
+                                TokenKind::StarStar
+                            }
+                        } else if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::StarEq
                         } else {
                             TokenKind::Star
                         }
                     }
-                    b'/' => TokenKind::Slash,
-                    b'%' => TokenKind::Percent,
-                    b'^' => TokenKind::Caret,
+                    b'/' => {
+                        if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::SlashEq
+                        } else {
+                            TokenKind::Slash
+                        }
+                    }
+                    b'%' => {
+                        if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::PercentEq
+                        } else {
+                            TokenKind::Percent
+                        }
+                    }
+                    b'^' => {
+                        if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::CaretEq
+                        } else {
+                            TokenKind::Caret
+                        }
+                    }
                     b'~' => TokenKind::Tilde,
                     b'=' => {
                         if bytes.get(pos) == Some(&b'=') {
@@ -421,6 +476,9 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                         if bytes.get(pos) == Some(&b'&') {
                             pos += 1;
                             TokenKind::AndAnd
+                        } else if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::AmpEq
                         } else {
                             TokenKind::Amp
                         }
@@ -429,6 +487,9 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                         if bytes.get(pos) == Some(&b'|') {
                             pos += 1;
                             TokenKind::OrOr
+                        } else if bytes.get(pos) == Some(&b'=') {
+                            pos += 1;
+                            TokenKind::PipeEq
                         } else {
                             TokenKind::Pipe
                         }
@@ -439,7 +500,12 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                             TokenKind::LtEq
                         } else if bytes.get(pos) == Some(&b'<') {
                             pos += 1;
-                            TokenKind::Shl
+                            if bytes.get(pos) == Some(&b'=') {
+                                pos += 1;
+                                TokenKind::ShlEq
+                            } else {
+                                TokenKind::Shl
+                            }
                         } else {
                             TokenKind::Lt
                         }
@@ -452,7 +518,15 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                             pos += 1;
                             if bytes.get(pos) == Some(&b'>') {
                                 pos += 1;
-                                TokenKind::UShr
+                                if bytes.get(pos) == Some(&b'=') {
+                                    pos += 1;
+                                    TokenKind::UShrEq
+                                } else {
+                                    TokenKind::UShr
+                                }
+                            } else if bytes.get(pos) == Some(&b'=') {
+                                pos += 1;
+                                TokenKind::ShrEq
                             } else {
                                 TokenKind::Shr
                             }

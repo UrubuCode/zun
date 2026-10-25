@@ -235,6 +235,25 @@ fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
     })
 }
 
+/// Map a compound-assignment token to the binary operator it applies.
+fn compound_assign_op(kind: TokenKind) -> Option<BinaryOp> {
+    Some(match kind {
+        TokenKind::PlusEq => BinaryOp::Add,
+        TokenKind::MinusEq => BinaryOp::Sub,
+        TokenKind::StarEq => BinaryOp::Mul,
+        TokenKind::SlashEq => BinaryOp::Div,
+        TokenKind::PercentEq => BinaryOp::Rem,
+        TokenKind::StarStarEq => BinaryOp::Pow,
+        TokenKind::AmpEq => BinaryOp::BitAnd,
+        TokenKind::PipeEq => BinaryOp::BitOr,
+        TokenKind::CaretEq => BinaryOp::BitXor,
+        TokenKind::ShlEq => BinaryOp::Shl,
+        TokenKind::ShrEq => BinaryOp::Shr,
+        TokenKind::UShrEq => BinaryOp::UShr,
+        _ => return None,
+    })
+}
+
 impl Parser<'_> {
     pub(crate) fn primary(&mut self) -> Expr {
         let t = self.peek();
@@ -776,9 +795,25 @@ impl Parser<'_> {
 
     pub(crate) fn assignment(&mut self) -> Expr {
         let lhs = self.conditional();
-        if self.at(TokenKind::Eq) {
+        let compound = compound_assign_op(self.peek().kind);
+        if self.at(TokenKind::Eq) || compound.is_some() {
             let eq_span = self.bump().span;
-            let value = self.assignment();
+            let mut value = self.assignment();
+            if let Some(op) = compound {
+                // `a OP= b` desugars to `a = (a OP b)`.
+                // Known v1 limitation: the target is cloned as the left operand,
+                // so a field/index target whose object or index sub-expression
+                // has side effects (`f().x += 1`, `arr[g()] += 1`) evaluates
+                // that sub-expression twice. Ident, `this.field` and `obj[i]`
+                // (ident object and index) forms are exact.
+                let span = lhs.span().to(value.span());
+                value = Expr::Binary {
+                    op,
+                    lhs: Box::new(lhs.clone()),
+                    rhs: Box::new(value),
+                    span,
+                };
+            }
             match lhs {
                 Expr::Ident(target) => {
                     let span = target.span.to(value.span());
