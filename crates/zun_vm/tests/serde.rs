@@ -244,3 +244,29 @@ function main() {
     );
     assert_eq!(out, ["1", "7"]);
 }
+
+/// A `DataView` round-trips: the deserialized view re-serializes to identical
+/// bytes (buffer contents, offset, length and the length-tracking flag all
+/// survive), and the wire form carries the written bytes.
+#[test]
+fn data_view_round_trips_bytes_offset_and_length() {
+    let out = run_stable(
+        r#"let v = new DataView(new ArrayBuffer(8), 2, 4);
+           v.setUint8(0, 11);
+           v.setUint8(1, 22);
+           v.setUint8(3, 44);
+           let s = serialize(box_any(v));
+           print(stable(s));
+           print(s[5] as number);
+           print(s[6] as number);
+           print(s[8] as number);
+           print(s[11] as number);
+           print(s[12] as number);
+           print(s[13] as number);
+           let t = new DataView(new ArrayBuffer(6), 1);
+           let ts = serialize(box_any(t));
+           print(stable(ts));
+           print(ts[11] as number);"#,
+    );
+    assert_eq!(out, ["true", "11", "22", "44", "2", "4", "0", "true", "1"]);
+}

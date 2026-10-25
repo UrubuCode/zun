@@ -59,6 +59,12 @@ impl Heap {
         self.data_views.get(&(object.addr() as usize)).map(|view| view.offset())
     }
 
+    /// Whether a `DataView` is length-tracking (no explicit length at
+    /// construction); `None` if `object` is not a data view.
+    pub fn data_view_is_tracking(&self, object: Obj) -> Option<bool> {
+        self.data_views.get(&(object.addr() as usize)).map(|view| view.is_tracking())
+    }
+
     /// The backing `ArrayBuffer` of a `DataView` (`dataView.buffer`). The
     /// handle is stored in field 0 at construction; it is only returned for an
     /// object that is actually a registered data view.

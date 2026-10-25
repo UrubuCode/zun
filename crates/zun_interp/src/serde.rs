@@ -36,6 +36,7 @@ enum ObjKind {
     BigInt,
     TypedArray,
     ArrayBuffer,
+    DataView,
     Array,
     Map,
     Set,
@@ -164,6 +165,28 @@ impl Interp<'_> {
                 out.push(Tag::TypedArray.to_u8());
                 out.push(element as u8);
                 write_bytes(out, &bytes);
+            }
+            ObjKind::DataView => {
+                let (bytes, offset, length, tracking) = zun_gc::with_current_heap(|heap| {
+                    let buffer = heap.data_view_buffer(obj)?;
+                    let len = heap.buffer_len(buffer)?;
+                    let mut bytes = Vec::with_capacity(len);
+                    for i in 0..len {
+                        bytes.push(heap.buffer_get(buffer, i)?);
+                    }
+                    Some((
+                        bytes,
+                        heap.data_view_byte_offset(obj)?,
+                        heap.data_view_byte_len(obj)?,
+                        heap.data_view_is_tracking(obj)?,
+                    ))
+                })
+                .ok_or(RunError::BadToken)?;
+                out.push(Tag::DataView.to_u8());
+                write_bytes(out, &bytes);
+                write_uvarint(out, offset as u64);
+                write_uvarint(out, length as u64);
+                out.push(u8::from(tracking));
             }
             ObjKind::ArrayBuffer => {
                 let bytes = zun_gc::with_current_heap(|heap| {
@@ -306,9 +329,10 @@ impl Interp<'_> {
             if heap.bigint_value(obj).is_some() {
                 Some(ObjKind::BigInt)
             } else if heap.is_view(obj) {
-                // A typed array is supported; a bare DataView is not.
                 Some(if heap.typed_array_len(obj).is_some() {
                     ObjKind::TypedArray
+                } else if heap.data_view_buffer(obj).is_some() {
+                    ObjKind::DataView
                 } else {
                     ObjKind::Unsupported
                 })
@@ -420,6 +444,26 @@ impl Interp<'_> {
                     }
                     buffer
                 });
+                memo.push(Value::Object(obj));
+                Ok(Value::Object(obj))
+            }
+            Tag::DataView => {
+                let bytes = reader.read_bytes().ok_or_else(bad)?.to_vec();
+                let offset = reader.read_uvarint().ok_or_else(bad)? as usize;
+                let length = reader.read_uvarint().ok_or_else(bad)? as usize;
+                let tracking = de_u8(reader)? == 1;
+                let obj = zun_gc::with_current_heap_mut(|heap| {
+                    let buffer = heap.alloc_buffer(bytes.len());
+                    for (i, byte) in bytes.iter().enumerate() {
+                        heap.buffer_set(buffer, i, *byte);
+                    }
+                    if tracking {
+                        heap.alloc_data_view_tracking(buffer, offset)
+                    } else {
+                        heap.alloc_data_view(buffer, offset, length)
+                    }
+                })
+                .ok_or_else(bad)?;
                 memo.push(Value::Object(obj));
                 Ok(Value::Object(obj))
             }

@@ -88,6 +88,10 @@ pub enum Tag {
     /// cross-deserialize identity). An object with no encodable symbol key is
     /// still written as plain [`Tag::Object`], keeping that path byte-compatible.
     ObjectSym = 18,
+    /// A `DataView` (memoized): the whole backing buffer (uvarint length +
+    /// raw bytes), a uvarint `byteOffset`, a uvarint `byteLength`, and a
+    /// one-byte length-tracking flag (`1` = tracks the buffer's length).
+    DataView = 19,
 }
 
 impl Tag {
@@ -114,6 +118,7 @@ impl Tag {
             16 => Self::TypedArray,
             17 => Self::Ref,
             18 => Self::ObjectSym,
+            19 => Self::DataView,
             _ => return None,
         })
     }
@@ -237,7 +242,7 @@ mod tests {
 
     #[test]
     fn tag_bytes_round_trip_and_reject_unknown() {
-        for raw in 0u8..=18 {
+        for raw in 0u8..=19 {
             let tag = Tag::from_u8(raw).expect("known tag");
             assert_eq!(tag.to_u8(), raw);
         }

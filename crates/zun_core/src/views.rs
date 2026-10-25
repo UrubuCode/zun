@@ -126,6 +126,11 @@ impl DataView {
         self.view.len()
     }
 
+    /// Whether this view is length-tracking (created with no explicit length).
+    pub fn is_tracking(self) -> bool {
+        self.track
+    }
+
     pub(crate) fn bytes(self, relative: usize, width: usize) -> Option<usize> {
         relative
             .checked_add(width)
