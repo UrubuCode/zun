@@ -591,6 +591,31 @@ fn to_locale_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeVa
     }
 }
 
+/// Parse a BCP-47 locale string for `Intl`; empty or malformed input falls
+/// back to the root (`und`) locale.
+pub(crate) fn intl_locale(text: &str) -> icu::locale::Locale {
+    icu::locale::Locale::try_from_str(text).unwrap_or(icu::locale::Locale::UNKNOWN)
+}
+
+/// `new Intl.Collator(locale).compare(a, b)` — runtime-locale ICU4X collation.
+fn intl_collator_compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    use core::cmp::Ordering;
+    use icu::collator::{options::CollatorOptions, Collator, CollatorPreferences};
+    let (Some(NativeArg::Str(locale)), Some(NativeArg::Str(a)), Some(NativeArg::Str(b))) =
+        (args.first(), args.get(1), args.get(2))
+    else {
+        return Err(NativeError("Intl.Collator.compare: expected (string, string, string)".to_string()));
+    };
+    let locale = intl_locale(locale);
+    let collator = Collator::try_new(CollatorPreferences::from(&locale), CollatorOptions::default())
+        .map_err(|e| NativeError(format!("Intl.Collator: collator init failed: {e:?}")))?;
+    Ok(NativeValue::Int(match collator.compare(a, b) {
+        Ordering::Less => -1,
+        Ordering::Equal => 0,
+        Ordering::Greater => 1,
+    }))
+}
+
 pub const MODULE: crate::Module = crate::Module {
     name: "string",
     functions: &[
@@ -810,5 +835,6 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Str,
             imp: to_locale_upper_case,
         },
+        NativeFn { name: "intlCollatorCompare", params: &[Str, Str, Str], ret: I32, imp: intl_collator_compare },
     ],
 };

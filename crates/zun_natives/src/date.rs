@@ -150,6 +150,30 @@ fn from_utc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
     Ok(NativeValue::Int(value))
 }
 
+/// `new Intl.DateTimeFormat(locale).format(d)` — runtime-locale ICU4X
+/// date+time formatting (medium length, UTC).
+fn intl_date_time_format(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    use icu::datetime::{fieldsets, DateTimeFormatter};
+    let name = "Intl.DateTimeFormat.format";
+    let Some(NativeArg::Str(locale)) = args.first() else {
+        return Err(NativeError(format!("{name}: expected (string, date)")));
+    };
+    let value = date(&args[1..], name)?;
+    let invalid = || NativeError(format!("{name}: invalid date"));
+    let (y, mo, d) = value.utc_date().ok_or_else(invalid)?;
+    let (h, mi, s, ms) = value.utc_time().ok_or_else(invalid)?;
+    let input = icu::time::DateTime {
+        date: icu::calendar::Date::try_new_iso(y, mo as u8, d as u8)
+            .map_err(|e| NativeError(format!("{name}: {e}")))?,
+        time: icu::time::Time::try_new(h as u8, mi as u8, s as u8, ms * 1_000_000)
+            .map_err(|e| NativeError(format!("{name}: {e}")))?,
+    };
+    let locale = crate::string::intl_locale(locale);
+    let formatter = DateTimeFormatter::try_new((&locale).into(), fieldsets::YMDT::medium())
+        .map_err(|e| NativeError(format!("{name}: {e}")))?;
+    Ok(NativeValue::Str(formatter.format(&input).to_string()))
+}
+
 pub const MODULE: crate::Module = crate::Module {
     name: "date",
     functions: &[
@@ -246,6 +270,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "dateToLocaleString", params: &[I64], ret: Str, imp: to_locale_string },
         NativeFn { name: "dateToLocaleDateString", params: &[I64], ret: Str, imp: to_locale_date_string },
         NativeFn { name: "dateToLocaleTimeString", params: &[I64], ret: Str, imp: to_locale_time_string },
+        NativeFn { name: "intlDateTimeFormat", params: &[Str, I64], ret: Str, imp: intl_date_time_format },
     ],
 };
 

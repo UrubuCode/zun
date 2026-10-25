@@ -1,0 +1,30 @@
+// ECMA-402 `Intl` v1: Collator, NumberFormat and DateTimeFormat.
+//
+// Each class carries its BCP-47 locale string (`new IntlCollator("de")`); the
+// source spelling `new Intl.Collator("de")` is mapped onto these classes by a
+// small shim in sema (see `Checker::text`). An omitted locale defaults to the
+// empty string, which the natives treat as the root (`und`) locale. The ICU4X
+// object is built per call from the stored locale (correctness first).
+
+import { date as intlDate, number as intlNumber, string as intlString } from "zun:core";
+
+class IntlCollator {
+    locale: string = "";
+    compare(a: string, b: string): number {
+        return intlString.intlCollatorCompare(this.locale, a, b) as number;
+    }
+}
+
+class IntlNumberFormat {
+    locale: string = "";
+    format(n: number): string {
+        return intlNumber.intlNumberFormat(this.locale, n);
+    }
+}
+
+class IntlDateTimeFormat {
+    locale: string = "";
+    format(d: Date): string {
+        return intlDate.intlDateTimeFormat(this.locale, d.millis);
+    }
+}

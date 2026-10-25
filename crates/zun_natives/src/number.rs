@@ -406,6 +406,33 @@ fn number_to_locale_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<Nativ
 }
 
 /// Runtime-backed numeric conversion functions.
+/// `new Intl.NumberFormat(locale).format(n)` — runtime-locale ICU4X decimal
+/// formatting (same digit policy as `toLocaleString`).
+fn intl_number_format(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let (Some(NativeArg::Str(locale)), Some(n)) = (args.first(), args.get(1)) else {
+        return Err(NativeError("Intl.NumberFormat.format: expected (string, number)".to_string()));
+    };
+    let value = match n {
+        NativeArg::Float(v) => *v,
+        NativeArg::Int(v) => *v as f64,
+        _ => return Err(NativeError("Intl.NumberFormat.format: expected a number".to_string())),
+    };
+    if value.is_nan() {
+        return Ok(NativeValue::Str("NaN".to_string()));
+    }
+    if value.is_infinite() {
+        return Ok(NativeValue::Str(if value < 0.0 { "-∞" } else { "∞" }.to_string()));
+    }
+    let mut decimal: icu::decimal::input::Decimal = format!("{value:.3}")
+        .parse()
+        .map_err(|_| NativeError("Intl.NumberFormat.format: unrepresentable number".to_string()))?;
+    decimal.trim_end();
+    let locale = crate::string::intl_locale(locale);
+    let formatter = icu::decimal::DecimalFormatter::try_new((&locale).into(), Default::default())
+        .map_err(|_| NativeError("Intl.NumberFormat: no decimal data".to_string()))?;
+    Ok(NativeValue::Str(formatter.format(&decimal).to_string()))
+}
+
 pub const MODULE: crate::Module = crate::Module {
     name: "number",
     functions: &[
@@ -519,5 +546,6 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Str,
             imp: number_to_locale_string,
         },
+        NativeFn { name: "intlNumberFormat", params: &[Str, F64], ret: Str, imp: intl_number_format },
     ],
 };

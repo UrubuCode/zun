@@ -293,7 +293,7 @@ impl Parser<'_> {
             TokenKind::KwNull => { self.bump(); Expr::Null { span: t.span } }
             TokenKind::KwNew => {
                 let start = self.bump().span;
-                let class = self.name("a class name");
+                let class = self.dotted_name("a class name");
                 self.expect(TokenKind::LParen, "`(`");
                 let args = self.arguments();
                 let close = self.tokens[self.pos - 1].span;
@@ -1039,6 +1039,24 @@ impl Parser<'_> {
         params
     }
 
+    /// Parse a possibly dotted constructor/type name (`A` or `A.B`). A dotted
+    /// name becomes a single `Name` whose span covers the whole `A.B` text; only
+    /// the `Intl` namespace shim in sema gives such names a meaning. Whitespace
+    /// around the dot is not supported (the span must be contiguous source).
+    pub(crate) fn dotted_name(&mut self, what: &str) -> Name {
+        let mut name = self.name(what);
+        while self.at(TokenKind::Dot)
+            && self.peek_n(1).kind == TokenKind::Ident
+            && self.peek_n(1).span.start == self.peek().span.end
+            && self.peek().span.start == name.span.end
+        {
+            self.bump();
+            let member = self.bump();
+            name.span = name.span.to(member.span);
+        }
+        name
+    }
+
     /// Parse a type name. Type positions accept `void` (a keyword since it is
     /// also the unary `void` operator) as well as ordinary identifiers.
     pub(crate) fn type_name(&mut self, what: &str) -> Name {
@@ -1046,7 +1064,7 @@ impl Parser<'_> {
             let t = self.bump();
             Name { span: t.span }
         } else {
-            self.name(what)
+            self.dotted_name(what)
         }
     }
 

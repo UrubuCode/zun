@@ -335,11 +335,12 @@ fn compile_with_cached_module(
     // Whatever `with_prelude` appends as classes has to be listed here too.
     // `prelude_classes_match_the_linked_source` holds the two together.
     let linked_source = format!(
-        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n{}\n{}\n{}\n",
+        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n{}\n{}\n{}\n{}\n",
         zun_prelude::ERRORS,
         zun_prelude::DATE,
         zun_prelude::BOOLEAN,
-        zun_prelude::DECORATORS
+        zun_prelude::DECORATORS,
+        zun_prelude::INTL
     );
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();

@@ -49,6 +49,10 @@ pub const BOOLEAN: &str = include_str!("../../../builtin/boolean.zun");
 /// program for the same reason as [`ERRORS`].
 pub const DECORATORS: &str = include_str!("../../../builtin/decorators.zun");
 
+/// The ECMA-402 `Intl` classes (`builtin/intl.zun`), compiled with every program
+/// for the same reason as [`ERRORS`]. `new Intl.X(..)` maps onto `IntlX`.
+pub const INTL: &str = include_str!("../../../builtin/intl.zun");
+
 /// Stable content fingerprint for cache invalidation of compiled prelude data.
 ///
 /// This is deliberately a small, deterministic identifier rather than a
@@ -70,7 +74,7 @@ pub const fn fingerprint() -> u64 {
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
     let mut combined = String::with_capacity(
-        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + DECORATORS.len() + 5,
+        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + DECORATORS.len() + INTL.len() + 6,
     );
     combined.push_str(user_source);
     combined.push('\n');
@@ -83,6 +87,8 @@ pub fn with_prelude(user_source: &str) -> String {
     combined.push_str(BOOLEAN);
     combined.push('\n');
     combined.push_str(DECORATORS);
+    combined.push('\n');
+    combined.push_str(INTL);
     combined
 }
 
