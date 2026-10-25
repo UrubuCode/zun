@@ -96,6 +96,8 @@ pub enum TokenKind {
     KwIn,
     /// `instanceof`
     KwInstanceof,
+    /// `void`
+    KwVoid,
 
     // Punctuation
     /// `(`
@@ -164,6 +166,22 @@ pub enum TokenKind {
     OrOr,
     /// `!`
     Bang,
+    /// `**`
+    StarStar,
+    /// `&`
+    Amp,
+    /// `|`
+    Pipe,
+    /// `^`
+    Caret,
+    /// `~`
+    Tilde,
+    /// `<<`
+    Shl,
+    /// `>>`
+    Shr,
+    /// `>>>`
+    UShr,
 
     /// An unrecognized character (already diagnosed).
     Error,
@@ -182,7 +200,7 @@ impl TokenKind {
                 | KwCase | KwDefault | KwWhile | KwDo | KwFor | KwOf | KwBreak | KwContinue
                 | KwReturn | KwThrow | KwTry | KwCatch | KwFinally | KwTrue | KwFalse | KwNull
                 | KwClass | KwNew | KwExtends | KwAs | KwImport | KwFrom | KwExtern | KwStatic
-                | KwTypeof | KwDelete | KwIn | KwInstanceof
+                | KwTypeof | KwDelete | KwIn | KwInstanceof | KwVoid
         )
     }
 }
@@ -361,9 +379,18 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     }
                     b'+' => TokenKind::Plus,
                     b'-' => TokenKind::Minus,
-                    b'*' => TokenKind::Star,
+                    b'*' => {
+                        if bytes.get(pos) == Some(&b'*') {
+                            pos += 1;
+                            TokenKind::StarStar
+                        } else {
+                            TokenKind::Star
+                        }
+                    }
                     b'/' => TokenKind::Slash,
                     b'%' => TokenKind::Percent,
+                    b'^' => TokenKind::Caret,
+                    b'~' => TokenKind::Tilde,
                     b'=' => {
                         if bytes.get(pos) == Some(&b'=') {
                             pos += 1;
@@ -390,18 +417,29 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                             TokenKind::Bang
                         }
                     }
-                    b'&' if bytes.get(pos) == Some(&b'&') => {
-                        pos += 1;
-                        TokenKind::AndAnd
+                    b'&' => {
+                        if bytes.get(pos) == Some(&b'&') {
+                            pos += 1;
+                            TokenKind::AndAnd
+                        } else {
+                            TokenKind::Amp
+                        }
                     }
-                    b'|' if bytes.get(pos) == Some(&b'|') => {
-                        pos += 1;
-                        TokenKind::OrOr
+                    b'|' => {
+                        if bytes.get(pos) == Some(&b'|') {
+                            pos += 1;
+                            TokenKind::OrOr
+                        } else {
+                            TokenKind::Pipe
+                        }
                     }
                     b'<' => {
                         if bytes.get(pos) == Some(&b'=') {
                             pos += 1;
                             TokenKind::LtEq
+                        } else if bytes.get(pos) == Some(&b'<') {
+                            pos += 1;
+                            TokenKind::Shl
                         } else {
                             TokenKind::Lt
                         }
@@ -410,6 +448,14 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                         if bytes.get(pos) == Some(&b'=') {
                             pos += 1;
                             TokenKind::GtEq
+                        } else if bytes.get(pos) == Some(&b'>') {
+                            pos += 1;
+                            if bytes.get(pos) == Some(&b'>') {
+                                pos += 1;
+                                TokenKind::UShr
+                            } else {
+                                TokenKind::Shr
+                            }
                         } else {
                             TokenKind::Gt
                         }
@@ -504,6 +550,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "delete" => TokenKind::KwDelete,
         "in" => TokenKind::KwIn,
         "instanceof" => TokenKind::KwInstanceof,
+        "void" => TokenKind::KwVoid,
         _ => TokenKind::Ident,
     }
 }

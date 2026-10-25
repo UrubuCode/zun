@@ -913,6 +913,81 @@ fn fixture_invalid_catch_type_is_rejected() {
 }
 
 #[test]
+fn fixture_valid_integer_bitwise_and_shift_ops() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(5)),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(3)),
+        Instruction::simple(Opcode::AndI32),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
+        Instruction::simple(Opcode::OrI32),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::simple(Opcode::XorI32),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
+        Instruction::simple(Opcode::ShlI32),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::simple(Opcode::ShrI32),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
+        Instruction::simple(Opcode::UShrI32),
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(3)),
+        Instruction::simple(Opcode::PowI32),
+        Instruction::simple(Opcode::NotI32),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_and_i32_underflow() {
+    let code = asm(&[
+        Instruction::new(Opcode::ConstI32, Operand::Imm32(5)),
+        Instruction::simple(Opcode::AndI32),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::StackUnderflow
+    );
+}
+
+#[test]
+fn fixture_invalid_not_i32_underflow() {
+    let code = asm(&[
+        Instruction::simple(Opcode::NotI32),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::StackUnderflow
+    );
+}
+
+#[test]
+fn fixture_valid_const_undef_stack_effect() {
+    let code = asm(&[
+        Instruction::simple(Opcode::ConstUndef),
+        Instruction::simple(Opcode::Pop),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(check(&code, VOID), Ok(()));
+}
+
+#[test]
+fn fixture_invalid_const_undef_return_height() {
+    let code = asm(&[
+        Instruction::simple(Opcode::ConstUndef),
+        Instruction::simple(Opcode::Ret),
+    ]);
+    assert_eq!(
+        check(&code, VOID).unwrap_err().kind,
+        ErrorKind::BadReturnHeight {
+            expected: 0,
+            found: 1
+        }
+    );
+}
+
+#[test]
 fn fixture_valid_import_dynamic_stack_effect() {
     let code = asm(&[
         Instruction::new(Opcode::ConstI32, Operand::Imm32(0)),

@@ -137,6 +137,15 @@ const SHAPES: &[(Opcode, Shape)] = &[
     (Opcode::PopcntI32, Shape::Fixed(1, 1)),
     (Opcode::RoundF64, Shape::Fixed(1, 1)),
     (Opcode::SignF64, Shape::Fixed(1, 1)),
+    (Opcode::AndI32, Shape::Fixed(2, 1)),
+    (Opcode::OrI32, Shape::Fixed(2, 1)),
+    (Opcode::XorI32, Shape::Fixed(2, 1)),
+    (Opcode::NotI32, Shape::Fixed(1, 1)),
+    (Opcode::ShlI32, Shape::Fixed(2, 1)),
+    (Opcode::ShrI32, Shape::Fixed(2, 1)),
+    (Opcode::UShrI32, Shape::Fixed(2, 1)),
+    (Opcode::PowI32, Shape::Fixed(2, 1)),
+    (Opcode::ConstUndef, Shape::Fixed(0, 1)),
 ];
 
 /// Locals available to a fixture body; only the slot operand needs one.

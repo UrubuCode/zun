@@ -3201,12 +3201,23 @@ impl Checker<'_> {
                 // so `x + 1` type-checks when `x: int` (and vice versa).
                 unify_numeric_literal(&mut lhs, &mut rhs);
                 if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
+                    // `>>>` has no BigInt form in ECMAScript: it is a TypeError.
+                    if let ast::BinaryOp::UShr = op {
+                        self.error(span, "BigInts have no unsigned right shift (`>>>`)");
+                        return self.poison(span);
+                    }
                     let intrinsic = match op {
                         ast::BinaryOp::Add => Some("bigIntAdd"),
                         ast::BinaryOp::Sub => Some("bigIntSub"),
                         ast::BinaryOp::Mul => Some("bigIntMul"),
                         ast::BinaryOp::Div => Some("bigIntDiv"),
                         ast::BinaryOp::Rem => Some("bigIntRem"),
+                        ast::BinaryOp::Pow => Some("bigIntPow"),
+                        ast::BinaryOp::BitAnd => Some("bigIntAnd"),
+                        ast::BinaryOp::BitOr => Some("bigIntOr"),
+                        ast::BinaryOp::BitXor => Some("bigIntXor"),
+                        ast::BinaryOp::Shl => Some("bigIntShl"),
+                        ast::BinaryOp::Shr => Some("bigIntShr"),
                         ast::BinaryOp::Eq => Some("bigIntEq"),
                         ast::BinaryOp::Ne => Some("bigIntNe"),
                         ast::BinaryOp::Lt => Some("bigIntLt"),
@@ -3229,6 +3240,23 @@ impl Checker<'_> {
                     }
                     self.error(span, "BigInt supports arithmetic and comparison operators");
                     return self.poison(span);
+                }
+                // `number ** number` routes to the `Math.pow` intrinsic (JS
+                // exponent semantics, NaN/Infinity edges included). Integer `**`
+                // stays an IL opcode (`pow.i32`), lowered below via binary_result.
+                if let ast::BinaryOp::Pow = op {
+                    if lhs.ty == Ty::F64 && rhs.ty == Ty::F64 {
+                        if let Some((id, native)) = zun_natives::resolve("math", "powNumber") {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![lhs, rhs],
+                                },
+                                ty: native_ty(native.ret),
+                                span,
+                            };
+                        }
+                    }
                 }
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
                 hir::Expr {
@@ -3270,7 +3298,10 @@ impl Checker<'_> {
                 match op {
                     ast::UnaryOp::Typeof => return self.check_typeof_operator(cx, operand, span),
                     ast::UnaryOp::Delete => return self.check_delete_operator(cx, operand, span),
-                    ast::UnaryOp::Neg | ast::UnaryOp::Not => {}
+                    ast::UnaryOp::Neg
+                    | ast::UnaryOp::Not
+                    | ast::UnaryOp::BitNot
+                    | ast::UnaryOp::Void => {}
                 }
                 // Fold `-<number literal>` into a single negative number literal
                 // so it stays coercible to an int context (e.g. `abs(-7)`).
@@ -3284,8 +3315,15 @@ impl Checker<'_> {
                     }
                 }
                 let operand = self.check_expr(cx, operand);
-                if *op == ast::UnaryOp::Neg && operand.ty == Ty::BigInt {
-                    if let Some((id, native)) = zun_natives::resolve("collections", "bigIntNeg") {
+                if operand.ty == Ty::BigInt
+                    && matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot)
+                {
+                    let native_name = match op {
+                        ast::UnaryOp::Neg => "bigIntNeg",
+                        ast::UnaryOp::BitNot => "bigIntNot",
+                        _ => unreachable!(),
+                    };
+                    if let Some((id, native)) = zun_natives::resolve("collections", native_name) {
                         return hir::Expr {
                             kind: hir::ExprKind::CallBuiltin {
                                 id,
@@ -3304,6 +3342,20 @@ impl Checker<'_> {
                         Ty::Error
                     }
                     ast::UnaryOp::Not => self.expect_ty(&operand, Ty::Boolean),
+                    // `~` keeps the operand's numeric type (int, or `number` via
+                    // the int32 coercion lowered in ilgen).
+                    ast::UnaryOp::BitNot if operand.ty.is_int() || operand.ty == Ty::F64 => {
+                        operand.ty
+                    }
+                    ast::UnaryOp::BitNot => {
+                        self.error(
+                            operand.span,
+                            format!("cannot apply `~` to {:?}", operand.ty),
+                        );
+                        Ty::Error
+                    }
+                    // `void x` evaluates its operand and yields `undefined`.
+                    ast::UnaryOp::Void => Ty::Any,
                     ast::UnaryOp::Typeof | ast::UnaryOp::Delete => {
                         unreachable!("handled before operand type-checking")
                     }
@@ -7539,6 +7591,45 @@ impl Checker<'_> {
                         span,
                         format!(
                             "arithmetic requires matching numbers, found {:?} and {:?}",
+                            lhs.ty, rhs.ty
+                        ),
+                    );
+                    Ty::Error
+                }
+            }
+            // `**` on integers → `pow.i32`; `number ** number` is intercepted
+            // and routed to `Math.pow` before reaching here, so a float operand
+            // here is the unsupported `float32` case.
+            Pow => {
+                if lhs.ty.is_int() && same_numeric(lhs.ty, rhs.ty) {
+                    lhs.ty
+                } else {
+                    self.error(
+                        span,
+                        format!(
+                            "exponentiation requires matching int or number operands, found {:?} and {:?}",
+                            lhs.ty, rhs.ty
+                        ),
+                    );
+                    Ty::Error
+                }
+            }
+            // Bitwise and shift operators. On integer operands they use the
+            // native width/signedness (`shr` is arithmetic for signed, logical
+            // for unsigned). On `number` (f64) they follow JS: coerce both
+            // operands to int32 (uint32 for the `>>>` left operand), operate,
+            // and widen the int result back to a `number` — all lowered in
+            // ilgen, so the result type here is the operand's own numeric type.
+            BitAnd | BitOr | BitXor | Shl | Shr | UShr => {
+                let both_int = lhs.ty.is_int() && same_numeric(lhs.ty, rhs.ty);
+                let both_number = lhs.ty == Ty::F64 && rhs.ty == Ty::F64;
+                if both_int || both_number {
+                    lhs.ty
+                } else {
+                    self.error(
+                        span,
+                        format!(
+                            "bitwise/shift operators require matching int or number operands, found {:?} and {:?}",
                             lhs.ty, rhs.ty
                         ),
                     );

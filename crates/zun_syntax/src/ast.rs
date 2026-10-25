@@ -401,6 +401,20 @@ pub enum BinaryOp {
     Div,
     /// `%`
     Rem,
+    /// `**` — exponentiation (right-associative).
+    Pow,
+    /// `&` — bitwise AND.
+    BitAnd,
+    /// `|` — bitwise OR.
+    BitOr,
+    /// `^` — bitwise XOR.
+    BitXor,
+    /// `<<` — left shift.
+    Shl,
+    /// `>>` — signed/arithmetic right shift.
+    Shr,
+    /// `>>>` — unsigned/logical right shift.
+    UShr,
     /// `==`
     Eq,
     /// `!=`
@@ -432,6 +446,10 @@ pub enum UnaryOp {
     Neg,
     /// `!`
     Not,
+    /// `~` — bitwise NOT.
+    BitNot,
+    /// `void` — evaluate the operand for side effects, yield `undefined`.
+    Void,
     /// `typeof` — the JS runtime type-string operator.
     Typeof,
     /// `delete` — remove a property from an object; yields a boolean.

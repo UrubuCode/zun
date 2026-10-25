@@ -370,6 +370,39 @@ define_opcodes! {
     /// `Math.sign`: -1, -0, +0, 1, or NaN. Zeros and NaN pass through with
     /// their sign intact.
     SignF64 = 0xA4, None, "sign.f64", StackEffect::Fixed { pops: 1, pushes: 1 };
+
+    // --- integer bitwise, shift, and exponent machine ops ---
+    //
+    // Width- and signedness-generic like the integer arithmetic above: the
+    // result kind comes from the operands (which sema guarantees match) and the
+    // value wraps to that width. `shr.i32` is arithmetic for a signed operand
+    // kind and logical for an unsigned one; `ushr.i32` is always logical. Shift
+    // amounts are masked to the operand kind's bit width (`& 31` for i32),
+    // matching Cranelift's shift semantics. None of these can throw, so all are
+    // JIT-eligible and must agree with Tier 0 on the equivalence suite.
+    /// Bitwise AND.
+    AndI32 = 0xA5, None, "and.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Bitwise OR.
+    OrI32 = 0xA6, None, "or.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Bitwise XOR.
+    XorI32 = 0xA7, None, "xor.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Bitwise NOT (one's complement), width-generic.
+    NotI32 = 0xA8, None, "not.i32", StackEffect::Fixed { pops: 1, pushes: 1 };
+    /// Left shift; amount masked to the operand kind's width.
+    ShlI32 = 0xA9, None, "shl.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Right shift: arithmetic for a signed operand kind, logical for unsigned.
+    ShrI32 = 0xAA, None, "shr.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Unsigned/logical right shift (JS `>>>`), regardless of operand kind.
+    UShrI32 = 0xAB, None, "ushr.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+    /// Integer exponentiation `a ** b`, wrapping to the operand kind. A negative
+    /// exponent yields 1 (the empty product); exactness is pinned by the
+    /// equivalence suite.
+    PowI32 = 0xAC, None, "pow.i32", StackEffect::Fixed { pops: 2, pushes: 1 };
+
+    /// Push `undefined` (an `Any` with the Void tag). Used to give `void x` a
+    /// value after its operand is evaluated and discarded. Tier 0 only: the
+    /// typed JIT does not list it, so a method using it stays on the interpreter.
+    ConstUndef = 0xAD, None, "const.undef", StackEffect::Fixed { pops: 0, pushes: 1 };
 }
 
 #[cfg(test)]

@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, Block, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind, Type,
-    Value,
+    types, AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, StackSlotData,
+    StackSlotKind, Type, Value,
 };
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -340,6 +340,18 @@ impl Translator<'_> {
                     let r = self.builder.ins().ineg(v);
                     stack.push((r, k));
                 }
+                Opcode::AndI32 => self.int_bin(&mut stack, IntOp::And)?,
+                Opcode::OrI32 => self.int_bin(&mut stack, IntOp::Or)?,
+                Opcode::XorI32 => self.int_bin(&mut stack, IntOp::Xor)?,
+                Opcode::ShlI32 => self.int_bin(&mut stack, IntOp::Shl)?,
+                Opcode::ShrI32 => self.int_bin(&mut stack, IntOp::Shr)?,
+                Opcode::UShrI32 => self.int_bin(&mut stack, IntOp::UShr)?,
+                Opcode::NotI32 => {
+                    let (v, k) = stack.pop().ok_or("stack underflow")?;
+                    let r = self.builder.ins().bnot(v);
+                    stack.push((r, k));
+                }
+                Opcode::PowI32 => self.int_pow(&mut stack)?,
                 Opcode::AddF64 => self.float_bin(&mut stack, FloatOp::Add)?,
                 Opcode::SubF64 => self.float_bin(&mut stack, FloatOp::Sub)?,
                 Opcode::MulF64 => self.float_bin(&mut stack, FloatOp::Mul)?,
@@ -2144,8 +2156,92 @@ impl Translator<'_> {
             IntOp::Div => ins.udiv(a, b),
             IntOp::Rem if signed => ins.srem(a, b),
             IntOp::Rem => ins.urem(a, b),
+            IntOp::And => ins.band(a, b),
+            IntOp::Or => ins.bor(a, b),
+            IntOp::Xor => ins.bxor(a, b),
+            // Cranelift masks the shift amount to the controlling type's width,
+            // matching JS's `& 31` for i32 and the Tier 0 masking.
+            IntOp::Shl => ins.ishl(a, b),
+            // `>>` is arithmetic for signed operands, logical for unsigned.
+            IntOp::Shr if signed => ins.sshr(a, b),
+            IntOp::Shr => ins.ushr(a, b),
+            // `>>>` is always logical.
+            IntOp::UShr => ins.ushr(a, b),
         };
         stack.push((r, k));
+        Ok(())
+    }
+
+    /// Integer exponentiation `a ** b`, wrapping to the operand kind, as an
+    /// inline loop (exponentiation by squaring). Wrapping multiply is a ring
+    /// homomorphism, so this agrees with the Tier 0 `bin_int_pow` bit-for-bit
+    /// regardless of the squaring order. A negative exponent yields 1.
+    fn int_pow(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
+        let (b, _) = stack.pop().ok_or("stack underflow")?;
+        let (a, k) = stack.pop().ok_or("stack underflow")?;
+        let ty = self.builder.func.dfg.value_type(a);
+
+        // The exponent as an unsigned i64 count: negative clamps to 0.
+        let exp0 = if is_signed(k) {
+            let wide = if ty == types::I64 { b } else { self.builder.ins().sextend(types::I64, b) };
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            self.builder.ins().smax(wide, zero)
+        } else if ty == types::I64 {
+            b
+        } else {
+            self.builder.ins().uextend(types::I64, b)
+        };
+        let acc0 = self.builder.ins().iconst(ty, 1);
+
+        let header = self.builder.create_block();
+        let body = self.builder.create_block();
+        let exit = self.builder.create_block();
+        self.builder.append_block_param(header, ty); // acc
+        self.builder.append_block_param(header, ty); // base
+        self.builder.append_block_param(header, types::I64); // exp
+        self.builder.append_block_param(exit, ty); // result
+
+        self.builder.ins().jump(
+            header,
+            &[BlockArg::from(acc0), BlockArg::from(a), BlockArg::from(exp0)],
+        );
+
+        self.builder.switch_to_block(header);
+        let acc = self.builder.block_params(header)[0];
+        let base = self.builder.block_params(header)[1];
+        let exp = self.builder.block_params(header)[2];
+        let zero64 = self.builder.ins().iconst(types::I64, 0);
+        let done = self.builder.ins().icmp(IntCC::Equal, exp, zero64);
+        self.builder
+            .ins()
+            .brif(done, exit, &[BlockArg::from(acc)], body, &[]);
+
+        self.builder.switch_to_block(body);
+        let one64 = self.builder.ins().iconst(types::I64, 1);
+        let bit = self.builder.ins().band(exp, one64);
+        let take = self.builder.ins().icmp(IntCC::NotEqual, bit, zero64);
+        let acc_mul = self.builder.ins().imul(acc, base);
+        let acc_next = self.builder.ins().select(take, acc_mul, acc);
+        let base_next = self.builder.ins().imul(base, base);
+        let exp_next = self.builder.ins().ushr(exp, one64);
+        self.builder.ins().jump(
+            header,
+            &[
+                BlockArg::from(acc_next),
+                BlockArg::from(base_next),
+                BlockArg::from(exp_next),
+            ],
+        );
+
+        // The loop header is only fully known once the back-edge from `body`
+        // is emitted; seal in dependency order.
+        self.builder.seal_block(body);
+        self.builder.seal_block(header);
+        self.builder.seal_block(exit);
+
+        self.builder.switch_to_block(exit);
+        let result = self.builder.block_params(exit)[0];
+        stack.push((result, k));
         Ok(())
     }
 
@@ -2989,6 +3085,12 @@ enum IntOp {
     Mul,
     Div,
     Rem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+    UShr,
 }
 #[derive(Clone, Copy)]
 enum FloatOp {

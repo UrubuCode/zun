@@ -2472,3 +2472,93 @@ fn static_regex_injects_jit_eligible_matcher_method() {
         .expect("matchAt present");
     assert!(eligible.contains(&match_rid), "synthesized matchAt must be JIT-eligible");
 }
+
+// ---------------------------------------------------------------------------
+// Operator tokens: `**`, bitwise `& | ^ ~`, shifts `<< >> >>>`, and `void`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn number_bitwise_and_shift_operators_follow_js_int32_semantics() {
+    // On `number` operands the bitwise/shift operators coerce to int32
+    // (uint32 for the `>>>` left operand) and widen the result back to a
+    // number, matching JavaScript.
+    let out = run_source(
+        r#"function main() {
+            print(5 & 3);
+            print(5 | 2);
+            print(6 ^ 3);
+            print(1 << 4);
+            print(-8 >> 1);
+            print(-1 >>> 28);
+            print(~5);
+            print(5.9 & 3);
+            print((-1) >>> 0);
+        }"#,
+    );
+    assert_eq!(out, ["1", "7", "5", "16", "-4", "15", "-6", "1", "4294967295"]);
+}
+
+#[test]
+fn number_exponent_operator_uses_math_pow() {
+    let out = run_source(
+        r#"function main() {
+            print(2 ** 10);
+            print(2.0 ** 0.5);
+            print(3 ** 3 ** 2);
+        }"#,
+    );
+    // `**` is right-associative: 3 ** (3 ** 2) == 3 ** 9 == 19683.
+    assert_eq!(out, ["1024", "1.4142135623730951", "19683"]);
+}
+
+#[test]
+fn bigint_exponent_bitwise_and_shift_operators_use_the_managed_floor() {
+    // The NUCLEUS #4 payoff: these operators were method-only because the
+    // tokens did not exist. They now route to the same bigint natives as
+    // `+ - * / %`.
+    let out = run_source(
+        r#"function main(): int {
+            print((2n ** 10n).toString());
+            print((7n & 3n).toString());
+            print((5n | 2n).toString());
+            print((6n ^ 3n).toString());
+            print((1n << 4n).toString());
+            print((-8n >> 1n).toString());
+            print((~7n).toString());
+            return 0;
+        }"#,
+    );
+    assert_eq!(out, ["1024", "3", "7", "5", "16", "-4", "-8"]);
+}
+
+#[test]
+fn bigint_unsigned_right_shift_is_rejected() {
+    // ECMAScript: `>>>` has no BigInt form, so this is a TypeError at check
+    // time, surfaced as a diagnostic.
+    let src = zun_prelude::with_prelude(
+        r#"function main(): int {
+            let a: BigInt = 8n;
+            let b: BigInt = 1n;
+            print((a >>> b).toString());
+            return 0;
+        }"#,
+    );
+    let mut diags = Vec::new();
+    let ast = zun_syntax::parse(&src, &mut diags);
+    let _ = zun_sema::check(&src, &ast, &mut diags);
+    assert!(
+        diags.iter().any(|d| d.message.contains("unsigned right shift")),
+        "expected a BigInt `>>>` rejection, got: {diags:?}"
+    );
+}
+
+#[test]
+fn void_operator_yields_undefined() {
+    let out = run_source(
+        r#"function main() {
+            print(void 0);
+            print(void "ignored");
+        }"#,
+    );
+    assert_eq!(out, ["undefined", "undefined"]);
+}

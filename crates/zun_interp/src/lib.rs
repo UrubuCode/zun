@@ -31,8 +31,9 @@ use operands::{
     operand_token, operand_token_imm32,
 };
 use stack::{
-    bin_float, bin_int, bin_int_minmax, bin_int_signed_aware, cmp, compare, convert, js_max,
-    js_min, js_round, js_sign, pop, pop_n, un_float, un_int_bits, underflow,
+    bin_float, bin_int, bin_int_minmax, bin_int_pow, bin_int_shift, bin_int_signed_aware, cmp,
+    compare, convert, js_max, js_min, js_round, js_sign, pop, pop_n, un_float, un_int_bits,
+    underflow, ShiftOp,
     Ordering,
 };
 use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
@@ -607,6 +608,21 @@ impl Interp<'_> {
                     let k = v.int_kind();
                     stack.push(Value::Int(value::wrap_int(v.as_int().wrapping_neg(), k), k));
                 }
+                // Integer bitwise, shift, and exponent machine ops, width- and
+                // signedness-generic from the operand kind.
+                Opcode::AndI32 => bin_int(&mut stack, |a, b| a & b)?,
+                Opcode::OrI32 => bin_int(&mut stack, |a, b| a | b)?,
+                Opcode::XorI32 => bin_int(&mut stack, |a, b| a ^ b)?,
+                Opcode::NotI32 => {
+                    let v = pop(&mut stack)?;
+                    let k = v.int_kind();
+                    stack.push(Value::Int(value::wrap_int(!v.as_int(), k), k));
+                }
+                Opcode::ShlI32 => bin_int_shift(&mut stack, ShiftOp::Left)?,
+                Opcode::ShrI32 => bin_int_shift(&mut stack, ShiftOp::Right)?,
+                Opcode::UShrI32 => bin_int_shift(&mut stack, ShiftOp::UnsignedRight)?,
+                Opcode::PowI32 => bin_int_pow(&mut stack)?,
+                Opcode::ConstUndef => stack.push(Value::Void),
                 Opcode::Conv => {
                     let target = zun_il::NumKind::from_imm(operand_i32(&instr.operand))
                         .ok_or_else(|| RunError::Malformed("bad conv kind".into()))?;

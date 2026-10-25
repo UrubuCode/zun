@@ -220,6 +220,78 @@ pub(crate) fn un_int_bits(
     Ok(())
 }
 
+/// The kind of integer shift to perform.
+#[derive(Clone, Copy)]
+pub(crate) enum ShiftOp {
+    /// Left shift.
+    Left,
+    /// Right shift: arithmetic for a signed operand kind, logical for unsigned.
+    Right,
+    /// Unsigned/logical right shift regardless of kind (JS `>>>`).
+    UnsignedRight,
+}
+
+/// Integer shift, width- and signedness-generic.
+///
+/// The shift amount is masked to the operand kind's bit width (`& (bits - 1)`),
+/// which matches both JS's 32-bit shift masking and Cranelift's shift
+/// semantics, so Tier 0 and Tier 1 agree.
+pub(crate) fn bin_int_shift(stack: &mut Vec<Value>, op: ShiftOp) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (bits, signed) = kind.int_parts().expect("int kind");
+    let bits = bits as u32;
+    let amount = (b.as_int() as u64 & (bits as u64 - 1)) as u32;
+    let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+    let value = a.as_int();
+    let result = match op {
+        ShiftOp::Left => ((value as u64) << amount) as i64,
+        ShiftOp::Right if signed => value >> amount,
+        // Logical: read the operand as unsigned of its width first, so a signed
+        // negative value's high bits do not leak in from the i64 container.
+        ShiftOp::Right | ShiftOp::UnsignedRight => (((value as u64) & mask) >> amount) as i64,
+    };
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
+
+/// Integer exponentiation `a ** b`, wrapping to the operand kind.
+///
+/// Exponentiation by squaring under wrapping multiplication; a negative
+/// exponent produces 1 (the empty product). The algorithm is irrelevant to the
+/// result — wrapping multiply is a ring homomorphism — so Tier 1 may use any
+/// equivalent sequence.
+pub(crate) fn bin_int_pow(stack: &mut Vec<Value>) -> Result<(), RunError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    let kind = a.int_kind();
+    let (_, signed) = kind.int_parts().expect("int kind");
+    let exp_raw = b.as_int();
+    // The exponent is read by the operand kind's signedness: a signed negative
+    // exponent is the empty product (1); an unsigned exponent uses its full
+    // value. Squaring is logarithmic in the exponent, so a huge unsigned
+    // exponent still terminates. This matches the Tier 1 lowering.
+    let mut exp: u64 = if signed {
+        if exp_raw < 0 { 0 } else { exp_raw as u64 }
+    } else {
+        exp_raw as u64
+    };
+    let mut result = 1i64;
+    let mut base = a.as_int();
+    while exp > 0 {
+        if exp & 1 == 1 {
+            result = result.wrapping_mul(base);
+        }
+        exp >>= 1;
+        if exp > 0 {
+            base = base.wrapping_mul(base);
+        }
+    }
+    stack.push(Value::Int(value::wrap_int(result, kind), kind));
+    Ok(())
+}
+
 pub(crate) fn bin_int(
     stack: &mut Vec<Value>,
     f: impl Fn(i64, i64) -> i64,

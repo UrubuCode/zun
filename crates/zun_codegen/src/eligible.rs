@@ -38,6 +38,14 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::DivI32
             | Opcode::RemI32
             | Opcode::NegI32
+            | Opcode::AndI32
+            | Opcode::OrI32
+            | Opcode::XorI32
+            | Opcode::NotI32
+            | Opcode::ShlI32
+            | Opcode::ShrI32
+            | Opcode::UShrI32
+            | Opcode::PowI32
             | Opcode::AddF64
             | Opcode::SubF64
             | Opcode::MulF64

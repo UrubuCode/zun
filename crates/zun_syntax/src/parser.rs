@@ -282,7 +282,7 @@ impl Parser<'_> {
             } else {
                 self.expect(TokenKind::Colon, "`:` (fields require a type)");
                 let ty = TypeAnnotation {
-                    name: self.name("a type name"),
+                    name: self.type_name("a type name"),
                 };
                 // `field: T = expr;` gives the field a default, which makes
                 // its constructor argument optional.

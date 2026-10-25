@@ -132,24 +132,34 @@ pub(crate) fn find_template_interpolation_end(source: &str, start: usize) -> Opt
 
 pub(crate) fn decode_template_text(text: &str) -> String { decode_string(&format!("\"{text}\"")) }
 
+/// Map a token to its binary operator and precedence level (higher binds
+/// tighter). The order mirrors JS: `|| ?? < && < | < ^ < & < == < relational <
+/// shift < additive < multiplicative < **`.
 fn binary_op(kind: TokenKind) -> Option<(BinaryOp, u8)> {
     Some(match kind {
-        TokenKind::EqEq => (BinaryOp::Eq, 1),
-        TokenKind::BangEq => (BinaryOp::Ne, 1),
-        TokenKind::Lt => (BinaryOp::Lt, 2),
-        TokenKind::LtEq => (BinaryOp::Le, 2),
-        TokenKind::Gt => (BinaryOp::Gt, 2),
-        TokenKind::GtEq => (BinaryOp::Ge, 2),
-        TokenKind::KwIn => (BinaryOp::In, 2),
-        TokenKind::KwInstanceof => (BinaryOp::Instanceof, 2),
-        TokenKind::OrOr => (BinaryOp::Or, 0),
-        TokenKind::Nullish => (BinaryOp::Nullish, 0),
-        TokenKind::AndAnd => (BinaryOp::And, 1),
-        TokenKind::Plus => (BinaryOp::Add, 3),
-        TokenKind::Minus => (BinaryOp::Sub, 3),
-        TokenKind::Star => (BinaryOp::Mul, 4),
-        TokenKind::Slash => (BinaryOp::Div, 4),
-        TokenKind::Percent => (BinaryOp::Rem, 4),
+        TokenKind::OrOr => (BinaryOp::Or, 1),
+        TokenKind::Nullish => (BinaryOp::Nullish, 1),
+        TokenKind::AndAnd => (BinaryOp::And, 2),
+        TokenKind::Pipe => (BinaryOp::BitOr, 3),
+        TokenKind::Caret => (BinaryOp::BitXor, 4),
+        TokenKind::Amp => (BinaryOp::BitAnd, 5),
+        TokenKind::EqEq => (BinaryOp::Eq, 6),
+        TokenKind::BangEq => (BinaryOp::Ne, 6),
+        TokenKind::Lt => (BinaryOp::Lt, 7),
+        TokenKind::LtEq => (BinaryOp::Le, 7),
+        TokenKind::Gt => (BinaryOp::Gt, 7),
+        TokenKind::GtEq => (BinaryOp::Ge, 7),
+        TokenKind::KwIn => (BinaryOp::In, 7),
+        TokenKind::KwInstanceof => (BinaryOp::Instanceof, 7),
+        TokenKind::Shl => (BinaryOp::Shl, 8),
+        TokenKind::Shr => (BinaryOp::Shr, 8),
+        TokenKind::UShr => (BinaryOp::UShr, 8),
+        TokenKind::Plus => (BinaryOp::Add, 9),
+        TokenKind::Minus => (BinaryOp::Sub, 9),
+        TokenKind::Star => (BinaryOp::Mul, 10),
+        TokenKind::Slash => (BinaryOp::Div, 10),
+        TokenKind::Percent => (BinaryOp::Rem, 10),
+        TokenKind::StarStar => (BinaryOp::Pow, 11),
         _ => return None,
     })
 }
@@ -528,7 +538,7 @@ impl Parser<'_> {
         let mut expr = self.call();
         while self.eat(TokenKind::KwAs) {
             let ty = TypeAnnotation {
-                name: self.name("a type name"),
+                name: self.type_name("a type name"),
             };
             let span = expr.span().to(ty.name.span);
             expr = Expr::Cast {
@@ -544,6 +554,8 @@ impl Parser<'_> {
         let op = match self.peek().kind {
             TokenKind::Minus => Some(UnaryOp::Neg),
             TokenKind::Bang => Some(UnaryOp::Not),
+            TokenKind::Tilde => Some(UnaryOp::BitNot),
+            TokenKind::KwVoid => Some(UnaryOp::Void),
             TokenKind::KwTypeof => Some(UnaryOp::Typeof),
             TokenKind::KwDelete => Some(UnaryOp::Delete),
             _ => None,
@@ -571,7 +583,13 @@ impl Parser<'_> {
                 break;
             }
             self.bump();
-            let rhs = self.binary(level + 1);
+            // `**` is right-associative: recurse at the same level so
+            // `2 ** 3 ** 2` parses as `2 ** (3 ** 2)`.
+            let rhs = if op == BinaryOp::Pow {
+                self.binary(level)
+            } else {
+                self.binary(level + 1)
+            };
             let span = lhs.span().to(rhs.span());
             lhs = Expr::Binary {
                 op,
@@ -652,7 +670,7 @@ impl Parser<'_> {
             let binding = self.name("a catch binding");
             self.expect(TokenKind::Colon, "`:` after catch binding");
             let ty = TypeAnnotation {
-                name: self.name("a catch type"),
+                name: self.type_name("a catch type"),
             };
             self.expect(TokenKind::RParen, "`)` after catch binding");
             let catch_body = self.block();
@@ -830,6 +848,17 @@ impl Parser<'_> {
         params
     }
 
+    /// Parse a type name. Type positions accept `void` (a keyword since it is
+    /// also the unary `void` operator) as well as ordinary identifiers.
+    pub(crate) fn type_name(&mut self, what: &str) -> Name {
+        if self.at(TokenKind::KwVoid) {
+            let t = self.bump();
+            Name { span: t.span }
+        } else {
+            self.name(what)
+        }
+    }
+
     pub(crate) fn name(&mut self, what: &str) -> Name {
         match self.expect(TokenKind::Ident, what) {
             Some(t) => Name { span: t.span },
@@ -855,7 +884,7 @@ impl Parser<'_> {
     pub(crate) fn optional_type_annotation(&mut self) -> Option<TypeAnnotation> {
         if self.eat(TokenKind::Colon) {
             Some(TypeAnnotation {
-                name: self.name("a type name"),
+                name: self.type_name("a type name"),
             })
         } else {
             None
