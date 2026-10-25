@@ -810,6 +810,16 @@ pub enum Expr {
         /// Span of the whole expression.
         span: Span,
     },
+    /// `new (expr)(args)` — construct through a parenthesized callee
+    /// expression (a proxy-typed value; classes use [`Expr::New`]).
+    NewDynamic {
+        /// The callee expression, evaluated to a value first.
+        callee: Box<Expr>,
+        /// Constructor arguments.
+        args: Vec<Expr>,
+        /// Span of the whole expression.
+        span: Span,
+    },
     /// `object.field` — read a field.
     Field {
         /// The object expression.
@@ -893,6 +903,7 @@ impl Expr {
             | Expr::Spread { span, .. }
             | Expr::Cast { span, .. }
             | Expr::New { span, .. }
+            | Expr::NewDynamic { span, .. }
             | Expr::Field { span, .. }
             | Expr::PrivateField { span, .. }
             | Expr::FieldAssign { span, .. }

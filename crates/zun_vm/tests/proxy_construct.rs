@@ -64,3 +64,31 @@ fn proxy_construct_defaults_to_target_class() {
     );
     assert_eq!(out, ["5"]);
 }
+
+#[test]
+fn new_on_proxy_from_function_call() {
+    let out = run_source(
+        r#"class C { n: number; }
+        function getProxy(): Proxy { return new Proxy(C, dynamic_new()); }
+        function main() {
+            let o: any = new (getProxy())(4.0);
+            let c = o as C;
+            print(c.n);
+        }"#,
+    );
+    assert_eq!(out, ["4"]);
+}
+
+#[test]
+fn reflect_construct_applies_field_default() {
+    let out = run_source(
+        r#"class C { a: number; b: number = 7.0; }
+        function main() {
+            let o: any = Reflect.construct(C, [1.0]);
+            let c = o as C;
+            print(c.a);
+            print(c.b);
+        }"#,
+    );
+    assert_eq!(out, ["1", "7"]);
+}

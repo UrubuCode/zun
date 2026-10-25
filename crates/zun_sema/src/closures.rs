@@ -398,7 +398,7 @@ impl Checker<'_> {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
             }
-            ast::Expr::ComputedCall { callee, args, .. } => {
+            ast::Expr::ComputedCall { callee, args, .. } | ast::Expr::NewDynamic { callee, args, .. } => {
                 self.collect_capture_expr(cx, parameters, callee, uses);
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);

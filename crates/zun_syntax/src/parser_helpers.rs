@@ -38,6 +38,7 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::OptionalIndex { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::OptionalCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
         Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }
+        Expr::NewDynamic { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
         Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
@@ -293,6 +294,16 @@ impl Parser<'_> {
             TokenKind::KwNull => { self.bump(); Expr::Null { span: t.span } }
             TokenKind::KwNew => {
                 let start = self.bump().span;
+                if self.at(TokenKind::LParen) {
+                    // `new (expr)(args)`: a parenthesized callee expression.
+                    self.bump();
+                    let callee = self.expression();
+                    self.expect(TokenKind::RParen, "`)`");
+                    self.expect(TokenKind::LParen, "`(`");
+                    let args = self.arguments();
+                    let close = self.tokens[self.pos - 1].span;
+                    return Expr::NewDynamic { callee: Box::new(callee), args, span: start.to(close) };
+                }
                 let class = self.dotted_name("a class name");
                 self.expect(TokenKind::LParen, "`(`");
                 let args = self.arguments();

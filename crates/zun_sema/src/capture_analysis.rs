@@ -76,7 +76,7 @@ pub(super) fn collect_mutated_expr(
         ast::Expr::Call { args, .. } | ast::Expr::New { args, .. } => {
             for arg in args { collect_mutated_expr(checker, arg, names); }
         }
-        ast::Expr::ComputedCall { callee, args, .. } => {
+        ast::Expr::ComputedCall { callee, args, .. } | ast::Expr::NewDynamic { callee, args, .. } => {
             collect_mutated_expr(checker, callee, names);
             for arg in args { collect_mutated_expr(checker, arg, names); }
         }
