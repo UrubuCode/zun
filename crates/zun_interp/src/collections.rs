@@ -794,9 +794,16 @@ impl<'a> Interp<'a> {
                 }) {
                     return self.create_generator(method_rid, &[]);
                 }
-                let generator = object(args.first().ok_or(RunError::BadToken)?)
+                let source = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                Ok(Value::Object(generator))
+                // A generator object drives itself through the existing frame
+                // resume machinery; anything else (a built-in iterator object, a
+                // raw array/set/map, or a user `[Symbol.iterator]` object) routes
+                // through the generic iteration protocol.
+                if zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some()) {
+                    return Ok(Value::Object(source));
+                }
+                self.protocol_iterator_new(source)
             }
             "generatorIteratorNewArgs" => {
                 let method_rid = match args.first().ok_or(RunError::BadToken)? {
@@ -819,6 +826,9 @@ impl<'a> Interp<'a> {
             "generatorIteratorDone" => {
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.generator_state(generator).is_none()) {
+                    return self.protocol_done(generator);
+                }
                 let needs_prefetch = zun_gc::with_current_heap(|heap| {
                     heap.generator_state(generator)
                         .map(|state| !state.done && !state.has_current)
@@ -850,6 +860,9 @@ impl<'a> Interp<'a> {
             "generatorIteratorNext" => {
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.generator_state(generator).is_none()) {
+                    return self.protocol_next(generator);
+                }
                 let mut state = zun_gc::with_current_heap_mut(|heap| {
                     heap.generator_state_take(generator)
                 })
@@ -1084,7 +1097,9 @@ impl<'a> Interp<'a> {
                         heap.array_set(array, index, value);
                     });
                 }
-                Ok(Value::Object(array))
+                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(iterator))
             }
             "mapKeys" | "mapEntries" => {
                 let object =
@@ -1107,7 +1122,9 @@ impl<'a> Interp<'a> {
                         let _ = heap.array_set(array, index, item);
                     });
                 }
-                Ok(Value::Object(array))
+                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(iterator))
             }
             "mapForEach" => {
                 // `callback(value, key, map)` for each entry, in insertion
@@ -1226,9 +1243,12 @@ impl<'a> Interp<'a> {
                             })
                             .collect::<Result<_, _>>()?
                     } else {
-                        return Err(RunError::Native(
-                            "Set constructor argument is not a supported iterable".into(),
-                        ));
+                        // An arbitrary user `[Symbol.iterator]` iterable: drive
+                        // the iteration protocol, adding each produced value.
+                        let target = self.drive_iterable(source, target, |heap, set, value| {
+                            heap.set_add(set, value);
+                        })?;
+                        return Ok(Value::Any(zun_core::Any::object(target.addr() as usize)));
                     };
                 let length = values.len();
                 let staged = zun_gc::with_current_heap_mut(|heap| {
@@ -1302,9 +1322,19 @@ impl<'a> Interp<'a> {
                             })
                             .collect::<Result<_, _>>()?
                     } else {
-                        return Err(RunError::Native(
-                            "Map constructor argument is not a supported iterable".into(),
-                        ));
+                        // An arbitrary user `[Symbol.iterator]` iterable yielding
+                        // `[key, value]` pair arrays: drive the protocol.
+                        let target = self.drive_iterable(source, target, |heap, map, value| {
+                            if let Some(pair) = value
+                                .as_object()
+                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                            {
+                                let key = heap.array_get(pair, 0).unwrap_or_else(zun_core::Any::void);
+                                let val = heap.array_get(pair, 1).unwrap_or_else(zun_core::Any::void);
+                                heap.map_insert(map, key, val);
+                            }
+                        })?;
+                        return Ok(Value::Any(zun_core::Any::object(target.addr() as usize)));
                     };
                 let length = elements.len();
                 let staged = zun_gc::with_current_heap_mut(|heap| {
@@ -1433,7 +1463,9 @@ impl<'a> Interp<'a> {
                         heap.array_set(array, index, value);
                     });
                 }
-                Ok(Value::Object(array))
+                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(iterator))
             }
             "setEntries" => {
                 let object =
@@ -1456,7 +1488,9 @@ impl<'a> Interp<'a> {
                         );
                     });
                 }
-                Ok(Value::Object(array))
+                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(iterator))
             }
             "setForEach" => {
                 // `callback(value, value, set)` for each element, in insertion
@@ -2012,6 +2046,14 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
                 };
+                // A built-in iterator object (from `Array`/`Map`/`Set`
+                // `keys`/`values`/`entries`) answers `next()` with a fresh
+                // `{ value, done }` result object, per the iterator protocol.
+                if member.as_ref() == "next" {
+                    if let Some(result) = self.builtin_iterator_result(namespace)? {
+                        return Ok(result);
+                    }
+                }
                 let call_args = args[2..]
                     .iter()
                     .map(|arg| match arg {
@@ -2678,8 +2720,9 @@ impl<'a> Interp<'a> {
                         };
                         heap.array_set(result, index, value);
                     }
-                    result
-                });
+                    heap.alloc_array_iterator(result)
+                })
+                .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(result))
             }
             "arraySpliceInsert" => {
@@ -2941,19 +2984,23 @@ impl<'a> Interp<'a> {
                                 "spread: value is not iterable",
                             ))));
                         };
-                        let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
-                        else {
-                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                                "spread: value is not iterable",
-                            ))));
-                        };
-                        let roots = [source, target];
-                        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                        for index in 0..length {
-                            let value =
-                                zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                                    .unwrap_or_else(zun_core::Any::void);
-                            zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], value));
+                        // A managed Array keeps its direct fast path; anything
+                        // else (a Set/Map or a user `[Symbol.iterator]` object)
+                        // is drained through the iteration protocol.
+                        if let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                        {
+                            let roots = [source, target];
+                            let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                            for index in 0..length {
+                                let value =
+                                    zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                                        .unwrap_or_else(zun_core::Any::void);
+                                zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], value));
+                            }
+                        } else {
+                            self.drive_iterable(source, target, |heap, array, value| {
+                                heap.array_push(array, value);
+                            })?;
                         }
                     }
                 }
@@ -3929,6 +3976,279 @@ impl<'a> Interp<'a> {
             call_args
         };
         Ok((handle.method_rid(), final_args))
+    }
+
+    /// The managed object an interpreter value refers to, unboxing an `Any`.
+    fn value_object(value: &Value) -> Option<zun_gc::Obj> {
+        match value {
+            Value::Object(object) => Some(*object),
+            Value::Any(any) => any
+                .as_object()
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+            _ => None,
+        }
+    }
+
+    /// ECMAScript `GetIterator(source)`: resolve the iterator object that drives
+    /// a for-of / spread / collection-constructor over `source`.
+    ///
+    /// A built-in iterator object drives itself; a raw array/set/map is wrapped
+    /// in the matching built-in iterator; a user value implementing
+    /// `[Symbol.iterator]` (an object literal's symbol-function slot or a typed
+    /// class's computed-symbol method) has it invoked to produce the iterator.
+    fn resolve_iterator(&mut self, source: zun_gc::Obj) -> Result<zun_gc::Obj, RunError> {
+        let iterator_id = zun_core::WellKnownSymbol::Iterator.id();
+        let is_builtin_iter = zun_gc::with_current_heap(|heap| {
+            heap.array_iterator_done(source).is_some()
+                || heap.set_iterator_done(source).is_some()
+                || heap.map_iterator_done(source).is_some()
+        });
+        if is_builtin_iter {
+            return Ok(source);
+        }
+        if zun_gc::with_current_heap(|heap| heap.array_len(source)).is_some() {
+            return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(source))
+                .ok_or(RunError::BadToken);
+        }
+        if zun_gc::with_current_heap(|heap| heap.set_values(source)).is_some() {
+            return zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(source))
+                .ok_or(RunError::BadToken);
+        }
+        if zun_gc::with_current_heap(|heap| heap.map_entries(source)).is_some() {
+            return zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(source))
+                .ok_or(RunError::BadToken);
+        }
+        let handle = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get_symbol_function(source, iterator_id)
+        })
+        .or_else(|| {
+            self.class_symbol_methods
+                .get(&(source.type_rid(), iterator_id.get()))
+                .copied()
+        });
+        let Some(handle) = handle else {
+            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                "value is not iterable",
+            ))));
+        };
+        let result = self.invoke_function_value(handle, Vec::new())?;
+        Self::value_object(&result).ok_or_else(|| {
+            RunError::Thrown(Value::Str(std::rc::Rc::from(
+                "[Symbol.iterator]() did not return an object",
+            )))
+        })
+    }
+
+    /// Advance a resolved iterator object once, returning `(value, done)`. A
+    /// built-in iterator advances through its native cursor; a user iterator has
+    /// its `next()` method called and the `{ value, done }` result read back.
+    fn protocol_step(&mut self, it: zun_gc::Obj) -> Result<(Value, bool), RunError> {
+        if let Some(done) = zun_gc::with_current_heap(|heap| heap.array_iterator_done(it)) {
+            if done {
+                return Ok((Value::Void, true));
+            }
+            let value = zun_gc::with_current_heap_mut(|heap| heap.array_iterator_next(it))
+                .and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
+                .unwrap_or(Value::Void);
+            return Ok((value, false));
+        }
+        if let Some(done) = zun_gc::with_current_heap(|heap| heap.set_iterator_done(it)) {
+            if done {
+                return Ok((Value::Void, true));
+            }
+            let value = zun_gc::with_current_heap_mut(|heap| heap.set_iterator_next(it))
+                .and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
+                .unwrap_or(Value::Void);
+            return Ok((value, false));
+        }
+        if let Some(done) = zun_gc::with_current_heap(|heap| heap.map_iterator_done(it)) {
+            if done {
+                return Ok((Value::Void, true));
+            }
+            let value = zun_gc::with_current_heap_mut(|heap| heap.map_iterator_next(it))
+                .map(Value::Object)
+                .unwrap_or(Value::Void);
+            return Ok((value, false));
+        }
+        let next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
+        let Some(next) = next else {
+            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                "iterator has no next() method",
+            ))));
+        };
+        let roots = [it];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let result = self.invoke_function_value(next, Vec::new())?;
+        let Some(result_obj) = Self::value_object(&result) else {
+            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                "iterator.next() did not return an object",
+            ))));
+        };
+        let done = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(result_obj, "done")
+                .and_then(|any| Value::unbox_any(any, heap))
+                .map(|value| is_truthy(&value, heap))
+                .unwrap_or(false)
+        });
+        if done {
+            return Ok((Value::Void, true));
+        }
+        let value = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(result_obj, "value")
+                .and_then(|any| Value::unbox_any(any, heap))
+        })
+        .unwrap_or(Value::Void);
+        Ok((value, false))
+    }
+
+    /// Build the look-ahead wrapper that backs the generic for-of protocol path
+    /// (`generatorIterator*` over a non-generator). It carries the resolved
+    /// iterator (`__zun_it`) plus a one-slot cache (`__zun_cur` / `__zun_done` /
+    /// `__zun_has`) so the desugared `done`/`next` pair reads one lookahead.
+    pub(crate) fn protocol_iterator_new(
+        &mut self,
+        source: zun_gc::Obj,
+    ) -> Result<Value, RunError> {
+        let it = self.resolve_iterator(source)?;
+        let roots = [it];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let wrapper = zun_gc::with_current_heap_mut(|heap| {
+            let wrapper = heap.alloc_dynamic();
+            heap.dynamic_set(
+                wrapper,
+                "__zun_it",
+                zun_core::Any::object(roots[0].addr() as usize),
+            );
+            wrapper
+        });
+        Ok(Value::Object(wrapper))
+    }
+
+    /// The `done` side of the protocol for-of path: prefetch the next value into
+    /// the wrapper's cache (unless one is already pending or the iterator is
+    /// exhausted) and report whether iteration is complete.
+    fn protocol_done(&mut self, wrapper: zun_gc::Obj) -> Result<Value, RunError> {
+        let roots = [wrapper];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let has = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(roots[0], "__zun_has").and_then(|any| any.as_bool())
+        })
+        .unwrap_or(false);
+        let done_cached = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(roots[0], "__zun_done").and_then(|any| any.as_bool())
+        })
+        .unwrap_or(false);
+        if has || done_cached {
+            return Ok(Value::Bool(done_cached));
+        }
+        let it = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(roots[0], "__zun_it").and_then(|any| any.as_object())
+        })
+        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        .ok_or(RunError::BadToken)?;
+        let (value, done) = self.protocol_step(it)?;
+        let boxed = if done {
+            zun_core::Any::void()
+        } else {
+            zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                .unwrap_or_else(zun_core::Any::null)
+        };
+        zun_gc::with_current_heap_mut(|heap| {
+            heap.dynamic_set(roots[0], "__zun_cur", boxed);
+            heap.dynamic_set(roots[0], "__zun_done", zun_core::Any::bool(done));
+            heap.dynamic_set(roots[0], "__zun_has", zun_core::Any::bool(true));
+        });
+        Ok(Value::Bool(done))
+    }
+
+    /// The `next` side of the protocol for-of path: hand back the value the
+    /// matching `protocol_done` prefetched and clear the cache slot.
+    fn protocol_next(&mut self, wrapper: zun_gc::Obj) -> Result<Value, RunError> {
+        let current = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(wrapper, "__zun_cur")
+                .and_then(|any| Value::unbox_any(any, heap))
+        })
+        .unwrap_or(Value::Void);
+        zun_gc::with_current_heap_mut(|heap| {
+            heap.dynamic_set(wrapper, "__zun_has", zun_core::Any::bool(false));
+        });
+        Ok(current)
+    }
+
+    /// `iterator.next()` for a built-in iterator object reached through a dynamic
+    /// member call (`[10, 20].values().next()`): advance it and return a fresh
+    /// `{ value, done }` result object. Returns `None` for a non-iterator so the
+    /// dynamic-call dispatch carries on.
+    fn builtin_iterator_result(
+        &mut self,
+        it: zun_gc::Obj,
+    ) -> Result<Option<Value>, RunError> {
+        let is_builtin = zun_gc::with_current_heap(|heap| {
+            heap.array_iterator_done(it).is_some()
+                || heap.set_iterator_done(it).is_some()
+                || heap.map_iterator_done(it).is_some()
+        });
+        if !is_builtin {
+            return Ok(None);
+        }
+        let (value, done) = self.protocol_step(it)?;
+        let boxed = if done {
+            zun_core::Any::void()
+        } else {
+            zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                .unwrap_or_else(zun_core::Any::null)
+        };
+        let value_root: Vec<zun_gc::Obj> = boxed
+            .as_object()
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+            .into_iter()
+            .collect();
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&value_root) };
+        let result = zun_gc::with_current_heap_mut(|heap| {
+            let result = heap.alloc_dynamic();
+            let value_any = match value_root.first() {
+                Some(object) => zun_core::Any::object(object.addr() as usize),
+                None => boxed,
+            };
+            heap.dynamic_set(result, "value", value_any);
+            heap.dynamic_set(result, "done", zun_core::Any::bool(done));
+            result
+        });
+        Ok(Some(Value::Any(zun_core::Any::object(result.addr() as usize))))
+    }
+
+    /// Drive `source` fully through the iteration protocol, handing each boxed
+    /// value to `sink` to deposit into `target`. `target` (and the look-ahead
+    /// wrapper) stay rooted across the drive, and the possibly-relocated target
+    /// is returned. Backs the `Set`/`Map` iterable constructors and array spread
+    /// for arbitrary user iterables.
+    pub(crate) fn drive_iterable<F>(
+        &mut self,
+        source: zun_gc::Obj,
+        target: zun_gc::Obj,
+        mut sink: F,
+    ) -> Result<zun_gc::Obj, RunError>
+    where
+        F: FnMut(&mut zun_gc::Heap, zun_gc::Obj, zun_core::Any),
+    {
+        let setup = [target];
+        let wrapper = {
+            let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
+            Self::value_object(&self.protocol_iterator_new(source)?)
+                .ok_or(RunError::BadToken)?
+        };
+        let roots = [wrapper, setup[0]];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        loop {
+            if matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+                break;
+            }
+            let value = self.protocol_next(roots[0])?;
+            let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                .unwrap_or_else(zun_core::Any::null);
+            zun_gc::with_current_heap_mut(|heap| sink(heap, roots[1], boxed));
+        }
+        Ok(roots[1])
     }
 
     /// Invoke a function value with the given positional arguments. The engine

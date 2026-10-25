@@ -129,6 +129,7 @@ fn check_impl(
         regex_matchers: Vec::new(),
         class_symbol_methods: Vec::new(),
         classes_with_has_instance: HashSet::new(),
+        classes_with_iterator: HashSet::new(),
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -290,6 +291,7 @@ struct Checker<'a> {
     /// Class indices that define a `[Symbol.hasInstance]` method. Such classes
     /// force the runtime `instanceof` path (the method decides membership).
     classes_with_has_instance: HashSet<u32>,
+    classes_with_iterator: HashSet<u32>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -900,6 +902,9 @@ impl Checker<'_> {
                         ));
                         if symbol == zun_core::WellKnownSymbol::HasInstance {
                             self.classes_with_has_instance.insert(class_idx as u32);
+                        }
+                        if symbol == zun_core::WellKnownSymbol::Iterator {
+                            self.classes_with_iterator.insert(class_idx as u32);
                         }
                     }
                     None => self.error(
@@ -1523,6 +1528,17 @@ impl Checker<'_> {
                     // iterator's `done`/`next` over a code-point array.
                     Ty::String => ("stringIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     Ty::Any => ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext"),
+                    // A user object implementing `[Symbol.iterator]`: a dynamic
+                    // object literal's symbol-function slot, or a typed class's
+                    // computed-symbol method. Both route through the generic
+                    // iteration protocol, which calls `[Symbol.iterator]()` and
+                    // drives the returned iterator's `next()`.
+                    Ty::DynamicObject => {
+                        ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext")
+                    }
+                    Ty::Instance(idx) if self.classes_with_iterator.contains(&idx) => {
+                        ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext")
+                    }
                     Ty::Error => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
                     // A typed array iterates its elements; it builds an element
                     // sequence and reuses the array iterator's `done`/`next`,
@@ -5836,18 +5852,18 @@ impl Checker<'_> {
                         Ty::Array,
                         vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
                     )),
-                    (Ty::Array, "keys") => Some(("arrayKeys", Ty::Array, vec![])),
-                    (Ty::Array, "values") => Some(("arrayValues", Ty::Array, vec![])),
-                    (Ty::Array, "entries") => Some(("arrayEntries", Ty::Array, vec![])),
+                    (Ty::Array, "keys") => Some(("arrayKeys", Ty::Any, vec![])),
+                    (Ty::Array, "values") => Some(("arrayValues", Ty::Any, vec![])),
+                    (Ty::Array, "entries") => Some(("arrayEntries", Ty::Any, vec![])),
                     (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
                     (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Map, "size") => Some(("mapSize", Ty::Int(IntKind::U64), vec![])),
                     (Ty::Map, "delete") => Some(("mapDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Map, "clear") => Some(("mapClear", Ty::Void, vec![])),
-                    (Ty::Map, "values") => Some(("mapValues", Ty::Array, vec![])),
-                    (Ty::Map, "keys") => Some(("mapKeys", Ty::Array, vec![])),
-                    (Ty::Map, "entries") => Some(("mapEntries", Ty::Array, vec![])),
+                    (Ty::Map, "values") => Some(("mapValues", Ty::Any, vec![])),
+                    (Ty::Map, "keys") => Some(("mapKeys", Ty::Any, vec![])),
+                    (Ty::Map, "entries") => Some(("mapEntries", Ty::Any, vec![])),
                     (Ty::Map, "forEach") => Some((
                         "mapForEach",
                         Ty::Void,
@@ -5858,9 +5874,9 @@ impl Checker<'_> {
                     (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),
                     (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "clear") => Some(("setClear", Ty::Void, vec![])),
-                    (Ty::Set, "values") => Some(("setValues", Ty::Array, vec![])),
-                    (Ty::Set, "keys") => Some(("setValues", Ty::Array, vec![])),
-                    (Ty::Set, "entries") => Some(("setEntries", Ty::Array, vec![])),
+                    (Ty::Set, "values") => Some(("setValues", Ty::Any, vec![])),
+                    (Ty::Set, "keys") => Some(("setValues", Ty::Any, vec![])),
+                    (Ty::Set, "entries") => Some(("setEntries", Ty::Any, vec![])),
                     (Ty::Set, "forEach") => Some((
                         "setForEach",
                         Ty::Void,

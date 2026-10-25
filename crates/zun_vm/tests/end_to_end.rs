@@ -25,6 +25,16 @@ fn run_source(src: &str) -> Vec<String> {
     out.lines
 }
 
+/// Compile `src` through the OXC front-end (standard TS: `const`, `for..of`,
+/// computed-symbol methods, spread) and run it.
+fn run_oxc(src: &str) -> Vec<String> {
+    let module = zun_compiler::compile_with_oxc(src, true).expect("compiles");
+    let bytes = module.write();
+    let mut out = CaptureOutput::default();
+    zun_vm::execute_with(&bytes, &mut out).expect("program should run");
+    out.lines
+}
+
 /// Compile and run `src`, expecting a runtime failure; return the error text.
 fn run_source_expect_error(src: &str) -> String {
     let mut diags = Vec::new();
@@ -929,13 +939,110 @@ fn array_keys_values_entries() {
     let out = run_source(
         "function main() { \
             let a = new Array(2); a[0] = 10.0; a[1] = 20.0; \
-            let k = a.keys(); print(k[0] as number); print(k[1] as number); \
-            let v = a.values(); print(v[0] as number); print(v[1] as number); \
-            let e = a.entries(); let p = e[1] as Array; \
-            print(p[0] as number); print(p[1] as number); }",
+            for (let k of a.keys()) { print(k as number); } \
+            for (let v of a.values()) { print(v as number); } \
+            for (let e of a.entries()) { let p = e as Array; \
+                print(p[0] as number); print(p[1] as number); } }",
     );
-    // keys 0,1; values 10,20; entries[1] = [1, 20].
-    assert_eq!(out, ["0", "1", "10", "20", "1", "20"]);
+    // keys 0,1; values 10,20; entries [0,10] then [1,20].
+    assert_eq!(out, ["0", "1", "10", "20", "0", "10", "1", "20"]);
+}
+
+#[test]
+fn array_values_returns_a_real_iterator() {
+    // `values()` returns a true iterator object: `next()` yields
+    // `{ value, done }`, ending in `{ value: undefined, done: true }`, and the
+    // iterator is itself for-of-able.
+    let out = run_source(
+        "function main() { \
+            let a = new Array(2); a[0] = 10.0; a[1] = 20.0; \
+            let it = a.values(); \
+            let r1 = it.next(); print(r1.value as number); print(r1.done as boolean); \
+            let r2 = it.next(); print(r2.value as number); print(r2.done as boolean); \
+            let r3 = it.next(); print(r3.done as boolean); \
+            let s = 0.0; for (let x of a.values()) { s = s + (x as number); } print(s); }",
+    );
+    // next() yields {10,false},{20,false}, then terminal done=true; the
+    // iterator is itself for-of-able (summing 10+20 = 30).
+    assert_eq!(out, ["10", "false", "20", "false", "true", "30"]);
+}
+
+#[test]
+fn map_and_set_iterators_drive_for_of_via_protocol() {
+    let out = run_oxc(
+        "function main() { \
+            let m = new Map(); m.set(\"a\", 1.0); m.set(\"b\", 2.0); \
+            let sum = 0.0; let keys = \"\"; \
+            for (const [k, v] of m.entries()) { keys = keys + (k as string); sum = sum + (v as number); } \
+            print(keys); print(sum); \
+            let set = new Set(); set.add(5.0); set.add(6.0); \
+            let ssum = 0.0; for (const x of set.values()) { ssum = ssum + (x as number); } \
+            print(ssum); }",
+    );
+    assert_eq!(out, ["ab", "3", "11"]);
+}
+
+#[test]
+fn user_object_symbol_iterator_is_consumed_by_for_of() {
+    // An arbitrary object literal implementing `[Symbol.iterator]` returning a
+    // hand-written iterator with a `next()` method. (The counter-holding
+    // closure is built in a top-level helper rather than inline in the object
+    // method: an object-literal method that itself creates a capturing closure
+    // is miscompiled when reached through the dynamic function slot — a
+    // pre-existing closure gap, orthogonal to iteration.)
+    let out = run_oxc(
+        "function makeCounter(): any { \
+            let i = 0; \
+            return { next() { \
+                if (i < 3) { let v = i; i = i + 1; return { value: v, done: false }; } \
+                return { value: 0, done: true }; \
+            } }; \
+         } \
+         function main() { \
+            const obj = { [Symbol.iterator]() { return makeCounter(); } }; \
+            let sum = 0.0; \
+            for (const n of obj) { sum = sum + (n as number); } \
+            print(sum); }",
+    );
+    assert_eq!(out, ["3"]);
+}
+
+#[test]
+fn typed_class_symbol_iterator_is_consumed_by_for_of() {
+    // A typed class's `[Symbol.iterator]` (the stored computed-symbol method) is
+    // now driven by for-of through the iteration protocol.
+    let out = run_oxc(
+        "class Range { \
+            [Symbol.iterator](): any { return [100.0, 200.0, 300.0].values(); } \
+         } \
+         function main() { \
+            let r = new Range(); \
+            let s = 0.0; \
+            for (const x of r) { s = s + (x as number); } \
+            print(s); }",
+    );
+    assert_eq!(out, ["600"]);
+}
+
+#[test]
+fn set_and_spread_accept_user_iterables() {
+    // `new Set(userIterable)` and `[...userIterable]` both route through the
+    // same `[Symbol.iterator]().next()` protocol loop.
+    let out = run_oxc(
+        "function makeCounter(): any { \
+            let i = 0; \
+            return { next() { \
+                if (i < 3) { let v = i; i = i + 1; return { value: v, done: false }; } \
+                return { value: 0, done: true }; \
+            } }; \
+         } \
+         function main() { \
+            const obj = { [Symbol.iterator]() { return makeCounter(); } }; \
+            let set = new Set(obj); let size = set.size(); print(size); \
+            let arr = [...obj]; let len = arr.length; print(len); \
+            let s = 0.0; for (const x of arr) { s = s + (x as number); } print(s); }",
+    );
+    assert_eq!(out, ["3", "3", "3"]);
 }
 
 #[test]

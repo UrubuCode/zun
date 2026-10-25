@@ -1435,7 +1435,7 @@ fn async_await_preserves_the_interpreter_fallback_boundary() {
 #[test]
 fn map_and_set_values_are_exposed_as_instance_methods() {
     let module = compile(
-        "function main(): int { let map = new Map(); map.set(7.0, 42.0); let set = new Set(); set.add(9.0); let map_values: Array = map.values(); let set_values: Array = set.values(); if ((map_values[0] as number) == 42.0) { if ((set_values[0] as number) == 9.0) { return 1; } } return 0; }",
+        "function main(): int { let map = new Map(); map.set(7.0, 42.0); let set = new Set(); set.add(9.0); let mr = map.values().next(); let sr = set.values().next(); if ((mr.value as number) == 42.0) { if ((sr.value as number) == 9.0) { return 1; } } return 0; }",
     );
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
@@ -1446,7 +1446,7 @@ fn map_and_set_values_are_exposed_as_instance_methods() {
 #[test]
 fn map_keys_and_entries_are_exposed_as_instance_methods() {
     let module = compile(
-        "function main(): int { let map = new Map(); map.set(7.0, 42.0); let keys: Array = map.keys(); let entries: Array = map.entries(); let pair: Array = entries[0] as Array; if ((keys[0] as number) == 7.0) { if ((pair[1] as number) == 42.0) { return 1; } } return 0; }",
+        "function main(): int { let map = new Map(); map.set(7.0, 42.0); let kr = map.keys().next(); let er = map.entries().next(); let pair: Array = er.value as Array; if ((kr.value as number) == 7.0) { if ((pair[1] as number) == 42.0) { return 1; } } return 0; }",
     );
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
@@ -1457,7 +1457,7 @@ fn map_keys_and_entries_are_exposed_as_instance_methods() {
 #[test]
 fn set_entries_are_exposed_as_instance_methods() {
     let module = compile(
-        "function main(): int { let set = new Set(); set.add(9.0); let entries: Array = set.entries(); let pair: Array = entries[0] as Array; if ((pair[0] as number) == 9.0) { if ((pair[1] as number) == 9.0) { return 1; } } return 0; }",
+        "function main(): int { let set = new Set(); set.add(9.0); let er = set.entries().next(); let pair: Array = er.value as Array; if ((pair[0] as number) == 9.0) { if ((pair[1] as number) == 9.0) { return 1; } } return 0; }",
     );
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
@@ -1468,7 +1468,7 @@ fn set_entries_are_exposed_as_instance_methods() {
 #[test]
 fn set_keys_alias_values() {
     let module = compile(
-        "function main(): int { let set = new Set(); set.add(9.0); let keys: Array = set.keys(); if ((keys[0] as number) == 9.0) { return 1; } return 0; }",
+        "function main(): int { let set = new Set(); set.add(9.0); let kr = set.keys().next(); if ((kr.value as number) == 9.0) { return 1; } return 0; }",
     );
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");

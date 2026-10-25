@@ -29,14 +29,14 @@ read.
 | 2 | Number | mostly | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants), instance `toString(radix)/toFixed/toExponential/toPrecision/valueOf`; only `toLocaleString` remains (locale/ICU — gated) |
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
-| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). **Object-literal computed Symbol methods landed** (§6b): `{ [Symbol.hasInstance](v){…} }` / `{ [Symbol.toPrimitive](h){…} }` lower to `dynamicSetSymbolFunction`, so user well-known-symbol methods can be written as literals (not only installed by hand). **Class computed symbol-key members landed**: `class C { [Symbol.hasInstance](v){…} }` parses and each such method is attached (as a function value) to a per-type symbol-method side table at class-definition time (`classSetSymbolFunction`); a typed-class `[Symbol.hasInstance]` now drives `instanceof` (forced runtime path consulting the side table). Remaining (all front-end/structural): typed-class `[Symbol.iterator]` consumption at `for..of` (storage works; the iteration protocol is not wired for typed classes), operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
+| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). **Object-literal computed Symbol methods landed** (§6b): `{ [Symbol.hasInstance](v){…} }` / `{ [Symbol.toPrimitive](h){…} }` lower to `dynamicSetSymbolFunction`, so user well-known-symbol methods can be written as literals (not only installed by hand). **Class computed symbol-key members landed**: `class C { [Symbol.hasInstance](v){…} }` parses and each such method is attached (as a function value) to a per-type symbol-method side table at class-definition time (`classSetSymbolFunction`); a typed-class `[Symbol.hasInstance]` now drives `instanceof` (forced runtime path consulting the side table). **Iteration protocol landed**: `for..of` over a non-built-in now desugars to `it[Symbol.iterator]().next()` driving, so a user object literal `{ [Symbol.iterator](){…} }`, a **typed-class `[Symbol.iterator]`** (the stored computed-symbol method is now consumed), and built-in iterator objects are all iterable; `Array`/`Map`/`Set` `keys/values/entries` return a real iterator object (`next()→{value,done}`, itself for-of-able); `new Set(x)`/`new Map(x)`/`[...x]` accept any protocol iterable. Remaining (all front-end/structural): operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
 | 6 | Object | mostly | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. Remaining: `getOwnPropertySymbols` |
-| 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. **Binding destructuring landed** (declarations + for-of heads), so `for (const [i, v] of arr.entries())` works directly. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries` |
+| 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. **Binding destructuring landed** (declarations + for-of heads), so `for (const [i, v] of arr.entries())` works directly. **`keys/values/entries` now return a real iterator object** (`next()→{value,done}`, itself for-of-able), and `[...x]` spread drains any protocol iterable. Remaining: `toSorted/toReversed/with/group` |
 | 8 | Function | mostly | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0). **Function-valued `bind` partial/`this` arguments now work**: a function cannot box into `Any`, so each function-typed prepended argument is wrapped by a `functionBox` intrinsic (a GC-traced object carrying the callable in a `__boxedFn` function slot, keeping its captured environment visible to precise root handling) and `resolve_call_target` unwraps it before dispatch — order among prepended args is preserved. Deferred: **`Function` constructor** (`new Function(args, body)` evaluates a source string ⇒ needs a runtime compiler; the VM links no compiler and this conflicts with AOT reachability/trimming — structural); **a function inside `apply`'s arguments array** / functions in generic arrays (would require letting `box_any` carry functions globally — a deliberate GC-root-precision invariant, broad arg-marshalling rework); **multi-argument bound calls** (bound functions are typed `Function` and dynamic calls use the single-trailing-arg IL arity model — carrying an argument count for a dynamic `CallIndirect` is an opcode-set + verifier change) |
 | 9 | Promise | mostly | Instance `state/result/isReady/resolve/reject` + ECMAScript `then/catch/finally` (new-promise + Promise adoption), statics `Promise.resolve/reject/all/allSettled/race/any/withResolvers`. `await` works via opcode. Unified micro+macrotask event loop with a `timers` surface (see §9a). `withResolvers` returns `{ promise, resolve, reject }`; **destructuring the resolver functions now works** (`const { resolve, reject } = Promise.withResolvers(); resolve(v)`) — object destructuring reads the function slot as a callable value and an `any`-typed local is now dynamically callable; `Promise.any` all-reject now carries an `AggregateError`; unhandled rejections are reported at turn end. Remaining: `new Promise(executor)` constructor |
 | 10 | Proxy / Reflect | mostly | Property traps `get/set/has/deleteProperty` intercept with Reflect-style target fallback; `proxy.k`/`proxy[k]` read+write route through the handler; `Reflect` realm global (`get/set/has/deleteProperty/ownKeys`). `x in obj` and `delete obj.k`/`obj[k]` operators now lex/parse and lower to the has/delete mechanism (Proxy receivers route to the `has`/`deleteProperty` traps). Deferred: descriptor-dependent traps + `apply`/`construct` |
-| 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
-| 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. Remaining: iterator-object return for `keys/values/entries`, arbitrary user `[Symbol.iterator]` sources |
+| 11 | Map | mostly | `set/get/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`map.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array of pairs (`new Map([[k,v],…])`) plus any built-in iterable (`new Map(otherMap)`, or a Set of pair arrays) via `mapFromIterable`. **`keys/values/entries` now return a real iterator object** (for-of-able, `next()→{value,done}`); `new Map(x)` accepts arbitrary user `[Symbol.iterator]` sources through the protocol. Remaining: — |
+| 12 | Set | mostly | `add/has/delete/clear/values/keys/entries/forEach` + `size` as a **property** (`set.size`; the `.size()` method form still resolves) + iterator + iterable constructor: array (`new Set([…])`) plus any built-in iterable (`new Set("abc")` by code point, `new Set(otherSet)`, a Map by entry pairs) via `setFromIterable`. **`keys/values/entries` now return a real iterator object** (for-of-able, `next()→{value,done}`); `new Set(x)` accepts arbitrary user `[Symbol.iterator]` sources through the protocol. Remaining: — |
 | 13 | WeakMap | done | `set/get/has/delete`; semantics OK (ephemeron floor). ECMAScript WeakMap has no iteration/size/clear by design, so this is the complete surface, not a gap |
 | 14 | WeakSet | done | `add/has/delete` over the WeakMap ephemeron floor (value-less); no iteration (correct) |
 | 15 | WeakRef | done | `new WeakRef(obj)` + `deref()` over the GC weak-reference floor; cleared on collection |
@@ -175,9 +175,9 @@ the `fromCodePoint` static operate on Unicode code points (surrogate pairs kept 
     non-overlapping match via `RegexValue::captures_all` on both regex engines). **Returns
     an Array of match arrays** (each inner array is shaped exactly like `exec`'s result —
     index 0 the whole match, 1.. the capture groups, `undefined` for non-participating
-    groups), **not** a distinct iterator object — the same pragmatic v1 choice as
-    `Array`/`Map`/`Set` `keys()/values()/entries()`. A proper iterator-protocol object is
-    the same cross-cutting follow-up as those.
+    groups), **not** a distinct iterator object — a pragmatic v1 choice specific to
+    `matchAll` (`Array`/`Map`/`Set` `keys()/values()/entries()` now DO return real
+    iterator objects via the iteration protocol).
   - `valueOf()` — identity, returning the string primitive itself. No native: the sema
     intercept returns the checked receiver expression directly (like `number.valueOf()`).
 - **Deferred — externally gated (documented, not faked):**
@@ -493,6 +493,25 @@ the OXC adapter — `Expression::ObjectExpression`). An object literal produces 
   result discarded. No new opcodes or natives (all four already exist and are appended-last
   in `collections`). Both front-ends (hand parser + OXC adapter) build the new AST nodes
   (`ObjectMember::{Property,Spread}`, `PropertyKind::{Init,Method,Get,Set}`).
+- **Iteration protocol (`zun_interp/src/collections.rs`).** `for..of` over a non-built-in
+  type (`DynamicObject`, a typed-class `Ty::Instance` carrying `[Symbol.iterator]`, or
+  `any`) reuses the generator desugaring triple (`generatorIteratorNew/Done/Next`): `New`
+  resolves the iterator via `resolve_iterator` (`GetIterator` — calls the symbol-function
+  slot / class symbol-method table, or wraps a raw array/set/map, or passes a built-in
+  iterator through) and returns a look-ahead **protocol wrapper** (a `DynamicObject` with
+  `__zun_it`/`__zun_cur`/`__zun_done`/`__zun_has`); `Done` prefetches one step
+  (`protocol_step`: native cursor for a built-in iterator, else `it.next()` reading
+  `{value,done}`), `Next` hands back the cached value. Generators keep their existing
+  frame-resume path untouched. `Array`/`Map`/`Set` `keys/values/entries` now return an
+  **array-iterator over the materialized sequence** (a real iterator object, typed `any`),
+  and `it.next()` on one is intercepted in `dynamicCall0` (`builtin_iterator_result`).
+  `new Set|Map(x)` and `[...x]` drain user iterables through `drive_iterable`.
+  **Compat choice:** `keys/values/entries` returning `any` (not `Array`) is spec-correct;
+  the few tests that indexed the old array result were updated to `.next()`/`for..of`.
+  **Known limitation (pre-existing, orthogonal):** an object-literal method that itself
+  creates a capturing closure is miscompiled when invoked through the dynamic function
+  slot, so a user `[Symbol.iterator]` that builds its counter inline must instead return a
+  closure minted by a top-level helper (see the end-to-end tests).
 - **Note on computed keys:** like `obj[k] = v` on a dynamic receiver, a computed key must be
   a string or a `Symbol` at runtime (`StoreDynamicValue` dispatches on tag); full ToString
   coercion of arbitrary computed keys is not implemented (consistent with `IndexAssign`).
@@ -816,9 +835,10 @@ table. Iterator intrinsics present (`mapIterator*`).
   fast path; any other built-in iterable (another Map — its entries; a Set of pair
   arrays; an array for `any`-typed args) routes to `mapFromIterable`, which dispatches on
   the runtime kind. A string is rejected (its elements are not pairs), matching JS.
-- **Missing / deferred:** iterator-object return for `keys/values/entries`; draining an
-  arbitrary user `[Symbol.iterator]` object (would need reentrant iterator-protocol calls
-  from a native).
+- **Iteration protocol (landed):** `keys/values/entries` return a real iterator object
+  (an array-iterator over the materialized key/value/entry sequence), for-of-able, with
+  `next()→{value,done}`; `new Map(userIterable)` now drains an arbitrary user
+  `[Symbol.iterator]` object via `drive_iterable` (reentrant Tier-0 protocol calls).
 
 ## 12. Set — mostly
 `std/set.zun` → `zun:collections`.
@@ -832,9 +852,11 @@ table. Iterator intrinsics present (`mapIterator*`).
   iterable routes to `setFromIterable`, which dispatches on runtime kind: a string
   (iterated by Unicode **code point** — `new Set("abc")` → 3 elements), another Set (its
   elements), another Map (its `[key, value]` entry pairs).
+- **Iteration protocol (landed):** `keys/values/entries` return a real iterator object
+  (for-of-able, `next()→{value,done}`); `new Set(userIterable)` and `[...set]` drain an
+  arbitrary user `[Symbol.iterator]` object via the protocol.
 - **Missing / deferred:** ES2024 set ops (`union/intersection/difference/isSubsetOf/…`) —
-  note Array has these as extras but Set does not; iterator-object return for
-  `keys/values/entries`; draining an arbitrary user `[Symbol.iterator]` object.
+  note Array has these as extras but Set does not.
 
 ## 13. WeakMap — done
 `builtin/weak_map.zun`; ephemeron-backed GC floor.
@@ -1436,8 +1458,9 @@ kinds), `zun_ilgen/tests/math_machine_ops.rs` (lowering),
    - Date (#20): setters, local-time getters, `Date.now/parse/UTC`, `getTimezoneOffset`.
    - Map/Set (#11,#12): ✅ `forEach`, array-iterable construction, `size` as a property,
      and general built-in-iterable construction (string/Set/Map via
-     `setFromIterable`/`mapFromIterable`) landed. Remaining: iterator-object return for
-     `keys/values/entries`; draining arbitrary user `[Symbol.iterator]` objects.
+     `setFromIterable`/`mapFromIterable`) landed. ✅ **Iteration protocol landed**:
+     `keys/values/entries` return real iterator objects; `for..of` / `new Set|Map(x)` /
+     `[...x]` drain arbitrary user `[Symbol.iterator]` objects (Tier 0).
    - Promise (#9): ✅ `then/catch/finally` (new-promise + Promise adoption) and statics
      `resolve/reject/all/allSettled/race/any` landed. Remaining: `withResolvers`,
      AggregateError for `any`, microtask deferral of a pending-source reaction.

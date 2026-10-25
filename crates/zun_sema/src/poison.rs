@@ -25,6 +25,12 @@ impl<'a> Checker<'a> {
                 | hir::Ty::String
                 | hir::Ty::Any
                 | hir::Ty::BufferView(_)
+                // A user object implementing `[Symbol.iterator]`: a dynamic
+                // object literal, or a typed class instance. The runtime
+                // `from_iterable` native drives the protocol (and throws if the
+                // value turns out not to be iterable, as JS does).
+                | hir::Ty::DynamicObject
+                | hir::Ty::Instance(_)
         )
     }
 }
