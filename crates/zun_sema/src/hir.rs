@@ -510,16 +510,52 @@ pub struct CatchClause {
     pub body: Vec<Stmt>,
 }
 
-/// One populated property of a [`ExprKind::DynamicObjectLiteral`].
+/// One populated member of a [`ExprKind::DynamicObjectLiteral`].
 #[derive(Debug)]
-pub struct ObjectEntry {
-    /// How the property key is produced.
-    pub key: ObjectKey,
-    /// The property value, already boxed to `Any`.
-    pub value: Expr,
+pub enum ObjectEntry {
+    /// A data property: `key: value` (or shorthand). The value is boxed to
+    /// `Any`.
+    Data {
+        /// How the property key is produced.
+        key: ObjectKey,
+        /// The property value, already boxed to `Any`.
+        value: Expr,
+    },
+    /// Install the member via a native builtin that takes the object as its
+    /// first argument (method shorthand, computed-symbol method, accessor, or
+    /// object spread). At lowering time the object handle is duplicated, `args`
+    /// are pushed after it, the builtin is invoked, and its result discarded.
+    ///
+    /// Used for:
+    /// - method shorthand → `dynamicSetFunction(obj, name, fn)`;
+    /// - computed-symbol method → `dynamicSetSymbolFunction(obj, sym, fn)`;
+    /// - getter/setter → `objectDefineProperty(obj, name, descriptor)`;
+    /// - spread → `objectAssign(obj, source)`.
+    Install {
+        /// Native dispatch id (resolved in sema).
+        builtin: u32,
+        /// Arguments pushed after the (duplicated) object handle.
+        args: Vec<Expr>,
+    },
 }
 
-/// The key of a [`ObjectEntry`].
+/// One part of an [`ExprKind::ArraySpreadLiteral`].
+#[derive(Debug)]
+pub enum ArrayPart {
+    /// A present element pushed at the next index.
+    Element(Expr),
+    /// An elision/hole: push `undefined` at the next index.
+    Hole,
+    /// Splice an iterable source's elements in via `arraySpreadAppend`.
+    Spread {
+        /// `arraySpreadAppend` native dispatch id.
+        builtin: u32,
+        /// The iterable source (boxed to `Any`).
+        source: Expr,
+    },
+}
+
+/// The key of a data [`ObjectEntry`].
 #[derive(Debug)]
 pub enum ObjectKey {
     /// A statically known string key stored via `StoreDynamic`.
@@ -838,8 +874,18 @@ pub enum ExprKind {
     /// Elements keep their natural static type; the `StoreArray` boundary boxes
     /// each value to `Any`, matching the dynamic array element model.
     ArrayLiteral {
-        /// Elements in source order; element `i` is stored at index `i`.
-        elements: Vec<Expr>,
+        /// Elements in source order; element `i` is stored at index `i`. A
+        /// `None` is an elision/hole: the index counts toward `length` and
+        /// reads as `undefined` (the true hole-vs-`undefined` distinction,
+        /// observable only through `in`/`hasOwnProperty`, is not represented).
+        elements: Vec<Option<Expr>>,
+    },
+    /// Build a managed array that contains a spread (`[a, ...xs, b]`), growing
+    /// it element-by-element so iterable sources can be spliced in at their
+    /// source position.
+    ArraySpreadLiteral {
+        /// Parts in source order.
+        parts: Vec<ArrayPart>,
     },
     /// Read `object`'s field at `field_slot`.
     FieldGet {

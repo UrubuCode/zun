@@ -49,5 +49,11 @@ pub const MODULE: crate::Module = crate::Module {
         // callback with `(value, index)`.
         NativeFn { name: "arrayFrom", params: &[Opaque], ret: Array, imp: unavailable },
         NativeFn { name: "arrayFromMapped", params: &[Opaque, Function], ret: Array, imp: unavailable },
+        // `arraySpreadAppend(target, source)` appends every element of the
+        // iterable `source` (a managed Array or a string, matching `arrayFrom`'s
+        // supported sources) to `target`, returning `target`. Backs array-literal
+        // spread (`[a, ...xs]`). Appended last so existing dispatch ids stay
+        // stable.
+        NativeFn { name: "arraySpreadAppend", params: &[Array, Opaque], ret: Array, imp: unavailable },
     ],
 };

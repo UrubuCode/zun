@@ -13,11 +13,12 @@ use oxc_ast::ast::{
     ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind,
     ModuleExportName, ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
 };
+use oxc_ast::ast::Function as OxcFunction;
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
 use zun_common::Span;
 
-use crate::ast::{BinaryOp, Block, Expr, Function, Name, Program, Stmt};
+use crate::ast::{BinaryOp, Block, Expr, Function, FunctionExpr, Name, Program, Stmt};
 
 fn convert_type_annotation(
     source: &str,
@@ -57,17 +58,17 @@ fn convert_type_annotation(
 /// arguments, a bare `@foo` carries `None`. Unsupported callee/argument forms
 /// surface as an explicit error (no silent drop) because `convert_expression`
 /// and `convert_argument` reject what they cannot represent.
-fn convert_decorator(decorator: &OxcDecorator<'_>) -> Result<crate::ast::Decorator, String> {
+fn convert_decorator(source: &str, decorator: &OxcDecorator<'_>) -> Result<crate::ast::Decorator, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let (callee, args) = match &decorator.expression {
         Expression::CallExpression(call) => {
             let mut args = Vec::with_capacity(call.arguments.len());
             for argument in &call.arguments {
-                args.push(convert_argument(argument)?);
+                args.push(convert_argument(source, argument)?);
             }
-            (convert_expression(&call.callee)?, Some(args))
+            (convert_expression(source, &call.callee)?, Some(args))
         }
-        other => (convert_expression(other)?, None),
+        other => (convert_expression(source, other)?, None),
     };
     Ok(crate::ast::Decorator {
         callee,
@@ -76,7 +77,7 @@ fn convert_decorator(decorator: &OxcDecorator<'_>) -> Result<crate::ast::Decorat
     })
 }
 
-fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
+fn convert_argument(source: &str, argument: &Argument<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match argument {
         Argument::NumericLiteral(number) => Ok(Expr::Number {
@@ -100,7 +101,7 @@ fn convert_argument(argument: &Argument<'_>) -> Result<Expr, String> {
             span: span(identifier.span),
         })),
         Argument::SpreadElement(spread) => Ok(Expr::Spread {
-            expr: Box::new(convert_expression(&spread.argument)?),
+            expr: Box::new(convert_expression(source, &spread.argument)?),
             span: span(spread.span),
         }),
         _ => Err("OXC adapter currently supports literal, identifier, and spread arguments".into()),
@@ -112,8 +113,19 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
         return Err("OXC adapter requires block branches for conditional statements".into());
     };
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
-    let mut statements = Vec::with_capacity(block.body.len());
-    for statement in &block.body {
+    let statements = convert_statement_list(source, &block.body)?;
+    Ok(Block {
+        statements,
+        span: span(block.span),
+    })
+}
+
+/// Convert an OXC statement list into Zun statements, reused by block
+/// statements and by object-method / function bodies.
+fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<Stmt>, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let mut statements = Vec::with_capacity(body.len());
+    for statement in body {
         match statement {
             Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
             Statement::VariableDeclaration(declaration) => {
@@ -131,7 +143,7 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
                             span: span(identifier.span),
                         },
                         ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                        init: convert_expression(initializer)?,
+                        init: convert_expression(source, initializer)?,
                         span: span(declarator.span),
                     });
                 }
@@ -140,12 +152,12 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
                 value: return_statement
                     .argument
                     .as_ref()
-                    .map(convert_expression)
+                    .map(|expression| convert_expression(source, expression))
                     .transpose()?,
                 span: span(return_statement.span),
             }),
             Statement::ExpressionStatement(expression_statement) => statements.push(Stmt::Expr(
-                convert_expression(&expression_statement.expression)?,
+                convert_expression(source, &expression_statement.expression)?,
             )),
             Statement::BreakStatement(break_statement) => statements.push(Stmt::Break {
                 label: break_statement.label.as_ref().map(|label| Name {
@@ -160,7 +172,7 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
                 span: span(continue_statement.span),
             }),
             Statement::ThrowStatement(throw_statement) => statements.push(Stmt::Throw {
-                value: convert_expression(&throw_statement.argument)?,
+                value: convert_expression(source, &throw_statement.argument)?,
                 span: span(throw_statement.span),
             }),
             Statement::IfStatement(if_statement) => {
@@ -171,7 +183,7 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
             }
             Statement::WhileStatement(while_statement) => {
                 statements.push(Stmt::While {
-                    cond: convert_expression(&while_statement.test)?,
+                    cond: convert_expression(source, &while_statement.test)?,
                     body: convert_if_branch(source, &while_statement.body)?,
                     span: span(while_statement.span),
                 });
@@ -179,7 +191,7 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
             Statement::DoWhileStatement(do_while_statement) => {
                 statements.push(Stmt::DoWhile {
                     body: convert_if_branch(source, &do_while_statement.body)?,
-                    cond: convert_expression(&do_while_statement.test)?,
+                    cond: convert_expression(source, &do_while_statement.test)?,
                     span: span(do_while_statement.span),
                 });
             }
@@ -199,10 +211,62 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
             }
         }
     }
-    Ok(Block {
-        statements,
-        span: span(block.span),
-    })
+    Ok(statements)
+}
+
+/// Convert an OXC function (an object-method, getter, or setter value) into a
+/// Zun anonymous-function expression. Parameters must be plain identifiers;
+/// the body reuses the shared statement-list conversion.
+fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let Some(body) = function.body.as_ref() else {
+        return Err("OXC adapter requires an object method body".into());
+    };
+    let mut params = Vec::with_capacity(function.params.items.len());
+    for parameter in &function.params.items {
+        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
+            return Err("OXC adapter supports identifier object-method parameters only".into());
+        };
+        params.push(crate::ast::Param {
+            name: Name {
+                span: span(identifier.span),
+            },
+            ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
+            default_value: parameter
+                .initializer
+                .as_ref()
+                .map(|initializer| convert_expression(source, initializer))
+                .transpose()?
+                .map(Box::new),
+            is_rest: false,
+        });
+    }
+    if let Some(rest) = function.params.rest.as_ref() {
+        let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
+            return Err("OXC adapter supports identifier rest parameters only".into());
+        };
+        params.push(crate::ast::Param {
+            name: Name {
+                span: span(identifier.span),
+            },
+            ty: convert_type_annotation(source, rest.type_annotation.as_deref())?,
+            default_value: None,
+            is_rest: true,
+        });
+    }
+    let statements = convert_statement_list(source, &body.statements)?;
+    Ok(Expr::Function(FunctionExpr {
+        params,
+        return_type: convert_type_annotation(source, function.return_type.as_deref())?,
+        body: Block {
+            statements,
+            span: span(body.span),
+        },
+        is_arrow: false,
+        is_async: function.r#async,
+        is_generator: function.generator,
+        span: span(function.span),
+    }))
 }
 
 fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
@@ -238,7 +302,7 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                         span: Span::new(identifier.span.start, identifier.span.end),
                     },
                     ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                    init: convert_expression(initializer)?,
+                    init: convert_expression(source, initializer)?,
                     span: Span::new(declarator.span.start, declarator.span.end),
                 });
             }
@@ -253,7 +317,7 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 value: return_statement
                     .argument
                     .as_ref()
-                    .map(convert_expression)
+                    .map(|expression| convert_expression(source, expression))
                     .transpose()?,
                 span: Span::new(return_statement.span.start, return_statement.span.end),
             }],
@@ -263,14 +327,14 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                 expression_statement.span.start,
                 expression_statement.span.end,
             ),
-            statements: vec![Stmt::Expr(convert_expression(
+            statements: vec![Stmt::Expr(convert_expression(source, 
                 &expression_statement.expression,
             )?)],
         }),
         Statement::ThrowStatement(throw_statement) => Ok(Block {
             span: Span::new(throw_statement.span.start, throw_statement.span.end),
             statements: vec![Stmt::Throw {
-                value: convert_expression(&throw_statement.argument)?,
+                value: convert_expression(source, &throw_statement.argument)?,
                 span: Span::new(throw_statement.span.start, throw_statement.span.end),
             }],
         }),
@@ -295,7 +359,7 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
         Statement::WhileStatement(while_statement) => Ok(Block {
             span: Span::new(while_statement.span.start, while_statement.span.end),
             statements: vec![Stmt::While {
-                cond: convert_expression(&while_statement.test)?,
+                cond: convert_expression(source, &while_statement.test)?,
                 body: convert_if_branch(source, &while_statement.body)?,
                 span: Span::new(while_statement.span.start, while_statement.span.end),
             }],
@@ -304,7 +368,7 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
             span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
             statements: vec![Stmt::DoWhile {
                 body: convert_if_branch(source, &do_while_statement.body)?,
-                cond: convert_expression(&do_while_statement.test)?,
+                cond: convert_expression(source, &do_while_statement.test)?,
                 span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
             }],
         }),
@@ -329,11 +393,11 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                             span: Span::new(identifier.span.start, identifier.span.end),
                         },
                         ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                        init: convert_expression(initializer)?,
+                        init: convert_expression(source, initializer)?,
                         span: Span::new(declarator.span.start, declarator.span.end),
                     }))
                 }
-                Some(init) => Some(Box::new(Stmt::Expr(convert_expression(
+                Some(init) => Some(Box::new(Stmt::Expr(convert_expression(source, 
                     init.as_expression()
                         .ok_or("OXC adapter does not support this for-loop initializer yet")?,
                 )?))),
@@ -345,12 +409,12 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                     cond: for_statement
                         .test
                         .as_ref()
-                        .map(convert_expression)
+                        .map(|expression| convert_expression(source, expression))
                         .transpose()?,
                     update: for_statement
                         .update
                         .as_ref()
-                        .map(convert_expression)
+                        .map(|expression| convert_expression(source, expression))
                         .transpose()?,
                     body: convert_if_branch(source, &for_statement.body)?,
                     span: Span::new(for_statement.span.start, for_statement.span.end),
@@ -377,7 +441,7 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
                     name: Name {
                         span: Span::new(identifier.span.start, identifier.span.end),
                     },
-                    iterable: convert_expression(&for_of_statement.right)?,
+                    iterable: convert_expression(source, &for_of_statement.right)?,
                     body: convert_if_branch(source, &for_of_statement.body)?,
                     span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
                 }],
@@ -392,7 +456,7 @@ fn convert_if_statement(
     if_statement: &oxc_ast::ast::IfStatement<'_>,
 ) -> Result<Stmt, String> {
     Ok(Stmt::If {
-        cond: convert_expression(&if_statement.test)?,
+        cond: convert_expression(source, &if_statement.test)?,
         then_block: convert_if_branch(source, &if_statement.consequent)?,
         else_block: if_statement
             .alternate
@@ -454,7 +518,7 @@ fn convert_try_statement(
     })
 }
 
-fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
+fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match expression {
         Expression::NumericLiteral(number) => Ok(Expr::Number {
@@ -501,7 +565,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 parts.push(crate::ast::TemplatePart::Text(text.to_owned()));
                 if let Some(expression) = template.expressions.get(index) {
                     parts.push(crate::ast::TemplatePart::Expr(Box::new(
-                        convert_expression(expression)?,
+                        convert_expression(source, expression)?,
                     )));
                 }
             }
@@ -517,10 +581,10 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             span: span(this_expression.span),
         })),
         Expression::ParenthesizedExpression(parenthesized) => {
-            convert_expression(&parenthesized.expression)
+            convert_expression(source, &parenthesized.expression)
         }
         Expression::TSAsExpression(assertion) => Ok(Expr::Cast {
-            expr: Box::new(convert_expression(&assertion.expression)?),
+            expr: Box::new(convert_expression(source, &assertion.expression)?),
             ty: crate::ast::TypeAnnotation {
                 name: Name {
                     span: Span::new(
@@ -532,7 +596,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             span: span(assertion.span),
         }),
         Expression::TSTypeAssertion(assertion) => Ok(Expr::Cast {
-            expr: Box::new(convert_expression(&assertion.expression)?),
+            expr: Box::new(convert_expression(source, &assertion.expression)?),
             ty: crate::ast::TypeAnnotation {
                 name: Name {
                     span: Span::new(
@@ -544,7 +608,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             span: span(assertion.span),
         }),
         Expression::TSSatisfiesExpression(assertion) => Ok(Expr::Cast {
-            expr: Box::new(convert_expression(&assertion.expression)?),
+            expr: Box::new(convert_expression(source, &assertion.expression)?),
             ty: crate::ast::TypeAnnotation {
                 name: Name {
                     span: Span::new(
@@ -555,9 +619,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             },
             span: span(assertion.span),
         }),
-        Expression::TSNonNullExpression(assertion) => convert_expression(&assertion.expression),
+        Expression::TSNonNullExpression(assertion) => convert_expression(source, &assertion.expression),
         Expression::StaticMemberExpression(member) => {
-            let object = Box::new(convert_expression(&member.object)?);
+            let object = Box::new(convert_expression(source, &member.object)?);
             let field = Name {
                 span: span(member.property.span),
             };
@@ -576,8 +640,8 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             }
         }
         Expression::ComputedMemberExpression(member) => {
-            let object = Box::new(convert_expression(&member.object)?);
-            let index = Box::new(convert_expression(&member.expression)?);
+            let object = Box::new(convert_expression(source, &member.object)?);
+            let index = Box::new(convert_expression(source, &member.expression)?);
             if member.optional {
                 return Ok(Expr::OptionalIndex {
                     object,
@@ -596,7 +660,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 return Err("OXC adapter does not support optional private members yet".into());
             }
             Ok(Expr::PrivateField {
-                object: Box::new(convert_expression(&member.object)?),
+                object: Box::new(convert_expression(source, &member.object)?),
                 field: Name {
                     span: span(member.field.span),
                 },
@@ -605,32 +669,32 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         }
         Expression::ChainExpression(chain) => match &chain.expression {
             ChainElement::StaticMemberExpression(member) => Ok(Expr::OptionalField {
-                object: Box::new(convert_expression(&member.object)?),
+                object: Box::new(convert_expression(source, &member.object)?),
                 field: Name {
                     span: span(member.property.span),
                 },
                 span: span(chain.span),
             }),
             ChainElement::ComputedMemberExpression(member) => Ok(Expr::OptionalIndex {
-                object: Box::new(convert_expression(&member.object)?),
-                index: Box::new(convert_expression(&member.expression)?),
+                object: Box::new(convert_expression(source, &member.object)?),
+                index: Box::new(convert_expression(source, &member.expression)?),
                 span: span(chain.span),
             }),
             ChainElement::CallExpression(call) => {
                 let mut args = Vec::with_capacity(call.arguments.len());
                 for argument in &call.arguments {
-                    args.push(convert_argument(argument)?);
+                    args.push(convert_argument(source, argument)?);
                 }
                 if let Expression::StaticMemberExpression(member) = &call.callee {
                     return Ok(Expr::OptionalMethodCall {
-                        object: Box::new(convert_expression(&member.object)?),
+                        object: Box::new(convert_expression(source, &member.object)?),
                         method: Name { span: span(member.property.span) },
                         args,
                         span: span(chain.span),
                     });
                 }
                 Ok(Expr::OptionalCall {
-                    callee: Box::new(convert_expression(&call.callee)?),
+                    callee: Box::new(convert_expression(source, &call.callee)?),
                     args,
                     span: span(chain.span),
                 })
@@ -663,8 +727,8 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             };
             Ok(Expr::Binary {
                 op,
-                lhs: Box::new(convert_expression(&binary.left)?),
-                rhs: Box::new(convert_expression(&binary.right)?),
+                lhs: Box::new(convert_expression(source, &binary.left)?),
+                rhs: Box::new(convert_expression(source, &binary.right)?),
                 span: span(binary.span),
             })
         }
@@ -676,15 +740,15 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             };
             Ok(Expr::Binary {
                 op,
-                lhs: Box::new(convert_expression(&logical.left)?),
-                rhs: Box::new(convert_expression(&logical.right)?),
+                lhs: Box::new(convert_expression(source, &logical.left)?),
+                rhs: Box::new(convert_expression(source, &logical.right)?),
                 span: span(logical.span),
             })
         }
         Expression::ConditionalExpression(conditional) => Ok(Expr::Conditional {
-            condition: Box::new(convert_expression(&conditional.test)?),
-            when_true: Box::new(convert_expression(&conditional.consequent)?),
-            when_false: Box::new(convert_expression(&conditional.alternate)?),
+            condition: Box::new(convert_expression(source, &conditional.test)?),
+            when_true: Box::new(convert_expression(source, &conditional.consequent)?),
+            when_false: Box::new(convert_expression(source, &conditional.alternate)?),
             span: span(conditional.span),
         }),
         Expression::UnaryExpression(unary) => {
@@ -699,7 +763,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             };
             Ok(Expr::Unary {
                 op,
-                operand: Box::new(convert_expression(&unary.argument)?),
+                operand: Box::new(convert_expression(source, &unary.argument)?),
                 span: span(unary.span),
             })
         }
@@ -708,12 +772,12 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                 return Err("OXC adapter does not support import options yet".into());
             }
             Ok(Expr::ImportCall {
-                specifier: Box::new(convert_expression(&import.source)?),
+                specifier: Box::new(convert_expression(source, &import.source)?),
                 span: span(import.span),
             })
         }
         Expression::AwaitExpression(await_expression) => Ok(Expr::Await {
-            operand: Box::new(convert_expression(&await_expression.argument)?),
+            operand: Box::new(convert_expression(source, &await_expression.argument)?),
             span: span(await_expression.span),
         }),
         Expression::YieldExpression(yield_expression) => {
@@ -722,7 +786,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             }
             Ok(Expr::Yield {
                 value: Box::new(match yield_expression.argument.as_ref() {
-                    Some(argument) => convert_expression(argument)?,
+                    Some(argument) => convert_expression(source, argument)?,
                     None => Expr::Null {
                         span: span(yield_expression.span),
                     },
@@ -734,7 +798,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             if assignment.operator != AssignmentOperator::Assign {
                 return Err("OXC adapter currently supports only simple assignments".into());
             }
-            let value = Box::new(convert_expression(&assignment.right)?);
+            let value = Box::new(convert_expression(source, &assignment.right)?);
             match &assignment.left {
                 AssignmentTarget::AssignmentTargetIdentifier(identifier) => Ok(Expr::Assign {
                     target: Name {
@@ -744,7 +808,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                     span: span(assignment.span),
                 }),
                 AssignmentTarget::StaticMemberExpression(member) => Ok(Expr::FieldAssign {
-                    object: Box::new(convert_expression(&member.object)?),
+                    object: Box::new(convert_expression(source, &member.object)?),
                     field: Name {
                         span: span(member.property.span),
                     },
@@ -752,13 +816,13 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                     span: span(assignment.span),
                 }),
                 AssignmentTarget::ComputedMemberExpression(member) => Ok(Expr::IndexAssign {
-                    object: Box::new(convert_expression(&member.object)?),
-                    index: Box::new(convert_expression(&member.expression)?),
+                    object: Box::new(convert_expression(source, &member.object)?),
+                    index: Box::new(convert_expression(source, &member.expression)?),
                     value,
                     span: span(assignment.span),
                 }),
                 AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::PrivateFieldAssign {
-                    object: Box::new(convert_expression(&member.object)?),
+                    object: Box::new(convert_expression(source, &member.object)?),
                     field: Name {
                         span: span(member.field.span),
                     },
@@ -773,7 +837,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::CallExpression(call) => {
             let mut args = Vec::with_capacity(call.arguments.len());
             for argument in &call.arguments {
-                args.push(convert_argument(argument)?);
+                args.push(convert_argument(source, argument)?);
             }
             match &call.callee {
                 Expression::Identifier(identifier) => Ok(Expr::Call {
@@ -784,7 +848,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                     span: span(call.span),
                 }),
                 Expression::StaticMemberExpression(member) => {
-                    let receiver = Box::new(convert_expression(&member.object)?);
+                    let receiver = Box::new(convert_expression(source, &member.object)?);
                     let method = Name {
                         span: span(member.property.span),
                     };
@@ -813,19 +877,32 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
         Expression::ObjectExpression(object) => {
             let mut properties = Vec::with_capacity(object.properties.len());
             for property in &object.properties {
-                let ObjectPropertyKind::ObjectProperty(property) = property else {
-                    return Err("OXC adapter does not support object spread yet".into());
+                let property = match property {
+                    ObjectPropertyKind::ObjectProperty(property) => property,
+                    ObjectPropertyKind::SpreadProperty(spread) => {
+                        properties.push(crate::ast::ObjectMember::Spread {
+                            expr: convert_expression(source, &spread.argument)?,
+                            span: span(spread.span),
+                        });
+                        continue;
+                    }
                 };
-                if property.method || property.kind != PropertyKind::Init {
-                    return Err(
-                        "OXC adapter does not support object methods or accessors yet".into(),
-                    );
-                }
+                // Method shorthand and accessors carry a function value; a plain
+                // data property is `PropertyKind::Init` and not a method.
+                let member_kind = if property.method {
+                    crate::ast::PropertyKind::Method
+                } else {
+                    match property.kind {
+                        PropertyKind::Init => crate::ast::PropertyKind::Init,
+                        PropertyKind::Get => crate::ast::PropertyKind::Get,
+                        PropertyKind::Set => crate::ast::PropertyKind::Set,
+                    }
+                };
                 let key = if property.computed {
                     let Some(key_expression) = property.key.as_expression() else {
                         return Err("OXC adapter requires an expression computed key".into());
                     };
-                    crate::ast::PropertyKey::Computed(Box::new(convert_expression(key_expression)?))
+                    crate::ast::PropertyKey::Computed(Box::new(convert_expression(source, key_expression)?))
                 } else {
                     match &property.key {
                         PropertyKey::StaticIdentifier(identifier) => {
@@ -856,10 +933,24 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                         }
                     }
                 };
-                properties.push(crate::ast::ObjectProperty {
+                let value = match member_kind {
+                    crate::ast::PropertyKind::Init => convert_expression(source, &property.value)?,
+                    // Method / getter / setter: the value is a function.
+                    _ => {
+                        let Expression::FunctionExpression(function) = &property.value else {
+                            return Err(
+                                "OXC adapter expected a function value for an object method or accessor"
+                                    .into(),
+                            );
+                        };
+                        convert_oxc_function(source, function)?
+                    }
+                };
+                properties.push(crate::ast::ObjectMember::Property(crate::ast::ObjectProperty {
                     key,
-                    value: convert_expression(&property.value)?,
-                });
+                    value,
+                    kind: member_kind,
+                }));
             }
             Ok(Expr::ObjectLiteral {
                 properties,
@@ -870,15 +961,13 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             let mut elements = Vec::with_capacity(array.elements.len());
             for element in &array.elements {
                 match element {
-                    // Holes and spread are deferred; map them to an explicit
-                    // "unsupported" path instead of silently miscompiling.
                     ArrayExpressionElement::Elision(_) => {
-                        return Err(
-                            "OXC adapter does not support array elision (holes) yet".into()
-                        );
+                        elements.push(crate::ast::ArrayElement::Hole);
                     }
-                    ArrayExpressionElement::SpreadElement(_) => {
-                        return Err("OXC adapter does not support array spread yet".into());
+                    ArrayExpressionElement::SpreadElement(spread) => {
+                        elements.push(crate::ast::ArrayElement::Spread(
+                            convert_expression(source, &spread.argument)?,
+                        ));
                     }
                     other => {
                         let Some(expression) = other.as_expression() else {
@@ -886,7 +975,9 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
                                 "OXC adapter expected an array element expression".into()
                             );
                         };
-                        elements.push(convert_expression(expression)?);
+                        elements.push(crate::ast::ArrayElement::Expr(
+                            convert_expression(source, expression)?,
+                        ));
                     }
                 }
             }
@@ -901,7 +992,7 @@ fn convert_expression(expression: &Expression<'_>) -> Result<Expr, String> {
             };
             let mut args = Vec::with_capacity(new_expression.arguments.len());
             for argument in &new_expression.arguments {
-                args.push(convert_argument(argument)?);
+                args.push(convert_argument(source, argument)?);
             }
             Ok(Expr::New {
                 class: Name {
@@ -1109,7 +1200,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             decorators: property
                                 .decorators
                                 .iter()
-                                .map(convert_decorator)
+                                .map(|decorator| convert_decorator(source, decorator))
                                 .collect::<Result<Vec<_>, _>>()
                                 .map_err(|error| vec![error])?,
                             ty: type_annotation,
@@ -1118,7 +1209,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             initializer: property
                                 .value
                                 .as_ref()
-                                .map(convert_expression)
+                                .map(|expression| convert_expression(source, expression))
                                 .transpose()
                                 .map_err(|error| vec![error])?
                                 .map(Box::new),
@@ -1163,7 +1254,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                                 declarator.type_annotation.as_deref(),
                                             )
                                             .map_err(|error| vec![error])?,
-                                            init: convert_expression(initializer)
+                                            init: convert_expression(source, initializer)
                                                 .map_err(|error| vec![error])?,
                                             span: Span::new(
                                                 declarator.span.start,
@@ -1177,7 +1268,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                         value: return_statement
                                             .argument
                                             .as_ref()
-                                            .map(convert_expression)
+                                            .map(|expression| convert_expression(source, expression))
                                             .transpose()
                                             .map_err(|error| vec![error])?,
                                         span: Span::new(
@@ -1188,7 +1279,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 }
                                 Statement::ExpressionStatement(expression_statement) => {
                                     method_statements.push(Stmt::Expr(
-                                        convert_expression(&expression_statement.expression)
+                                        convert_expression(source, &expression_statement.expression)
                                             .map_err(|error| vec![error])?,
                                     ));
                                 }
@@ -1216,7 +1307,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 }
                                 Statement::ThrowStatement(throw_statement) => {
                                     method_statements.push(Stmt::Throw {
-                                        value: convert_expression(&throw_statement.argument)
+                                        value: convert_expression(source, &throw_statement.argument)
                                             .map_err(|error| vec![error])?,
                                         span: Span::new(
                                             throw_statement.span.start,
@@ -1238,7 +1329,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 }
                                 Statement::WhileStatement(while_statement) => {
                                     method_statements.push(Stmt::While {
-                                        cond: convert_expression(&while_statement.test)
+                                        cond: convert_expression(source, &while_statement.test)
                                             .map_err(|error| vec![error])?,
                                         body: convert_if_branch(source, &while_statement.body)
                                             .map_err(|error| vec![error])?,
@@ -1252,7 +1343,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     method_statements.push(Stmt::DoWhile {
                                         body: convert_if_branch(source, &do_while_statement.body)
                                             .map_err(|error| vec![error])?,
-                                        cond: convert_expression(&do_while_statement.test)
+                                        cond: convert_expression(source, &do_while_statement.test)
                                             .map_err(|error| vec![error])?,
                                         span: Span::new(
                                             do_while_statement.span.start,
@@ -1300,7 +1391,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 default_value: parameter
                                     .initializer
                                     .as_ref()
-                                    .map(|initializer| convert_expression(initializer))
+                                    .map(|initializer| convert_expression(source, initializer))
                                     .transpose()
                                     .map_err(|error| vec![error])?
                                     .map(Box::new),
@@ -1334,7 +1425,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             decorators: method
                                 .decorators
                                 .iter()
-                                .map(convert_decorator)
+                                .map(|decorator| convert_decorator(source, decorator))
                                 .collect::<Result<Vec<_>, _>>()
                                 .map_err(|error| vec![error])?,
                             params,
@@ -1375,7 +1466,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 decorators: class_declaration
                     .decorators
                     .iter()
-                    .map(convert_decorator)
+                    .map(|decorator| convert_decorator(source, decorator))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|error| vec![error])?,
                 fields,
@@ -1431,7 +1522,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             },
                             ty: convert_type_annotation(source, declarator.type_annotation.as_deref())
                                 .map_err(|error| vec![error])?,
-                            init: convert_expression(initializer).map_err(|error| vec![error])?,
+                            init: convert_expression(source, initializer).map_err(|error| vec![error])?,
                             span: span(declarator.span),
                         });
                     }
@@ -1440,7 +1531,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     let value = return_statement
                         .argument
                         .as_ref()
-                        .map(convert_expression)
+                        .map(|expression| convert_expression(source, expression))
                         .transpose()
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::Return {
@@ -1450,7 +1541,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 }
                 Statement::ExpressionStatement(expression_statement) => {
                     statements.push(Stmt::Expr(
-                        convert_expression(&expression_statement.expression)
+                        convert_expression(source, &expression_statement.expression)
                             .map_err(|error| vec![error])?,
                     ));
                 }
@@ -1472,7 +1563,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 }
                 Statement::ThrowStatement(throw_statement) => {
                     statements.push(Stmt::Throw {
-                        value: convert_expression(&throw_statement.argument)
+                        value: convert_expression(source, &throw_statement.argument)
                             .map_err(|error| vec![error])?,
                         span: span(throw_statement.span),
                     });
@@ -1487,7 +1578,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     let body = convert_block_statement(source, &while_statement.body)
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::While {
-                        cond: convert_expression(&while_statement.test)
+                        cond: convert_expression(source, &while_statement.test)
                             .map_err(|error| vec![error])?,
                         body,
                         span: span(while_statement.span),
@@ -1523,7 +1614,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     declarator.type_annotation.as_deref(),
                                 )
                                 .map_err(|error| vec![error])?,
-                                init: convert_expression(initializer)
+                                init: convert_expression(source, initializer)
                                     .map_err(|error| vec![error])?,
                                 span: span(declarator.span),
                             }))
@@ -1535,7 +1626,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 ]);
                             };
                             Some(Box::new(Stmt::Expr(
-                                convert_expression(expression).map_err(|error| vec![error])?,
+                                convert_expression(source, expression).map_err(|error| vec![error])?,
                             )))
                         }
                     };
@@ -1546,13 +1637,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         cond: for_statement
                             .test
                             .as_ref()
-                            .map(convert_expression)
+                            .map(|expression| convert_expression(source, expression))
                             .transpose()
                             .map_err(|error| vec![error])?,
                         update: for_statement
                             .update
                             .as_ref()
-                            .map(convert_expression)
+                            .map(|expression| convert_expression(source, expression))
                             .transpose()
                             .map_err(|error| vec![error])?,
                         body,
@@ -1588,7 +1679,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         name: Name {
                             span: span(identifier.span),
                         },
-                        iterable: convert_expression(&for_of_statement.right)
+                        iterable: convert_expression(source, &for_of_statement.right)
                             .map_err(|error| vec![error])?,
                         body,
                         span: span(for_of_statement.span),
@@ -1599,7 +1690,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         .map_err(|error| vec![error])?;
                     statements.push(Stmt::DoWhile {
                         body,
-                        cond: convert_expression(&do_while_statement.test)
+                        cond: convert_expression(source, &do_while_statement.test)
                             .map_err(|error| vec![error])?,
                         span: span(do_while_statement.span),
                     });
@@ -1630,7 +1721,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 default_value: parameter
                     .initializer
                     .as_ref()
-                    .map(|initializer| convert_expression(initializer))
+                    .map(|initializer| convert_expression(source, initializer))
                     .transpose()
                     .map_err(|error| vec![error])?
                     .map(Box::new),
@@ -2620,7 +2711,7 @@ mod tests {
     }
 
     #[test]
-    fn converts_object_literals_and_defers_methods_and_spread() {
+    fn converts_object_literals_with_methods_accessors_and_spread() {
         let program = parse_subset(
             "function main() { let x = 0; let o = { a: 1, x, [\"k\"]: 2 }; }",
             false,
@@ -2634,15 +2725,46 @@ mod tests {
             panic!("expected an object literal");
         };
         assert_eq!(properties.len(), 3);
-        assert!(matches!(properties[0].key, crate::ast::PropertyKey::Ident(_)));
-        assert!(matches!(properties[1].value, crate::ast::Expr::Ident(_)));
-        assert!(matches!(
-            properties[2].key,
-            crate::ast::PropertyKey::Computed(_)
-        ));
+        let prop = |index: usize| match &properties[index] {
+            crate::ast::ObjectMember::Property(property) => property,
+            _ => panic!("expected a keyed property"),
+        };
+        assert!(matches!(prop(0).key, crate::ast::PropertyKey::Ident(_)));
+        assert!(matches!(prop(1).value, crate::ast::Expr::Ident(_)));
+        assert!(matches!(prop(2).key, crate::ast::PropertyKey::Computed(_)));
 
-        assert!(parse_subset("function main() { let o = { ...rest }; }", false).is_err());
-        assert!(parse_subset("function main() { let o = { m() { return 1; } }; }", false).is_err());
-        assert!(parse_subset("function main() { let o = { get a() { return 1; } }; }", false).is_err());
+        // Method shorthand, getters/setters, and spread now convert.
+        assert!(parse_subset("function main() { let o = { ...rest }; }", false).is_ok());
+        assert!(parse_subset(
+            "function main() { let o = { m() { return 1; } }; }",
+            false
+        )
+        .is_ok());
+        assert!(parse_subset(
+            "function main() { let o = { get a() { return 1; } }; }",
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn converts_array_literals_with_holes_and_spread() {
+        let program = parse_subset(
+            "function main() { let xs = [1, 2]; let a = [0, ...xs, , 3]; }",
+            false,
+        )
+        .unwrap();
+        let crate::ast::Stmt::Let {
+            init: crate::ast::Expr::ArrayLiteral { elements, .. },
+            ..
+        } = &program.functions[0].body.statements[1]
+        else {
+            panic!("expected an array literal");
+        };
+        assert_eq!(elements.len(), 4);
+        assert!(matches!(elements[0], crate::ast::ArrayElement::Expr(_)));
+        assert!(matches!(elements[1], crate::ast::ArrayElement::Spread(_)));
+        assert!(matches!(elements[2], crate::ast::ArrayElement::Hole));
+        assert!(matches!(elements[3], crate::ast::ArrayElement::Expr(_)));
     }
 }

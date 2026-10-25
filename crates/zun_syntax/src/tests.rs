@@ -557,12 +557,16 @@
             panic!("expected object literal");
         };
         assert_eq!(properties.len(), 4);
-        assert!(matches!(properties[0].key, PropertyKey::Ident(_)));
+        let prop = |index: usize| match &properties[index] {
+            ObjectMember::Property(property) => property,
+            _ => panic!("expected a keyed property"),
+        };
+        assert!(matches!(prop(0).key, PropertyKey::Ident(_)));
         // Shorthand `b` desugars to key=value=ident `b`.
-        assert!(matches!(properties[1].key, PropertyKey::Ident(_)));
-        assert!(matches!(properties[1].value, Expr::Ident(_)));
-        assert!(matches!(properties[2].key, PropertyKey::Computed(_)));
-        assert!(matches!(properties[3].key, PropertyKey::Computed(_)));
+        assert!(matches!(prop(1).key, PropertyKey::Ident(_)));
+        assert!(matches!(prop(1).value, Expr::Ident(_)));
+        assert!(matches!(prop(2).key, PropertyKey::Computed(_)));
+        assert!(matches!(prop(3).key, PropertyKey::Computed(_)));
     }
 
     #[test]
@@ -579,7 +583,10 @@
         else {
             panic!("expected nested object literal");
         };
-        assert!(matches!(properties[0].value, Expr::ObjectLiteral { .. }));
+        let ObjectMember::Property(first) = &properties[0] else {
+            panic!("expected a keyed property");
+        };
+        assert!(matches!(first.value, Expr::ObjectLiteral { .. }));
     }
 
     #[test]
@@ -605,7 +612,7 @@
         else {
             panic!("expected nested array literal");
         };
-        assert!(matches!(elements[0], Expr::ArrayLiteral { .. }));
+        assert!(matches!(elements[0], ArrayElement::Expr(Expr::ArrayLiteral { .. })));
     }
 
     #[test]

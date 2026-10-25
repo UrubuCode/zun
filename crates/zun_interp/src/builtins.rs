@@ -333,6 +333,7 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayIsArray",
         "arrayFrom",
         "arrayFromMapped",
+        "arraySpreadAppend",
     ] {
         if zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);

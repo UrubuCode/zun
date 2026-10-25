@@ -42,16 +42,28 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
         Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
         Expr::ObjectLiteral { properties, .. } => {
-            for property in properties {
-                match &mut property.key {
-                    PropertyKey::Ident(name) => shift(&mut name.span),
-                    PropertyKey::String { span, .. } | PropertyKey::Number { span, .. } => shift(span),
-                    PropertyKey::Computed(key) => rebase_expression_names(key, base),
+            for member in properties {
+                match member {
+                    ObjectMember::Property(property) => {
+                        match &mut property.key {
+                            PropertyKey::Ident(name) => shift(&mut name.span),
+                            PropertyKey::String { span, .. } | PropertyKey::Number { span, .. } => shift(span),
+                            PropertyKey::Computed(key) => rebase_expression_names(key, base),
+                        }
+                        rebase_expression_names(&mut property.value, base);
+                    }
+                    ObjectMember::Spread { expr, .. } => rebase_expression_names(expr, base),
                 }
-                rebase_expression_names(&mut property.value, base);
             }
         }
-        Expr::ArrayLiteral { elements, .. } => { for element in elements { rebase_expression_names(element, base); } }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                match element {
+                    ArrayElement::Expr(expr) | ArrayElement::Spread(expr) => rebase_expression_names(expr, base),
+                    ArrayElement::Hole => {}
+                }
+            }
+        }
         Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::RegexLiteral { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
     }
 }
@@ -304,6 +316,28 @@ impl Parser<'_> {
         let start = self.bump().span; // `{`
         let mut properties = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            // Spread member `...expr`.
+            if self.at(TokenKind::Ellipsis) {
+                let spread_start = self.bump().span;
+                let expr = self.assignment();
+                let span = spread_start.to(expr.span());
+                properties.push(ObjectMember::Spread { expr, span });
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+                continue;
+            }
+            // A leading `get`/`set` identifier introduces an accessor only when
+            // it is followed by a property name (not `:` / `(` / `,` / `}`,
+            // which would make `get`/`set` itself the property name).
+            let mut accessor: Option<PropertyKind> = None;
+            if self.at(TokenKind::Ident) {
+                let text = self.text(self.peek());
+                if (text == "get" || text == "set") && self.accessor_follows() {
+                    accessor = Some(if text == "get" { PropertyKind::Get } else { PropertyKind::Set });
+                    self.bump(); // consume `get`/`set`
+                }
+            }
             let key = if self.eat(TokenKind::LBracket) {
                 let key = self.assignment();
                 self.expect(TokenKind::RBracket, "`]` after computed property key");
@@ -336,16 +370,34 @@ impl Parser<'_> {
                     }
                 }
             };
-            let value = if self.eat(TokenKind::Colon) {
-                self.assignment()
-            } else if let PropertyKey::Ident(name) = &key {
-                // Shorthand `{ x }` desugars to `{ x: x }`.
-                Expr::Ident(*name)
+            // A getter/setter, or a method shorthand `name(...) {...}`, parse
+            // their function form from the `(`.
+            if let Some(kind) = accessor {
+                let value = self.object_method_body();
+                properties.push(ObjectMember::Property(ObjectProperty { key, value, kind }));
+            } else if self.at(TokenKind::LParen) {
+                let value = self.object_method_body();
+                properties.push(ObjectMember::Property(ObjectProperty {
+                    key,
+                    value,
+                    kind: PropertyKind::Method,
+                }));
             } else {
-                self.error_at(self.peek().span, "`:` after property name");
-                Expr::Null { span: self.peek().span }
-            };
-            properties.push(ObjectProperty { key, value });
+                let value = if self.eat(TokenKind::Colon) {
+                    self.assignment()
+                } else if let PropertyKey::Ident(name) = &key {
+                    // Shorthand `{ x }` desugars to `{ x: x }`.
+                    Expr::Ident(*name)
+                } else {
+                    self.error_at(self.peek().span, "`:` after property name");
+                    Expr::Null { span: self.peek().span }
+                };
+                properties.push(ObjectMember::Property(ObjectProperty {
+                    key,
+                    value,
+                    kind: PropertyKind::Init,
+                }));
+            }
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -356,6 +408,35 @@ impl Parser<'_> {
             properties,
             span: start.to(close),
         }
+    }
+
+    /// Whether the token after a leading `get`/`set` begins a property name
+    /// (so `get`/`set` is an accessor keyword rather than the property itself).
+    fn accessor_follows(&self) -> bool {
+        match self.peek_n(1).kind {
+            TokenKind::Ident | TokenKind::String | TokenKind::Number | TokenKind::LBracket => true,
+            kind => kind.is_keyword(),
+        }
+    }
+
+    /// Parse the `(params) [: ret] { body }` of an object method, getter, or
+    /// setter (the key has already been consumed), yielding a function value.
+    fn object_method_body(&mut self) -> Expr {
+        let start = self.peek().span;
+        self.expect(TokenKind::LParen, "`(` after method name");
+        let params = self.parameters();
+        self.expect(TokenKind::RParen, "`)`");
+        let return_type = self.optional_type_annotation();
+        let body = self.block();
+        Expr::Function(FunctionExpr {
+            params,
+            return_type,
+            span: start.to(body.span),
+            body,
+            is_arrow: false,
+            is_async: false,
+            is_generator: false,
+        })
     }
 
     /// Parse an array literal `[ e1, e2, ... ]` in expression position.
@@ -369,17 +450,18 @@ impl Parser<'_> {
         let mut elements = Vec::new();
         while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
             if self.at(TokenKind::Comma) {
-                // Elision/holes are a deferred follow-up; do not fake them.
-                self.error_at(self.peek().span, "array elision (holes) is not supported yet");
+                // A bare `,` is an elision/hole: count the index, consume the
+                // comma, and continue (a trailing hole before `]` is dropped by
+                // ECMAScript, matching how a trailing comma adds no element).
+                elements.push(ArrayElement::Hole);
                 self.bump();
                 continue;
             }
             if self.at(TokenKind::Ellipsis) {
-                self.error_at(self.peek().span, "array spread `...` is not supported yet");
                 self.bump();
-                let _ = self.assignment();
+                elements.push(ArrayElement::Spread(self.assignment()));
             } else {
-                elements.push(self.assignment());
+                elements.push(ArrayElement::Expr(self.assignment()));
             }
             if !self.eat(TokenKind::Comma) {
                 break;

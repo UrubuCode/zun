@@ -478,15 +478,27 @@ impl Checker<'_> {
             }
             ast::Expr::ArrayLiteral { elements, .. } => {
                 for element in elements {
-                    self.collect_capture_expr(cx, parameters, element, uses);
+                    match element {
+                        ast::ArrayElement::Expr(expr) | ast::ArrayElement::Spread(expr) => {
+                            self.collect_capture_expr(cx, parameters, expr, uses);
+                        }
+                        ast::ArrayElement::Hole => {}
+                    }
                 }
             }
             ast::Expr::ObjectLiteral { properties, .. } => {
-                for property in properties {
-                    if let ast::PropertyKey::Computed(key) = &property.key {
-                        self.collect_capture_expr(cx, parameters, key, uses);
+                for member in properties {
+                    match member {
+                        ast::ObjectMember::Property(property) => {
+                            if let ast::PropertyKey::Computed(key) = &property.key {
+                                self.collect_capture_expr(cx, parameters, key, uses);
+                            }
+                            self.collect_capture_expr(cx, parameters, &property.value, uses);
+                        }
+                        ast::ObjectMember::Spread { expr, .. } => {
+                            self.collect_capture_expr(cx, parameters, expr, uses);
+                        }
                     }
-                    self.collect_capture_expr(cx, parameters, &property.value, uses);
                 }
             }
             ast::Expr::Number { .. }

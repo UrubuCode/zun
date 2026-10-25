@@ -2807,6 +2807,54 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Object(roots[1]))
             }
+            "arraySpreadAppend" => {
+                // Append every element of `source` (a managed Array or a
+                // string, matching `arrayFrom`) to `target`, in order.
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let concrete = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                match &concrete {
+                    Value::Str(text) => {
+                        // Spread a string by Unicode code point.
+                        let points: Vec<String> =
+                            text.chars().map(|point| point.to_string()).collect();
+                        let roots = [target];
+                        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                        for point in points {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                let id = heap.intern_string(point.as_str().into());
+                                heap.array_push(roots[0], zun_core::Any::string(id));
+                            });
+                        }
+                    }
+                    _ => {
+                        let Some(source) = object(&concrete) else {
+                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                                "spread: value is not iterable",
+                            ))));
+                        };
+                        let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                        else {
+                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                                "spread: value is not iterable",
+                            ))));
+                        };
+                        let roots = [source, target];
+                        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                        for index in 0..length {
+                            let value =
+                                zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                                    .unwrap_or_else(zun_core::Any::void);
+                            zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], value));
+                        }
+                    }
+                }
+                Ok(Value::Object(target))
+            }
             "promiseNew" => {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 Ok(Value::Object(promise))

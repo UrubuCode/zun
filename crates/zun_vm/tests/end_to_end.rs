@@ -234,6 +234,105 @@ fn object_keys_and_values_on_a_typed_object_use_declared_fields() {
 }
 
 #[test]
+fn object_literal_method_shorthand_is_callable() {
+    // `{ m() {} }` stores the method in the object's function slot
+    // (dynamicSetFunction); `o.m()` dispatches through it.
+    let out = run_source(
+        r#"function main() {
+            let o = { m() { return 1.0; } };
+            print(o.m() as number);
+        }"#,
+    );
+    assert_eq!(out, ["1"]);
+}
+
+#[test]
+fn object_literal_computed_symbol_method_backs_has_instance() {
+    // A computed Symbol method key routes to the symbol-function slot
+    // (dynamicSetSymbolFunction); a user `[Symbol.hasInstance]` is then
+    // consulted by `instanceof` (NUCLEUS #5 enabler).
+    let out = run_source(
+        r#"function main() {
+            let matcher = { [Symbol.hasInstance](value) { return true; } };
+            if (5.0 instanceof matcher) { print("yes"); } else { print("no"); }
+        }"#,
+    );
+    assert_eq!(out, ["yes"]);
+}
+
+#[test]
+fn object_literal_getter_is_invoked_on_read() {
+    // `{ get x() {} }` installs an accessor property; reading `o.x` invokes it.
+    let out = run_source(
+        r#"function main() {
+            let o = { get x() { return 42.0; } };
+            print(o.x as number);
+        }"#,
+    );
+    assert_eq!(out, ["42"]);
+}
+
+#[test]
+fn object_literal_setter_is_invoked_on_write() {
+    // `{ set x(v) {} }` installs an accessor; assigning `o.x = v` invokes it.
+    let out = run_source(
+        r#"function main() {
+            let sink = new Array(1);
+            let o = { set x(v) { sink[0] = v; } };
+            o.x = 7.0;
+            print(sink[0] as number);
+        }"#,
+    );
+    assert_eq!(out, ["7"]);
+}
+
+#[test]
+fn object_literal_spread_merges_with_later_keys_overriding() {
+    // `{ ...a, y: 2 }` copies `a`'s own enumerable keys in place; a later key
+    // overrides a spread-copied one (source order).
+    let out = run_source(
+        r#"function main() {
+            let a = { x: 1.0, y: 1.0 };
+            let o = { x: 9.0, ...a, y: 2.0 };
+            print(o.x as number);
+            print(o.y as number);
+        }"#,
+    );
+    assert_eq!(out, ["1", "2"]);
+}
+
+#[test]
+fn array_literal_holes_count_toward_length() {
+    // `[1, , 3]` has length 3; the hole reads as `undefined` (not `0`).
+    let out = run_source(
+        r#"function main() {
+            let a = [1.0, , 3.0];
+            print(a.length);
+            print(a[0] as number);
+            print(a[2] as number);
+        }"#,
+    );
+    assert_eq!(out, ["3", "1", "3"]);
+}
+
+#[test]
+fn array_literal_spread_splices_array_and_string_sources() {
+    let out = run_source(
+        r#"function main() {
+            let xs = [1.0, 2.0];
+            let a = [0.0, ...xs, 3.0];
+            print(a.length);
+            print(a[1] as number);
+            print(a[3] as number);
+            let chars = [..."ab"];
+            print(chars.length);
+            print(chars[0] as string);
+        }"#,
+    );
+    assert_eq!(out, ["4", "1", "3", "2", "a"]);
+}
+
+#[test]
 fn object_assign_merges_sources_and_returns_the_target() {
     let out = run_source(
         r#"function main() {

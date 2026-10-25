@@ -126,15 +126,27 @@ pub(super) fn collect_mutated_expr(
         ast::Expr::Spread { expr, .. } => collect_mutated_expr(checker, expr, names),
         ast::Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
-                collect_mutated_expr(checker, element, names);
+                match element {
+                    ast::ArrayElement::Expr(expr) | ast::ArrayElement::Spread(expr) => {
+                        collect_mutated_expr(checker, expr, names);
+                    }
+                    ast::ArrayElement::Hole => {}
+                }
             }
         }
         ast::Expr::ObjectLiteral { properties, .. } => {
-            for property in properties {
-                if let ast::PropertyKey::Computed(key) = &property.key {
-                    collect_mutated_expr(checker, key, names);
+            for member in properties {
+                match member {
+                    ast::ObjectMember::Property(property) => {
+                        if let ast::PropertyKey::Computed(key) = &property.key {
+                            collect_mutated_expr(checker, key, names);
+                        }
+                        collect_mutated_expr(checker, &property.value, names);
+                    }
+                    ast::ObjectMember::Spread { expr, .. } => {
+                        collect_mutated_expr(checker, expr, names);
+                    }
                 }
-                collect_mutated_expr(checker, &property.value, names);
             }
         }
     }

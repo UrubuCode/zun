@@ -29,7 +29,7 @@ read.
 | 2 | Number | mostly | Statics landed (`isNaN/isFinite/isInteger/isSafeInteger parseFloat parseInt` + all eight constants), instance `toString(radix)/toFixed/toExponential/toPrecision/valueOf`; only `toLocaleString` remains (locale/ICU — gated) |
 | 3 | Boolean | mostly | `Boolean(x)` truthiness coercion + `boolean.toString()`; `globalThis.Boolean` resolves. `new Boolean()` wrapper object deferred |
 | 4 | BigInt | mostly | Full op surface: `add/sub/mul/div/rem/pow/neg`, bitwise/shift (`and/or/xor/not/shl/shr`, two's-complement), `compare/eq/…`, `toString`, `BigInt(number\|string)` coercion (radix prefixes), `BigInt.asIntN/asUintN`. Operators `+ - * / %` and comparisons route to the natives; `** & \| ^ << >> ~` are method-only (those operator *tokens* are not in the lexer — a language-wide feature) |
-| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). Remaining (all front-end/structural): typed-class `hasInstance`/class computed symbol-key members, operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
+| 5 | Symbol | mostly | Foundation + behavioral dispatch landed: `Symbol()` unique primitives, `Symbol.for/keyFor`, well-known symbol **values** (now 12: `iterator/asyncIterator/hasInstance/toPrimitive/toStringTag` + seeded `match/replace/search/split/species/isConcatSpreadable/unscopables`), `.description`, symbol-keyed `obj[sym]` get/set. Dispatch: `Symbol.hasInstance` on a **dynamic object** drives `instanceof` (via `dynamicSetSymbolFunction` + `instanceofDynamic`); **`String(x)` coercion** is the ToString site that invokes `[Symbol.toPrimitive]` (hint "string") and exposes `[Symbol.toStringTag]` as `"[object <Tag>]"` (`stringCoerce` native). **Object-literal computed Symbol methods landed** (§6b): `{ [Symbol.hasInstance](v){…} }` / `{ [Symbol.toPrimitive](h){…} }` lower to `dynamicSetSymbolFunction`, so user well-known-symbol methods can be written as literals (not only installed by hand). Remaining (all front-end/structural): typed-class `hasInstance`/class computed symbol-key members, operator-position auto-coercion (`+`/templates), `Number(obj)` number-hint coercion, and behavior for the seeded `match/replace/…` symbols |
 | 6 | Object | mostly | Enumeration/reflection surface + **property-descriptor model** landed: `keys/values/entries/assign/freeze/isFrozen/create/getPrototypeOf/setPrototypeOf/fromEntries/is` plus `defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyDescriptors/getOwnPropertyNames/seal/isSealed/preventExtensions/isExtensible` and instance `hasOwnProperty/isPrototypeOf/propertyIsEnumerable`. Full attribute set on `DynamicObject` (`writable/enumerable/configurable` + non-extensible); enumerable-skipping in `keys/values/entries/assign`; accessor get/set stored and the getter/setter is **invoked on `obj.k` read/write**. Remaining: `getOwnPropertySymbols` |
 | 7 | Array | mostly | Standard callback + structural surface landed (spec `(value,index,array)` callbacks); `findLast/findLastIndex/flat(depth)/flatMap/keys/values/entries/at` (relative), statics `Array.isArray/of/from`, variadic `splice` inserts and no-initial `reduce`/`reduceRight` now landed. Zun extensions kept. Remaining: `toSorted/toReversed/with/group`, iterator-object return for `keys/values/entries`, for-of binding destructuring (front-end gap) |
 | 8 | Function | mostly | `call/apply/bind` + `.name/.length` landed (receiver-as-leading-param model, Tier 0). **Function-valued `bind` partial/`this` arguments now work**: a function cannot box into `Any`, so each function-typed prepended argument is wrapped by a `functionBox` intrinsic (a GC-traced object carrying the callable in a `__boxedFn` function slot, keeping its captured environment visible to precise root handling) and `resolve_call_target` unwraps it before dispatch — order among prepended args is preserved. Deferred: **`Function` constructor** (`new Function(args, body)` evaluates a source string ⇒ needs a runtime compiler; the VM links no compiler and this conflicts with AOT reachability/trimming — structural); **a function inside `apply`'s arguments array** / functions in generic arrays (would require letting `box_any` carry functions globally — a deliberate GC-root-precision invariant, broad arg-marshalling rework); **multi-argument bound calls** (bound functions are typed `Function` and dynamic calls use the single-trailing-arg IL arity model — carrying an argument count for a dynamic `CallIndirect` is an opcode-set + verifier change) |
@@ -466,9 +466,32 @@ the OXC adapter — `Expression::ObjectExpression`). An object literal produces 
   (`DynamicObject` is insertion-ordered). Values box to `Any` for the dynamic store.
 - **Block-vs-object:** the hand parser treats `{` as an object literal only in expression
   position; it has no bare block statement, so the ambiguity does not arise there.
-- **Deferred (documented follow-ups — the OXC adapter errors rather than miscompiling, the
-  hand parser does not yet accept them):** method shorthand `{ m() {} }`, getters/setters
-  `{ get x() {} }` / `{ set x(v) {} }`, and spread `{ ...o }`.
+- **Method shorthand `{ m() {} }` — landed.** The method value is a closure stored in the
+  object's string **function slot** via `dynamicSetFunction(obj, name, fn)`; `obj.m()`
+  dispatches through it (the dynamic member-call path, `dynamicCall0/1/2`, now accepts a
+  `DynamicObject` receiver, not only `any`). A **computed Symbol method** `{ [Symbol.X]() {} }`
+  routes to the symbol-function slot via `dynamicSetSymbolFunction` — this is the NUCLEUS #5
+  enabler for user `[Symbol.hasInstance]` / `[Symbol.toPrimitive]` methods (consulted by
+  `instanceof` / `String()` coercion). A computed **string** method key uses the string
+  function slot; a computed key that is neither a string nor a Symbol is rejected.
+- **Getters/setters `{ get x() {} }` / `{ set x(v) {} }` — landed (named keys).** Lowered to
+  an accessor property: the literal builds a `{ get|set: fn }` descriptor (the accessor fn
+  in its function slot) and installs it with `objectDefineProperty(obj, name, desc)` — the
+  same property-descriptor model as above, so reading/assigning `obj.x` invokes the
+  getter/setter. Computed/Symbol-keyed accessors in literals are **deferred** (computed-key
+  accessor access is itself not yet wired — see above).
+- **Spread `{ ...o }` — landed.** Lowered to `objectAssign(obj, o)` at the spread position,
+  copying `o`'s own enumerable string keys (for a `DynamicObject`) or declared instance
+  fields (for a typed object) into the new object; a later key overrides an earlier one
+  (source order preserved). Symbol-keyed own properties are **not** copied (consistent with
+  `getOwnPropertySymbols` still being deferred).
+- **Lowering mechanics.** Data entries keep the `Dup` + store + `Pop` shape; method /
+  symbol-method / accessor / spread entries are `hir::ObjectEntry::Install { builtin, args }`:
+  the object handle is duplicated, the args pushed, the native (`dynamicSetFunction` /
+  `dynamicSetSymbolFunction` / `objectDefineProperty` / `objectAssign`) called, and its
+  result discarded. No new opcodes or natives (all four already exist and are appended-last
+  in `collections`). Both front-ends (hand parser + OXC adapter) build the new AST nodes
+  (`ObjectMember::{Property,Spread}`, `PropertyKind::{Init,Method,Get,Set}`).
 - **Note on computed keys:** like `obj[k] = v` on a dynamic receiver, a computed key must be
   a string or a `Symbol` at runtime (`StoreDynamicValue` dispatches on tag); full ToString
   coercion of arbitrary computed keys is not implemented (consistent with `IndexAssign`).
@@ -544,11 +567,21 @@ so the array stays on the stack as the result. This parallels the object-literal
   Empty `[]`; nested literals; a single **trailing comma** (`[1, 2, 3,]`). Elements are set
   in source index order. Composes with the standard Array natives (`.map`, `.sort`, …) and
   with the `Set`/`Map` array-iterable constructors (`new Set([…])`, `new Map([[k, v], …])`).
-- **Deferred (documented follow-ups — the OXC adapter errors rather than miscompiling, the
-  hand parser reports them as unsupported rather than silently dropping them):** elision /
-  **holes** `[1, , 3]` and **spread** `[...xs]`. Both need element kinds the v1 lowering
-  does not model (a hole is a distinct "no element at this index" vs. `undefined`, and
-  spread needs iteration/concatenation at the literal site).
+- **Holes `[1, , 3]` — landed.** A bare `,` is an elision (`ArrayElement::Hole`). The
+  no-spread path still uses `ConstI32 N` + `NewArray` but stores `ConstUndef` at each hole
+  index, so a hole counts toward `length` and **reads as `undefined`** (not `0`, which the
+  default array fill would give). The true hole-vs-`undefined` distinction (observable only
+  through `in` / `hasOwnProperty`) is **not** represented — a hole and an explicit
+  `undefined` are indistinguishable; documented, since there is no front-end `in`/`for-in`
+  over dense arrays today.
+- **Spread `[...xs]` — landed.** When any element is a spread, the literal lowers to
+  `hir::ExprKind::ArraySpreadLiteral`: a growable `NewArray 0` built up part-by-part — a
+  plain element and a hole each `ArrayPush` one value (`undefined` for a hole), and a spread
+  calls `arraySpreadAppend(target, source)` (a new `array` native, appended last so existing
+  dispatch ids stay stable) to splice the iterable's elements in at its source position.
+  **Supported spread sources:** a managed `Array` and a `String` (code points), matching
+  `Array.from`'s supported sources. `Set`/`Map`/generator/typed-array spread sources are
+  **deferred** (same limitation as `arrayFrom`).
 - **Note on nested access:** because elements are `Any`, a direct `m[i][j]` chain needs the
   middle value cast back to `Array` (`(m[i] as Array)[j]`), consistent with every other
   array read — this is the element-typing model, not an array-literal limitation.

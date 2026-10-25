@@ -168,19 +168,59 @@ pub enum TemplatePart {
     Expr(Box<Expr>),
 }
 
-/// One property of an object literal: `key: value`.
+/// One member of an object literal: either a keyed property or a spread.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectMember {
+    /// A keyed property: `key: value`, shorthand `{ x }`, method `{ m() {} }`,
+    /// or an accessor `{ get x() {} }` / `{ set x(v) {} }`.
+    Property(ObjectProperty),
+    /// `...expr` — spread the source object's own enumerable entries in place.
+    Spread {
+        /// The spread source expression.
+        expr: Expr,
+        /// Span of the `...expr` member.
+        span: Span,
+    },
+}
+
+/// One element of an array literal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayElement {
+    /// A present element expression, stored at its positional index.
+    Expr(Expr),
+    /// A hole from elision (`[1, , 3]`): the index still counts toward
+    /// `length` but reads as `undefined`.
+    Hole,
+    /// `...expr` — splice the iterable source's elements in at this position.
+    Spread(Expr),
+}
+
+/// The kind of a keyed object-literal property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyKind {
+    /// `key: value` or shorthand `{ x }`.
+    Init,
+    /// Method shorthand `{ m() {} }` (the value is a `Expr::Function`).
+    Method,
+    /// Getter `{ get x() {} }` (the value is a zero-parameter `Expr::Function`).
+    Get,
+    /// Setter `{ set x(v) {} }` (the value is a one-parameter `Expr::Function`).
+    Set,
+}
+
+/// One keyed property of an object literal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectProperty {
     /// The property key.
     pub key: PropertyKey,
-    /// The property value. For shorthand `{ x }` this is the identifier `x`.
+    /// The property value. For shorthand `{ x }` this is the identifier `x`;
+    /// for a method/getter/setter it is a `Expr::Function`.
     pub value: Expr,
+    /// Whether this is a data property, a method, or an accessor.
+    pub kind: PropertyKind,
 }
 
 /// The key of an object-literal property.
-///
-/// Method shorthand (`{ m() {} }`), getters/setters (`{ get x() {} }`), and
-/// spread (`{ ...o }`) are deferred follow-ups and are not represented here.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyKey {
     /// An identifier or keyword property name, e.g. `a` in `{ a: 1 }`.
@@ -463,18 +503,18 @@ pub enum Expr {
     Function(FunctionExpr),
     /// `{ key: value, ... }` — an object literal producing a `DynamicObject`.
     ObjectLiteral {
-        /// Properties in source order (insertion order is preserved).
-        properties: Vec<ObjectProperty>,
+        /// Members in source order (insertion order is preserved).
+        properties: Vec<ObjectMember>,
         /// Span including the braces.
         span: Span,
     },
     /// `[ e1, e2, ... ]` — an array literal producing a managed `Array`.
     ///
-    /// Elision/holes (`[1, , 3]`) and spread (`[...xs]`) are deferred and are
-    /// not represented here; see the NUCLEUS note and the OXC adapter.
+    /// Supports plain elements, elision/holes (`[1, , 3]`) and spread
+    /// (`[...xs]`).
     ArrayLiteral {
         /// Elements in source order, each stored at its positional index.
-        elements: Vec<Expr>,
+        elements: Vec<ArrayElement>,
         /// Span including the brackets.
         span: Span,
     },

@@ -562,9 +562,19 @@
     }
 
     #[test]
-    fn oxc_array_spread_and_holes_are_rejected_not_miscompiled() {
-        assert!(parse_subset("function main() { let a = [...b]; }", true).is_err());
-        assert!(parse_subset("function main() { let a = [1, , 3]; }", true).is_err());
+    fn oxc_array_spread_and_holes_now_parse() {
+        use zun_syntax::ast::{ArrayElement, Expr, Stmt};
+        let program = parse_subset("function main() { let b = [0]; let a = [...b, , 3]; }", true)
+            .expect("spread and holes parse");
+        let Stmt::Let { init: Expr::ArrayLiteral { elements, .. }, .. } =
+            &program.functions[0].body.statements[1]
+        else {
+            panic!("expected array literal");
+        };
+        assert_eq!(elements.len(), 3);
+        assert!(matches!(elements[0], ArrayElement::Spread(_)));
+        assert!(matches!(elements[1], ArrayElement::Hole));
+        assert!(matches!(elements[2], ArrayElement::Expr(_)));
     }
 
     #[test]

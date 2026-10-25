@@ -216,7 +216,7 @@ fn decorator_context_entry(
     value_ty: Ty,
     span: Span,
 ) -> hir::ObjectEntry {
-    hir::ObjectEntry {
+    hir::ObjectEntry::Data {
         key: hir::ObjectKey::Named(name.to_string()),
         value: hir::Expr {
             kind: hir::ExprKind::BoxAny {
@@ -1921,7 +1921,10 @@ impl Checker<'_> {
             "of" => {
                 // `<Kind>Array.of(...items)` is an array literal of the args,
                 // then a copy into a view of the kind.
-                let elements = args.iter().map(|element| self.check_expr(cx, element)).collect();
+                let elements = args
+                    .iter()
+                    .map(|element| Some(self.check_expr(cx, element)))
+                    .collect();
                 let source = hir::Expr {
                     kind: hir::ExprKind::ArrayLiteral { elements },
                     ty: Ty::Array,
@@ -2597,7 +2600,7 @@ impl Checker<'_> {
             "of" => {
                 // `Array.of(...items)` is exactly an array literal of the args.
                 let elements =
-                    args.iter().map(|element| self.check_expr(cx, element)).collect();
+                    args.iter().map(|element| Some(self.check_expr(cx, element))).collect();
                 hir::Expr {
                     kind: hir::ExprKind::ArrayLiteral { elements },
                     ty: Ty::Array,
@@ -2836,10 +2839,18 @@ impl Checker<'_> {
         let max = if let Some(options) = args.get(1) {
             match options {
                 ast::Expr::ObjectLiteral { properties, .. } => {
-                    let found = properties.iter().find(|property| match &property.key {
-                        ast::PropertyKey::Ident(name) => self.text(name) == "maxByteLength",
-                        ast::PropertyKey::String { value, .. } => value == "maxByteLength",
-                        _ => false,
+                    let found = properties.iter().find_map(|member| match member {
+                        ast::ObjectMember::Property(property)
+                            if property.kind == ast::PropertyKind::Init =>
+                        {
+                            let matches = match &property.key {
+                                ast::PropertyKey::Ident(name) => self.text(name) == "maxByteLength",
+                                ast::PropertyKey::String { value, .. } => value == "maxByteLength",
+                                _ => false,
+                            };
+                            matches.then_some(property)
+                        }
+                        _ => None,
                     });
                     match found {
                         Some(property) => {
@@ -2882,6 +2893,228 @@ impl Checker<'_> {
         }
     }
 
+    /// Resolve a `collections`-module native, reporting a missing intrinsic.
+    fn resolve_collection(&mut self, span: Span, name: &str) -> Option<u32> {
+        match zun_natives::resolve("collections", name) {
+            Some((id, _)) => Some(id),
+            None => {
+                self.error(span, format!("missing collections intrinsic `{name}`"));
+                None
+            }
+        }
+    }
+
+    /// Box a checked value to `Any` unless it already is (or is poisoned).
+    fn box_to_any(value: hir::Expr) -> hir::Expr {
+        if value.ty == Ty::Any || value.ty.is_error() {
+            value
+        } else {
+            let span = value.span;
+            hir::Expr {
+                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                ty: Ty::Any,
+                span,
+            }
+        }
+    }
+
+    /// A `Ty::String` HIR literal.
+    fn string_literal(text: String, span: Span) -> hir::Expr {
+        hir::Expr { kind: hir::ExprKind::String(text), ty: Ty::String, span }
+    }
+
+    /// Lower an object literal's members (data properties, method shorthand,
+    /// computed-symbol methods, getters/setters, and spread) into
+    /// [`hir::ObjectEntry`] entries evaluated in source order.
+    fn lower_object_members(
+        &mut self,
+        cx: &mut FunctionCx,
+        members: &[ast::ObjectMember],
+        span: Span,
+    ) -> Vec<hir::ObjectEntry> {
+        let mut entries = Vec::with_capacity(members.len());
+        for member in members {
+            match member {
+                ast::ObjectMember::Spread { expr, .. } => {
+                    // `{ ...o }` → objectAssign(obj, o): copy the source's own
+                    // enumerable string keys (DynamicObject) or declared
+                    // instance fields (typed object) into the new object.
+                    let source = Self::box_to_any(self.check_expr(cx, expr));
+                    let Some(builtin) = self.resolve_collection(span, "objectAssign") else {
+                        continue;
+                    };
+                    entries.push(hir::ObjectEntry::Install { builtin, args: vec![source] });
+                }
+                ast::ObjectMember::Property(property) => {
+                    self.lower_object_property(cx, property, span, &mut entries);
+                }
+            }
+        }
+        entries
+    }
+
+    fn lower_object_property(
+        &mut self,
+        cx: &mut FunctionCx,
+        property: &ast::ObjectProperty,
+        span: Span,
+        entries: &mut Vec<hir::ObjectEntry>,
+    ) {
+        // A statically-known string key, or `None` for a computed key.
+        let named_key = match &property.key {
+            ast::PropertyKey::Ident(name) => Some(self.text(name).to_string()),
+            ast::PropertyKey::String { value, .. } => Some(value.clone()),
+            ast::PropertyKey::Number { value, .. } => Some(value.to_string()),
+            ast::PropertyKey::Computed(_) => None,
+        };
+        match property.kind {
+            ast::PropertyKind::Init => {
+                let value = Self::box_to_any(self.check_expr(cx, &property.value));
+                let key = match &property.key {
+                    ast::PropertyKey::Computed(key) => {
+                        hir::ObjectKey::Computed(self.check_expr(cx, key))
+                    }
+                    _ => hir::ObjectKey::Named(named_key.expect("named key")),
+                };
+                entries.push(hir::ObjectEntry::Data { key, value });
+            }
+            ast::PropertyKind::Method => {
+                let func = self.check_expr(cx, &property.value);
+                match &property.key {
+                    ast::PropertyKey::Computed(key) => {
+                        let key = self.check_expr(cx, key);
+                        // A `Symbol` computed key routes to the symbol-function
+                        // slot (the enabler for user `[Symbol.iterator]` /
+                        // `[Symbol.hasInstance]` methods); a string key uses the
+                        // ordinary string function slot.
+                        if key.ty == Ty::Symbol {
+                            if let Some(builtin) =
+                                self.resolve_collection(span, "dynamicSetSymbolFunction")
+                            {
+                                entries.push(hir::ObjectEntry::Install {
+                                    builtin,
+                                    args: vec![Self::box_to_any(key), func],
+                                });
+                            }
+                        } else if key.ty == Ty::String {
+                            if let Some(builtin) =
+                                self.resolve_collection(span, "dynamicSetFunction")
+                            {
+                                entries.push(hir::ObjectEntry::Install {
+                                    builtin,
+                                    args: vec![key, func],
+                                });
+                            }
+                        } else {
+                            self.error(
+                                span,
+                                "a computed method key must be a string or a Symbol",
+                            );
+                        }
+                    }
+                    _ => {
+                        let name = named_key.expect("named key");
+                        if let Some(builtin) = self.resolve_collection(span, "dynamicSetFunction") {
+                            entries.push(hir::ObjectEntry::Install {
+                                builtin,
+                                args: vec![Self::string_literal(name, span), func],
+                            });
+                        }
+                    }
+                }
+            }
+            ast::PropertyKind::Get | ast::PropertyKind::Set => {
+                let Some(name) = named_key else {
+                    self.error(
+                        span,
+                        "computed getter/setter keys in object literals are not supported yet",
+                    );
+                    return;
+                };
+                let func = self.check_expr(cx, &property.value);
+                let accessor_slot = if property.kind == ast::PropertyKind::Get { "get" } else { "set" };
+                // Build the accessor descriptor `{ get|set: fn }` as a dynamic
+                // object (the function lives in its string function slot), then
+                // install it with objectDefineProperty — the same model
+                // `Object.defineProperty` uses, so the named-key accessor is
+                // invoked on `obj.k` read/write.
+                let Some(set_fn) = self.resolve_collection(span, "dynamicSetFunction") else {
+                    return;
+                };
+                let descriptor = hir::Expr {
+                    kind: hir::ExprKind::DynamicObjectLiteral {
+                        entries: vec![hir::ObjectEntry::Install {
+                            builtin: set_fn,
+                            args: vec![Self::string_literal(accessor_slot.to_string(), span), func],
+                        }],
+                    },
+                    ty: Ty::DynamicObject,
+                    span,
+                };
+                let Some(define) = self.resolve_collection(span, "objectDefineProperty") else {
+                    return;
+                };
+                entries.push(hir::ObjectEntry::Install {
+                    builtin: define,
+                    args: vec![Self::string_literal(name, span), descriptor],
+                });
+            }
+        }
+    }
+
+    /// Lower an array literal, choosing the fixed-length store path when there
+    /// is no spread, and the growable builder path when a spread is present.
+    fn lower_array_literal(
+        &mut self,
+        cx: &mut FunctionCx,
+        elements: &[ast::ArrayElement],
+        span: Span,
+    ) -> hir::Expr {
+        let has_spread = elements
+            .iter()
+            .any(|element| matches!(element, ast::ArrayElement::Spread(_)));
+        if !has_spread {
+            // Fixed-length path: allocate N slots and store each present
+            // element at its index; a hole leaves the index as `undefined`.
+            let elements = elements
+                .iter()
+                .map(|element| match element {
+                    ast::ArrayElement::Expr(expr) => Some(self.check_expr(cx, expr)),
+                    ast::ArrayElement::Hole => None,
+                    ast::ArrayElement::Spread(_) => unreachable!("spread handled above"),
+                })
+                .collect();
+            return hir::Expr {
+                kind: hir::ExprKind::ArrayLiteral { elements },
+                ty: Ty::Array,
+                span,
+            };
+        }
+        let mut parts = Vec::with_capacity(elements.len());
+        for element in elements {
+            match element {
+                ast::ArrayElement::Expr(expr) => {
+                    parts.push(hir::ArrayPart::Element(self.check_expr(cx, expr)));
+                }
+                ast::ArrayElement::Hole => parts.push(hir::ArrayPart::Hole),
+                ast::ArrayElement::Spread(expr) => {
+                    let source = Self::box_to_any(self.check_expr(cx, expr));
+                    let Some((builtin, _)) = zun_natives::resolve("array", "arraySpreadAppend")
+                    else {
+                        self.error(span, "missing Array intrinsic `arraySpreadAppend`");
+                        continue;
+                    };
+                    parts.push(hir::ArrayPart::Spread { builtin, source });
+                }
+            }
+        }
+        hir::Expr {
+            kind: hir::ExprKind::ArraySpreadLiteral { parts },
+            ty: Ty::Array,
+            span,
+        }
+    }
+
     fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
         let span = expr.span();
         match expr {
@@ -2919,55 +3152,14 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::ObjectLiteral { properties, .. } => {
-                // Build a DynamicObject and populate it in source order. Values
-                // box to Any as the dynamic store expects; a computed key is
-                // kept as an expression so a Symbol routes to the symbol slot.
-                let mut entries = Vec::with_capacity(properties.len());
-                for property in properties {
-                    let value = self.check_expr(cx, &property.value);
-                    let value = if value.ty == Ty::Any {
-                        value
-                    } else {
-                        hir::Expr {
-                            span: value.span,
-                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
-                            ty: Ty::Any,
-                        }
-                    };
-                    let key = match &property.key {
-                        ast::PropertyKey::Ident(name) => {
-                            hir::ObjectKey::Named(self.text(name).to_string())
-                        }
-                        ast::PropertyKey::String { value, .. } => {
-                            hir::ObjectKey::Named(value.clone())
-                        }
-                        ast::PropertyKey::Number { value, .. } => {
-                            hir::ObjectKey::Named(value.to_string())
-                        }
-                        ast::PropertyKey::Computed(key) => {
-                            hir::ObjectKey::Computed(self.check_expr(cx, key))
-                        }
-                    };
-                    entries.push(hir::ObjectEntry { key, value });
-                }
+                let entries = self.lower_object_members(cx, properties, span);
                 hir::Expr {
                     kind: hir::ExprKind::DynamicObjectLiteral { entries },
                     ty: Ty::DynamicObject,
                     span,
                 }
             }
-            ast::Expr::ArrayLiteral { elements, .. } => {
-                // Allocate an Array of length N and store each element at its
-                // index. Elements keep their natural type; `StoreArray` boxes
-                // to Any at the store boundary (the dynamic array element
-                // model), so no explicit BoxAny is inserted here.
-                let elements = elements.iter().map(|element| self.check_expr(cx, element)).collect();
-                hir::Expr {
-                    kind: hir::ExprKind::ArrayLiteral { elements },
-                    ty: Ty::Array,
-                    span,
-                }
-            }
+            ast::Expr::ArrayLiteral { elements, .. } => self.lower_array_literal(cx, elements, span),
             ast::Expr::Yield { value, .. } => {
                 if !cx.is_generator {
                     self.error(span, "yield is only valid inside a generator function");
@@ -4582,8 +4774,8 @@ impl Checker<'_> {
                     {
                         self.error(delete_count.span, "`Array.splice` deleteCount must be an integer");
                     }
-                    let items: Vec<hir::Expr> =
-                        args[2..].iter().map(|item| self.check_expr(cx, item)).collect();
+                    let items: Vec<Option<hir::Expr>> =
+                        args[2..].iter().map(|item| Some(self.check_expr(cx, item))).collect();
                     let items = hir::Expr {
                         kind: hir::ExprKind::ArrayLiteral { elements: items },
                         ty: Ty::Array,
@@ -4770,9 +4962,10 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                if receiver.ty == Ty::Any && args.len() <= 2 {
-                    // Dynamic member call on an `any` receiver (e.g. a namespace from
-                    // `import()`): dispatched by name at run time.
+                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 2 {
+                    // Dynamic member call on an `any`/dynamic receiver (e.g. a
+                    // namespace from `import()`, or an object-literal method in
+                    // the function slot): dispatched by name at run time.
                     let native_name = ["dynamicCall0", "dynamicCall1", "dynamicCall2"][args.len()];
                     let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
@@ -7755,15 +7948,26 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         StaticField { .. } => 0,
         ObjectLiteral { properties, .. } => properties
             .iter()
-            .map(|property| {
-                let key = match &property.key {
-                    ast::PropertyKey::Computed(key) => count_yields_in_expr(key),
-                    _ => 0,
-                };
-                key + count_yields_in_expr(&property.value)
+            .map(|member| match member {
+                ast::ObjectMember::Property(property) => {
+                    let key = match &property.key {
+                        ast::PropertyKey::Computed(key) => count_yields_in_expr(key),
+                        _ => 0,
+                    };
+                    key + count_yields_in_expr(&property.value)
+                }
+                ast::ObjectMember::Spread { expr, .. } => count_yields_in_expr(expr),
             })
             .sum(),
-        ArrayLiteral { elements, .. } => elements.iter().map(count_yields_in_expr).sum(),
+        ArrayLiteral { elements, .. } => elements
+            .iter()
+            .map(|element| match element {
+                ast::ArrayElement::Expr(expr) | ast::ArrayElement::Spread(expr) => {
+                    count_yields_in_expr(expr)
+                }
+                ast::ArrayElement::Hole => 0,
+            })
+            .sum(),
     }
 }
 
@@ -7846,15 +8050,26 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         }
         ObjectLiteral { properties, .. } => properties
             .iter()
-            .map(|property| {
-                let key = match &property.key {
-                    ast::PropertyKey::Computed(key) => count_awaits_in_expr(key),
-                    _ => 0,
-                };
-                key + count_awaits_in_expr(&property.value)
+            .map(|member| match member {
+                ast::ObjectMember::Property(property) => {
+                    let key = match &property.key {
+                        ast::PropertyKey::Computed(key) => count_awaits_in_expr(key),
+                        _ => 0,
+                    };
+                    key + count_awaits_in_expr(&property.value)
+                }
+                ast::ObjectMember::Spread { expr, .. } => count_awaits_in_expr(expr),
             })
             .sum(),
-        ArrayLiteral { elements, .. } => elements.iter().map(count_awaits_in_expr).sum(),
+        ArrayLiteral { elements, .. } => elements
+            .iter()
+            .map(|element| match element {
+                ast::ArrayElement::Expr(expr) | ast::ArrayElement::Spread(expr) => {
+                    count_awaits_in_expr(expr)
+                }
+                ast::ArrayElement::Hole => 0,
+            })
+            .sum(),
     }
 }
 

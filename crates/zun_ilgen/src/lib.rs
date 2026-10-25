@@ -1492,19 +1492,33 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::NewDynamic));
                 for entry in entries {
                     self.emit(Instruction::simple(Opcode::Dup));
-                    match &entry.key {
-                        hir::ObjectKey::Named(name) => {
-                            self.expr(&entry.value);
-                            let property = self.module.strings.intern(name);
+                    match entry {
+                        hir::ObjectEntry::Data { key, value } => match key {
+                            hir::ObjectKey::Named(name) => {
+                                self.expr(value);
+                                let property = self.module.strings.intern(name);
+                                self.emit(Instruction::new(
+                                    Opcode::StoreDynamic,
+                                    Operand::StringRef(property.0),
+                                ));
+                            }
+                            hir::ObjectKey::Computed(key) => {
+                                self.expr(key);
+                                self.expr(value);
+                                self.emit(Instruction::simple(Opcode::StoreDynamicValue));
+                            }
+                        },
+                        hir::ObjectEntry::Install { builtin, args } => {
+                            // The object is the dup'd handle (arg0); push the
+                            // remaining args, call the native, and discard its
+                            // result so the object stays as the literal's value.
+                            for arg in args {
+                                self.expr(arg);
+                            }
                             self.emit(Instruction::new(
-                                Opcode::StoreDynamic,
-                                Operand::StringRef(property.0),
+                                Opcode::CallBuiltin,
+                                Operand::Imm32(*builtin as i32),
                             ));
-                        }
-                        hir::ObjectKey::Computed(key) => {
-                            self.expr(key);
-                            self.expr(&entry.value);
-                            self.emit(Instruction::simple(Opcode::StoreDynamicValue));
                         }
                     }
                     self.emit(Instruction::simple(Opcode::Pop));
@@ -1606,12 +1620,50 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(length)));
                 self.emit(Instruction::simple(Opcode::NewArray));
                 for (index, element) in elements.iter().enumerate() {
+                    // A hole leaves the pre-allocated slot alone except that we
+                    // overwrite the default fill with `undefined`, so a hole
+                    // reads as `undefined` (not `0`) while still counting toward
+                    // `length`.
                     let index = i32::try_from(index)
                         .expect("array literal index exceeds i32 range");
                     self.emit(Instruction::simple(Opcode::Dup));
                     self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index)));
-                    self.expr(element);
+                    match element {
+                        Some(element) => self.expr(element),
+                        None => self.emit(Instruction::simple(Opcode::ConstUndef)),
+                    }
                     self.emit(Instruction::simple(Opcode::StoreArray));
+                    self.emit(Instruction::simple(Opcode::Pop));
+                }
+            }
+            ExprKind::ArraySpreadLiteral { parts } => {
+                // Build a growable array (length 0) and append each part in
+                // source order: a plain element and a hole each push one value
+                // (`undefined` for a hole); a spread splices the iterable
+                // source's elements in via `arraySpreadAppend`.
+                self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(0)));
+                self.emit(Instruction::simple(Opcode::NewArray));
+                for part in parts {
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    match part {
+                        hir::ArrayPart::Element(element) => {
+                            self.expr(element);
+                            self.emit(Instruction::simple(Opcode::ArrayPush));
+                        }
+                        hir::ArrayPart::Hole => {
+                            self.emit(Instruction::simple(Opcode::ConstUndef));
+                            self.emit(Instruction::simple(Opcode::ArrayPush));
+                        }
+                        hir::ArrayPart::Spread { builtin, source } => {
+                            self.expr(source);
+                            self.emit(Instruction::new(
+                                Opcode::CallBuiltin,
+                                Operand::Imm32(*builtin as i32),
+                            ));
+                        }
+                    }
+                    // Discard the per-part result (push length / native return),
+                    // leaving the array as the literal's value.
                     self.emit(Instruction::simple(Opcode::Pop));
                 }
             }
