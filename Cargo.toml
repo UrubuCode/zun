@@ -23,6 +23,7 @@ members = [
     "crates/zun_loader",
     "crates/zun_types",
     "crates/zun_regex",
+    "crates/zun_runtime",
 ]
 
 [workspace.dependencies]

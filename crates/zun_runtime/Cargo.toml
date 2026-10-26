@@ -1,0 +1,23 @@
+[package]
+name = "zun_runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Zun shared runtime: a cdylib exposing the stable zun_rt_* C ABI."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zun_vm = { path = "../zun_vm" }
+
+[dev-dependencies]
+libloading = "0.8"
+zstd = "0.13"
+zun_syntax = { path = "../zun_syntax" }
+zun_sema = { path = "../zun_sema" }
+zun_ilgen = { path = "../zun_ilgen" }
+
+[lints]
+workspace = true
