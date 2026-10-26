@@ -28,6 +28,7 @@ zun_gc = { path = "../zun_gc" }
 zun_natives = { path = "../zun_natives" }
 zun_abi = { path = "../zun_abi" }
 libloading = "0.8"
+target-lexicon = { workspace = true }
 
 [dev-dependencies]
 zun_vm = { path = ".", features = ["eval"] }

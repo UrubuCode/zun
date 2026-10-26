@@ -1234,6 +1234,54 @@ impl Zmlib {
             .map(|(_, bytes)| bytes.as_slice())
     }
 
+    /// Materialize the native object for `triple` into
+    /// `<cache_root>/native/<content-hash>.<ext>` and return its path, or
+    /// `Ok(None)` when the package carries no object for that triple (a
+    /// pure-ZIL package, or another platform's object).
+    ///
+    /// A native library cannot be loaded from memory, and a mapped library
+    /// cannot be deleted while in use, so the file is content-addressed: an
+    /// existing file whose bytes hash to the locked identity is reused and
+    /// never rewritten. New files are written to a temporary name and renamed
+    /// so a concurrent load never observes a partial library.
+    pub fn materialize_native_object(
+        &self,
+        cache_root: impl AsRef<Path>,
+        triple: &str,
+    ) -> Result<Option<PathBuf>, LoadError> {
+        let Some(bytes) = self.native_object_for(triple) else {
+            return Ok(None);
+        };
+        let id = content_id(bytes);
+        let ext = if triple.contains("windows") {
+            "dll"
+        } else if triple.contains("apple") || triple.contains("darwin") {
+            "dylib"
+        } else {
+            "so"
+        };
+        let dir = cache_root.as_ref().join("native");
+        let path = dir.join(format!("{}.{ext}", id.hex()));
+        if let Ok(existing) = std::fs::read(&path) {
+            if content_id(&existing) == id {
+                return Ok(Some(path));
+            }
+        }
+        std::fs::create_dir_all(&dir).map_err(LoadError::Io)?;
+        let tmp = dir.join(format!("{}.{}.tmp", id.hex(), std::process::id()));
+        std::fs::write(&tmp, bytes).map_err(LoadError::Io)?;
+        if let Err(error) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            // A concurrent loader may have won the race (and may hold the file
+            // mapped on Windows); accept it when the content is right.
+            match std::fs::read(&path) {
+                Ok(existing) if content_id(&existing) == id => {}
+                _ => return Err(LoadError::Io(error)),
+            }
+        }
+        Ok(Some(path))
+    }
+
     /// Verify the package lock against a release-pinned registry key.
     pub fn verify_against(&self, trusted_key: &[u8; 32]) -> Result<(), LoadError> {
         self.lock.verify_against(trusted_key)
@@ -2590,6 +2638,56 @@ mod tests {
         assert!(loader.load_zmlib(&loaded).is_err());
         std::fs::remove_file(path).unwrap();
         assert!(Zmlib::new(package.lock, vec![("app".into(), b"tampered".to_vec())]).is_err());
+    }
+
+    #[test]
+    fn zmlib_materializes_native_object_content_addressed_and_reuses_it() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let payload = b"serialized zm".to_vec();
+        let native = b"fake-native-bytes".to_vec();
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(&payload)).unwrap();
+        lock.push("t-host.nativeobj", content_id(&native)).unwrap();
+        let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let lock_bytes = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&lock_bytes).to_bytes(),
+        )
+        .unwrap();
+        let package = Zmlib::new(signed.clone(), vec![("app".into(), payload.clone())])
+            .unwrap()
+            .with_native_objects(vec![("t-host".into(), native.clone())])
+            .unwrap();
+        let root = std::env::temp_dir().join(format!("zun-nat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(package.materialize_native_object(&root, "other").unwrap(), None);
+        let path = package
+            .materialize_native_object(&root, "t-host")
+            .unwrap()
+            .unwrap();
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(&content_id(&native).hex()));
+        assert_eq!(std::fs::read(&path).unwrap(), native);
+        let first = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let again = package
+            .materialize_native_object(&root, "t-host")
+            .unwrap()
+            .unwrap();
+        assert_eq!(again, path);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), first);
+        // A corrupted cache file is repaired.
+        std::fs::write(&path, b"junk").unwrap();
+        package.materialize_native_object(&root, "t-host").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), native);
+        // Pure-ZIL package: no native step.
+        let pure = Zmlib::new(signed, vec![("app".into(), payload)]).unwrap();
+        assert_eq!(pure.materialize_native_object(&root, "t-host").unwrap(), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

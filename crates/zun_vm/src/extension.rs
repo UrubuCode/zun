@@ -55,6 +55,49 @@ impl ExtensionResolver {
             .expect("extension inserted or cached"))
     }
 
+    /// Materialize and register a `.zmlib`'s embedded native extension for
+    /// `triple` (the host triple in production). Returns `Ok(false)` when the
+    /// package has no object for that triple. The library handle is stored in
+    /// this resolver, keeping its mapping valid for the resolver's lifetime;
+    /// the cache file is content-hash named, so a repeat load reuses it.
+    ///
+    /// # Safety
+    /// The package lock must already be verified against trusted keys; the
+    /// embedded library is then trusted native code implementing the v1
+    /// registration contract and runs during registration.
+    pub unsafe fn load_zmlib_native(
+        &mut self,
+        package: &zun_loader::Zmlib,
+        cache_root: impl AsRef<Path>,
+        triple: &str,
+    ) -> Result<bool, FfiError> {
+        let path = package
+            .materialize_native_object(cache_root, triple)
+            .map_err(|error| {
+                FfiError::new(format!("native object materialization failed: {error}"))
+            })?;
+        let Some(path) = path else {
+            return Ok(false);
+        };
+        let path = std::path::absolute(&path).map_err(|error| {
+            FfiError::new(format!("native object path is unusable: {error}"))
+        })?;
+        let key = path.to_string_lossy().into_owned();
+        if !self.extensions.contains_key(&key) {
+            // SAFETY: forwarded from the caller's trusted-extension contract.
+            let extension = unsafe { LoadedExtension::load_path(&path) }?;
+            self.extensions.insert(key, extension);
+        }
+        Ok(true)
+    }
+
+    /// Look up a registered function across all stored extensions.
+    pub fn find_function(&self, module: &str, key: &str) -> Option<&OwnedFunction> {
+        self.extensions
+            .values()
+            .find_map(|extension| extension.find_function(module, key))
+    }
+
     pub fn contains(&self, name: &str) -> bool {
         self.extensions.contains_key(name)
     }
@@ -177,4 +220,10 @@ mod tests {
         assert!(!resolver.contains("zun-extension-that-does-not-exist"));
         assert_eq!(resolver.len(), 0);
     }
+}
+
+/// The host target triple (compile-time), matching the keys of a `.zmlib`'s
+/// embedded native objects.
+pub fn host_triple() -> String {
+    target_lexicon::Triple::host().to_string()
 }
