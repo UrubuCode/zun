@@ -24,6 +24,7 @@ members = [
     "crates/zun_types",
     "crates/zun_regex",
     "crates/zun_runtime",
+    "xtask",
 ]
 
 [workspace.dependencies]

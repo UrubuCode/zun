@@ -1,0 +1,11 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Dev-only release packaging tasks (not shipped)."
+
+[dependencies]
+sha2.workspace = true
+zstd = "0.13"

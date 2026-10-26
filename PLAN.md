@@ -449,6 +449,8 @@ compress to ~10–20 MB. (The 633 MB static `zun_vm.lib` / 72 MB per-binary figu
 debug, no-strip, statically-linked-per-binary artifact of the dev prototype — this phase
 replaces that with a shared, compressed engine.)
 
+**Packaging recipe (implemented):** `cargo run -p xtask -- package` builds `zun_runtime --release`, zstd-compresses the artifact to `target/package/zun-runtime.<ext>.zst`, rebuilds `zun_cli --release` with `ZUN_EMBED_RUNTIME` pointing at it, prints sizes, then runs the end-to-end check (fresh `ZUN_HOME`, embedded `zun install`, SHA-256 match, second install is a no-op). `cargo run -p xtask -- verify` re-runs only the check. See `xtask/src/main.rs`.
+
 **Install layout (`~/.zun/`, inspired by Bun):**
 ```
 ~/.zun/
