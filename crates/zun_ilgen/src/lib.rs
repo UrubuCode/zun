@@ -148,6 +148,8 @@ struct Layout {
 /// Lower a checked program into a `.zm` module.
 pub fn lower(program: &hir::Program) -> Module {
     let mut module = Module::new();
+    module.requires_codegen = !program.codegen_sites.is_empty();
+    module.codegen_sites = program.codegen_sites.clone();
     let layout = emit_classes(program, &mut module);
 
     // Reserve one MethodDef per function first so call sites can name any

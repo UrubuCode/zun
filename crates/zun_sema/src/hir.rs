@@ -227,6 +227,10 @@ pub struct Program {
     /// outside the compilable subset (lookaround/backref/etc.). A
     /// [`ExprKind::RegexMatch`] `matcher` indexes this vector.
     pub regex_matchers: Vec<CompiledRegex>,
+    /// Source spans (start, end) of runtime code-generation sites
+    /// (new Function / Function(src) / eval). Non-empty means the module
+    /// requires the codegen capability.
+    pub codegen_sites: Vec<(u32, u32)>,
 }
 
 /// A static regex to be synthesized to a ZIL matcher at IL-generation time.

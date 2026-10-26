@@ -111,6 +111,7 @@ fn check_impl(
         external_by_name.insert(function.name.clone(), function.clone());
     }
     let mut checker = Checker {
+        codegen_sites: Vec::new(),
         source,
         diagnostics,
         signatures: Vec::new(),
@@ -189,6 +190,7 @@ fn check_impl(
         module_init,
         closures: checker.closures,
         regex_matchers: checker.regex_matchers,
+        codegen_sites: checker.codegen_sites,
     }
 }
 
@@ -256,6 +258,7 @@ struct ClassInfo {
 }
 
 struct Checker<'a> {
+    codegen_sites: Vec<(u32, u32)>,
     source: &'a str,
     diagnostics: &'a mut Vec<Diagnostic>,
     signatures: Vec<Signature>,
@@ -2410,6 +2413,7 @@ impl Checker<'_> {
             self.error(span, "missing `functionConstruct` intrinsic");
             return self.poison(span);
         };
+        self.codegen_sites.push((span.start, span.end));
         let array = hir::Expr {
             kind: hir::ExprKind::ArrayLiteral { elements },
             ty: Ty::Array,

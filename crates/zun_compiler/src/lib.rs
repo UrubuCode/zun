@@ -222,6 +222,8 @@ pub fn trim_module_with_roots(module: &Module, roots: &[u32]) -> Result<Module, 
         blobs: module.blobs.clone(),
         tables,
         sequence_points: module.sequence_points.clone(),
+        requires_codegen: module.requires_codegen,
+        codegen_sites: module.codegen_sites.clone(),
     })
 }
 

@@ -238,6 +238,25 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
         }
     };
 
+    if let Action::Build { aot, .. } = &action {
+        if module.requires_codegen {
+            if *aot {
+                let target = match aot_target() {
+                    Ok(target) => target,
+                    Err(error) => {
+                        eprintln!("zun: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                if let Some(message) = ios_codegen_error(&target, file, &source, &module) {
+                    eprintln!("{message}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            eprintln!("zun: note: this artifact requires the `codegen` capability (runtime code generation)");
+        }
+    }
+
     let preserve_roots = match &action {
         Action::Build {
             preserve_roots: Some(path),
@@ -917,6 +936,39 @@ fn report(file: &str, source: &str, diags: &[Diagnostic]) {
     }
 }
 
+/// True for Apple-mobile targets (iOS, tvOS, watchOS, visionOS), where the
+/// platform forbids runtime code generation.
+fn is_apple_mobile(target: &target_lexicon::Triple) -> bool {
+    let text = target.to_string();
+    ["-ios", "-tvos", "-watchos", "-visionos"]
+        .iter()
+        .any(|marker| text.contains(marker))
+}
+
+/// Build error for a module that generates code at runtime on an iOS target.
+fn ios_codegen_error(
+    target: &target_lexicon::Triple,
+    file: &str,
+    source: &str,
+    module: &Module,
+) -> Option<String> {
+    if !module.requires_codegen || !is_apple_mobile(target) {
+        return None;
+    }
+    let sites = module
+        .codegen_sites
+        .iter()
+        .map(|(start, _)| {
+            let (line, col) = line_col(source, *start);
+            format!("{file}:{line}:{col}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "zun: error: runtime code generation (`new Function`/`eval`) is not available on iOS targets (`{target}`) — used at {sites}"
+    ))
+}
+
 fn warn_dynamic_fallback(report: &zun_compiler::TrimReport) {
     eprintln!(
         "zun: warning: dynamic/reflection operations require embedded-IL interpreter fallback"
@@ -1003,5 +1055,48 @@ mod tests {
             target_env_name("ZUN_LLD", "aarch64-unknown-linux-gnu"),
             "ZUN_LLD_AARCH64_UNKNOWN_LINUX_GNU"
         );
+    }
+}
+
+#[cfg(test)]
+mod codegen_gate_tests {
+    use super::ios_codegen_error;
+
+    const EVAL: &str = "function main() {\n  let f = new Function(\"a\", \"return a;\");\n  print((f(1.0)) as number);\n}\n";
+
+    fn compile(src: &str) -> zun_module::Module {
+        zun_compiler::compile(src).expect("compiles")
+    }
+
+    #[test]
+    fn eval_program_requires_codegen_and_roundtrips() {
+        let module = compile(EVAL);
+        assert!(module.requires_codegen);
+        assert_eq!(module.capabilities(), vec!["codegen"]);
+        let read = zun_module::Module::read(&module.write()).unwrap();
+        assert!(read.requires_codegen);
+        assert_eq!(read.codegen_sites, module.codegen_sites);
+    }
+
+    #[test]
+    fn plain_program_has_no_codegen() {
+        let module = compile("function main(): number { return 1; }
+");
+        assert!(!module.requires_codegen);
+        assert!(module.capabilities().is_empty());
+    }
+
+    #[test]
+    fn ios_gate_errors_only_on_ios() {
+        let module = compile(EVAL);
+        let ios: target_lexicon::Triple = "aarch64-apple-ios".parse().unwrap();
+        let message = ios_codegen_error(&ios, "x.ts", EVAL, &module).expect("ios errors");
+        assert!(message.contains("not available on iOS"));
+        assert!(message.contains("x.ts:2:"));
+        let host = target_lexicon::Triple::host();
+        assert!(ios_codegen_error(&host, "x.ts", EVAL, &module).is_none());
+        let plain = compile("function main(): number { return 1; }
+");
+        assert!(ios_codegen_error(&ios, "x.ts", "", &plain).is_none());
     }
 }

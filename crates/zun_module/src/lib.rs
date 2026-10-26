@@ -25,6 +25,19 @@
 //!     56     …  section bytes
 //! ```
 //!
+//! After the debug section an optional trailer may follow (minor >= 3), written
+//! only when it carries data so ordinary modules are byte-identical to before:
+//!
+//! ```text
+//!      0     4  trailer magic "ZFLG"
+//!      4     4  module flags (bit 0: requires_codegen)
+//!      8     4  eval-site count N
+//!     12  N*8  eval sites: (source_start u32, source_end u32)
+//! ```
+//!
+//! Older readers slice sections by header offsets and ignore the trailer; a
+//! module without one reads as requires_codegen = false.
+//!
 //! The writer lays sections out contiguously in that order, so writing then
 //! reading is byte-exact (deterministic builds fall out of this plus the
 //! deduplicated heaps).
@@ -45,9 +58,11 @@ pub const MAGIC: [u8; 4] = *b"ZUNM";
 /// Current format major version. Bump only on breaking layout changes.
 pub const FORMAT_MAJOR: u16 = 1;
 /// Current format minor version. Bump on backward-compatible additions.
-pub const FORMAT_MINOR: u16 = 2;
+pub const FORMAT_MINOR: u16 = 3;
 
 const HEADER_LEN: usize = 56;
+const TRAILER_MAGIC: [u8; 4] = *b"ZFLG";
+const FLAG_REQUIRES_CODEGEN: u32 = 1;
 
 /// A source mapping for one instruction boundary in one method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +104,12 @@ pub struct Module {
     pub tables: Tables,
     /// Optional PC-to-source mappings used by stack capture and diagnostics.
     pub sequence_points: Vec<SequencePoint>,
+    /// True when the program uses runtime code generation (new Function /
+    /// Function(src) / eval). Persisted in the trailer; the deploy layer maps
+    /// it to the "codegen" capability.
+    pub requires_codegen: bool,
+    /// Source byte spans of the code-generation sites (for diagnostics).
+    pub codegen_sites: Vec<(u32, u32)>,
 }
 
 impl Default for Module {
@@ -108,6 +129,17 @@ impl Module {
             blobs: BlobHeap::new(),
             tables: Tables::new(),
             sequence_points: Vec::new(),
+            requires_codegen: false,
+            codegen_sites: Vec::new(),
+        }
+    }
+
+    /// Capabilities this module declares on its own (currently "codegen").
+    pub fn capabilities(&self) -> Vec<&'static str> {
+        if self.requires_codegen {
+            vec!["codegen"]
+        } else {
+            Vec::new()
         }
     }
 
@@ -180,6 +212,15 @@ impl Module {
             out.extend_from_slice(&point.source_start.to_le_bytes());
             out.extend_from_slice(&point.source_end.to_le_bytes());
         }
+        if self.requires_codegen {
+            out.extend_from_slice(&TRAILER_MAGIC);
+            out.extend_from_slice(&FLAG_REQUIRES_CODEGEN.to_le_bytes());
+            out.extend_from_slice(&(self.codegen_sites.len() as u32).to_le_bytes());
+            for (start, end) in &self.codegen_sites {
+                out.extend_from_slice(&start.to_le_bytes());
+                out.extend_from_slice(&end.to_le_bytes());
+            }
+        }
         out
     }
 
@@ -222,6 +263,28 @@ impl Module {
             })
             .collect();
 
+        let mut requires_codegen = false;
+        let mut codegen_sites = Vec::new();
+        let debug_base = u32::from_le_bytes(bytes[48..52].try_into().unwrap()) as usize;
+        let trailer_off = debug_base + debug.len();
+        if let Some(t) = bytes.get(trailer_off..) {
+            if t.len() >= 12 && t[0..4] == TRAILER_MAGIC {
+                requires_codegen =
+                    u32::from_le_bytes(t[4..8].try_into().unwrap()) & FLAG_REQUIRES_CODEGEN != 0;
+                let n = u32::from_le_bytes(t[8..12].try_into().unwrap()) as usize;
+                let sites = t.get(12..12 + n * 8).ok_or(ReadError::Truncated)?;
+                codegen_sites = sites
+                    .chunks_exact(8)
+                    .map(|c| {
+                        (
+                            u32::from_le_bytes(c[0..4].try_into().unwrap()),
+                            u32::from_le_bytes(c[4..8].try_into().unwrap()),
+                        )
+                    })
+                    .collect();
+            }
+        }
+
         Ok(Self {
             entry_point: if entry_raw == 0 {
                 None
@@ -238,6 +301,8 @@ impl Module {
             blobs,
             tables,
             sequence_points,
+            requires_codegen,
+            codegen_sites,
         })
     }
 }
@@ -272,3 +337,29 @@ impl core::fmt::Display for ReadError {
 }
 
 impl std::error::Error for ReadError {}
+
+#[cfg(test)]
+mod codegen_flag_tests {
+    use super::*;
+
+    #[test]
+    fn requires_codegen_roundtrips_with_sites() {
+        let mut module = Module::new();
+        module.requires_codegen = true;
+        module.codegen_sites = vec![(4, 20), (30, 44)];
+        let read = Module::read(&module.write()).unwrap();
+        assert!(read.requires_codegen);
+        assert_eq!(read.codegen_sites, vec![(4, 20), (30, 44)]);
+        assert_eq!(read.capabilities(), vec!["codegen"]);
+    }
+
+    #[test]
+    fn plain_module_has_no_trailer_and_reads_false() {
+        let module = Module::new();
+        let bytes = module.write();
+        assert!(!bytes.windows(4).any(|w| w == b"ZFLG"));
+        let read = Module::read(&bytes).unwrap();
+        assert!(!read.requires_codegen);
+        assert!(read.codegen_sites.is_empty());
+    }
+}
