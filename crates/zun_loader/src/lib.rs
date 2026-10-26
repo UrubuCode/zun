@@ -1150,11 +1150,15 @@ pub struct Zmlib {
     /// Optional `.zmlib` type declaration payloads keyed by module identity.
     /// Debug information remains in each serialized `.zm` module.
     pub type_declarations: Vec<(String, Vec<u8>)>,
+    /// Embedded native extension library bytes keyed by target triple
+    /// (e.g. `x86_64-pc-windows-msvc`). Each payload is authenticated by the
+    /// lock entry `<triple>.nativeobj`. A pure-ZIL package carries none.
+    pub native_objects: Vec<(String, Vec<u8>)>,
 }
 
 impl Zmlib {
     const MAGIC: &'static [u8; 5] = b"ZMLIB";
-    const VERSION: u16 = 2;
+    const VERSION: u16 = 3;
 
     /// Construct a package and ensure every payload matches its lock entry.
     pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
@@ -1180,7 +1184,54 @@ impl Zmlib {
             lock,
             modules,
             type_declarations: Vec::new(),
+            native_objects: Vec::new(),
         })
+    }
+
+    /// Attach native extension library bytes keyed by target triple. Each
+    /// payload must match the lock entry `<triple>.nativeobj` by content hash.
+    pub fn with_native_objects(
+        mut self,
+        objects: Vec<(String, Vec<u8>)>,
+    ) -> Result<Self, LoadError> {
+        let mut seen = std::collections::HashSet::new();
+        for (triple, payload) in &objects {
+            if triple.is_empty() || !seen.insert(triple) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "invalid or duplicate native object triple `{triple}`"
+                )));
+            }
+            let identity_name = format!("{triple}.nativeobj");
+            let expected = self
+                .lock
+                .lock
+                .entries
+                .iter()
+                .find(|(entry, _)| entry == &identity_name)
+                .map(|(_, id)| *id)
+                .ok_or_else(|| {
+                    LoadError::InvalidManifest(format!(
+                        "native object `{identity_name}` is not locked"
+                    ))
+                })?;
+            if expected != content_id(payload) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "native object `{identity_name}` has content identity mismatch"
+                )));
+            }
+        }
+        self.native_objects = objects;
+        Ok(self)
+    }
+
+    /// Native library bytes for an exact target triple, if embedded. A loader
+    /// writes these to a file, `libloading`s it, and registers its `zun_abi`
+    /// exports.
+    pub fn native_object_for(&self, triple: &str) -> Option<&[u8]> {
+        self.native_objects
+            .iter()
+            .find(|(t, _)| t == triple)
+            .map(|(_, bytes)| bytes.as_slice())
     }
 
     /// Verify the package lock against a release-pinned registry key.
@@ -1248,6 +1299,12 @@ impl Zmlib {
             bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
             bytes.extend_from_slice(payload);
         }
+        bytes.extend_from_slice(&(self.native_objects.len() as u32).to_le_bytes());
+        for (triple, payload) in &self.native_objects {
+            write_name(&mut bytes, triple);
+            bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(payload);
+        }
         bytes
     }
 
@@ -1305,10 +1362,30 @@ impl Zmlib {
                 type_declarations.push((name, payload));
             }
         }
+        let mut native_objects = Vec::new();
+        if version >= 3 {
+            let count = read_u32(bytes, &mut cursor).ok_or_else(|| {
+                LoadError::InvalidManifest("truncated zmlib native object count".into())
+            })? as usize;
+            for _ in 0..count {
+                let triple = read_name(bytes, &mut cursor)?;
+                let len = read_u32(bytes, &mut cursor).ok_or_else(|| {
+                    LoadError::InvalidManifest("truncated zmlib native object length".into())
+                })? as usize;
+                let payload = take(bytes, &mut cursor, len)
+                    .ok_or_else(|| {
+                        LoadError::InvalidManifest("truncated zmlib native object".into())
+                    })?
+                    .to_vec();
+                native_objects.push((triple, payload));
+            }
+        }
         if cursor != bytes.len() {
             return Err(LoadError::InvalidManifest("trailing zmlib bytes".into()));
         }
-        Self::new(lock, modules)?.with_type_declarations(type_declarations)
+        Self::new(lock, modules)?
+            .with_type_declarations(type_declarations)?
+            .with_native_objects(native_objects)
     }
 
     /// Write a `.zmlib` package to disk.
@@ -2513,6 +2590,63 @@ mod tests {
         assert!(loader.load_zmlib(&loaded).is_err());
         std::fs::remove_file(path).unwrap();
         assert!(Zmlib::new(package.lock, vec![("app".into(), b"tampered".to_vec())]).is_err());
+    }
+
+    #[test]
+    fn zmlib_embeds_authenticated_native_objects_per_triple() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let payload = b"serialized zm".to_vec();
+        let win = b"MZ-native-windows".to_vec();
+        let lin = b"ELF-native-linux".to_vec();
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(&payload)).unwrap();
+        lock.push("x86_64-pc-windows-msvc.nativeobj", content_id(&win))
+            .unwrap();
+        lock.push("x86_64-unknown-linux-gnu.nativeobj", content_id(&lin))
+            .unwrap();
+        let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let lock_bytes = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            signing.verifying_key().to_bytes(),
+            signing.sign(&lock_bytes).to_bytes(),
+        )
+        .unwrap();
+        let objects = vec![
+            ("x86_64-pc-windows-msvc".to_string(), win.clone()),
+            ("x86_64-unknown-linux-gnu".to_string(), lin.clone()),
+        ];
+        let package = Zmlib::new(signed.clone(), vec![("app".into(), payload.clone())])
+            .unwrap()
+            .with_native_objects(objects.clone())
+            .unwrap();
+        let bytes = package.write();
+        let read = Zmlib::read(&bytes).unwrap();
+        assert_eq!(read.native_objects, objects);
+        assert_eq!(read, package);
+        assert_eq!(
+            read.native_object_for("x86_64-pc-windows-msvc"),
+            Some(&win[..])
+        );
+        assert_eq!(read.native_object_for("aarch64-apple-darwin"), None);
+        // Tampering a native payload byte fails validation.
+        let mut tampered = bytes.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0xff;
+        assert!(Zmlib::read(&tampered).is_err());
+        assert!(
+            Zmlib::new(signed.clone(), vec![("app".into(), payload.clone())])
+                .unwrap()
+                .with_native_objects(vec![("x86_64-pc-windows-msvc".into(), b"bad".to_vec())])
+                .is_err()
+        );
+        // Version-2 package (no native section) still reads.
+        let v2 = Zmlib::new(signed, vec![("app".into(), payload)]).unwrap();
+        let mut v2_bytes = v2.write();
+        v2_bytes[5..7].copy_from_slice(&2u16.to_le_bytes());
+        v2_bytes.truncate(v2_bytes.len() - 4); // drop the empty native count
+        let old = Zmlib::read(&v2_bytes).unwrap();
+        assert!(old.native_objects.is_empty());
     }
 
     #[test]
