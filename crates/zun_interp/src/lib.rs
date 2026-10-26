@@ -8,6 +8,7 @@
 
 mod builtins;
 mod collections;
+mod decorators;
 mod errors;
 mod eval;
 mod gc_policy;
@@ -1618,6 +1619,13 @@ impl Interp<'_> {
                     for value in self.static_fields.values_mut() {
                         Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
                     }
+                    decorators::rewrite_decorator_fields(
+                        &mut self.decorator_initializers,
+                        &mut self.class_named_methods,
+                        &mut self.instance_initializers,
+                        &mut self.field_transforms,
+                        relocation,
+                    );
                     self.async_state.rewrite_after_move(relocation);
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);
@@ -1638,6 +1646,13 @@ impl Interp<'_> {
                     for value in self.static_fields.values_mut() {
                         Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
                     }
+                    decorators::rewrite_decorator_fields(
+                        &mut self.decorator_initializers,
+                        &mut self.class_named_methods,
+                        &mut self.instance_initializers,
+                        &mut self.field_transforms,
+                        relocation,
+                    );
                     self.async_state.rewrite_after_move(relocation);
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);

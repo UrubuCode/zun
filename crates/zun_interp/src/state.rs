@@ -36,9 +36,15 @@ pub(super) struct Interp<'a> {
     pub(super) class_field_defaults: HashMap<(u32, u32), Value>,
     /// Pending class-decorator `addInitializer` callbacks, queued by
     /// `decoratorAddInitializer` and drained by `decoratorRunInitializers`.
-    /// Closure environments are not GC-rooted here; the queue lives only
-    /// between a decorator call and the immediately following drain.
+    /// Rooted and relocated with the other decorator side tables (see
+    /// `decorators.rs`), so a collection between the decorator call and the
+    /// drain cannot free a queued closure environment.
     pub(super) decorator_initializers: Vec<zun_core::FunctionHandle>,
+    /// Instance-bound `addInitializer` callbacks `(class rid, fn)`, run by
+    /// `classInstanceInit` on every new instance of the class or a subclass.
+    pub(super) instance_initializers: Vec<(u32, zun_core::FunctionHandle)>,
+    /// Field decorator initializer-transforms `(class rid, field slot, fn)`.
+    pub(super) field_transforms: Vec<(u32, u32, zun_core::FunctionHandle)>,
     /// Most recent executing frame/program counter, used for source-aware
     /// diagnostics at the public runner boundary.
     pub(super) active_frame: Option<(u32, u32)>,
@@ -242,6 +248,7 @@ impl<'a> Interp<'a> {
         &mut self,
         relocation: &zun_gc::RelocationMap,
     ) -> usize {
+        self.rewrite_decorator_tables(relocation);
         self.async_state.rewrite_after_move(relocation)
     }
 }
@@ -311,6 +318,7 @@ impl<'a> Interp<'a> {
     /// owned by [`AsyncState`] and are rooted from here while they sit in their
     /// side tables, exactly as the actively suspended frame is.
     pub(super) fn append_parked_roots(&self, roots: &mut Vec<Obj>) {
+        self.append_decorator_roots(roots);
         for parked in self.async_state.parked.values() {
             parked.frame.append_managed_roots(roots);
         }

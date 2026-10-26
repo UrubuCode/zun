@@ -226,6 +226,14 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "classSetMethod",
         "classSetFieldDefault",
         "functionConstruct",
+        "classReplaceMethod",
+        "classBoundMethod",
+        "classMethodBox",
+        "classSetFieldTransform",
+        "classInstanceInit",
+        "decoratorAddInstanceInitializer",
+        "decoratorAccessGet",
+        "decoratorAccessSet",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))

@@ -42,6 +42,9 @@ impl<'a> Interp<'a> {
         if let Some(result) = self.call_typed_array_ext(name, args) {
             return result;
         }
+        if let Some(result) = self.call_decorator_native(name, args) {
+            return result;
+        }
         let object = |value: &Value| match value {
             Value::Object(object) => Some(*object),
             Value::Any(any) => any
@@ -2225,10 +2228,15 @@ impl<'a> Interp<'a> {
                 Ok(Value::Void)
             }
             "decoratorRunInitializers" => {
-                // Drain first so a callback that registers more initializers
-                // cannot extend the batch being run.
-                let pending = std::mem::take(&mut self.decorator_initializers);
-                for function in pending {
+                // Run only the batch queued so far (a callback that registers
+                // more initializers cannot extend it), popping one at a time so
+                // the not-yet-run tail stays in the rooted queue.
+                let batch = self.decorator_initializers.len();
+                for _ in 0..batch {
+                    if self.decorator_initializers.is_empty() {
+                        break;
+                    }
+                    let function = self.decorator_initializers.remove(0);
                     self.invoke_function_value(function, vec![Value::Any(zun_core::Any::null())])?;
                 }
                 Ok(Value::Void)
@@ -4688,6 +4696,7 @@ impl<'a> Interp<'a> {
             }
             obj
         });
+        let obj = self.run_instance_hooks(obj)?;
         let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(obj).box_any(heap))
             .unwrap_or_else(zun_core::Any::null);
         Ok(Value::Any(boxed))

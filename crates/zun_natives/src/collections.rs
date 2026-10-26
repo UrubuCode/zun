@@ -517,6 +517,28 @@ pub const MODULE: crate::Module = crate::Module {
         // injected `EvalHost`; with no host it throws "code generation from strings
         // disallowed". Appended last so existing dispatch ids stay stable.
         NativeFn { name: "functionConstruct", params: &[Array], ret: Function, imp: unavailable },
+        // NUCLEUS #25 decorator residuals. `classReplaceMethod(classRid, name, fn)`
+        // overwrites a decorated method's `class_named_methods` entry with the
+        // function a method decorator returned; `classBoundMethod(receiver,
+        // declClassRid, name)` resolves the receiver's runtime-class entry
+        // (walking to the declaring class) and binds the receiver as `this`, so a
+        // decorated-method call site is an indirect call; `classMethodBox(classRid,
+        // name)` hands the current entry to a decorator as its `value` (a
+        // `functionBox` record). `classSetFieldTransform` stores a field
+        // decorator's returned `(initial) => value`; `classInstanceInit(obj)` runs
+        // field transforms and instance `addInitializer` callbacks on a new
+        // instance and returns it; `decoratorAddInstanceInitializer`,
+        // `decoratorAccessGet` and `decoratorAccessSet` back the typed
+        // `DecoratorContext` (`builtin/decorators.zun`). Appended last so existing
+        // dispatch ids stay stable.
+        NativeFn { name: "classReplaceMethod", params: &[U32, Str, Function], ret: Void, imp: unavailable },
+        NativeFn { name: "classBoundMethod", params: &[Opaque, U32, Str], ret: Function, imp: unavailable },
+        NativeFn { name: "classMethodBox", params: &[U32, Str], ret: Opaque, imp: unavailable },
+        NativeFn { name: "classSetFieldTransform", params: &[U32, U32, Function], ret: Void, imp: unavailable },
+        NativeFn { name: "classInstanceInit", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "decoratorAddInstanceInitializer", params: &[F64, Function], ret: Void, imp: unavailable },
+        NativeFn { name: "decoratorAccessGet", params: &[Opaque, F64, F64, Str], ret: Opaque, imp: unavailable },
+        NativeFn { name: "decoratorAccessSet", params: &[Opaque, F64, F64, Str, Opaque], ret: Void, imp: unavailable },
     ],
 };
 
