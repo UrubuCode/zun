@@ -271,6 +271,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "dateToLocaleDateString", params: &[I64, Str], ret: Str, imp: to_locale_date_string },
         NativeFn { name: "dateToLocaleTimeString", params: &[I64, Str], ret: Str, imp: to_locale_time_string },
         NativeFn { name: "intlDateTimeFormat", params: &[Str, I64], ret: Str, imp: intl_date_time_format },
+        NativeFn { name: "localOffsetMinutes", params: &[I64, Str], ret: I32, imp: local_offset_minutes },
+        NativeFn { name: "localToUtc", params: &[I64, Str], ret: I64, imp: local_to_utc },
     ],
 };
 
@@ -327,4 +329,40 @@ fn to_locale_date_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeV
 
 fn to_locale_time_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     locale_format(args, "dateToLocaleTimeString", LocaleKind::Time)
+}
+
+/// Resolve a zone: an IANA id, or the host zone when empty.
+fn zone_of(args: &[NativeArg]) -> jiff::tz::TimeZone {
+    match args.get(1) {
+        Some(NativeArg::Str(id)) if !id.is_empty() => {
+            jiff::tz::TimeZone::get(id).unwrap_or(jiff::tz::TimeZone::UTC)
+        }
+        _ => jiff::tz::TimeZone::system(),
+    }
+}
+
+/// Signed offset of `zone` from UTC (local - UTC) in minutes at a UTC instant.
+/// ECMAScript's `getTimezoneOffset` is the negation of this.
+pub fn local_offset_minutes_at(utc_millis: i64, zone: &jiff::tz::TimeZone) -> i32 {
+    jiff::Timestamp::from_millisecond(utc_millis)
+        .map(|ts| zone.to_offset(ts).seconds() / 60)
+        .unwrap_or(0)
+}
+
+fn local_offset_minutes(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let utc = millis(args, "localOffsetMinutes")?;
+    Ok(NativeValue::Int(local_offset_minutes_at(utc, &zone_of(args)) as i64))
+}
+
+/// Interpret `local` (a wall-clock reading encoded as if UTC) in the zone and
+/// return the UTC instant (compatible disambiguation for DST gaps/folds).
+fn local_to_utc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let local = millis(args, "localToUtc")?;
+    let ts = jiff::Timestamp::from_millisecond(local)
+        .map_err(|e| NativeError(format!("localToUtc: {e}")))?;
+    let civil = ts.to_zoned(jiff::tz::TimeZone::UTC).datetime();
+    let out = zone_of(args)
+        .to_zoned(civil)
+        .map_err(|e| NativeError(format!("localToUtc: {e}")))?;
+    Ok(NativeValue::Int(out.timestamp().as_millisecond()))
 }

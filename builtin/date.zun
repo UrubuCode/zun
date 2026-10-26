@@ -9,8 +9,9 @@
 // argument per field with no overloads, so the string form arrives as the
 // `Date.fromISO` static instead.
 //
-// The calendar is UTC-only: the VM exposes no platform timezone offset, so
-// local time *is* UTC. The local-time getters (`getFullYear`, `getHours`, ...)
+// Local getters/setters convert at the method boundary: local = UTC + the
+// host zone's DST-aware offset (`date.localOffsetMinutes`); stored millis stay UTC.
+// (Formerly the calendar was UTC-only, so local time *was* UTC.) The local-time getters (`getFullYear`, `getHours`, ...)
 // therefore return exactly their UTC counterparts and `getTimezoneOffset`
 // returns 0. These are accurate for a UTC-only calendar, not stubs; a real
 // local offset waits on a timezone intrinsic that does not yet exist.
@@ -66,20 +67,29 @@ class Date {
 
     // UTC-only calendar, so local time is UTC and the offset is always zero.
     // Reporting 0 is accurate here; it is not a stub.
-    getTimezoneOffset(): i32 { return 0; }
+    getTimezoneOffset(): i32 { return 0 - date.localOffsetMinutes(this.millis, ""); }
+    // Local calendar fields: the UTC fields of `millis + offset` (host zone).
+    localMillis(): i64 { return this.millis + (date.localOffsetMinutes(this.millis, "") as i64) * 60000; }
+    locYear(): i32 { return date.year(this.localMillis()); }
+    locMonth(): i32 { return date.month(this.localMillis()); }
+    locDay(): i32 { return date.day(this.localMillis()); }
+    locHour(): i32 { return date.hour(this.localMillis()); }
+    locMinute(): i32 { return date.minute(this.localMillis()); }
+    locSecond(): i32 { return date.second(this.localMillis()); }
+    locMillisecond(): i32 { return date.millisecond(this.localMillis()); }
 
     // Local-time getters. The VM has no platform timezone, so local == UTC and
     // each delegates to the UTC-named getter (same 0-based month, 0-based-from-
     // Sunday weekday conventions). They become distinct from the UTC getters
     // only once a timezone intrinsic supplies a non-zero `getTimezoneOffset`.
-    getFullYear(): i32 { return this.getUTCFullYear(); }
-    getMonth(): i32 { return this.getUTCMonth(); }
-    getDate(): i32 { return this.getUTCDate(); }
-    getDay(): i32 { return this.getUTCDay(); }
-    getHours(): i32 { return this.getUTCHours(); }
-    getMinutes(): i32 { return this.getUTCMinutes(); }
-    getSeconds(): i32 { return this.getUTCSeconds(); }
-    getMilliseconds(): i32 { return this.getUTCMilliseconds(); }
+    getFullYear(): i32 { return this.locYear(); }
+    getMonth(): i32 { return this.locMonth() - 1; }
+    getDate(): i32 { return this.locDay(); }
+    getDay(): i32 { return date.weekday(this.localMillis()) % 7; }
+    getHours(): i32 { return this.locHour(); }
+    getMinutes(): i32 { return this.locMinute(); }
+    getSeconds(): i32 { return this.locSecond(); }
+    getMilliseconds(): i32 { return this.locMillisecond(); }
 
     // Setters rebuild the timestamp from the components, replacing one. Each
     // returns the new timestamp, as JS does. Out-of-range values roll over
@@ -119,32 +129,32 @@ class Date {
     // current value (the default expression reads it back off `this` before the
     // timestamp is rebuilt). `month`/`day` here are the JS-named 0-based month
     // and 1-based date, as `getUTCMonth`/`getUTCDate` report them.
-    setFullYear(year: i32, month: i32 = this.getUTCMonth(), day: i32 = this.getUTCDate()): i64 {
-        this.millis = date.fromUTC(year as i64, (month + 1) as i64, day as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+    setFullYear(year: i32, month: i32 = this.getMonth(), day: i32 = this.getDate()): i64 {
+        this.millis = date.localToUtc(date.fromUTC(year as i64, (month + 1) as i64, day as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, this.locMillisecond() as i64), "");
         return this.millis;
     }
-    setMonth(month: i32, day: i32 = this.getUTCDate()): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, (month + 1) as i64, day as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+    setMonth(month: i32, day: i32 = this.getDate()): i64 {
+        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, (month + 1) as i64, day as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, this.locMillisecond() as i64), "");
         return this.millis;
     }
     setDate(day: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, day as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
+        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, day as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, this.locMillisecond() as i64), "");
         return this.millis;
     }
-    setHours(hour: i32, minute: i32 = this.utcMinute(), second: i32 = this.utcSecond(), milli: i32 = this.utcMillisecond()): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, hour as i64, minute as i64, second as i64, milli as i64);
+    setHours(hour: i32, minute: i32 = this.locMinute(), second: i32 = this.locSecond(), milli: i32 = this.locMillisecond()): i64 {
+        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, hour as i64, minute as i64, second as i64, milli as i64), "");
         return this.millis;
     }
-    setMinutes(minute: i32, second: i32 = this.utcSecond(), milli: i32 = this.utcMillisecond()): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, minute as i64, second as i64, milli as i64);
+    setMinutes(minute: i32, second: i32 = this.locSecond(), milli: i32 = this.locMillisecond()): i64 {
+        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, this.locHour() as i64, minute as i64, second as i64, milli as i64), "");
         return this.millis;
     }
-    setSeconds(second: i32, milli: i32 = this.utcMillisecond()): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, second as i64, milli as i64);
+    setSeconds(second: i32, milli: i32 = this.locMillisecond()): i64 {
+        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, this.locHour() as i64, this.locMinute() as i64, second as i64, milli as i64), "");
         return this.millis;
     }
     setMilliseconds(milli: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, milli as i64);
+        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, milli as i64), "");
         return this.millis;
     }
     toLocaleString(locale: string = ""): string { return date.dateToLocaleString(this.millis, locale); }

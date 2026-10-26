@@ -15,3 +15,5 @@ zun_core = { path = "../zun_core" }
 # (default) bakes the CLDR "modern" data into the binary — the modern analog of
 # Boa's `boa_icu_provider`, with no runtime data-provider plumbing.
 icu = "2"
+# Host/IANA time zone offsets for local Date (DST-aware). ICU4X has no offset lookup.
+jiff = "0.2"
