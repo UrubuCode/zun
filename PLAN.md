@@ -427,6 +427,68 @@ declare and trim.
 **N-API embedding (Zun-inside-Node) is out of core scope** — Zun competes with Node,
 it is not a guest. Node `.node` addon compat, if ever, is a separate module.
 
+### 4.1 Toolchain layout, engine packaging & build cache (`~/.zun/`, Bun/.NET-shaped)
+
+This phase (opened once the nucleus closed — done 27/27) packages the engine and its
+library layers for distribution. It separates two artifacts that the earlier "one big
+AOT `.lib`" prototype conflated:
+
+- **Native engine = `zun.exe`** — the Rust `zun_vm` (interpreter + Cranelift JIT + GC +
+  natives + baked data: ICU4X CLDR, `jiff` tz DB). Machine code; it is the CLR analogue.
+- **`.zmlib` = ZIL library layers** — `zun-runtime` (the std/nucleus prelude surface as
+  compiled ZIL), `zun-node`, `zun-common`, `zun-napi`, … — the "assemblies" the engine
+  loads. `zun-runtime.zmlib` is the **ZIL** std surface; the **native** core stays in
+  `zun.exe`.
+
+**Engine packaging — embedded, zstd-compressed payload (Bun/Deno/rts model).** The core
+payload ships **compressed inside `zun.exe`** and is extracted to `~/.zun/modules/` on
+first run (or when the engine version changes), verified by content hash, then reused
+without re-decompressing. `zstd` is the compressor (Bun's choice); the baked ICU CLDR +
+`jiff` tz data are highly redundant, so a release+strip core of ~40–70 MB is expected to
+compress to ~10–20 MB. (The 633 MB static `zun_vm.lib` / 72 MB per-binary figures were a
+debug, no-strip, statically-linked-per-binary artifact of the dev prototype — this phase
+replaces that with a shared, compressed engine.)
+
+**Install layout (`~/.zun/`, inspired by Bun):**
+```
+~/.zun/
+  bin/
+    zun.exe
+    zun.upgraded        # touch-sentinel written by an upgrade; see self-upgrade below
+  cache/                # Bun-style content cache (downloads, extracted payloads)
+  modules/              # the engine's .zmlib library layers, versioned to the core
+    zun-runtime.zmlib
+    zun-node.zmlib
+    zun-common.zmlib
+    zun-napi.zmlib
+    …
+```
+
+**Self-upgrade (Windows-safe, rustup/bun pattern).** A running `.exe` cannot delete
+itself on Windows, so `zun upgrade` renames the current binary to `zun-outdated.exe`,
+installs the new `zun.exe`, and `touch`es `bin/zun.upgraded`. On the next start the
+engine sees the sentinel, deletes `zun-outdated.exe`, clears the sentinel, and continues.
+`zun upgrade` also **revalidates `modules/*.zmlib` against the new core**: each `.zmlib`
+declares the core **ABI/contract version** it was built for (§4 compat key = `.zm`
+format + intrinsic ids + core-type layouts + host ABI); any stale layer is re-extracted
+(for the shipped layers) or recompiled, so an upgrade reloads the whole area atomically.
+
+**Per-module build cache (`node_modules/.zun/<hash>.zm`, .NET/Bun model).** The project
+does **not** recompile the world: dependencies ship precompiled as `.zmlib`, and only the
+user's own modules compile — each to a **content-addressed** `node_modules/.zun/<hash>.zm`.
+The hash keys on `(module source + compiler/core version + the hashes of its resolved
+deps)`, so a change to any of those invalidates exactly that module and its dependents,
+nothing else — incremental like .NET's compile cache, content-addressed like Bun's.
+
+**Points to decide (marked, not yet fixed):**
+- The `.zmlib` container header — magic + format version + required-core version — is the
+  engine↔library **version handshake** (the same cross-program identity gap left open as a
+  serde #27 follow-up; settle both together).
+- Whether the embedded payload is the native core **only**, or also bundles the default
+  `.zmlib` layers for a fully offline first run (vs. fetching them via §4's signed index).
+- `cache/` eviction policy and whether `node_modules/.zun/` is shared across projects
+  (a global content-addressed store) or per-project.
+
 ## 5. Performance strategy (measured)
 
 The Tier 0 **100x** is not fixed by speeding the interpreter — it is made irrelevant
@@ -533,7 +595,12 @@ parked-frame tables). Intervals re-arm themselves until cleared.
   fallback interpreter**, so non-AOT-eligible code runs interpreted instead of failing
   the build — the "Tier 0 always correct" invariant extended to the AOT binary.
 - **Phase 7 — distribution:** module registry/fetcher (index, lockfile, content-
-  addressed cache, signatures, capabilities), official repos (`@urubucode/*`).
+  addressed cache, signatures, capabilities), official repos (`@urubucode/*`); plus the
+  **toolchain packaging** of §4.1 — `zun.exe` shipping a **zstd-compressed embedded
+  engine** extracted to `~/.zun/modules/`, the Bun-shaped `~/.zun/` layout
+  (`bin/`+`zun.upgraded` sentinel, `cache/`, `modules/*.zmlib`), Windows-safe
+  self-upgrade (`zun-outdated.exe`), engine↔`.zmlib` version handshake, and the
+  per-module content-addressed build cache (`node_modules/.zun/<hash>.zm`).
 - **Deferred:** true OSR (mid-frame), SharedArrayBuffer/Atomics + multi-thread STW GC,
   RegExp engine, full trimming/R2R, LLVM second backend.
 
