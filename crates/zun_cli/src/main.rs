@@ -34,6 +34,7 @@ fn parse_aot_target(value: Option<String>) -> Result<target_lexicon::Triple, Str
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
+        [cmd, file] if cmd == "run" && file.ends_with(".zm") => run_zm(file),
         [cmd, file] if cmd == "run" => dispatch(file, Action::Run),
         [cmd, file] if cmd == "build" => dispatch(
             file,
@@ -1098,5 +1099,58 @@ mod codegen_gate_tests {
         let plain = compile("function main(): number { return 1; }
 ");
         assert!(ios_codegen_error(&ios, "x.ts", "", &plain).is_none());
+    }
+}
+
+/// Which engine flavour executes a module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeKind {
+    /// Compiler-free runtime: `new Function` is disallowed.
+    CompilerFree,
+    /// Eval-capable runtime: the compiler-backed `EvalHost` is injected.
+    EvalCapable,
+}
+
+/// Capability-driven selection: only a module declaring `codegen` needs the
+/// eval-capable engine.
+fn select_runtime(module: &Module) -> RuntimeKind {
+    if module.capabilities().contains(&"codegen") {
+        RuntimeKind::EvalCapable
+    } else {
+        RuntimeKind::CompilerFree
+    }
+}
+
+/// `zun run <file.zm>`: load a compiled module and run it on the engine its
+/// capabilities call for.
+fn run_zm(file: &str) -> ExitCode {
+    let bytes = match std::fs::read(file) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("zun: cannot read {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let module = match Module::read(&bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("zun: cannot load {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = match select_runtime(&module) {
+        // Provisioning seam: once the compiler ships as a separate on-demand
+        // component, this arm fetches it into `~/.zun/modules/` and loads
+        // `zun_runtime` (eval flavour) via `zun_rt_run_eval` instead of linking
+        // it in-process.
+        RuntimeKind::EvalCapable => zun_vm::execute(&bytes),
+        RuntimeKind::CompilerFree => zun_vm::execute_aot(&bytes),
+    };
+    match result {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("zun: {e}");
+            ExitCode::FAILURE
+        }
     }
 }

@@ -9,6 +9,10 @@ description = "The Zun shared runtime: a cdylib exposing the stable zun_rt_* C A
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Link the compiler so `zun_rt_run_eval` supports `new Function`.
+eval = ["zun_vm/eval"]
+
 [dependencies]
 zun_vm = { path = "../zun_vm" }
 
@@ -18,6 +22,7 @@ zstd = "0.13"
 zun_syntax = { path = "../zun_syntax" }
 zun_sema = { path = "../zun_sema" }
 zun_ilgen = { path = "../zun_ilgen" }
+zun_compiler = { path = "../zun_compiler" }
 
 [lints]
 workspace = true
