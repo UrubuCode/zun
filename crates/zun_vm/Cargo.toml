@@ -9,7 +9,13 @@ description = "The Zun virtual machine: loads a .zm module and runs it."
 [lib]
 crate-type = ["rlib", "staticlib"]
 
+[features]
+# Compiler-backed `new Function(...)`. Off by default so the runtime library
+# links no compiler; the driver (zun_cli) and this crate's tests turn it on.
+eval = ["dep:zun_compiler"]
+
 [dependencies]
+zun_compiler = { path = "../zun_compiler", optional = true }
 zun_interp = { path = "../zun_interp" }
 zun_sched = { path = "../zun_sched" }
 zun_module = { path = "../zun_module" }
@@ -24,6 +30,7 @@ zun_abi = { path = "../zun_abi" }
 libloading = "0.8"
 
 [dev-dependencies]
+zun_vm = { path = ".", features = ["eval"] }
 zun_core = { path = "../zun_core" }
 zun_regex = { path = "../zun_regex" }
 zun_compiler = { path = "../zun_compiler" }

@@ -2057,6 +2057,50 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower `new Function(p1, ..., body)` / `Function(...)` to a
+    /// `functionConstruct([p1, ..., body])` intrinsic. The runtime compiles the
+    /// strings through an injected `EvalHost` (absent under AOT, where it
+    /// throws "code generation from strings disallowed"). The result is a
+    /// dynamic function value, called through the ordinary indirect path.
+    fn lower_function_construct(
+        &mut self,
+        cx: &mut FunctionCx,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let mut elements = Vec::with_capacity(args.len().max(1));
+        for arg in args {
+            let checked = self.check_expr(cx, arg);
+            if !checked.ty.is_error() && checked.ty != Ty::String {
+                self.error(checked.span, "the `Function` constructor expects string arguments");
+                return self.poison(span);
+            }
+            elements.push(Some(checked));
+        }
+        if elements.is_empty() {
+            // `new Function()` is a function with an empty body.
+            elements.push(Some(hir::Expr {
+                kind: hir::ExprKind::String(String::new()),
+                ty: Ty::String,
+                span,
+            }));
+        }
+        let Some((id, _)) = zun_natives::resolve("collections", "functionConstruct") else {
+            self.error(span, "missing `functionConstruct` intrinsic");
+            return self.poison(span);
+        };
+        let array = hir::Expr {
+            kind: hir::ExprKind::ArrayLiteral { elements },
+            ty: Ty::Array,
+            span,
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![array] },
+            ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+            span,
+        }
+    }
+
     /// Build a `proxyGet(proxy, key)` native call routing a property read
     /// through the handler's `get` trap (absent trap → target default).
     fn proxy_get(&mut self, object: hir::Expr, key: hir::Expr, span: Span) -> hir::Expr {
@@ -4427,6 +4471,13 @@ impl Checker<'_> {
             }
             ast::Expr::Call { callee, args, .. } => {
                 let name = self.text(callee).to_string();
+                // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
+                if name == "Function"
+                    && !self.by_name.contains_key(&name)
+                    && !self.classes_by_name.contains_key(&name)
+                {
+                    return self.lower_function_construct(cx, args, span);
+                }
                 if let Some(ast::Expr::Spread { expr, .. }) = args.last() {
                     if let Some(&func) = self.by_name.get(&name) {
                         let rest_param = self.signatures[func as usize].rest_param;
@@ -7512,6 +7563,9 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                if name == "Function" && !self.classes_by_name.contains_key(&name) {
+                    return self.lower_function_construct(cx, args, span);
+                }
                 // `new proxy(...args)`: a local of proxy type routes through
                 // `proxyConstruct` (the handler's `construct` trap, else the
                 // wrapped class's default construction).

@@ -512,6 +512,11 @@ pub const MODULE: crate::Module = crate::Module {
         // `construct`) can fill trailing absent args.
         NativeFn { name: "classSetMethod", params: &[U32, Str, Function], ret: Void, imp: unavailable },
         NativeFn { name: "classSetFieldDefault", params: &[U32, U32, Opaque], ret: Void, imp: unavailable },
+        // `functionConstruct(argsArray)`: `new Function(p1, ..., body)` / `Function(...)`.
+        // All elements are strings (last = body). Handled by the interpreter via an
+        // injected `EvalHost`; with no host it throws "code generation from strings
+        // disallowed". Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "functionConstruct", params: &[Array], ret: Function, imp: unavailable },
     ],
 };
 

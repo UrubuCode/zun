@@ -8,8 +8,6 @@ description = "The .zm container format: header, code section, heaps, and metada
 
 [dependencies]
 zun_metadata = { path = "../zun_metadata" }
-
-[dev-dependencies]
 zun_il = { path = "../zun_il" }
 
 [lints]

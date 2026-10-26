@@ -11,6 +11,8 @@ mod jit_hook;
 mod native_hook;
 mod promise;
 mod verify_module;
+#[cfg(feature = "eval")]
+mod eval_host;
 
 /// The machine-level async substrate (promises, continuations, scheduling
 /// order). Relocated to the leaf crate [`zun_sched`] so the interpreter can
@@ -44,7 +46,7 @@ pub unsafe extern "C" fn zun_rt_run_embedded_i64(ptr: *const u8, len: u64) -> i6
         return -1;
     };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    match execute(bytes) {
+    match execute_aot(bytes) {
         Ok(Value::Int(value, _)) => value,
         Ok(Value::Bool(value)) => i64::from(value),
         _ => -1,
@@ -62,7 +64,7 @@ pub unsafe extern "C" fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u6
         return u64::MAX;
     };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    match execute(bytes) {
+    match execute_aot(bytes) {
         Ok(Value::Int(value, kind))
             if kind.int_parts().is_some_and(|(_, signed)| !signed) =>
         {
@@ -87,7 +89,7 @@ pub unsafe extern "C" fn zun_rt_run_embedded_f64(
         return -1;
     };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    match execute(bytes) {
+    match execute_aot(bytes) {
         Ok(Value::Float(value, _)) => {
             unsafe { *out = value };
             0
@@ -108,7 +110,7 @@ pub unsafe extern "C" fn zun_rt_run_embedded_print(ptr: *const u8, len: u64) -> 
         return -1;
     };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    match execute(bytes) {
+    match execute_aot(bytes) {
         Ok(value) => {
             println!("{}", value.display());
             0
@@ -129,7 +131,10 @@ pub use promise::{
     AsyncStateMachine, GeneratorIteratorResult, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
     PromiseAwaiter, PromiseState, Scheduler,
 };
-pub use verify_module::{verify_loaded_module, verify_module, ModuleVerifyError};
+pub use verify_module::{verify_loaded_module, verify_method_range, verify_module, ModuleVerifyError};
+#[cfg(feature = "eval")]
+pub use eval_host::CompilerEvalHost;
+pub use zun_interp::{EvalError, EvalHost};
 
 /// Errors from loading or running a module.
 #[derive(Debug)]
@@ -175,13 +180,38 @@ pub fn execute(bytes: &[u8]) -> Result<Value, VmError> {
 /// interpreter routes calls to them into native code via a [`JitHook`]. If the
 /// JIT cannot be built, execution falls back to the interpreter alone.
 pub fn execute_with(bytes: &[u8], output: &mut dyn Output) -> Result<Value, VmError> {
+    #[cfg(feature = "eval")]
+    let host: Option<&dyn EvalHost> = Some(&CompilerEvalHost);
+    #[cfg(not(feature = "eval"))]
+    let host: Option<&dyn EvalHost> = None;
+    execute_with_eval_host(bytes, output, host)
+}
+
+/// Run a module on the AOT runtime path: stdout output and **no** [`EvalHost`], so
+/// `new Function(...)` throws "code generation from strings disallowed" even if the
+/// compiler happens to be linked into the same binary.
+pub fn execute_aot(bytes: &[u8]) -> Result<Value, VmError> {
+    let mut out = StdoutOutput;
+    execute_with_eval_host(bytes, &mut out, None)
+}
+
+/// Like [`execute_with`] but with an explicit (or absent) [`EvalHost`]. Methods
+/// appended by `new Function` linking are never JIT-compiled: the hook only knows
+/// the original module's methods, so they stay on Tier 0.
+pub fn execute_with_eval_host(
+    bytes: &[u8],
+    output: &mut dyn Output,
+    eval_host: Option<&dyn EvalHost>,
+) -> Result<Value, VmError> {
     let module = load(bytes)?;
     match zun_codegen::Jit::new(&module) {
         Ok(jit) => {
             let hook = JitHook::new(jit, &module);
-            run_with(&module, output, Some(&hook)).map_err(VmError::Run)
+            zun_interp::run_with_eval_host(&module, output, Some(&hook), eval_host)
+                .map_err(VmError::Run)
         }
-        Err(_) => run_with(&module, output, None).map_err(VmError::Run),
+        Err(_) => zun_interp::run_with_eval_host(&module, output, None, eval_host)
+            .map_err(VmError::Run),
     }
 }
 

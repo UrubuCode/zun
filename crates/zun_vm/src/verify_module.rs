@@ -34,7 +34,17 @@ impl core::fmt::Display for ModuleVerifyError {
 
 /// Verify every method body in `module`.
 pub fn verify_module(module: &Module) -> Result<(), ModuleVerifyError> {
-    verify_module_with(module, |opcode, operand| {
+    verify_method_range(module, 1, module.tables.method_defs.len() as u32)
+}
+
+/// Verify only methods `first_rid..first_rid + count` (1-based), e.g. the ones
+/// just appended by the runtime linker for `new Function`.
+pub fn verify_method_range(
+    module: &Module,
+    first_rid: u32,
+    count: u32,
+) -> Result<(), ModuleVerifyError> {
+    verify_module_with(module, first_rid..first_rid + count, |opcode, operand| {
         resolve_call(module, opcode, operand)
     })
 }
@@ -45,17 +55,21 @@ pub fn verify_loaded_module(
     loader: &ModuleLoader,
 ) -> Result<(), ModuleVerifyError> {
     let module = scope.module();
-    verify_module_with(module, |opcode, operand| {
+    verify_module_with(module, 1..module.tables.method_defs.len() as u32 + 1, |opcode, operand| {
         resolve_loaded_call(scope, loader, opcode, operand)
     })
 }
 
 fn verify_module_with(
     module: &Module,
+    rids: std::ops::Range<u32>,
     resolve: impl Fn(Opcode, &Operand) -> Option<(u8, u8)>,
 ) -> Result<(), ModuleVerifyError> {
     for (i, method) in module.tables.method_defs.iter().enumerate() {
         let rid = i as u32 + 1;
+        if !rids.contains(&rid) {
+            continue;
+        }
         if method.body_offset == u32::MAX {
             continue; // abstract / external: no body to verify
         }

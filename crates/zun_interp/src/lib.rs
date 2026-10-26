@@ -9,6 +9,7 @@
 mod builtins;
 mod collections;
 mod errors;
+mod eval;
 mod gc_policy;
 mod hooks;
 mod namespace;
@@ -84,6 +85,7 @@ pub use zun_natives::Sink as Output;
 pub use output::{CaptureOutput, StdoutOutput};
 pub use hooks::CallHook;
 pub use errors::RunError;
+pub use eval::{EvalError, EvalHost, CODEGEN_DISALLOWED};
 pub use namespace::{call_namespace_member, materialize_namespace, zun_dynamic_import};
 
 /// A hook the interpreter consults before interpreting a call, so a faster
@@ -102,7 +104,20 @@ pub fn run_with(
     hook: Option<&dyn CallHook>,
 ) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
-    run_method_with(module, entry.rid(), Vec::new(), output, hook, None)
+    run_method_with(module, entry.rid(), Vec::new(), output, hook, None, None)
+}
+
+/// Run a module's entry point with an [`EvalHost`] that compiles source strings for
+/// `new Function(...)`. Every other entry point has no host, so that intrinsic throws
+/// "code generation from strings disallowed".
+pub fn run_with_eval_host(
+    module: &Module,
+    output: &mut dyn Output,
+    hook: Option<&dyn CallHook>,
+    eval_host: Option<&dyn EvalHost>,
+) -> Result<Value, RunError> {
+    let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
+    run_method_with(module, entry.rid(), Vec::new(), output, hook, None, eval_host)
 }
 
 /// Execute a specific method body with positional arguments.
@@ -116,7 +131,7 @@ pub fn run_method(
     args: Vec<Value>,
     output: &mut dyn Output,
 ) -> Result<Value, RunError> {
-    run_method_with(module, method_rid, args, output, None, None)
+    run_method_with(module, method_rid, args, output, None, None, None)
 }
 
 /// Execute a callable function handle with its captured environment.
@@ -147,7 +162,7 @@ pub fn run_method_loaded(
     args: Vec<Value>,
     output: &mut dyn Output,
 ) -> Result<Value, RunError> {
-    run_method_with(scope.module(), method_rid, args, output, None, Some(loader))
+    run_method_with(scope.module(), method_rid, args, output, None, Some(loader), None)
 }
 
 impl Interp<'_> {

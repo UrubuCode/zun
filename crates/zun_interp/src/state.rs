@@ -9,6 +9,10 @@ pub(super) struct Interp<'a> {
     pub(super) output: &'a mut dyn Output,
     pub(super) hook: Option<&'a dyn CallHook>,
     pub(super) loader: Option<&'a zun_loader::ModuleLoader>,
+    /// Injected compiler for `new Function`; `None` throws (AOT / jitless).
+    pub(super) eval_host: Option<&'a dyn super::EvalHost>,
+    /// `new Function` results by source so repeats link (and leak a module copy) once.
+    pub(super) eval_cache: HashMap<String, zun_core::FunctionHandle>,
     pub(super) allocs: u32,
     pub(super) gc_interval: u32,
     pub(super) minor_collections: u8,

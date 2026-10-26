@@ -2619,6 +2619,7 @@ impl<'a> Interp<'a> {
                     record.addr() as usize,
                 )))
             }
+            "functionConstruct" => self.function_construct(args),
             "functionBox" => {
                 // Wrap a callable in a GC-traced object so it can ride through
                 // an `Any`-boxing argument lane. The function is stored in a
@@ -4709,7 +4710,7 @@ impl<'a> Interp<'a> {
 
     /// Read every element of a managed array, unboxing each `Any` slot to its
     /// concrete interpreter value.
-    fn read_array_values(&self, array: zun_gc::Obj) -> Result<Vec<Value>, RunError> {
+    pub(super) fn read_array_values(&self, array: zun_gc::Obj) -> Result<Vec<Value>, RunError> {
         zun_gc::with_current_heap(|heap| {
             let length = heap.array_len(array).ok_or(RunError::BadToken)?;
             let mut values = Vec::with_capacity(length);

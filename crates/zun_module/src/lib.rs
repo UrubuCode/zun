@@ -30,8 +30,10 @@
 //! deduplicated heaps).
 
 pub mod body;
+mod link;
 mod serial;
 
+pub use link::{LinkError, LinkedMethods};
 pub use body::{
     read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, MethodBody,
 };
@@ -65,7 +67,7 @@ pub struct DebugFrame<'a> {
 }
 
 /// An in-memory module: everything a `.zm` file holds.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Module {
     /// Entry-point method token, if the module is executable.
     pub entry_point: Option<Token>,

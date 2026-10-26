@@ -62,6 +62,8 @@ impl<'a> OwnedGeneratorSession<'a> {
             output,
             hook,
             loader,
+            eval_host: None,
+            eval_cache: std::collections::HashMap::new(),
             allocs: 0,
             gc_interval: GC_INTERVAL,
             minor_collections: 0,
@@ -387,6 +389,8 @@ impl<'a> ResumableSession<'a> {
                 output,
                 hook,
                 loader,
+                eval_host: None,
+                eval_cache: std::collections::HashMap::new(),
                 allocs: 0,
                 gc_interval: GC_INTERVAL,
                 minor_collections: 0,
@@ -522,6 +526,7 @@ pub(super) fn run_method_with(
     output: &mut dyn Output,
     hook: Option<&dyn CallHook>,
     loader: Option<&zun_loader::ModuleLoader>,
+    eval_host: Option<&dyn super::EvalHost>,
 ) -> Result<Value, RunError> {
     let mut heap = zun_gc::Heap::new();
     let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
@@ -531,6 +536,8 @@ pub(super) fn run_method_with(
         output,
         hook,
         loader,
+        eval_host,
+        eval_cache: std::collections::HashMap::new(),
         allocs: 0,
         gc_interval: GC_INTERVAL,
         minor_collections: 0,
