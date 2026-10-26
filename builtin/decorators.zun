@@ -22,6 +22,14 @@
 // bound to the instance). The element is addressed by class and slot, never by
 // a stored function, so no function value has to live in a typed field.
 
+import {
+    decoratorAddInitializer,
+    decoratorAddInstanceInitializer,
+    decoratorRunInitializers,
+    decoratorAccessGet,
+    decoratorAccessSet,
+} from "zun:core";
+
 class DecoratorAccess {
     classRid: number;
     slot: number;
