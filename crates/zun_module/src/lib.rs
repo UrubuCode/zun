@@ -60,6 +60,12 @@ pub const FORMAT_MAJOR: u16 = 1;
 /// Current format minor version. Bump on backward-compatible additions.
 pub const FORMAT_MINOR: u16 = 3;
 
+/// Engine core contract version (PLAN section 4: `.zm` format + intrinsic ids +
+/// core-type layouts + host ABI). Bump whenever any of those change
+/// incompatibly. A `.zmlib` records the value it was built against and the
+/// loader requires an exact match (0 in a package means "unspecified/legacy").
+pub const CORE_CONTRACT_VERSION: u32 = 1;
+
 const HEADER_LEN: usize = 56;
 const TRAILER_MAGIC: [u8; 4] = *b"ZFLG";
 const FLAG_REQUIRES_CODEGEN: u32 = 1;

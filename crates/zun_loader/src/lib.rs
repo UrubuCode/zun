@@ -1154,11 +1154,31 @@ pub struct Zmlib {
     /// (e.g. `x86_64-pc-windows-msvc`). Each payload is authenticated by the
     /// lock entry `<triple>.nativeobj`. A pure-ZIL package carries none.
     pub native_objects: Vec<(String, Vec<u8>)>,
+    /// Engine core contract version this package was built against
+    /// (`zun_module::CORE_CONTRACT_VERSION`); `0` means unspecified (a
+    /// pre-v4 package). Compatibility rule: exact match, or `0`.
+    ///
+    /// Note: the same versioning concern applies to cross-program type
+    /// identity (serde #27 follow-up); that is not implemented here.
+    pub required_core_version: u32,
 }
 
 impl Zmlib {
     const MAGIC: &'static [u8; 5] = b"ZMLIB";
-    const VERSION: u16 = 3;
+    const VERSION: u16 = 4;
+
+    /// Check this package against an engine core contract version. `0`
+    /// (legacy/unspecified) and an exact match are accepted.
+    pub fn check_core_contract(&self, engine: u32) -> Result<(), LoadError> {
+        if self.required_core_version == 0 || self.required_core_version == engine {
+            Ok(())
+        } else {
+            Err(LoadError::InvalidManifest(format!(
+                ".zmlib requires core contract v{}, engine provides v{engine}",
+                self.required_core_version
+            )))
+        }
+    }
 
     /// Construct a package and ensure every payload matches its lock entry.
     pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
@@ -1185,6 +1205,7 @@ impl Zmlib {
             modules,
             type_declarations: Vec::new(),
             native_objects: Vec::new(),
+            required_core_version: zun_module::CORE_CONTRACT_VERSION,
         })
     }
 
@@ -1353,11 +1374,25 @@ impl Zmlib {
             bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
             bytes.extend_from_slice(payload);
         }
+        bytes.extend_from_slice(&self.required_core_version.to_le_bytes());
         bytes
     }
 
-    /// Parse and validate a `.zmlib` package.
+    /// Parse and validate a `.zmlib` package against the running engine's
+    /// core contract version.
     pub fn read(bytes: &[u8]) -> Result<Self, LoadError> {
+        Self::read_for_engine(bytes, zun_module::CORE_CONTRACT_VERSION)
+    }
+
+    /// Parse a package and check it against an explicit engine contract version.
+    pub fn read_for_engine(bytes: &[u8], engine: u32) -> Result<Self, LoadError> {
+        let package = Self::read_unchecked(bytes)?;
+        package.check_core_contract(engine)?;
+        Ok(package)
+    }
+
+    /// Parse and validate a `.zmlib` package without the core contract check.
+    pub fn read_unchecked(bytes: &[u8]) -> Result<Self, LoadError> {
         if bytes.len() < 11 || &bytes[..5] != Self::MAGIC {
             return Err(LoadError::InvalidManifest("bad zmlib header".into()));
         }
@@ -1428,12 +1463,20 @@ impl Zmlib {
                 native_objects.push((triple, payload));
             }
         }
+        let mut required_core_version = 0;
+        if version >= 4 {
+            required_core_version = read_u32(bytes, &mut cursor).ok_or_else(|| {
+                LoadError::InvalidManifest("truncated zmlib core contract version".into())
+            })?;
+        }
         if cursor != bytes.len() {
             return Err(LoadError::InvalidManifest("trailing zmlib bytes".into()));
         }
-        Self::new(lock, modules)?
+        let mut package = Self::new(lock, modules)?
             .with_type_declarations(type_declarations)?
-            .with_native_objects(native_objects)
+            .with_native_objects(native_objects)?;
+        package.required_core_version = required_core_version;
+        Ok(package)
     }
 
     /// Write a `.zmlib` package to disk.
@@ -2090,6 +2133,7 @@ impl ModuleLoader {
         let trusted = self.trusted_keys.as_ref().ok_or_else(|| {
             LoadError::InvalidManifest("loader has no trusted registry key set".into())
         })?;
+        package.check_core_contract(zun_module::CORE_CONTRACT_VERSION)?;
         package.lock.verify_with_keys(trusted)?;
         for (name, bytes) in &package.modules {
             self.load_bytes(name.clone(), bytes)?;
@@ -2103,6 +2147,7 @@ impl ModuleLoader {
         package: &Zmlib,
         trusted: &TrustedKeySet,
     ) -> Result<(), LoadError> {
+        package.check_core_contract(zun_module::CORE_CONTRACT_VERSION)?;
         package.lock.verify_with_keys(trusted)?;
         for (name, bytes) in &package.modules {
             self.load_bytes(name.clone(), bytes)?;
@@ -2729,7 +2774,7 @@ mod tests {
         assert_eq!(read.native_object_for("aarch64-apple-darwin"), None);
         // Tampering a native payload byte fails validation.
         let mut tampered = bytes.clone();
-        let last = tampered.len() - 1;
+        let last = tampered.len() - 5; // last native payload byte (before the u32 contract)
         tampered[last] ^= 0xff;
         assert!(Zmlib::read(&tampered).is_err());
         assert!(
@@ -2742,9 +2787,48 @@ mod tests {
         let v2 = Zmlib::new(signed, vec![("app".into(), payload)]).unwrap();
         let mut v2_bytes = v2.write();
         v2_bytes[5..7].copy_from_slice(&2u16.to_le_bytes());
-        v2_bytes.truncate(v2_bytes.len() - 4); // drop the empty native count
+        v2_bytes.truncate(v2_bytes.len() - 8); // drop native count + core contract
         let old = Zmlib::read(&v2_bytes).unwrap();
         assert!(old.native_objects.is_empty());
+        assert_eq!(old.required_core_version, 0);
+    }
+
+    #[test]
+    fn zmlib_core_contract_roundtrip_legacy_and_check() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let payload = Module::new().write();
+        let mut lock = ModuleLock::new();
+        lock.push("app", content_id(&payload)).unwrap();
+        let key = SigningKey::from_bytes(&[33u8; 32]);
+        let lock_bytes = lock.write();
+        let signed = SignedModuleLock::new(
+            lock,
+            key.verifying_key().to_bytes(),
+            key.sign(&lock_bytes).to_bytes(),
+        )
+        .unwrap();
+        let mut package = Zmlib::new(signed, vec![("app".into(), payload)]).unwrap();
+        assert_eq!(package.required_core_version, zun_module::CORE_CONTRACT_VERSION);
+        package.required_core_version = 7;
+        let bytes = package.write();
+        // Round-trip preserves the field.
+        assert_eq!(Zmlib::read_unchecked(&bytes).unwrap().required_core_version, 7);
+        // Mismatch is rejected with both versions named; equal is accepted.
+        let err = Zmlib::read_for_engine(&bytes, 8).unwrap_err().to_string();
+        assert!(err.contains("requires core contract v7") && err.contains("engine provides v8"));
+        assert!(Zmlib::read_for_engine(&bytes, 7).is_ok());
+        assert!(Zmlib::read(&bytes).is_err()); // running engine is not v7
+        // v3 package (no field) reads as 0 = unspecified and is accepted.
+        let mut v3 = bytes.clone();
+        v3[5..7].copy_from_slice(&3u16.to_le_bytes());
+        v3.truncate(v3.len() - 4);
+        let old = Zmlib::read_for_engine(&v3, 99).unwrap();
+        assert_eq!(old.required_core_version, 0);
+        // The loader path checks too.
+        let mut loader = ModuleLoader::new_with_trusted_keys(
+            TrustedKeySet::new([key.verifying_key().to_bytes()]).unwrap(),
+        );
+        assert!(loader.load_zmlib(&package).is_err());
     }
 
     #[test]
