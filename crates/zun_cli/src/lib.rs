@@ -99,3 +99,71 @@ pub fn install() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Installed binary file name for this platform.
+pub fn bin_name() -> &'static str {
+    if cfg!(windows) { "zun.exe" } else { "zun" }
+}
+
+/// Renamed-aside previous binary name for this platform.
+pub fn outdated_name() -> &'static str {
+    if cfg!(windows) { "zun-outdated.exe" } else { "zun-outdated" }
+}
+
+/// Sentinel file name marking that `outdated_name()` should be removed on next start.
+pub const UPGRADED_SENTINEL: &str = "zun.upgraded";
+
+/// Cheap startup check (two stats in the common case): if the upgrade sentinel
+/// exists, delete the outdated binary and clear the sentinel. A locked outdated
+/// binary leaves the sentinel in place so a later start retries.
+pub fn cleanup_after_upgrade(home: &Path) {
+    let bin = home.join("bin");
+    let sentinel = bin.join(UPGRADED_SENTINEL);
+    if !sentinel.exists() {
+        return;
+    }
+    match std::fs::remove_file(bin.join(outdated_name())) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return, // still locked/mapped; retry next start
+    }
+    let _ = std::fs::remove_file(&sentinel);
+}
+
+/// Swap in a new `zun` binary from `from`: old -> `zun-outdated`, new copied
+/// atomically (temp + rename), sentinel touched, then the runtime area is
+/// re-provisioned from `blob`.
+pub fn upgrade_with(home: &Path, from: &Path, blob: &[u8]) -> Result<Provision, String> {
+    ensure_layout(home)?;
+    if !from.is_file() {
+        return Err(format!("{}: not a file", from.display()));
+    }
+    let bin = home.join("bin");
+    let target = bin.join(bin_name());
+    let outdated = bin.join(outdated_name());
+    let tmp = bin.join(format!("{}.new{}", bin_name(), std::process::id()));
+    std::fs::copy(from, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    if target.exists() {
+        let _ = std::fs::remove_file(&outdated); // replace any prior outdated
+        if let Err(e) = std::fs::rename(&target, &outdated) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("{}: {e}", outdated.display()));
+        }
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", target.display()));
+    }
+    std::fs::write(bin.join(UPGRADED_SENTINEL), b"")
+        .map_err(|e| format!("{}: {e}", UPGRADED_SENTINEL))?;
+    provision_blob(home, blob)
+}
+
+/// `zun upgrade --from <path>` entry point.
+/// Seam: Phase 7 replaces `--from` with a registry download of the new binary.
+pub fn upgrade(from: &Path) -> Result<(), String> {
+    let home = zun_home()?;
+    let r = upgrade_with(&home, from, EMBEDDED_RUNTIME)?;
+    println!("zun: upgraded {} ({r:?})", home.join("bin").join(bin_name()).display());
+    Ok(())
+}

@@ -33,7 +33,19 @@ fn parse_aot_target(value: Option<String>) -> Result<target_lexicon::Triple, Str
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Ok(home) = zun_cli::zun_home() {
+        zun_cli::cleanup_after_upgrade(&home);
+    }
     match args.as_slice() {
+        [cmd, flag, path] if cmd == "upgrade" && flag == "--from" => {
+            match zun_cli::upgrade(Path::new(path)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("zun upgrade: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         [cmd] if cmd == "install" => match zun_cli::install() {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
