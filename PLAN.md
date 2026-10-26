@@ -480,12 +480,40 @@ The hash keys on `(module source + compiler/core version + the hashes of its res
 deps)`, so a change to any of those invalidates exactly that module and its dependents,
 nothing else — incremental like .NET's compile cache, content-addressed like Bun's.
 
+**`.zmlib` = the packaged module artifact (native lib + its `.zm`s, one signed file).**
+A `.zmlib` bundles everything a distributable module contributes: its **ZIL side** (one or
+more serialized `.zm` modules + type declarations + embedded debug info) AND its **native
+side** — the module's compiled extension library (e.g. `zun-node.lib`/`.dll`/`.so`/`.dylib`,
+built against the `zun_abi` extension ABI), **embedded per target triple**. A pure-ZIL
+module carries no native section; a native/FFI module (node, codecs) carries per-arch
+native bytes. The whole container is the **signed unit** (`SignedModuleLock` authenticates
+each `.zm`, type-decl, and native-object payload by content hash), and declares its
+capabilities (`fs/net/screen/native/codegen`). The engine loading a `.zmlib`: verify
+signature + the core ABI/contract handshake → map the `.zm`s into the module registry →
+`libloading` the arch-matched native object (if present) and register its `zun_abi`
+exports. Base already implemented: `zun_loader::Zmlib` (MAGIC `ZMLIB`) carries the signed
+lock + `.zm`s + type declarations; the lock already references a `native_object`. Remaining
+is to **embed the native object bytes per-arch inside the container** (today it is a
+reference) so the `.zmlib` is self-contained, versioned, and signed as one file.
+
+**Decided (measured 2026-10-26):** the compiler-backed eval capability is **bundled into
+the one shared runtime**, not shipped as a separate on-demand component. Measured on
+Windows release: compiler-free `zun_runtime.dll` = 12.05 MB (zstd 2.97 MB); eval-capable
+(`--features eval`) = 13.44 MB (zstd **3.30 MB**) — the compiler costs **+1.39 MB raw /
++0.33 MB zstd (+11%)**. A separate component would save only ~0.33 MB compressed per install
+at the cost of a runtime↔compiler ABI + dynamic loading — not worth it. So: **one
+eval-capable runtime**; `new Function`/eval work everywhere except where the AOT/iOS gate
+forbids them (compile-time `codegen` capability detection + the iOS build-error gate are
+implemented). The `codegen` capability now drives the iOS gate and documentation, not a
+second artifact. `zun run <file.zm>` already selects the execute path from the module's
+capabilities.
+
 **Points to decide (marked, not yet fixed):**
-- The `.zmlib` container header — magic + format version + required-core version — is the
-  engine↔library **version handshake** (the same cross-program identity gap left open as a
-  serde #27 follow-up; settle both together).
-- Whether the embedded payload is the native core **only**, or also bundles the default
-  `.zmlib` layers for a fully offline first run (vs. fetching them via §4's signed index).
+- The `.zmlib` container header already carries magic + format version; it still needs the
+  explicit **required-core version** field as the engine↔library **version handshake** (the
+  same cross-program identity gap left open as a serde #27 follow-up; settle both together).
+- Whether the embedded `zun.exe` payload is the native engine **only**, or also bundles the
+  default `.zmlib` layers for a fully offline first run (vs. fetching them via §4's signed index).
 - `cache/` eviction policy and whether `node_modules/.zun/` is shared across projects
   (a global content-addressed store) or per-project.
 
