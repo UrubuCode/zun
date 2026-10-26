@@ -131,6 +131,8 @@ fn check_impl(
         classes_with_has_instance: HashSet::new(),
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
+        routed_methods: HashMap::new(),
+        hooked_classes: HashSet::new(),
     };
     checker.resolve_imports(program, allow_external_modules);
     // Classes first so field and signature annotations can name them, then
@@ -139,6 +141,7 @@ fn check_impl(
     checker.collect_classes(program);
     let mut classes = checker.check_classes(program);
     checker.collect_signatures(program);
+    checker.collect_decorator_routing(program);
 
     let mut functions: Vec<hir::Function> = Vec::new();
     // Top-level functions occupy the first func indices (see collect_signatures).
@@ -301,6 +304,13 @@ struct Checker<'a> {
     /// so it never leaks to a nested or sibling closure. `None` keeps the
     /// `F64` default — numeric callbacks (`arr.map(x => x + 1)`) are unchanged.
     closure_param_hint: Option<Vec<Ty>>,
+    /// Instance methods whose runtime decorator returns a function (method
+    /// replacement): calls dispatch through the `class_named_methods` side
+    /// table instead of the static vtable slot. Value: the declaring class.
+    routed_methods: HashMap<u32, u32>,
+    /// Classes (and subclasses of classes) with runtime-decorated instance
+    /// members: `new` runs the instance-initializer and field-transform hooks.
+    hooked_classes: HashSet<u32>,
 }
 
 /// One lexical scope: name -> local slot.
@@ -468,6 +478,85 @@ impl Checker<'_> {
         })
     }
 
+    /// The signature of a bare `@dec` decorator whose callee is a top-level
+    /// `(any, DecoratorContext)` function: the typed-context decorator form.
+    fn typed_decorator_signature(&self, decorator: &ast::Decorator) -> Option<&Signature> {
+        if decorator.args.is_some() {
+            return None;
+        }
+        let ctx_class = *self.classes_by_name.get("DecoratorContext")?;
+        let span = decorator.callee.span();
+        let callee = self.source.get(span.start as usize..span.end as usize)?;
+        let signature = self.signatures.get(*self.by_name.get(callee)? as usize)?;
+        (signature.params.len() == 2
+            && signature.rest_param.is_none()
+            && matches!(signature.params[0], Ty::Any)
+            && signature.params[1] == Ty::Instance(ctx_class))
+        .then_some(signature)
+    }
+
+    /// Decide, before any body is checked, which instance methods are routed
+    /// through the `class_named_methods` side table (a typed-context decorator
+    /// returns a function, so it may replace the method) and which classes need
+    /// the `new` hooks (instance `addInitializer`, field transforms). Only
+    /// decorated elements opt in: undecorated methods and classes keep static
+    /// dispatch and plain `new`.
+    fn collect_decorator_routing(&mut self, program: &ast::Program) {
+        let mut routed: HashMap<u32, u32> = HashMap::new();
+        let mut own_hooked: HashSet<u32> = HashSet::new();
+        for (class_idx, class) in program.classes.iter().enumerate() {
+            let class_idx = class_idx as u32;
+            for method in &class.methods {
+                if method.is_static {
+                    continue;
+                }
+                let name = self.text(&method.name).to_string();
+                let Some(&func) = self
+                    .methods_by_class
+                    .get(class_idx as usize)
+                    .and_then(|m| m.get(&name))
+                else {
+                    continue;
+                };
+                let rest = self.signatures[func as usize].rest_param.is_some();
+                for decorator in &method.decorators {
+                    let Some(signature) = self.typed_decorator_signature(decorator) else {
+                        continue;
+                    };
+                    own_hooked.insert(class_idx);
+                    if !rest && matches!(signature.return_ty, Ty::Function(_)) {
+                        routed.insert(func, class_idx);
+                    }
+                }
+            }
+            for field in &class.fields {
+                if field.is_static || field.is_private {
+                    continue;
+                }
+                if field
+                    .decorators
+                    .iter()
+                    .any(|decorator| self.typed_decorator_signature(decorator).is_some())
+                {
+                    own_hooked.insert(class_idx);
+                }
+            }
+        }
+        let mut hooked = HashSet::new();
+        for class in 0..self.classes.len() as u32 {
+            let mut current = Some(class);
+            while let Some(c) = current {
+                if own_hooked.contains(&c) {
+                    hooked.insert(class);
+                    break;
+                }
+                current = self.classes.get(c as usize).and_then(|info| info.base);
+            }
+        }
+        self.routed_methods = routed;
+        self.hooked_classes = hooked;
+    }
+
     /// Emit the runtime TC39 decorator (PLAN §3.5 Stage 3, the "runtime flavor")
     /// invocations into the module-initializer `body`.
     ///
@@ -506,13 +595,16 @@ impl Checker<'_> {
     ///
     /// ## Deferred (documented)
     ///
-    /// The decorator's **return value is ignored**: replacing a method or class
-    /// with the returned value would require a mutable dispatch indirection that
-    /// the static-vtable model (and the interp/JIT equivalence invariant) does
-    /// not support without a dispatch-model change. Also deferred: delivering a
-    /// live `value` (see [`decorator_null_value`]); `context.addInitializer`;
-    /// `context.access` (get/set); field and accessor decorators; and
-    /// private-element decorators. Decorator factories `@dec(args)` are
+    /// A typed-context instance-method decorator that returns a `Function`
+    /// **replaces the method**: only such decorated methods dispatch through
+    /// `class_named_methods` (see `routed_methods`); the replacement receives the
+    /// instance as its leading argument. A returned function from a field
+    /// decorator is its initializer transform. Still deferred: class
+    /// return-value replacement (`new C` targets a compile-time TypeDef, there
+    /// is no first-class runtime class value to rebind); static-method
+    /// replacement; a live class `value`; accessor and private-element
+    /// decorators; and replacement results of decorator factories. Decorator
+    /// factories `@dec(args)` are
     /// supported (literal arguments): the factory call is evaluated in the
     /// initializer and its result invoked via the `applyDecorator` native.
     /// Emit `classSetSymbolFunction(classRid, symbol, fn)` for each class
@@ -583,6 +675,11 @@ impl Checker<'_> {
                     if sig.is_static || sig.params.len() != 1 {
                         continue;
                     }
+                    // A routed (decorator-replaceable) method is already
+                    // registered, and its entry may have been replaced.
+                    if self.routed_methods.contains_key(&func) {
+                        continue;
+                    }
                     body.push(hir::Stmt::Expr(hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
                             id: set_method,
@@ -651,30 +748,171 @@ impl Checker<'_> {
         }
     }
 
+    /// Register, ahead of every decorator, the original body of each routed
+    /// (decorated, function-returning) instance method in `class_named_methods`,
+    /// plus the undecorated overrides of that method in subclasses, so a routed
+    /// call site finds the runtime class's own implementation.
+    fn register_routed_methods(&self, program: &ast::Program, body: &mut Vec<hir::Stmt>, span: Span) {
+        let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") else {
+            return;
+        };
+        let mut routed: Vec<(u32, u32)> = self.routed_methods.iter().map(|(&f, &c)| (f, c)).collect();
+        routed.sort_unstable();
+        let register = |class: u32, name: &str, func: u32| {
+            hir::Stmt::Expr(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: set_method,
+                    args: vec![
+                        hir::Expr {
+                            kind: hir::ExprKind::Number((class + 1) as f64),
+                            ty: Ty::Int(IntKind::U32),
+                            span,
+                        },
+                        hir::Expr {
+                            kind: hir::ExprKind::String(name.to_string()),
+                            ty: Ty::String,
+                            span,
+                        },
+                        hir::Expr {
+                            kind: hir::ExprKind::FunctionRef { func },
+                            ty: Ty::Function(func),
+                            span,
+                        },
+                    ],
+                },
+                ty: Ty::Void,
+                span,
+            })
+        };
+        for (func, class) in routed {
+            let Some(name) = self.method_name_of(class, func) else { continue };
+            body.push(register(class, &name, func));
+            // Undecorated overrides in subclasses.
+            for (sub, sub_class) in program.classes.iter().enumerate() {
+                let sub = sub as u32;
+                if sub == class || !self.is_subclass(sub, class) {
+                    continue;
+                }
+                if !sub_class.methods.iter().any(|m| self.text(&m.name) == name) {
+                    continue;
+                }
+                let Some(&own) = self.methods_by_class.get(sub as usize).and_then(|m| m.get(&name)) else {
+                    continue;
+                };
+                if !self.routed_methods.contains_key(&own) {
+                    body.push(register(sub, &name, own));
+                }
+            }
+        }
+    }
+
+    /// Lower a call to a routed (decorator-replaceable) instance method as an
+    /// indirect call: `classBoundMethod(receiver, declaringClass, name)` looks the
+    /// receiver's runtime-class entry up in `class_named_methods` and binds the
+    /// receiver as `this`; the bound function value is then invoked with the
+    /// remaining arguments. The dynamic call yields `Any`, converted back to the
+    /// method's return type (a `void` method's result is left as `Any`).
+    fn routed_method_call(
+        &self,
+        func: u32,
+        owner: u32,
+        call_args: &mut Vec<hir::Expr>,
+        return_ty: Ty,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if matches!(return_ty, Ty::Function(_)) {
+            return None;
+        }
+        let (bound_id, _) = zun_natives::resolve("collections", "classBoundMethod")?;
+        let name = self.method_name_of(owner, func)?;
+        let receiver = call_args.remove(0);
+        let boxed = hir::Expr {
+            kind: hir::ExprKind::BoxAny { value: Box::new(receiver) },
+            ty: Ty::Any,
+            span,
+        };
+        let callee = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id: bound_id,
+                args: vec![
+                    boxed,
+                    hir::Expr {
+                        kind: hir::ExprKind::Number((owner + 1) as f64),
+                        ty: Ty::Int(IntKind::U32),
+                        span,
+                    },
+                    hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span },
+                ],
+            },
+            ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+            span,
+        };
+        let call = hir::Expr {
+            kind: hir::ExprKind::IndirectCall {
+                callee: Box::new(callee),
+                args: std::mem::take(call_args),
+                func: hir::DYNAMIC_FUNCTION,
+            },
+            ty: Ty::Any,
+            span,
+        };
+        if matches!(return_ty, Ty::Void | Ty::Error) {
+            return Some(call);
+        }
+        Some(hir::Expr {
+            kind: hir::ExprKind::Convert { value: Box::new(call) },
+            ty: return_ty,
+            span,
+        })
+    }
+
+    /// The source-level name of method `func` declared by `class`.
+    fn method_name_of(&self, class: u32, func: u32) -> Option<String> {
+        self.methods_by_class
+            .get(class as usize)?
+            .iter()
+            .find(|(_, &index)| index == func)
+            .map(|(name, _)| name.clone())
+    }
+
     fn append_runtime_decorator_calls(
         &self,
         program: &ast::Program,
         body: &mut Vec<hir::Stmt>,
         span: Span,
     ) {
+        self.register_routed_methods(program, body, span);
         for (class_idx, class) in program.classes.iter().enumerate() {
+            let class_idx = class_idx as u32;
             let class_name = self.text(&class.name).to_string();
+            let full_fields = self.full_fields(class_idx);
             // Field decorators run at class-definition time with
-            // `kind: "field"`. Private (`#x`) fields stay deferred, and the
-            // initializer-transform a field decorator may return is not applied
-            // (no per-instance field-init hook; see NUCLEUS #25).
+            // `kind: "field"`. Private (`#x`) fields stay deferred. A decorator
+            // returning a function installs it as the field's initializer
+            // transform, applied per instance by the `new` hook.
             for field in &class.fields {
                 if field.is_private {
                     continue;
                 }
                 let field_name = self.text(&field.name).to_string();
+                let slot = full_fields
+                    .iter()
+                    .position(|(name, _, _, _)| *name == field_name)
+                    .map_or(-1, |slot| slot as i32);
                 for decorator in field.decorators.iter().rev() {
+                    let target = DecoratorTarget {
+                        class_idx,
+                        slot,
+                        replaces_method: false,
+                        transforms_field: !field.is_static && slot >= 0,
+                    };
                     if let Some(stmt) = self.runtime_decorator_call(
                         decorator,
                         || decorator_null_value(span),
                         "field",
                         &field_name,
                         field.is_static,
+                        target,
                         span,
                     ) {
                         body.push(stmt);
@@ -686,20 +924,35 @@ impl Checker<'_> {
                 let method_name = self.text(&method.name).to_string();
                 let Some(&func_index) = self
                     .methods_by_class
-                    .get(class_idx)
+                    .get(class_idx as usize)
                     .and_then(|m| m.get(&method_name))
                 else {
                     continue;
                 };
-                // Bottom-to-top per element.
-                let _ = func_index;
+                let routed = self.routed_methods.contains_key(&func_index);
+                // Bottom-to-top per element. A routed method hands its current
+                // body to each decorator as a `functionBox`ed `value`.
                 for decorator in method.decorators.iter().rev() {
+                    let make_value = || {
+                        if routed {
+                            self.method_value_expr(class_idx, &method_name, span)
+                        } else {
+                            decorator_null_value(span)
+                        }
+                    };
+                    let target = DecoratorTarget {
+                        class_idx,
+                        slot: -1,
+                        replaces_method: routed,
+                        transforms_field: false,
+                    };
                     if let Some(stmt) = self.runtime_decorator_call(
                         decorator,
-                        || decorator_null_value(span),
+                        make_value,
                         "method",
                         &method_name,
                         method.is_static,
+                        target,
                         span,
                     ) {
                         body.push(stmt);
@@ -708,17 +961,47 @@ impl Checker<'_> {
             }
             // Class decorators after members, bottom-to-top.
             for decorator in class.decorators.iter().rev() {
+                let target = DecoratorTarget {
+                    class_idx,
+                    slot: -1,
+                    replaces_method: false,
+                    transforms_field: false,
+                };
                 if let Some(stmt) = self.runtime_decorator_call(
                     decorator,
                     || decorator_null_value(span),
                     "class",
                     &class_name,
                     false,
+                    target,
                     span,
                 ) {
                     body.push(stmt);
                 }
             }
+        }
+    }
+
+    /// `classMethodBox(classRid, name)`: the method's current body as a
+    /// `functionBox` record in an `Any`, the `value` a method decorator receives.
+    fn method_value_expr(&self, class_idx: u32, name: &str, span: Span) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("collections", "classMethodBox") else {
+            return decorator_null_value(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![
+                    hir::Expr {
+                        kind: hir::ExprKind::Number((class_idx + 1) as f64),
+                        ty: Ty::Int(IntKind::U32),
+                        span,
+                    },
+                    hir::Expr { kind: hir::ExprKind::String(name.to_string()), ty: Ty::String, span },
+                ],
+            },
+            ty: Ty::Any,
+            span,
         }
     }
 
@@ -735,6 +1018,7 @@ impl Checker<'_> {
         kind: &str,
         name: &str,
         is_static: bool,
+        target: DecoratorTarget,
         span: Span,
     ) -> Option<hir::Stmt> {
         let callee_span = decorator.callee.span();
@@ -750,7 +1034,7 @@ impl Checker<'_> {
         // callbacks live in typed class fields (functions cannot cross `Any`).
         if decorator.args.is_none() {
             if let Some(stmt) =
-                self.typed_context_decorator(dec_index, signature, make_value(), kind, name, is_static, span)
+                self.typed_context_decorator(dec_index, signature, make_value(), kind, name, is_static, target, span)
             {
                 return Some(stmt);
             }
@@ -858,6 +1142,7 @@ impl Checker<'_> {
         kind: &str,
         name: &str,
         is_static: bool,
+        target: DecoratorTarget,
         span: Span,
     ) -> Option<hir::Stmt> {
         let ctx_class = *self.classes_by_name.get("DecoratorContext")?;
@@ -873,6 +1158,43 @@ impl Checker<'_> {
         let finish = self.method_of(ctx_class, "finish")?;
         let expr = |kind: hir::ExprKind, ty: Ty| hir::Expr { kind, ty, span };
         let local = || expr(hir::ExprKind::Local(0), ctx_ty);
+        let call = expr(
+            hir::ExprKind::Call { func: dec_index, args: vec![value, local()] },
+            signature.return_ty,
+        );
+        let class_rid = |ty: Ty| expr(hir::ExprKind::Number((target.class_idx + 1) as f64), ty);
+        // A function returned by a method decorator replaces the method; one
+        // returned by a field decorator becomes its initializer transform.
+        let returns_function = matches!(signature.return_ty, Ty::Function(_));
+        let result_stmt = if returns_function && target.replaces_method {
+            let (id, _) = zun_natives::resolve("collections", "classReplaceMethod")?;
+            hir::Stmt::Expr(expr(
+                hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![
+                        class_rid(Ty::Int(IntKind::U32)),
+                        expr(hir::ExprKind::String(name.to_string()), Ty::String),
+                        call,
+                    ],
+                },
+                Ty::Void,
+            ))
+        } else if returns_function && target.transforms_field {
+            let (id, _) = zun_natives::resolve("collections", "classSetFieldTransform")?;
+            hir::Stmt::Expr(expr(
+                hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![
+                        class_rid(Ty::Int(IntKind::U32)),
+                        expr(hir::ExprKind::Number(target.slot as f64), Ty::Int(IntKind::U32)),
+                        call,
+                    ],
+                },
+                Ty::Void,
+            ))
+        } else {
+            hir::Stmt::Expr(call)
+        };
         Some(hir::Stmt::Group(vec![
             hir::Stmt::Let {
                 slot: 0,
@@ -883,15 +1205,14 @@ impl Checker<'_> {
                             expr(hir::ExprKind::String(kind.to_string()), Ty::String),
                             expr(hir::ExprKind::String(name.to_string()), Ty::String),
                             expr(hir::ExprKind::Boolean(is_static), Ty::Boolean),
+                            class_rid(Ty::F64),
+                            expr(hir::ExprKind::Number(target.slot as f64), Ty::F64),
                         ],
                     },
                     ctx_ty,
                 ),
             },
-            hir::Stmt::Expr(expr(
-                hir::ExprKind::Call { func: dec_index, args: vec![value, local()] },
-                signature.return_ty,
-            )),
+            result_stmt,
             hir::Stmt::Expr(expr(
                 hir::ExprKind::StaticCall { func: finish, args: vec![local()] },
                 Ty::Void,
@@ -4989,6 +5310,37 @@ impl Checker<'_> {
                     };
                 }
 
+                if matches!(
+                    name.as_str(),
+                    "decoratorAddInstanceInitializer" | "decoratorAccessGet" | "decoratorAccessSet"
+                ) && !self.by_name.contains_key(&name)
+                {
+                    // Prelude plumbing for `DecoratorContext` / `DecoratorAccess`
+                    // (builtin/decorators.zun): checked against the native signature.
+                    let Some((id, native)) = zun_natives::resolve("collections", &name) else {
+                        return self.poison(span);
+                    };
+                    if args.len() != native.params.len() {
+                        self.error(span, format!("`{name}` has an invalid argument list"));
+                        return self.poison(span);
+                    }
+                    for (arg, &param) in args.iter_mut().zip(native.params) {
+                        let expected = native_ty(param);
+                        coerce_numeric_literal(arg, expected);
+                        if !arg.ty.is_error()
+                            && !(matches!(expected, Ty::Function(_)) && matches!(arg.ty, Ty::Function(_)))
+                            && !self.is_assignable(arg.ty, expected)
+                        {
+                            self.error(arg.span, format!("`{name}` argument does not match {expected:?}"));
+                        }
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
+
                 if name == "decoratorAddInitializer" || name == "decoratorRunInitializers" {
                     // Prelude plumbing for the typed `DecoratorContext`
                     // (builtin/decorators.zun).
@@ -7378,6 +7730,15 @@ impl Checker<'_> {
                         }
                     }
                 }
+                if rest_index.is_none() {
+                    if let Some(&owner) = self.routed_methods.get(&func) {
+                        if let Some(routed) =
+                            self.routed_method_call(func, owner, &mut call_args, return_ty, span)
+                        {
+                            return routed;
+                        }
+                    }
+                }
                 hir::Expr {
                     kind: if rest_index.is_some() {
                         hir::ExprKind::MethodCallRest { func, args: call_args }
@@ -8277,14 +8638,36 @@ impl Checker<'_> {
                         }
                     }
                 }
-                hir::Expr {
+                let new = hir::Expr {
                     kind: hir::ExprKind::New {
                         class: class_idx,
                         args,
                     },
                     ty: Ty::Instance(class_idx),
                     span,
+                };
+                // Classes with runtime-decorated instance members run the
+                // instance-initializer / field-transform hooks on the new object.
+                if self.hooked_classes.contains(&class_idx) {
+                    if let Some((init_id, _)) = zun_natives::resolve("collections", "classInstanceInit") {
+                        let boxed = hir::Expr {
+                            kind: hir::ExprKind::BoxAny { value: Box::new(new) },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        let hooked = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: init_id, args: vec![boxed] },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(hooked) },
+                            ty: Ty::Instance(class_idx),
+                            span,
+                        };
+                    }
                 }
+                new
             }
             ast::Expr::Field { object, field, .. } => {
                 let fname = self.text(field).to_string();
@@ -9825,4 +10208,17 @@ mod tests {
 #[cfg(test)]
 #[path = "../tests.rs"]
 mod tests;
+}
+
+/// Where a runtime decorator applies, for the typed-context lowering.
+#[derive(Clone, Copy)]
+struct DecoratorTarget {
+    /// The decorated element's declaring class.
+    class_idx: u32,
+    /// Instance field slot of a field decorator, else `-1`.
+    slot: i32,
+    /// A returned function replaces the (routed) instance method.
+    replaces_method: bool,
+    /// A returned function is the field's initializer transform.
+    transforms_field: bool,
 }

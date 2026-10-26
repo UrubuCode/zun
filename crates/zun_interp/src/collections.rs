@@ -2582,8 +2582,12 @@ impl<'a> Interp<'a> {
             "functionApply" => {
                 // `f.apply(thisArg, argsArray)`: invoke `f` with `thisArg` as
                 // the leading positional argument, spread with the array.
-                let target = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Function(handle) => *handle,
+                // A callee carried as `any` (a decorator's method `value`) arrives
+                // as a `functionBox` record; restore the callable.
+                let callee = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let callee = zun_gc::with_current_heap(|heap| unbox_function_box(callee, heap));
+                let target = match callee {
+                    Value::Function(handle) => handle,
                     _ => return Err(RunError::BadToken),
                 };
                 let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();

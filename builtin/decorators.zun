@@ -6,32 +6,58 @@
 // the interpreter side; `finish` drains and runs the queue.
 //
 // The checker lowers each typed runtime decorator to
-// `ctx = DecoratorContext.make(..); dec(null, ctx); DecoratorContext.finish(ctx)`
+// `ctx = DecoratorContext.make(..); dec(value, ctx); DecoratorContext.finish(ctx)`
 // in the module initializer.
 //
-// Only class decorators run their initializers (right after the class is
-// defined). A Function value is invoked with exactly one argument, so each
-// initializer is `(target: any) => ...`; a class initializer receives `null`.
-// Method/field initializers need the per-instance `this`, which would have to
-// be threaded through every constructor lowering, so they are not queued.
+// `addInitializer(fn)`:
+//   * class decorators (and static members): the callback runs right after the
+//     decorator returns, with `null` as its single argument;
+//   * instance methods/fields: the callback is registered for the class and runs
+//     on every new instance with the instance as its single argument (the
+//     `this` of the element). A Function value is invoked with exactly the
+//     arguments it declares, so each initializer is `(self: T) => ...`.
+//
+// `context.access.get(target)` / `.set(target, value)` read and write the
+// decorated field of an instance (or, for a method, `get` returns the method
+// bound to the instance). The element is addressed by class and slot, never by
+// a stored function, so no function value has to live in a typed field.
+
+class DecoratorAccess {
+    classRid: number;
+    slot: number;
+    name: string;
+
+    get(target: any): any {
+        return decoratorAccessGet(target, this.classRid, this.slot, this.name);
+    }
+
+    set(target: any, value: any): void {
+        decoratorAccessSet(target, this.classRid, this.slot, this.name, value);
+    }
+}
 
 class DecoratorContext {
     kind: string;
     name: string;
     isStatic: boolean;
+    classRid: number;
+    slot: number;
+    access: DecoratorAccess;
 
     addInitializer(initializer: Function): void {
-        if (this.kind == "class") {
+        if (this.kind == "class" || this.isStatic) {
             decoratorAddInitializer(initializer);
+        } else {
+            decoratorAddInstanceInitializer(this.classRid, initializer);
         }
     }
 
-    static make(kind: string, name: string, isStatic: boolean): DecoratorContext {
-        return new DecoratorContext(kind, name, isStatic);
+    static make(kind: string, name: string, isStatic: boolean, classRid: number, slot: number): DecoratorContext {
+        return new DecoratorContext(kind, name, isStatic, classRid, slot, new DecoratorAccess(classRid, slot, name));
     }
 
     static finish(context: DecoratorContext): void {
-        if (context.kind == "class") {
+        if (context.kind == "class" || context.isStatic) {
             decoratorRunInitializers();
         }
     }
