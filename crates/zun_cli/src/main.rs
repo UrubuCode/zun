@@ -34,6 +34,13 @@ fn parse_aot_target(value: Option<String>) -> Result<target_lexicon::Triple, Str
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
+        [cmd] if cmd == "install" => match zun_cli::install() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("zun install: {error}");
+                ExitCode::FAILURE
+            }
+        },
         [cmd, file] if cmd == "run" && file.ends_with(".zm") => run_zm(file),
         [cmd, file] if cmd == "run" => dispatch(file, Action::Run),
         [cmd, file] if cmd == "build" => dispatch(

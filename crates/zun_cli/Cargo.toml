@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "The `zun` command-line driver."
 
+[lib]
+name = "zun_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "zun"
 path = "src/main.rs"
@@ -23,6 +27,8 @@ zun_il = { path = "../zun_il" }
 zun_prelude = { path = "../zun_prelude" }
 zun_codegen = { path = "../zun_codegen" }
 target-lexicon = { workspace = true }
+sha2.workspace = true
+zstd = "0.13"
 
 [lints]
 workspace = true
