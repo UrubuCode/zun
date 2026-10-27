@@ -26,6 +26,7 @@ mod error;
 mod host;
 mod io;
 mod math;
+mod net;
 mod number;
 mod string;
 mod time;
@@ -306,6 +307,9 @@ pub static MODULES: &[Module] = &[
     // The host group (stdin/stdout/stderr/exit + ambient env/cwd/argv/tty).
     // Appended last so every existing dispatch id stays stable.
     host::MODULE,
+    // Blocking HTTP (`httpFetch`). Appended last so every existing dispatch
+    // id stays stable.
+    net::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

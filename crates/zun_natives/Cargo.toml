@@ -19,3 +19,5 @@ icu = "2"
 jiff = "0.2"
 # OS randomness for Web Crypto (`crypto.randomUUID` / `getRandomValues`).
 getrandom = "0.2"
+# Blocking HTTP for the nucleus `fetch` (`net` group).
+ureq = { workspace = true }

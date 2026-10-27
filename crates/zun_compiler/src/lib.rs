@@ -315,6 +315,13 @@ fn compile_with_cached_module(
     let prelude_scope = zun_loader::ModuleScope::from_bytes(module_name, &prelude.write())
         .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
     let mut externals = collect_function_signatures(zun_prelude::PRELUDE);
+    // Free functions declared inside a prelude *class* source (e.g. `fetch`,
+    // which must see the `Response` class) are linked as source below, not
+    // exported by the cached module, so only `prelude.zun`'s own functions are
+    // imported.
+    externals.retain(|function| {
+        zun_prelude::PRELUDE.contains(&format!("function {}(", function.name))
+    });
     for function in &mut externals {
         function.module = module_name.to_owned();
     }
