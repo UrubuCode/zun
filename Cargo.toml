@@ -1,8 +1,5 @@
 [workspace]
 resolver = "2"
-# libs/ holds independent module repos (git submodules, e.g. @urubucode/zun-common)
-# that consume the published SDK crates — they are NOT part of the engine workspace.
-exclude = ["libs"]
 members = [
     "crates/zun_common",
     "crates/zun_core",

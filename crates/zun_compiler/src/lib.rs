@@ -138,6 +138,10 @@ pub fn trim_report_with_roots(module: &Module, roots: &[u32]) -> Result<TrimRepo
         .iter()
         .enumerate()
         .filter(|(_, method)| method.body_offset != u32::MAX)
+        // Only retained code can need the interpreter fallback: an unreachable
+        // method (e.g. a nucleus class that throws an `Error`, whose
+        // construction is a member-ref call) is removed by the trimmer.
+        .filter(|(index, _)| reachable.contains(&(*index as u32 + 1)))
         .filter_map(|(index, method)| {
             let body = read_body(&module.code, method.body_offset).ok()?;
             let method_name = module.strings.get(method.name).to_owned();
@@ -337,12 +341,14 @@ fn compile_with_cached_module(
     // Whatever `with_prelude` appends as classes has to be listed here too.
     // `prelude_classes_match_the_linked_source` holds the two together.
     let linked_source = format!(
-        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n{}\n{}\n{}\n{}\n",
+        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
         zun_prelude::ERRORS,
         zun_prelude::DATE,
         zun_prelude::BOOLEAN,
         zun_prelude::DECORATORS,
-        zun_prelude::INTL
+        zun_prelude::INTL,
+        zun_prelude::CONSOLE,
+        zun_prelude::JSON
     );
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();
@@ -1118,10 +1124,17 @@ mod tests {
         .expect("compile external call");
         let report = trim_report(&module).expect("trim report");
         assert!(report.dynamic_fallback);
-        assert_eq!(report.dynamic_sites.len(), 1);
-        assert_eq!(report.dynamic_sites[0].method_name, "main");
-        assert!(report.dynamic_sites[0].pc < module.code.len() as u32);
-        assert!(report.dynamic_sites[0].source_span.is_some());
+        // An external call makes every local method conservatively reachable, so
+        // nucleus classes that throw an `Error` (a member-ref construction) show
+        // up too; this test is about the program's own call site.
+        let sites: Vec<_> = report
+            .dynamic_sites
+            .iter()
+            .filter(|site| site.method_name == "main")
+            .collect();
+        assert_eq!(sites.len(), 1);
+        assert!(sites[0].pc < module.code.len() as u32);
+        assert!(sites[0].source_span.is_some());
     }
 
     #[test]

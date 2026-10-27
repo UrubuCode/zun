@@ -54,6 +54,16 @@ pub const DECORATORS: &str = include_str!("../builtin/decorators.zun");
 /// for the same reason as [`ERRORS`]. `new Intl.X(..)` maps onto `IntlX`.
 pub const INTL: &str = include_str!("../builtin/intl.zun");
 
+/// The `console` class (`builtin/console.zun`), part of the nucleus: compiled
+/// with every program for the same reason as [`ERRORS`]. It is self-contained
+/// over the `zun:core` native surface and the implicit `print`.
+pub const CONSOLE: &str = include_str!("../builtin/console.zun");
+
+/// The `JSON` class (`builtin/json.zun`), part of the nucleus: compiled with
+/// every program for the same reason as [`ERRORS`]. Self-contained over the
+/// `zun:core` native surface.
+pub const JSON: &str = include_str!("../builtin/json.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -108,7 +118,7 @@ pub const fn fingerprint() -> u64 {
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
     let mut combined = String::with_capacity(
-        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + DECORATORS.len() + INTL.len() + 6,
+        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + DECORATORS.len() + INTL.len() + CONSOLE.len() + JSON.len() + 8,
     );
     combined.push_str(user_source);
     combined.push('\n');
@@ -123,6 +133,10 @@ pub fn with_prelude(user_source: &str) -> String {
     combined.push_str(DECORATORS);
     combined.push('\n');
     combined.push_str(INTL);
+    combined.push('\n');
+    combined.push_str(CONSOLE);
+    combined.push('\n');
+    combined.push_str(JSON);
     combined
 }
 

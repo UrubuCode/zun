@@ -1,0 +1,129 @@
+// Nucleus `console` surface (prelude class, compiled with every program).
+//
+//   console.log / info / debug  -> stdout (one line)
+//   console.error / warn        -> stderr (one line)
+//
+// Rendering is a readable, Node-flavoured inspection (not full deep-inspect):
+// strings print raw at the top level and quoted ('...') when nested, numbers
+// and booleans print as-is, `null`/`undefined` by name, arrays as `[ 1, 2 ]`,
+// objects as `{ a: 1, b: 'x' }`. Nesting deeper than `maxDepth` prints
+// `[Object]` / `[Array]`. Variadic arguments and format specifiers are deferred.
+//
+// This file is self-contained over the `zun:core` native surface (it does not
+// call String/Number/Array methods nor `JSON`), so it compiles as a prelude class.
+
+import { eprintln, number as coreNumber, object as coreObject, array as coreArray } from "zun:core";
+
+class console {
+    static log(v: any): void {
+        print(ConsoleFormat.top(v));
+    }
+
+    static info(v: any): void {
+        print(ConsoleFormat.top(v));
+    }
+
+    static debug(v: any): void {
+        print(ConsoleFormat.top(v));
+    }
+
+    static error(v: any): void {
+        eprintln(ConsoleFormat.top(v));
+    }
+
+    static warn(v: any): void {
+        eprintln(ConsoleFormat.top(v));
+    }
+}
+
+class ConsoleFormat {
+    static maxDepth(): u64 {
+        return 4;
+    }
+
+    // Top-level rendering: strings are printed raw.
+    static top(v: any): string {
+        if (typeof v == "string") {
+            return v as string;
+        }
+        return ConsoleFormat.render(v, 0);
+    }
+
+    static number(n: number): string {
+        if (n != n) {
+            return "NaN";
+        }
+        if (n - n != 0.0) {
+            if (n > 0.0) {
+                return "Infinity";
+            }
+            return "-Infinity";
+        }
+        return coreNumber.toString(n);
+    }
+
+    static render(v: any, depth: u64): string {
+        let kind = typeof v;
+        if (kind == "string") {
+            return "'" + (v as string) + "'";
+        }
+        if (kind == "number") {
+            return ConsoleFormat.number(v as number);
+        }
+        if (kind == "boolean") {
+            if (v as boolean) {
+                return "true";
+            }
+            return "false";
+        }
+        if (kind == "undefined") {
+            return "undefined";
+        }
+        if (v == null) {
+            return "null";
+        }
+        if (coreArray.arrayIsArray(v)) {
+            if (depth >= ConsoleFormat.maxDepth()) {
+                return "[Array]";
+            }
+            let items = v as Array;
+            let n: u64 = items.length;
+            if (n == 0) {
+                return "[]";
+            }
+            let out = "[ ";
+            let i: u64 = 0;
+            while (i < n) {
+                if (i > 0) {
+                    out = out + ", ";
+                }
+                let item: any = items[i];
+                out = out + ConsoleFormat.render(item, depth + 1);
+                i = i + 1;
+            }
+            return out + " ]";
+        }
+        if (depth >= ConsoleFormat.maxDepth()) {
+            return "[Object]";
+        }
+        // `Object.entries` yields [key, value] pairs, so no dynamic property load is needed.
+        let entries = coreObject.entries(v);
+        let n: u64 = entries.length;
+        if (n == 0) {
+            return "{}";
+        }
+        let out = "{ ";
+        let i: u64 = 0;
+        while (i < n) {
+            if (i > 0) {
+                out = out + ", ";
+            }
+            let pair = entries[i] as Array;
+            let key = pair[0] as string;
+            let item: any = pair[1];
+            out = out + key + ": " + ConsoleFormat.render(item, depth + 1);
+            i = i + 1;
+        }
+        return out + " }";
+    }
+}
