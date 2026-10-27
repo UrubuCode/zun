@@ -158,6 +158,16 @@ macro_rules! typed_array_surface {
             }
         }
 
+        /// A view kind's element size in bytes (`Uint32Array` → 4). `DataView`
+        /// has no element kind. Used to turn `new T(n)` (n elements) into a
+        /// fresh buffer of `n * size` bytes.
+        pub(crate) fn element_size(kind: BufferViewKind) -> Option<usize> {
+            match kind {
+                $(BufferViewKind::$variant => Some(zun_core::TypedElement::$variant.size()),)+
+                BufferViewKind::DataView => None,
+            }
+        }
+
         /// Every kind's JavaScript constructor name, in table order — for
         /// the guards that must not fall behind the table.
         pub const CONSTRUCTOR_NAMES: &[&str] = &[$($js),+];

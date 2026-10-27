@@ -8323,6 +8323,71 @@ impl Checker<'_> {
                                     span,
                                 };
                             }
+                            // `new Uint8Array(n)` — a single NUMERIC argument is
+                            // an element count: allocate a fresh zero-filled
+                            // buffer of `n * elementSize` bytes and return a
+                            // length-tracking view over it (not a view onto an
+                            // existing buffer). A non-numeric single argument
+                            // (a buffer) falls through to the view path below.
+                            if !matches!(kind, hir::BufferViewKind::DataView) && args.len() == 1 {
+                                let mut length = self.check_expr(cx, &args[0]);
+                                if length.ty.is_int() || matches!(length.ty, Ty::Float(_)) {
+                                    coerce_numeric_literal(&mut length, Ty::INT);
+                                    let elem = crate::typed_arrays::element_size(kind).unwrap_or(1);
+                                    let byte_len = if elem == 1 {
+                                        length
+                                    } else {
+                                        hir::Expr {
+                                            kind: hir::ExprKind::Binary {
+                                                op: hir::BinaryOp::Mul,
+                                                lhs: Box::new(length),
+                                                rhs: Box::new(hir::Expr {
+                                                    kind: hir::ExprKind::Number(elem as f64),
+                                                    ty: Ty::Int(IntKind::U64),
+                                                    span,
+                                                }),
+                                            },
+                                            ty: Ty::Int(IntKind::U64),
+                                            span,
+                                        }
+                                    };
+                                    let Some((buf_id, _)) = zun_natives::resolve("buffer", "bufferNew") else {
+                                        self.error(span, "missing buffer intrinsic `bufferNew`");
+                                        return self.poison(span);
+                                    };
+                                    let buffer = hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id: buf_id, args: vec![byte_len] },
+                                        ty: Ty::Buffer,
+                                        span,
+                                    };
+                                    let zero = hir::Expr {
+                                        kind: hir::ExprKind::Number(0.0),
+                                        ty: Ty::Int(IntKind::U64),
+                                        span,
+                                    };
+                                    let kind_lit = hir::Expr {
+                                        kind: hir::ExprKind::Number(
+                                            crate::typed_arrays::element_index(kind).unwrap_or(0) as f64,
+                                        ),
+                                        ty: Ty::Int(IntKind::U32),
+                                        span,
+                                    };
+                                    let Some((id, _)) =
+                                        zun_natives::resolve("buffer", "typedArrayTrackingNew")
+                                    else {
+                                        self.error(span, "missing typed-array intrinsic `typedArrayTrackingNew`");
+                                        return self.poison(span);
+                                    };
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin {
+                                            id,
+                                            args: vec![buffer, zero, kind_lit],
+                                        },
+                                        ty: Ty::BufferView(kind),
+                                        span,
+                                    };
+                                }
+                            }
                             // A typed array (not `DataView`) created with the
                             // length omitted (`new Uint8Array(buffer)` or
                             // `… (buffer, offset)`) is a length-tracking view

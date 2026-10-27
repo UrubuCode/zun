@@ -49,6 +49,18 @@ pub use runner::{
 /// Read the result of a settled managed Promise for the synchronous await
 /// fast path. Pending promises deliberately return `None` and must be routed
 /// through the future continuation/state-machine path.
+/// The property-key string for a numeric computed key on a plain dynamic object
+/// (`obj[2]` reads/writes property `"2"`, matching JS). Integral values render
+/// without a fractional part.
+fn number_index_key(key: &Value) -> String {
+    match key {
+        Value::Int(n, _) => n.to_string(),
+        Value::Float(n, _) if n.is_finite() && n.fract() == 0.0 => (*n as i64).to_string(),
+        Value::Float(n, _) => format!("{n}"),
+        other => other.as_number().to_string(),
+    }
+}
+
 fn settled_await_value(promise: zun_gc::Obj) -> Result<Option<Value>, RunError> {
     zun_gc::with_current_heap(|heap| {
         match heap.promise_state(promise) {
@@ -492,6 +504,26 @@ impl Interp<'_> {
                                 .map(Value::Any)
                                 .unwrap_or(Value::Void)
                         })
+                    } else if matches!(key, Value::Int(..) | Value::Float(..)) {
+                        // A numeric computed key: an array index on an array,
+                        // otherwise the stringified property on a dynamic object
+                        // (`obj[2]` -> property "2"). Out of range reads undefined.
+                        zun_gc::with_current_heap(|heap| {
+                            if let Some(len) = heap.array_len(object) {
+                                let index = key.as_number() as i64;
+                                if index >= 0 && (index as usize) < len {
+                                    heap.array_get(object, index as usize)
+                                        .and_then(|any| Value::unbox_any(any, heap))
+                                        .unwrap_or(Value::Void)
+                                } else {
+                                    Value::Void
+                                }
+                            } else {
+                                heap.dynamic_get(object, &number_index_key(&key))
+                                    .map(Value::Any)
+                                    .unwrap_or(Value::Void)
+                            }
+                        })
                     } else {
                         return Err(RunError::BadToken);
                     };
@@ -516,6 +548,22 @@ impl Interp<'_> {
                         Value::Str(key) => {
                             zun_gc::with_current_heap_mut(|heap| {
                                 heap.dynamic_set(object, key.as_ref().to_owned(), any);
+                            });
+                        }
+                        Value::Int(..) | Value::Float(..) => {
+                            // Array index on an array, else a stringified property
+                            // on a dynamic object (`obj[2] = v` -> property "2").
+                            // An out-of-range array write is a no-op (fixed-length
+                            // managed arrays do not auto-extend).
+                            zun_gc::with_current_heap_mut(|heap| {
+                                if heap.array_len(object).is_some() {
+                                    let index = key.as_number() as i64;
+                                    if index >= 0 {
+                                        heap.array_set(object, index as usize, any);
+                                    }
+                                } else {
+                                    heap.dynamic_set(object, number_index_key(&key), any);
+                                }
                             });
                         }
                         _ => return Err(RunError::BadToken),
