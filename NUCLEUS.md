@@ -11,13 +11,18 @@ not merely "a class exists".
 `crates/zun_sema/src/{check.rs,native_types.rs,types.rs}`, `crates/zun_core/src/*.rs`,
 `crates/zun_il/src/opcode.rs`.
 
-**The binary ser/de PRIMITIVE is nucleus (#27); the JSON surface is not.** PLAN §3.2
-lists "JSON/ser-de" under A as "a core machine concern … rides on the nucleus
-shape/field walk". That split is now explicit: the low-level binary
-**serialize/deserialize PRIMITIVE** (Erlang `term_to_binary`-style, imported from
-`"zun:core"`) IS nucleus — item **#27** — because it is the shape/field-walk machine
-concern. The high-level, human-facing **JSON** text surface (`JSON.parse`/`stringify`)
-stays in `@urubucode/common` (bucket C, ZIL) and remains **excluded** from this audit.
+**The binary ser/de PRIMITIVE is nucleus (#27).** PLAN §3.2 lists "JSON/ser-de"
+under A as "a core machine concern … rides on the nucleus shape/field walk". The
+low-level binary **serialize/deserialize PRIMITIVE** (Erlang `term_to_binary`-style,
+imported from `"zun:core"`) IS nucleus — item **#27** — because it is the
+shape/field-walk machine concern.
+
+**`console` and the `JSON` text surface are now nucleus too.** They were briefly a
+separate `@urubucode/common` module, but they are basic surface with no reason to
+be fetched, so they live in the nucleus as prelude classes (self-contained over
+`zun:core`, like `Intl`), compiled with every program. See the "console / JSON /
+host" section after the table. They are not among the 27 numbered rows and do not
+change the counts.
 
 Legend: **done** = standard-common surface present; **partial** = exists but material
 gaps; **missing** = not implemented. "verify" marks claims not fully confirmed from the
@@ -57,9 +62,9 @@ read.
 | 26 | ZIL math opcodes | done | 15 ops at `0x96-0xA4`: float `sqrt/abs/neg/floor/ceil/trunc/min/max/round/sign`, int `min/max/clz/ctz/popcnt`. Transcendentals stay on libm per PLAN §3 |
 | 27 | Binary ser/de primitive | done | `serialize(value): Uint8Array` / `deserialize(bytes): any`, imported from `"zun:core"` (bare names, not globals). Version-tagged CBOR-ish wire format (`zun_core::serde`) covering null/undefined/bool/int-kinds/f32/f64/bigint/string/array/dynamic object/**typed class instance (metadata type token + layout-order field walk)**/Map/Set/Date/ArrayBuffer/TypedArray(+Buffer) with a **ref/memo** tag; shared & cyclic graphs round-trip (allocate-shell-then-fill, memo on both sides). Engine on the Tier-0 floor (`zun_interp::serde`), reusing `object_own_entries` (the `Object.keys` walk). Safe-by-construction: no code exec; a function value, unknown tag, truncated stream, or unresolved type token is a clean error. **Symbol-keyed object entries landed** (registered `Symbol.for` key + well-known id; unique symbols are dropped) and **DataView landed** (length-tracking flag). Residual: cross-program/versioned type identity (type tokens are program-local) |
 
-**Counts:** done 27 · mostly 0 · partial 0 · missing 0 (of 27 nucleus items; the JSON
-text surface stays excluded — see the note at the top). Recounted from the table above;
-it has to sum to 27.
+**Counts:** done 27 · mostly 0 · partial 0 · missing 0 (of 27 numbered nucleus items;
+`console`, `JSON` and the `zun:core` host surface are nucleus but not numbered rows —
+see the section after the Intl note). Recounted from the table above; it has to sum to 27.
 
 **Intl (bucket-C-adjacent, shipped):** ECMA-402 `Intl.Collator` / `Intl.NumberFormat` /
 `Intl.DateTimeFormat` landed as a core lib (prelude classes + dotted-`new` parser support +
@@ -68,6 +73,48 @@ It is not one of the 27 nucleus rows and does not change the counts.
 
 (Derived from the table above, not tracked by hand. Both sides of a merge have
 had this line wrong; recount the rows rather than taking either version.)
+
+### console / JSON / host (nucleus, not numbered rows)
+
+These are prelude classes / native groups that ship in the nucleus but are not
+among the 27 numbered items; they do not change the counts.
+
+**`console` (prelude class, `builtin/console.zun`):** `log` / `info` / `debug`
+write one line to **stdout**; `error` / `warn` write to **stderr**. Rendering is a
+readable Node-flavoured inspection (primitives, `[ 1, 'x', true ]` arrays,
+`{ a: 1, b: { c: 2 } }` objects, depth-limited to `[Array]`/`[Object]`), done over
+`zun:core` natives only (no String/Number/Array methods), so it compiles as a
+prelude class on both the plain and cached-std paths. Variadic arguments and
+`%`-format specifiers are deferred.
+
+**`JSON` (prelude class, `builtin/json.zun`):** `JSON.stringify` (escaping,
+non-finite → `null`, `undefined` skipped in objects / `null` in arrays, circular
+guard, `\uXXXX`) and `JSON.parse` (recursive descent, string escapes incl.
+`\uXXXX`, `SyntaxError` on malformed). This is the human-facing text surface, over
+the nucleus shape/field walk, distinct from the binary ser/de PRIMITIVE (#27).
+Deferred: `replacer` / `space` / `toJSON` / `reviver`.
+
+**`zun:core` host surface:** the single importable native module `zun:core` carries,
+besides the per-type groups, the process/terminal surface:
+- `io` group: `print` (implicit builtin, id 0), `println`, and **`eprint` / `eprintln`**
+  (stderr) — the sinks behind `console.error`/`warn`.
+- `host` group (ambient / host-routed): `stdinLine`, `stdoutWrite`, `stderrWrite`,
+  `exitProcess`, `envGet`, `envHas`, `cwd`, `argCount`, `argAt`, `isTty`. stdin,
+  raw writes and exit route through the host `Sink`; `env`/`cwd`/argv/tty are read
+  straight from the OS inside the natives (like the clock). Appended last in the
+  native table so every existing dispatch id stays stable.
+
+Consolidating everything sensitive (I/O, stdin/stdout, env, exit, args) under the
+one `zun:core` namespace is deliberate: a compile-time core-capability gate
+(`check_with_externals_core_gated(allow_core)`) can refuse `import … from "zun:core"`
+for untrusted libraries, leaving it to internal / module code.
+
+### String-literal escapes (lexer)
+
+`decode_string` handles the full JS escape set: `\n \t \r \b \f \v \0 \\ \" \' ` `` \` ``,
+`\xHH`, `\uHHHH` and `\u{…}`; an unknown escape (`\q`) is the character itself, per
+JS. (Previously only `n t r \ " 0` were handled and every other escape silently
+dropped its backslash, so `A` became `u0041`.)
 
 ### Unary/binary operator tokens (`typeof` / `in` / `instanceof` / `delete`)
 
