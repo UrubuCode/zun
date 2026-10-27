@@ -441,9 +441,11 @@ impl Interp<'_> {
                         });
                         stack.push(Value::Function(handle));
                     } else {
-                        let Value::Any(any) = value else {
-                            return Err(RunError::BadToken);
-                        };
+                        // Any non-function value boxes into `Any` for the slot
+                        // (a primitive assigned to an `any`-typed local reaches
+                        // here unboxed, e.g. `o.k = 5.0` or `o.k = null`).
+                        let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .ok_or(RunError::BadToken)?;
                         let object = pop(&mut stack)?.as_object();
                         // An accessor property invokes its setter; a data property
                         // writes the value slot (rejected silently if non-writable).
@@ -466,7 +468,7 @@ impl Interp<'_> {
                                 heap.dynamic_set(object, name, any);
                             });
                         }
-                        stack.push(Value::Any(any));
+                        stack.push(value);
                     }
                 }
                 Opcode::LoadDynamicValue => {
@@ -497,9 +499,11 @@ impl Interp<'_> {
                 }
                 Opcode::StoreDynamicValue => {
                     let value = pop(&mut stack)?;
-                    let Value::Any(any) = value else {
-                        return Err(RunError::BadToken);
-                    };
+                    // Box any non-function value for the slot (a primitive or
+                    // `null` assigned through a computed key, e.g. `o[k] = v`
+                    // where `v: any = 5.0`, reaches here unboxed).
+                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
                     let key = pop(&mut stack)?;
                     let object = pop(&mut stack)?.as_object();
                     match &key {
@@ -516,7 +520,7 @@ impl Interp<'_> {
                         }
                         _ => return Err(RunError::BadToken),
                     }
-                    stack.push(Value::Any(any));
+                    stack.push(value);
                 }
                 Opcode::NewArray => {
                     let length = pop(&mut stack)?.as_int();

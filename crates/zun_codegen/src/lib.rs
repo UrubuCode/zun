@@ -1880,7 +1880,7 @@ impl Jit {
             detail: e.to_string(),
         })?;
         self.ctx.func.signature = body_signature(&self.module, &body);
-        translate::translate_body(
+        if let Err(detail) = translate::translate_body(
             &mut self.module,
             zm,
             &mut self.ctx,
@@ -1891,11 +1891,20 @@ impl Jit {
             self.literal_ptrs.as_ptr(),
             core::ptr::null(),
             &body,
-        )
-        .map_err(|detail| JitError::Compile {
-            method_rid: rid,
-            detail,
-        })?;
+        ) {
+            // Translation failed partway, so `FunctionBuilder::finalize` never
+            // ran: the builder context is left dirty and `ctx.func` holds a
+            // half-built body. Reset both before returning, or the next
+            // method's `FunctionBuilder::new` panics on `func_ctx.is_empty()`
+            // and `define_function` would see stale IR. The method simply stays
+            // on the interpreter (the tiering fallback).
+            self.fb_ctx = FunctionBuilderContext::new();
+            self.module.clear_context(&mut self.ctx);
+            return Err(JitError::Compile {
+                method_rid: rid,
+                detail,
+            });
+        }
         self.module
             .define_function(self.func_ids[&rid], &mut self.ctx)
             .map_err(|e| JitError::Compile {

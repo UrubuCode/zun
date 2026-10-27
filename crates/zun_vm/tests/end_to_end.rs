@@ -52,6 +52,30 @@ fn run_source_expect_error(src: &str) -> String {
 }
 
 #[test]
+fn dynamic_object_accepts_any_and_null_values() {
+    // Regression: storing an `any`-typed value into a dynamic object slot
+    // (computed `o[k]` or dotted `o.q`), and a `null` object-literal property,
+    // used to throw `BadToken` because the store path required an already-boxed
+    // `Any`. The store now boxes any non-function value, like `StoreArray`.
+    let out = run_with_std(
+        r#"
+        function main(): void {
+            let o: any = {};
+            let v: any = 5.0;
+            o["k"] = v;
+            o.q = "hi";
+            let lit: any = { nothing: null, n: 7.0 };
+            print((o["k"] as number) + 1.0);
+            print(o.q as string);
+            print(lit.n as number);
+            print(typeof lit.nothing);
+        }
+        "#,
+    );
+    assert_eq!(out, vec!["6", "hi", "7", "object"]);
+}
+
+#[test]
 fn boolean_coercion_matches_js_truthiness() {
     // `Boolean(x)` returns the JS truthiness of `x` as a `boolean` primitive,
     // consistent with the truthiness used for `if`/`&&` conditions.
