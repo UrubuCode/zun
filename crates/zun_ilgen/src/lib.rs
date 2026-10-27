@@ -1606,6 +1606,23 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let token = self.layout.type_tokens[*class as usize];
                 self.emit(Instruction::new(Opcode::NewObj, Operand::Token(token)));
             }
+            ExprKind::NewWithConstructor { class, defaults, func, args } => {
+                // Allocate with default field values, then run the constructor
+                // on a duplicate of the instance handle. Every call leaves one
+                // value (void included), so discard it; the instance remains.
+                for d in defaults {
+                    self.expr(d);
+                }
+                let token = self.layout.type_tokens[*class as usize];
+                self.emit(Instruction::new(Opcode::NewObj, Operand::Token(token)));
+                self.emit(Instruction::simple(Opcode::Dup));
+                for a in args {
+                    self.expr(a);
+                }
+                let ctor = Token::new(TableKind::MethodDef, *func + 1);
+                self.emit(Instruction::new(Opcode::CallVirt, Operand::Token(ctor)));
+                self.emit(Instruction::simple(Opcode::Pop));
+            }
             ExprKind::ArrayNew { length } => {
                 self.expr(length);
                 self.emit(Instruction::simple(Opcode::NewArray));

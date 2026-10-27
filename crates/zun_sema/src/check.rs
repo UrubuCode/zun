@@ -3913,6 +3913,131 @@ impl Checker<'_> {
         }
     }
 
+    /// Classes with runtime-decorated instance members run the
+    /// instance-initializer / field-transform hooks on the new object.
+    fn wrap_hooked_new(&mut self, class_idx: u32, new: hir::Expr, span: Span) -> hir::Expr {
+        if self.hooked_classes.contains(&class_idx) {
+            if let Some((init_id, _)) = zun_natives::resolve("collections", "classInstanceInit") {
+                let boxed = hir::Expr {
+                    kind: hir::ExprKind::BoxAny { value: Box::new(new) },
+                    ty: Ty::Any,
+                    span,
+                };
+                let hooked = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id: init_id, args: vec![boxed] },
+                    ty: Ty::Any,
+                    span,
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::Convert { value: Box::new(hooked) },
+                    ty: Ty::Instance(class_idx),
+                    span,
+                };
+            }
+        }
+        new
+    }
+
+    /// Lower `new C(args)` for a class that declares `constructor(...)`.
+    /// Fields are allocated at their default initializer (or the typed zero);
+    /// the constructor then runs with `this` = the instance. Arguments are
+    /// checked against the constructor's parameters (arity, optional
+    /// parameters, types), not the field list.
+    fn check_new_with_constructor(
+        &mut self,
+        cx: &mut FunctionCx,
+        class_idx: u32,
+        name: &str,
+        ctor: u32,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let fields = self.full_fields(class_idx);
+        let initializers = self.full_initializers(class_idx);
+        let mut defaults: Vec<hir::Expr> = Vec::with_capacity(fields.len());
+        for (slot, (_, field_ty, _, _)) in fields.iter().enumerate() {
+            let field_ty = *field_ty;
+            let mut value = match initializers.get(slot).and_then(|init| init.as_ref()) {
+                Some(init) => {
+                    let init = init.clone();
+                    self.check_expr(cx, &init)
+                }
+                None => match field_ty {
+                    Ty::Int(_) | Ty::Float(_) => {
+                        hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::F64, span }
+                    }
+                    Ty::Boolean => hir::Expr { kind: hir::ExprKind::Boolean(false), ty: Ty::Boolean, span },
+                    Ty::String => {
+                        hir::Expr { kind: hir::ExprKind::String(String::new()), ty: Ty::String, span }
+                    }
+                    // `undefined`: a missing key on an empty dynamic object.
+                    Ty::Any => hir::Expr {
+                        kind: hir::ExprKind::DynamicGet {
+                            object: Box::new(hir::Expr {
+                                kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                                ty: Ty::DynamicObject,
+                                span,
+                            }),
+                            name: "undefined".to_string(),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    },
+                    other => hir::Expr { kind: hir::ExprKind::Null, ty: other, span },
+                },
+            };
+            coerce_numeric_literal(&mut value, field_ty);
+            defaults.push(value);
+        }
+
+        let (param_tys, optional_count, rest_param, sig_name) = {
+            let sig = &self.signatures[ctor as usize];
+            (sig.params.clone(), sig.optional_count, sig.rest_param, sig.name.clone())
+        };
+        if rest_param.is_some() {
+            self.error(span, format!("`{name}` constructor rest parameters are not supported yet"));
+            return self.poison(span);
+        }
+        // param_tys[0] is `this`.
+        let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+        let max = param_tys.len() - 1;
+        let min = max.saturating_sub(optional_count);
+        if call_args.len() < min || call_args.len() > max {
+            self.error(
+                span,
+                format!(
+                    "`{name}` constructor expects {min} to {max} argument(s), found {}",
+                    call_args.len()
+                ),
+            );
+            return self.poison(span);
+        }
+        let sig = Signature {
+            name: sig_name,
+            params: param_tys[1..].to_vec(),
+            return_ty: Ty::Void,
+            optional_count,
+            rest_param: None,
+            is_generator: false,
+            is_static: false,
+        };
+        self.pad_default_args(&mut call_args, &sig, span);
+        for (arg, &expected) in call_args.iter_mut().zip(&param_tys[1..]) {
+            coerce_numeric_literal(arg, expected);
+            if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
+                self.error(
+                    arg.span,
+                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                );
+            }
+        }
+        hir::Expr {
+            kind: hir::ExprKind::NewWithConstructor { class: class_idx, defaults, func: ctor, args: call_args },
+            ty: Ty::Instance(class_idx),
+            span,
+        }
+    }
+
     /// Lower `new Error(message, { cause })` (and its subclasses) to a `New`
     /// node, bridging the ECMAScript `(message, options)` constructor shape onto
     /// Zun's one-argument-per-field object model. The arguments are rebuilt in
@@ -8617,6 +8742,19 @@ impl Checker<'_> {
                 {
                     return self.check_error_new(cx, class_idx, &name, args, span);
                 }
+                // A class that declares a `constructor` method runs user code on
+                // `new`: fields start at their defaults and the arguments are
+                // checked against the constructor's parameters. Only the class's
+                // own `constructor` is honoured (`super(...)` chaining deferred).
+                let own_ctor = self
+                    .methods_by_class
+                    .get(class_idx as usize)
+                    .and_then(|m| m.get("constructor"))
+                    .copied();
+                if let Some(ctor) = own_ctor {
+                    let new = self.check_new_with_constructor(cx, class_idx, &name, ctor, args, span);
+                    return self.wrap_hooked_new(class_idx, new, span);
+                }
                 let field_tys: Vec<Ty> = self
                     .full_fields(class_idx)
                     .into_iter()
@@ -8667,28 +8805,7 @@ impl Checker<'_> {
                     ty: Ty::Instance(class_idx),
                     span,
                 };
-                // Classes with runtime-decorated instance members run the
-                // instance-initializer / field-transform hooks on the new object.
-                if self.hooked_classes.contains(&class_idx) {
-                    if let Some((init_id, _)) = zun_natives::resolve("collections", "classInstanceInit") {
-                        let boxed = hir::Expr {
-                            kind: hir::ExprKind::BoxAny { value: Box::new(new) },
-                            ty: Ty::Any,
-                            span,
-                        };
-                        let hooked = hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id: init_id, args: vec![boxed] },
-                            ty: Ty::Any,
-                            span,
-                        };
-                        return hir::Expr {
-                            kind: hir::ExprKind::Convert { value: Box::new(hooked) },
-                            ty: Ty::Instance(class_idx),
-                            span,
-                        };
-                    }
-                }
-                new
+                self.wrap_hooked_new(class_idx, new, span)
             }
             ast::Expr::Field { object, field, .. } => {
                 let fname = self.text(field).to_string();

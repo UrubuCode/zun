@@ -857,6 +857,19 @@ pub enum ExprKind {
         /// One initializer per field, in field-slot order.
         args: Vec<Expr>,
     },
+    /// Allocate a class instance with every field at its default, then run the
+    /// class's `constructor` method on it. The expression evaluates to the
+    /// instance. (`super(...)` chaining is deferred.)
+    NewWithConstructor {
+        /// The class being instantiated.
+        class: ClassIndex,
+        /// One default value per field, in field-slot order.
+        defaults: Vec<Expr>,
+        /// The `constructor` method's function index.
+        func: FuncIndex,
+        /// The constructor arguments (without the implicit receiver).
+        args: Vec<Expr>,
+    },
     /// Allocate a managed array with a numeric length.
     ArrayNew {
         /// Number of elements to allocate.
