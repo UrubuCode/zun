@@ -8,9 +8,21 @@ impl<'a> Checker<'a> {
         &mut self,
         program: &ast::Program,
         allow_external_modules: bool,
+        allow_core: bool,
     ) {
         for import in &program.imports {
             if import.module == zun_natives::CORE_MODULE {
+                if !allow_core {
+                    self.error(
+                        import.span,
+                        format!(
+                            "importing from `{}` is not permitted here; the core native \
+                             surface is restricted to internal and module code",
+                            zun_natives::CORE_MODULE
+                        ),
+                    );
+                    continue;
+                }
                 self.resolve_core_import(import);
                 continue;
             }

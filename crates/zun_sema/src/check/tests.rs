@@ -1,4 +1,6 @@
-    use crate::check::{check, check_with_externals, ExternalFunction};
+    use crate::check::{
+        check, check_with_externals, check_with_externals_core_gated, ExternalFunction,
+    };
     use crate::hir;
     use crate::Ty;
     use zun_common::Diagnostic;
@@ -659,6 +661,28 @@
         // extra diagnostics.
         let (_, diags) = check_src("function f() { let x = y + 1; }");
         assert_eq!(diags.len(), 1, "{diags:?}");
+    }
+
+    #[test]
+    fn core_import_is_gated_for_untrusted_libraries() {
+        let src = "import { eprintln } from \"zun:core\";\nfunction main(): void { eprintln(\"x\"); }";
+        let mut diags = Vec::new();
+        let ast = parse(src, &mut diags);
+        assert!(diags.is_empty(), "parse errors: {diags:?}");
+
+        // Allowed (internal/module code): no diagnostic.
+        let mut ok = Vec::new();
+        let _ = check_with_externals_core_gated(src, &ast, &mut ok, &[], true);
+        assert!(ok.is_empty(), "core import should be allowed when gated open: {ok:?}");
+
+        // Denied (untrusted library): a diagnostic naming zun:core.
+        let mut denied = Vec::new();
+        let _ = check_with_externals_core_gated(src, &ast, &mut denied, &[], false);
+        assert!(
+            denied.iter().any(|d| d.message.contains("zun:core")
+                && d.message.contains("not permitted")),
+            "core import should be rejected when gated closed: {denied:?}"
+        );
     }
 
     #[test]

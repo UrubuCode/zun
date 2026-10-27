@@ -56,7 +56,7 @@ pub fn check(
     program: &ast::Program,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, &[], false)
+    check_impl(source, program, diagnostics, &[], false, true)
 }
 
 /// A source-level function signature imported from another module.
@@ -79,7 +79,23 @@ pub fn check_with_externals(
     diagnostics: &mut Vec<Diagnostic>,
     external_functions: &[ExternalFunction],
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, external_functions, true)
+    check_impl(source, program, diagnostics, external_functions, true, true)
+}
+
+/// Check a program with the `zun:core` native surface **gated**: when
+/// `allow_core` is false, any `import ... from "zun:core"` is a diagnostic
+/// error. The driver passes `false` for untrusted libraries (those that are not
+/// internal engine code or declared modules), so the sensitive native surface
+/// (I/O, stdin/stdout, env, process exit, args) is reachable only by trusted
+/// code — the compile-time half of the `.env` core-capability flag.
+pub fn check_with_externals_core_gated(
+    source: &str,
+    program: &ast::Program,
+    diagnostics: &mut Vec<Diagnostic>,
+    external_functions: &[ExternalFunction],
+    allow_core: bool,
+) -> hir::Program {
+    check_impl(source, program, diagnostics, external_functions, true, allow_core)
 }
 
 fn check_impl(
@@ -88,6 +104,7 @@ fn check_impl(
     diagnostics: &mut Vec<Diagnostic>,
     external_functions: &[ExternalFunction],
     allow_external_modules: bool,
+    allow_core: bool,
 ) -> hir::Program {
     let mut external_by_name: HashMap<String, ExternalFunction> = HashMap::new();
     let mut external_by_module_name: HashMap<(String, String), ExternalFunction> = HashMap::new();
@@ -135,7 +152,7 @@ fn check_impl(
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
     };
-    checker.resolve_imports(program, allow_external_modules);
+    checker.resolve_imports(program, allow_external_modules, allow_core);
     // Classes first so field and signature annotations can name them, then
     // function and method signatures so calls can be forward references, then
     // bodies. Methods are checked as functions with an implicit `this` param.
