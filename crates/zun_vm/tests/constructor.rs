@@ -1,7 +1,7 @@
 //! Class `constructor` methods: `new C(args)` allocates with field defaults,
 //! then runs the user `constructor` with `this` = the instance. Classes without
 //! a `constructor` keep positional field initialization. `super(...)` chaining
-//! is deferred (v1).
+//! to a base constructor is supported (see `super_calls.rs`).
 
 use zun_interp::CaptureOutput;
 

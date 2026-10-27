@@ -349,6 +349,8 @@ struct FunctionCx {
     boxed: HashSet<hir::LocalSlot>,
     captures: HashMap<String, hir::Capture>,
     this_class: Option<u32>,
+    /// True while checking a class `constructor` body (where `super(...)` is legal).
+    is_constructor: bool,
 }
 
 #[derive(Default)]
@@ -1518,6 +1520,7 @@ impl Checker<'_> {
             boxed: HashSet::new(),
             captures: HashMap::new(),
             this_class,
+            is_constructor: this_class.is_some() && self.text(&f.name) == "constructor",
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -3938,6 +3941,113 @@ impl Checker<'_> {
         new
     }
 
+    /// Lower `super.method(args)` (`method = Some(name)`) and `super(args)`
+    /// (`method = None`, constructor chaining). Both become a *direct*
+    /// (non-virtual) call to the base class's implementation with `this` as the
+    /// receiver, so an override in the current class is bypassed.
+    ///
+    /// The base method is found by walking the `base` chain from the enclosing
+    /// class's base. `super(...)` is only legal inside a `constructor`; when no
+    /// ancestor declares a `constructor`, `super()` with no arguments is a
+    /// no-op (the instance already holds its field defaults) and `super(args)`
+    /// is an error.
+    fn check_super_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: Option<&ast::Name>,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let Some(this_class) = cx.this_class else {
+            self.error(span, "`super` is only valid inside a class method");
+            return self.poison(span);
+        };
+        let Some(base) = self.classes[this_class as usize].base else {
+            self.error(span, "`super` used in a class that has no base class (no `extends`)");
+            return self.poison(span);
+        };
+        if method.is_none() && !cx.is_constructor {
+            self.error(span, "`super(...)` is only valid inside a constructor");
+            return self.poison(span);
+        }
+        let Some(this_slot) = cx.lookup("this") else {
+            self.error(span, "`super` is not supported inside a closure");
+            return self.poison(span);
+        };
+        let this_expr = hir::Expr {
+            ty: cx.locals[this_slot as usize],
+            kind: hir::ExprKind::Local(this_slot),
+            span,
+        };
+        let (mname, mspan) = match method {
+            Some(m) => (self.text(m).to_string(), m.span),
+            None => ("constructor".to_string(), span),
+        };
+        let Some(func) = self.method_of(base, &mname) else {
+            if method.is_none() {
+                if !args.is_empty() {
+                    self.error(span, "base class has no constructor; `super(...)` takes no arguments");
+                    return self.poison(span);
+                }
+                return hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Void, span };
+            }
+            self.error(mspan, format!("no method `{mname}` on the base class"));
+            return self.poison(span);
+        };
+        if self.signatures[func as usize].is_static {
+            self.error(mspan, format!("static method `{mname}` must be called through its class"));
+            return self.poison(span);
+        }
+        if self.signatures[func as usize].rest_param.is_some()
+            || args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+        {
+            self.error(span, "`super` calls do not support rest/spread parameters yet");
+            return self.poison(span);
+        }
+        let (param_tys, return_ty, optional_count, signature_name) = {
+            let sig = &self.signatures[func as usize];
+            (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
+        };
+        let mut call_args = vec![this_expr];
+        for a in args {
+            call_args.push(self.check_expr(cx, a));
+        }
+        let max = param_tys.len();
+        let min = max.saturating_sub(optional_count);
+        if call_args.len() < min || call_args.len() > max {
+            self.error(
+                span,
+                format!(
+                    "`{mname}` expects {} to {} argument(s), found {}",
+                    min - 1,
+                    max - 1,
+                    call_args.len() - 1
+                ),
+            );
+            return self.poison(span);
+        }
+        let sig = Signature {
+            name: signature_name,
+            params: param_tys.clone(),
+            return_ty,
+            optional_count,
+            rest_param: None,
+            is_generator: self.signatures[func as usize].is_generator,
+            is_static: false,
+        };
+        self.pad_default_args(&mut call_args, &sig, span);
+        for (arg, &expected) in call_args.iter_mut().zip(&param_tys).skip(1) {
+            coerce_numeric_literal(arg, expected);
+            if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
+                self.error(
+                    arg.span,
+                    format!("argument type {:?} does not match {expected:?}", arg.ty),
+                );
+            }
+        }
+        hir::Expr { kind: hir::ExprKind::StaticCall { func, args: call_args }, ty: return_ty, span }
+    }
+
     /// Lower `new C(args)` for a class that declares `constructor(...)`.
     /// Fields are allocated at their default initializer (or the typed zero);
     /// the constructor then runs with `this` = the instance. Arguments are
@@ -4938,6 +5048,9 @@ impl Checker<'_> {
             }
             ast::Expr::Call { callee, args, .. } => {
                 let name = self.text(callee).to_string();
+                if name == "super" {
+                    return self.check_super_call(cx, None, args, span);
+                }
                 // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
                 if name == "Function"
                     && !self.by_name.contains_key(&name)
@@ -5890,6 +6003,9 @@ impl Checker<'_> {
             } => {
                 if let ast::Expr::Ident(class) = receiver.as_ref() {
                     let class_name = self.text(class).to_string();
+                    if class_name == "super" {
+                        return self.check_super_call(cx, Some(method), args, span);
+                    }
                     if class_name == "Object" && !self.classes_by_name.contains_key("Object") {
                         return self.check_object_static(
                             cx,
@@ -8809,8 +8925,9 @@ impl Checker<'_> {
                 }
                 // A class that declares a `constructor` method runs user code on
                 // `new`: fields start at their defaults and the arguments are
-                // checked against the constructor's parameters. Only the class's
-                // own `constructor` is honoured (`super(...)` chaining deferred).
+                // checked against the constructor's parameters. The class's own
+                // `constructor` runs; it may call `super(...)` to chain to the
+                // base constructor (see `check_super_call`).
                 let own_ctor = self
                     .methods_by_class
                     .get(class_idx as usize)
