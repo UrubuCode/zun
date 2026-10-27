@@ -11,7 +11,7 @@ oxc_allocator = "0.155"
 oxc_ast = "0.155"
 oxc_parser = { version = "0.155", default-features = false }
 oxc_span = "0.155"
-zun_common = { path = "../zun_common" }
+zun_common = { workspace = true }
 
 [lints]
 workspace = true

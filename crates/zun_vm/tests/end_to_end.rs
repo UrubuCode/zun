@@ -717,7 +717,7 @@ fn function_call_threads_this_as_the_leading_argument() {
 /// Compile `user` together with the `Array` class source (so its Zun-extension
 /// methods resolve) and run it.
 fn run_with_array_class(user: &str) -> Vec<String> {
-    let src = format!("{user}\n{}", include_str!("../../../builtin/array.zun"));
+    let src = format!("{user}\n{}", zun_prelude::ARRAY);
     run_source(&src)
 }
 

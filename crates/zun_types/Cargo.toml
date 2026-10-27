@@ -7,13 +7,13 @@ repository.workspace = true
 description = "Reified runtime type descriptors and object layouts for Zun."
 
 [dependencies]
-zun_core = { path = "../zun_core" }
-zun_il = { path = "../zun_il" }
-zun_metadata = { path = "../zun_metadata" }
-zun_module = { path = "../zun_module" }
+zun_core = { workspace = true }
+zun_il = { workspace = true }
+zun_metadata = { workspace = true }
+zun_module = { workspace = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-zun_compiler = { path = "../zun_compiler" }
+zun_compiler = { workspace = true }

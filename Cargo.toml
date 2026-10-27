@@ -40,6 +40,29 @@ sha2 = "0.10"
 object = "0.39"
 target-lexicon = "0.13"
 ureq = "2"
+zun_common = { path = "crates/zun_common", version = "0.0.0" }
+zun_core = { path = "crates/zun_core", version = "0.0.0" }
+zun_metadata = { path = "crates/zun_metadata", version = "0.0.0" }
+zun_il = { path = "crates/zun_il", version = "0.0.0" }
+zun_module = { path = "crates/zun_module", version = "0.0.0" }
+zun_syntax = { path = "crates/zun_syntax", version = "0.0.0" }
+zun_sema = { path = "crates/zun_sema", version = "0.0.0" }
+zun_ilgen = { path = "crates/zun_ilgen", version = "0.0.0" }
+zun_interp = { path = "crates/zun_interp", version = "0.0.0" }
+zun_sched = { path = "crates/zun_sched", version = "0.0.0" }
+zun_vm = { path = "crates/zun_vm", version = "0.0.0" }
+zun_cli = { path = "crates/zun_cli", version = "0.0.0" }
+zun_verify = { path = "crates/zun_verify", version = "0.0.0" }
+zun_codegen = { path = "crates/zun_codegen", version = "0.0.0" }
+zun_prelude = { path = "crates/zun_prelude", version = "0.0.0" }
+zun_gc = { path = "crates/zun_gc", version = "0.0.0" }
+zun_natives = { path = "crates/zun_natives", version = "0.0.0" }
+zun_abi = { path = "crates/zun_abi", version = "0.0.0" }
+zun_compiler = { path = "crates/zun_compiler", version = "0.0.0" }
+zun_loader = { path = "crates/zun_loader", version = "0.0.0" }
+zun_types = { path = "crates/zun_types", version = "0.0.0" }
+zun_regex = { path = "crates/zun_regex", version = "0.0.0" }
+zun_runtime = { path = "crates/zun_runtime", version = "0.0.0" }
 
 [workspace.package]
 version = "0.0.0"

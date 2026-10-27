@@ -8,7 +8,7 @@
 use zun_interp::CaptureOutput;
 
 /// The shipped error hierarchy.
-const ERROR_SOURCE: &str = include_str!("../../../builtin/error.zun");
+const ERROR_SOURCE: &str = zun_prelude::ERRORS;
 
 /// Compile `main` against the real error classes and return its output.
 fn run_with_errors(main: &str) -> Vec<String> {

@@ -14,15 +14,15 @@ crate-type = ["cdylib"]
 eval = ["zun_vm/eval"]
 
 [dependencies]
-zun_vm = { path = "../zun_vm" }
+zun_vm = { workspace = true }
 
 [dev-dependencies]
 libloading = "0.8"
 zstd = "0.13"
-zun_syntax = { path = "../zun_syntax" }
-zun_sema = { path = "../zun_sema" }
-zun_ilgen = { path = "../zun_ilgen" }
-zun_compiler = { path = "../zun_compiler" }
+zun_syntax = { workspace = true }
+zun_sema = { workspace = true }
+zun_ilgen = { workspace = true }
+zun_compiler = { workspace = true }
 
 [lints]
 workspace = true

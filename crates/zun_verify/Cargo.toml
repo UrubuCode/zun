@@ -7,9 +7,9 @@ repository.workspace = true
 description = "ZIL verifier: structural and stack-consistency checks over a method body."
 
 [dependencies]
-zun_il = { path = "../zun_il" }
-zun_metadata = { path = "../zun_metadata" }
-zun_module = { path = "../zun_module" }
+zun_il = { workspace = true }
+zun_metadata = { workspace = true }
+zun_module = { workspace = true }
 
 [lints]
 workspace = true

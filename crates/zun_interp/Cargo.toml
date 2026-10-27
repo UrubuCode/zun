@@ -7,19 +7,19 @@ repository.workspace = true
 description = "Tier 0: the always-correct ZIL interpreter and its value model."
 
 [dependencies]
-zun_il = { path = "../zun_il" }
-zun_metadata = { path = "../zun_metadata" }
-zun_module = { path = "../zun_module" }
-zun_gc = { path = "../zun_gc" }
-zun_core = { path = "../zun_core" }
-zun_natives = { path = "../zun_natives" }
-zun_loader = { path = "../zun_loader" }
-zun_types = { path = "../zun_types" }
-zun_sched = { path = "../zun_sched" }
+zun_il = { workspace = true }
+zun_metadata = { workspace = true }
+zun_module = { workspace = true }
+zun_gc = { workspace = true }
+zun_core = { workspace = true }
+zun_natives = { workspace = true }
+zun_loader = { workspace = true }
+zun_types = { workspace = true }
+zun_sched = { workspace = true }
 
 [dev-dependencies]
-zun_compiler = { path = "../zun_compiler" }
-zun_sema = { path = "../zun_sema" }
+zun_compiler = { workspace = true }
+zun_sema = { workspace = true }
 
 [lints]
 workspace = true

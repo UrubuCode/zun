@@ -15,30 +15,30 @@ crate-type = ["rlib", "staticlib"]
 eval = ["dep:zun_compiler"]
 
 [dependencies]
-zun_compiler = { path = "../zun_compiler", optional = true }
-zun_interp = { path = "../zun_interp" }
-zun_sched = { path = "../zun_sched" }
-zun_module = { path = "../zun_module" }
-zun_loader = { path = "../zun_loader" }
-zun_metadata = { path = "../zun_metadata" }
-zun_il = { path = "../zun_il" }
-zun_verify = { path = "../zun_verify" }
-zun_codegen = { path = "../zun_codegen" }
-zun_gc = { path = "../zun_gc" }
-zun_natives = { path = "../zun_natives" }
-zun_abi = { path = "../zun_abi" }
+zun_compiler = { workspace = true, optional = true }
+zun_interp = { workspace = true }
+zun_sched = { workspace = true }
+zun_module = { workspace = true }
+zun_loader = { workspace = true }
+zun_metadata = { workspace = true }
+zun_il = { workspace = true }
+zun_verify = { workspace = true }
+zun_codegen = { workspace = true }
+zun_gc = { workspace = true }
+zun_natives = { workspace = true }
+zun_abi = { workspace = true }
 libloading = "0.8"
 target-lexicon = { workspace = true }
 
 [dev-dependencies]
 zun_vm = { path = ".", features = ["eval"] }
-zun_core = { path = "../zun_core" }
-zun_regex = { path = "../zun_regex" }
-zun_compiler = { path = "../zun_compiler" }
-zun_ilgen = { path = "../zun_ilgen" }
-zun_sema = { path = "../zun_sema" }
-zun_syntax = { path = "../zun_syntax" }
-zun_prelude = { path = "../zun_prelude" }
+zun_core = { workspace = true }
+zun_regex = { workspace = true }
+zun_compiler = { workspace = true }
+zun_ilgen = { workspace = true }
+zun_sema = { workspace = true }
+zun_syntax = { workspace = true }
+zun_prelude = { workspace = true }
 
 [lints]
 workspace = true

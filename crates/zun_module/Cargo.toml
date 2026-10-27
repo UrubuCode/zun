@@ -7,8 +7,8 @@ repository.workspace = true
 description = "The .zm container format: header, code section, heaps, and metadata tables."
 
 [dependencies]
-zun_metadata = { path = "../zun_metadata" }
-zun_il = { path = "../zun_il" }
+zun_metadata = { workspace = true }
+zun_il = { workspace = true }
 
 [lints]
 workspace = true

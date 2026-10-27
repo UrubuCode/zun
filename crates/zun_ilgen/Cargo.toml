@@ -7,16 +7,16 @@ repository.workspace = true
 description = "Lowers the typed HIR to ZIL and emits a .zm module."
 
 [dev-dependencies]
-zun_syntax = { path = "../zun_syntax" }
+zun_syntax = { workspace = true }
 
 [dependencies]
-zun_common = { path = "../zun_common" }
-zun_il = { path = "../zun_il" }
-zun_metadata = { path = "../zun_metadata" }
-zun_module = { path = "../zun_module" }
-zun_natives = { path = "../zun_natives" }
-zun_regex = { path = "../zun_regex" }
-zun_sema = { path = "../zun_sema" }
+zun_common = { workspace = true }
+zun_il = { workspace = true }
+zun_metadata = { workspace = true }
+zun_module = { workspace = true }
+zun_natives = { workspace = true }
+zun_regex = { workspace = true }
+zun_sema = { workspace = true }
 
 [lints]
 workspace = true

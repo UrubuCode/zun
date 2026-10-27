@@ -10,4 +10,4 @@ description = "The Zun runtime heap: a non-moving object allocator shared by the
 workspace = true
 
 [dependencies]
-zun_core = { path = "../zun_core" }
+zun_core = { workspace = true }

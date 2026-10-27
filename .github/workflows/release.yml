@@ -1,0 +1,173 @@
+name: release
+
+# The git tag is the single source of truth for the version. Pushing a tag
+# `vX.Y.Z` stamps that version into the whole workspace (one command, every
+# crate — see the `stamp` step), builds the embedded `zun` binary on a native
+# runner per platform, attaches the binaries to the GitHub Release, and
+# (optionally) publishes the zmlib-builder SDK crates to crates.io.
+#
+# Dry run without tagging: Actions -> release -> "Run workflow" (workflow_dispatch),
+# passing a version like 0.0.1-rc.1. No Release is created and nothing is published.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp for a dry run (no tag, e.g. 0.0.1-rc.1)"
+        required: true
+        default: "0.0.0-dev"
+
+permissions:
+  contents: write # create the GitHub Release and upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Resolve the version once (from the tag, or from the dispatch input) so every
+  # downstream job agrees on it.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_release: ${{ steps.v.outputs.is_release }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ver="${GITHUB_REF_NAME#v}"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            ver="${{ github.event.inputs.version }}"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $ver"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            bin: zun
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            bin: zun
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            bin: zun
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            bin: zun
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            bin: zun.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Stamp workspace version from the tag
+        shell: bash
+        run: |
+          cargo install cargo-edit --locked || true
+          cargo set-version --workspace "${{ needs.version.outputs.version }}"
+
+      # Builds zun_runtime (release) -> zstd -> rebuilds zun_cli with the embedded
+      # payload -> runs the self-provision verify. Produces target/release/zun[.exe].
+      - name: Package embedded engine (xtask)
+        run: cargo run -p xtask -- package
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          name="zun-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          cp "target/release/${{ matrix.bin }}" "dist/${name}${{ matrix.bin == 'zun.exe' && '.exe' || '' }}"
+          cd dist
+          f=$(ls zun-*)
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$f" > "$f.sha256"
+          else
+            certutil -hashfile "$f" SHA256 > "$f.sha256" || sha256sum "$f" > "$f.sha256"
+          fi
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zun-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: zun ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true
+
+  # Publishes the zmlib-builder SDK crates to crates.io so a module repo (e.g.
+  # @urubucode/common) can depend on them and build its .zmlib with plain Cargo.
+  #
+  # DISABLED until the prerequisites are done:
+  #   1. the builtin/*.zun include_str! refactor (files must live inside each
+  #      crate, or `cargo publish` ships a crate that cannot build);
+  #   2. internal path-deps carry a `version = ...` (centralized in
+  #      [workspace.dependencies]).
+  # Turn on by setting the repo variable PUBLISH_CRATES=true and the secret
+  # CARGO_REGISTRY_TOKEN.
+  publish-crates:
+    needs: [version, build]
+    if: needs.version.outputs.is_release == 'true' && vars.PUBLISH_CRATES == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Stamp workspace version from the tag
+        shell: bash
+        run: |
+          cargo install cargo-edit --locked || true
+          cargo set-version --workspace "${{ needs.version.outputs.version }}"
+      # Topological order: leaves first, up to zun_compiler. cargo publish waits
+      # for the index between crates by default.
+      - name: Publish SDK crates (dependency order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for c in \
+            zun_common zun_regex zun_metadata zun_il zun_module zun_core \
+            zun_types zun_syntax zun_natives zun_sema zun_ilgen zun_prelude \
+            zun_verify zun_loader zun_compiler; do
+            echo "::group::publish $c"
+            cargo publish -p "$c"
+            echo "::endgroup::"
+          done

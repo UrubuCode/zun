@@ -607,30 +607,21 @@ fn collect_function_signatures(source: &str) -> Vec<zun_sema::check::ExternalFun
 /// supplies the stable module identities used by hosts and tests.
 pub fn compile_standard_library() -> Result<zun_loader::ModuleLoader, Vec<Diagnostic>> {
     compile_modules([
-        ("zun:std:math", include_str!("../../../builtin/math.zun")),
-        ("zun:std:string", include_str!("../../../builtin/string.zun")),
-        ("zun:std:number", include_str!("../../../builtin/number.zun")),
-        ("zun:std:bigint", include_str!("../../../builtin/bigint.zun")),
-        ("zun:std:array", include_str!("../../../builtin/array.zun")),
-        ("zun:std:map", include_str!("../../../builtin/map.zun")),
-        ("zun:std:set", include_str!("../../../builtin/set.zun")),
-        (
-            "zun:std:weak-map",
-            include_str!("../../../builtin/weak_map.zun"),
-        ),
-        (
-            "zun:std:weak-set",
-            include_str!("../../../builtin/weak_set.zun"),
-        ),
-        (
-            "zun:std:weak-ref",
-            include_str!("../../../builtin/weak_ref.zun"),
-        ),
+        ("zun:std:math", zun_prelude::MATH),
+        ("zun:std:string", zun_prelude::STRING),
+        ("zun:std:number", zun_prelude::NUMBER),
+        ("zun:std:bigint", zun_prelude::BIGINT),
+        ("zun:std:array", zun_prelude::ARRAY),
+        ("zun:std:map", zun_prelude::MAP),
+        ("zun:std:set", zun_prelude::SET),
+        ("zun:std:weak-map", zun_prelude::WEAK_MAP),
+        ("zun:std:weak-set", zun_prelude::WEAK_SET),
+        ("zun:std:weak-ref", zun_prelude::WEAK_REF),
         (
             "zun:std:finalization-registry",
-            include_str!("../../../builtin/finalization_registry.zun"),
+            zun_prelude::FINALIZATION_REGISTRY,
         ),
-        ("zun:std:regexp", include_str!("../../../builtin/regexp.zun")),
+        ("zun:std:regexp", zun_prelude::REGEXP),
         // NOTE: `builtin/error.zun` and `builtin/date.zun` are deliberately
         // absent. Their classes ship through the prelude (`zun_prelude::ERRORS`
         // and `DATE`) so that `Error` and `Date` are reachable from user code
@@ -1304,10 +1295,7 @@ mod tests {
 
     #[test]
     fn standard_library_source_is_compilable_by_zun() {
-        let source =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtin/math.zun"))
-                .expect("builtin/math.zun");
-        compile(&source).expect("standard library module should compile");
+        compile(zun_prelude::MATH).expect("standard library module should compile");
         let loader = compile_standard_library().expect("standard library should load");
         assert!(loader.get("zun:std:math").is_some());
         assert!(loader.get("zun:std:string").is_some());

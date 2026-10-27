@@ -29,7 +29,7 @@ pub const PRELUDE: &str = include_str!("prelude.zun");
 /// Kept separate from [`PRELUDE`] so the numeric fingerprint above keeps its
 /// meaning, and so the two can be split again once the std module can supply
 /// classes.
-pub const ERRORS: &str = include_str!("../../../builtin/error.zun");
+pub const ERRORS: &str = include_str!("../builtin/error.zun");
 
 /// The `Date` calendar class (`builtin/date.zun`), also compiled with every
 /// program, and for the same reason as [`ERRORS`]: it is a plain class, so it
@@ -39,19 +39,52 @@ pub const ERRORS: &str = include_str!("../../../builtin/error.zun");
 /// (`zun:core`'s `date` and `time` namespaces). Those resolve from the middle
 /// of the combined text, since import declarations are collected before the
 /// body is checked rather than having to lead the file.
-pub const DATE: &str = include_str!("../../../builtin/date.zun");
+pub const DATE: &str = include_str!("../builtin/date.zun");
 
 /// The `new Boolean(x)` wrapper class (`builtin/boolean.zun`), compiled with
 /// every program for the same reason as [`ERRORS`] and [`DATE`].
-pub const BOOLEAN: &str = include_str!("../../../builtin/boolean.zun");
+pub const BOOLEAN: &str = include_str!("../builtin/boolean.zun");
 
 /// The typed decorator context (`builtin/decorators.zun`), compiled with every
 /// program for the same reason as [`ERRORS`].
-pub const DECORATORS: &str = include_str!("../../../builtin/decorators.zun");
+pub const DECORATORS: &str = include_str!("../builtin/decorators.zun");
 
 /// The ECMA-402 `Intl` classes (`builtin/intl.zun`), compiled with every program
 /// for the same reason as [`ERRORS`]. `new Intl.X(..)` maps onto `IntlX`.
-pub const INTL: &str = include_str!("../../../builtin/intl.zun");
+pub const INTL: &str = include_str!("../builtin/intl.zun");
+
+/// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
+/// source string that the compiler compiles into the precompiled `zun:std`
+/// module (see `zun_compiler`). They live here so `zun_prelude` owns every
+/// `builtin/*.zun` file in-crate (no `include_str!` reaching outside a crate
+/// directory, which `cargo publish` cannot package).
+pub const MATH: &str = include_str!("../builtin/math.zun");
+/// `String` prototype surface. See [`MATH`].
+pub const STRING: &str = include_str!("../builtin/string.zun");
+/// `Number` prototype surface. See [`MATH`].
+pub const NUMBER: &str = include_str!("../builtin/number.zun");
+/// `BigInt` surface. See [`MATH`].
+pub const BIGINT: &str = include_str!("../builtin/bigint.zun");
+/// `Array` prototype surface. See [`MATH`].
+pub const ARRAY: &str = include_str!("../builtin/array.zun");
+/// `Map` surface. See [`MATH`].
+pub const MAP: &str = include_str!("../builtin/map.zun");
+/// `Set` surface. See [`MATH`].
+pub const SET: &str = include_str!("../builtin/set.zun");
+/// `WeakMap` surface. See [`MATH`].
+pub const WEAK_MAP: &str = include_str!("../builtin/weak_map.zun");
+/// `WeakSet` surface. See [`MATH`].
+pub const WEAK_SET: &str = include_str!("../builtin/weak_set.zun");
+/// `WeakRef` surface. See [`MATH`].
+pub const WEAK_REF: &str = include_str!("../builtin/weak_ref.zun");
+/// `FinalizationRegistry` surface. See [`MATH`].
+pub const FINALIZATION_REGISTRY: &str = include_str!("../builtin/finalization_registry.zun");
+/// `RegExp` surface. See [`MATH`].
+pub const REGEXP: &str = include_str!("../builtin/regexp.zun");
+
+/// The base-type global registry (`builtin/realm.zun`), consumed by
+/// `zun_sema::realm`. See [`MATH`]; kept here so the file lives in-crate.
+pub const REALM: &str = include_str!("../builtin/realm.zun");
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.
 ///

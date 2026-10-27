@@ -7,10 +7,11 @@ repository.workspace = true
 description = "Name resolution and type checking: lowers the AST to a typed HIR."
 
 [dependencies]
-zun_common = { path = "../zun_common" }
-zun_core = { path = "../zun_core" }
-zun_syntax = { path = "../zun_syntax" }
-zun_natives = { path = "../zun_natives" }
+zun_common = { workspace = true }
+zun_core = { workspace = true }
+zun_syntax = { workspace = true }
+zun_natives = { workspace = true }
+zun_prelude = { workspace = true }
 
 [lints]
 workspace = true

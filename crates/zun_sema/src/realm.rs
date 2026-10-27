@@ -16,7 +16,7 @@ use crate::hir::Ty;
 
 /// The declarative seed source. Its directives are the source of truth for which
 /// base types are realm globals.
-const REALM_SOURCE: &str = include_str!("../../../builtin/realm.zun");
+const REALM_SOURCE: &str = zun_prelude::REALM;
 
 /// How `new <Name>()` lowers for a registered base type. Captures the existing
 /// lowering shapes so the registry only redirects the *name* over an unchanged
