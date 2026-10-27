@@ -1,0 +1,96 @@
+// Nucleus `Response` (Fetch, prelude class).
+//
+//   Response.fromBlob(blob)   build from the `httpFetch` response blob
+//   status, statusText, ok, headers, text(), json()
+//
+// Blob format (from the `net` native): "<status>\n<statusText>\n<headers>\n\n<body>"
+// where <headers> is "Name: Value" lines joined by "\n" (possibly empty). After
+// the two leading lines, the remainder is split on its FIRST "\n\n"; with no
+// headers the remainder begins with "\n\n".
+//
+// Simplifications (documented, not defects):
+//   * The body is held as text (UTF-8, lossy); `text()` and `json()` are
+//     synchronous and return the value directly (the web returns a Promise).
+//     `arrayBuffer`, `blob`, `formData`, streaming `body`, `clone`, `bodyUsed`,
+//     `redirected` and `url` are deferred.
+//   * A public `new Response(body, init)` is deferred; the constructor is the
+//     raw field form `new Response(status, statusText, headers, body)`.
+//
+// Also defines the global `fetch(url)` / `fetchWith(...)` free functions here (a
+// free function in `prelude.zun` cannot see prelude classes on the cached-std path).
+//
+// Self-contained over the `zun:core` string/number natives; uses `Headers` and `JSON`.
+
+import { string as resString, number as resNumber, net as resNet } from "zun:core";
+
+class Response {
+    status: number;
+    statusText: string;
+    headers: Headers;
+    body: string;
+
+    get ok(): boolean {
+        if (this.status < 200) {
+            return false;
+        }
+        return this.status <= 299;
+    }
+
+    text(): string {
+        return this.body;
+    }
+
+    json(): any {
+        return JSON.parse(this.body);
+    }
+
+    // Parses an `httpFetch` response blob.
+    static fromBlob(blob: string): Response {
+        let n: u64 = resString.length(blob);
+        if (n == 0) {
+            return new Response(0, "", new Headers(), "");
+        }
+        let nl1: u64 = resString.indexOf(blob, "\n") as u64;
+        let statusNum: number = resNumber.parseFloat(resString.substring(blob, 0, nl1));
+        let after1 = resString.substring(blob, nl1 + 1, n);
+        let n2: u64 = resString.length(after1);
+        let nl2: u64 = resString.indexOf(after1, "\n") as u64;
+        let statusText = resString.substring(after1, 0, nl2);
+        let rest = resString.substring(after1, nl2 + 1, n2);
+        let restLen: u64 = resString.length(rest);
+        let headerText = "";
+        let body = "";
+        let sep: i32 = resString.indexOf(rest, "\n\n");
+        if (sep < 0) {
+            headerText = rest;
+        } else {
+            let at: u64 = sep as u64;
+            headerText = resString.substring(rest, 0, at);
+            body = resString.substring(rest, at + 2, restLen);
+        }
+        return new Response(statusNum, statusText, Headers.fromLines(headerText), body);
+    }
+}
+
+// --- fetch (blocking HTTP, `net` native) ---
+//
+// v1: the request is performed synchronously by the `httpFetch` native and the
+// result is wrapped in an already-settled Promise, so `await fetch(url)` works.
+// True non-blocking I/O on the event loop, a `net` capability gate, streaming
+// bodies, redirect control and `AbortSignal` are deferred. `fetch` rejects (with
+// an `Error`) only on a transport failure; HTTP error statuses resolve.
+
+function fetchWith(url: string, method: string, headers: string, body: string): any {
+    let blob = resNet.httpFetch(method, url, headers, body);
+    if (resString.startsWith(blob, "__ZUN_FETCH_ERR__")) {
+        let message = resString.substring(blob, 18, resString.length(blob));
+        return Promise.reject(new Error(message));
+    }
+    return Promise.resolve(Response.fromBlob(blob));
+}
+
+// GET `url`. For other methods/headers/body use `fetchWith`
+// (headers as "Name: Value" lines separated by "\n").
+function fetch(url: string): any {
+    return fetchWith(url, "GET", "", "");
+}

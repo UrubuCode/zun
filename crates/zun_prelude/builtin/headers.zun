@@ -1,0 +1,174 @@
+// Nucleus `Headers` (Fetch, prelude class).
+//
+//   new Headers()                 empty
+//   Headers.fromLines(text)       parse "Name: Value" lines separated by "\n"
+//   get / has / set / append / delete / count / nameAt / valueAt / toLines
+//
+// Simplifications (documented, not defects):
+//   * Names are stored lower-cased (lookups are case-insensitive, and iteration
+//     yields lower-case names, as the web does).
+//   * `get` returns "" (not null) for a missing name; use `has` to distinguish.
+//   * `append` keeps repeated names as separate entries; `get` returns the
+//     first. No comma-joining. Iteration is by `count`/`nameAt`/`valueAt`
+//     (no function-typed parameters or Symbol.iterator in prelude classes yet).
+//   * Constructing from a record / array init is deferred.
+//
+// Self-contained over the `zun:core` string natives.
+
+import { string as hdrString } from "zun:core";
+
+class Headers {
+    names: Array = [];
+    values: Array = [];
+
+    // Parses `Name: Value` lines (separated by "\n"); lines without a colon
+    // are skipped.
+    static fromLines(text: string): Headers {
+        let headers = new Headers();
+        let n: u64 = hdrString.length(text);
+        let start: u64 = 0;
+        let i: u64 = 0;
+        while (i <= n) {
+            let atEnd = i == n;
+            if (!atEnd) {
+                if (hdrString.charCodeAt(text, i) == 10) {
+                    atEnd = true;
+                }
+            }
+            if (atEnd) {
+                if (i > start) {
+                    headers.appendLine(hdrString.substring(text, start, i));
+                }
+                start = i + 1;
+            }
+            i = i + 1;
+        }
+        return headers;
+    }
+
+    appendLine(line: string): void {
+        let n: u64 = hdrString.length(line);
+        let colon: u64 = n;
+        let i: u64 = 0;
+        while (i < n) {
+            if (hdrString.charCodeAt(line, i) == 58) {
+                colon = i;
+                i = n;
+            } else {
+                i = i + 1;
+            }
+        }
+        if (colon == n) {
+            return;
+        }
+        let name = hdrString.trim(hdrString.substring(line, 0, colon));
+        let value = hdrString.trim(hdrString.substring(line, colon + 1, n));
+        this.append(name, value);
+    }
+
+    count(): u64 {
+        return this.names.length;
+    }
+
+    nameAt(index: u64): string {
+        return this.names[index] as string;
+    }
+
+    valueAt(index: u64): string {
+        return this.values[index] as string;
+    }
+
+    get(name: string): string {
+        let key = hdrString.toLowerCase(name);
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == key) {
+                return this.values[i] as string;
+            }
+            i = i + 1;
+        }
+        return "";
+    }
+
+    has(name: string): boolean {
+        let key = hdrString.toLowerCase(name);
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == key) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    append(name: string, value: string): void {
+        this.names.push(hdrString.toLowerCase(name));
+        this.values.push(value);
+    }
+
+    // Removes every entry named `name`.
+    delete(name: string): void {
+        let key = hdrString.toLowerCase(name);
+        let names: Array = [];
+        let values: Array = [];
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) != key) {
+                names.push(this.names[i] as string);
+                values.push(this.values[i] as string);
+            }
+            i = i + 1;
+        }
+        this.names = names;
+        this.values = values;
+    }
+
+    // Replaces the first entry named `name` (dropping the rest), or appends.
+    set(name: string, value: string): void {
+        let key = hdrString.toLowerCase(name);
+        let names: Array = [];
+        let values: Array = [];
+        let placed = false;
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == key) {
+                if (!placed) {
+                    names.push(key);
+                    values.push(value);
+                    placed = true;
+                }
+            } else {
+                names.push(this.names[i] as string);
+                values.push(this.values[i] as string);
+            }
+            i = i + 1;
+        }
+        if (!placed) {
+            names.push(key);
+            values.push(value);
+        }
+        this.names = names;
+        this.values = values;
+    }
+
+    // "Name: Value" lines joined by "\n" (the request-header wire form used by
+    // `httpFetch`).
+    toLines(): string {
+        let out = "";
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if (i > 0) {
+                out = out + "\n";
+            }
+            out = out + (this.names[i] as string) + ": " + (this.values[i] as string);
+            i = i + 1;
+        }
+        return out;
+    }
+}

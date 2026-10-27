@@ -100,6 +100,13 @@ pub const ABORT: &str = include_str!("../builtin/abort.zun");
 /// `getRandomValues` over the `zun:core` OS-randomness native.
 pub const CRYPTO: &str = include_str!("../builtin/crypto.zun");
 
+/// The `Headers` class (`builtin/headers.zun`): case-insensitive header list.
+pub const HEADERS: &str = include_str!("../builtin/headers.zun");
+
+/// The `Response` class (`builtin/response.zun`): fetch response parsed from the
+/// `httpFetch` blob. Uses [`HEADERS`].
+pub const RESPONSE: &str = include_str!("../builtin/response.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -159,6 +166,8 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     EVENT_TARGET,
     ABORT,
     CRYPTO,
+    HEADERS,
+    RESPONSE,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

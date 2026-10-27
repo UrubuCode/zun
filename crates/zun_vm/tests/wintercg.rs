@@ -277,3 +277,111 @@ fn crypto_get_random_values_fills_a_uint8array() {
     }"#);
     assert_eq!(out.lines, ["16", "true", "false"]);
 }
+
+// --- fetch / Response / Headers ---
+
+#[test]
+fn response_parses_a_blob() {
+    let out = run(r#"function main() {
+        let blob = "200\nOK\nContent-Type: application/json\nX-Test: a: b\n\n{\"n\": 7}\n\nmore";
+        let res = Response.fromBlob(blob);
+        console.log(res.status);
+        console.log(res.ok);
+        console.log(res.statusText);
+        console.log(res.headers.get("content-type"));
+        console.log(res.headers.get("X-TEST"));
+        console.log(res.headers.has("nope"));
+        console.log(res.text() == "{\"n\": 7}\n\nmore");
+        let ok = Response.fromBlob("200\nOK\nA: 1\n\n{\"n\": 7, \"s\": \"x\"}");
+        let v: any = ok.json();
+        console.log(v.n);
+        console.log(v.s);
+    }"#);
+    assert_eq!(
+        out.lines,
+        ["200", "true", "OK", "application/json", "a: b", "false", "true", "7", "x"]
+    );
+}
+
+#[test]
+fn response_blob_without_headers_and_error_status() {
+    let out = run(r#"function main() {
+        let res = Response.fromBlob("404\nNot Found\n\n\nnope");
+        console.log(res.status);
+        console.log(res.ok);
+        console.log(res.statusText);
+        console.log(res.headers.count());
+        console.log(res.text());
+    }"#);
+    assert_eq!(out.lines, ["404", "false", "Not Found", "0", "nope"]);
+}
+
+#[test]
+fn headers_set_append_delete() {
+    let out = run(r#"function main() {
+        let h = new Headers();
+        h.append("Accept", "a");
+        h.append("accept", "b");
+        console.log(h.get("ACCEPT"));
+        h.set("Accept", "c");
+        console.log(h.count());
+        console.log(h.get("accept"));
+        h.delete("accept");
+        console.log(h.has("Accept"));
+    }"#);
+    assert_eq!(out.lines, ["a", "1", "c", "false"]);
+}
+
+#[test]
+fn fetch_end_to_end_over_localhost() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf);
+        let body = r#"{"hello":"world","n":42}"#;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Zun: yes\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(resp.as_bytes()).unwrap();
+        let _ = stream.flush();
+    });
+    let out = run(&format!(
+        r#"function main() {{
+        let raw: any = await fetch("http://127.0.0.1:{port}/");
+        let res = raw as Response;
+        console.log(res.status);
+        console.log(res.ok);
+        console.log(res.headers.get("x-zun"));
+        let v: any = res.json();
+        console.log(v.hello);
+        console.log(v.n);
+    }}"#
+    ));
+    server.join().unwrap();
+    assert_eq!(out.lines, ["200", "true", "yes", "world", "42"]);
+}
+
+#[test]
+fn fetch_rejects_on_transport_failure() {
+    // Bind then drop to get a port nothing listens on.
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let out = run(&format!(
+        r#"function main() {{
+        try {{
+            let raw: any = await fetch("http://127.0.0.1:{port}/");
+            console.log("resolved");
+        }} catch (e: any) {{
+            console.log("rejected");
+        }}
+    }}"#
+    ));
+    assert_eq!(out.lines, ["rejected"]);
+}
