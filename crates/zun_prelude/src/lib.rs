@@ -64,6 +64,18 @@ pub const CONSOLE: &str = include_str!("../builtin/console.zun");
 /// `zun:core` native surface.
 pub const JSON: &str = include_str!("../builtin/json.zun");
 
+/// The `performance` class (`builtin/performance.zun`), a WinterCG minimum
+/// common API: `performance.now()` over the `zun:core` `time` clock.
+pub const PERFORMANCE: &str = include_str!("../builtin/performance.zun");
+
+/// The `TextEncoder` class (`builtin/text_encoder.zun`): UTF-8 `encode` over
+/// the `zun:core` `nodeBuffer` natives.
+pub const TEXT_ENCODER: &str = include_str!("../builtin/text_encoder.zun");
+
+/// The `TextDecoder` class (`builtin/text_decoder.zun`): UTF-8 `decode` over
+/// the `zun:core` `nodeBuffer` natives.
+pub const TEXT_DECODER: &str = include_str!("../builtin/text_decoder.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -114,6 +126,9 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     INTL,
     CONSOLE,
     JSON,
+    PERFORMANCE,
+    TEXT_ENCODER,
+    TEXT_DECODER,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

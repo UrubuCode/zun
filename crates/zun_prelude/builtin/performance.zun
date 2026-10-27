@@ -1,0 +1,15 @@
+// Nucleus `performance` (WinterCG minimum common API, prelude class).
+//
+//   performance.now() -> number   milliseconds from the engine's clock
+//
+// Self-contained over the `time` group of `zun:core`. v1 resolution is whole
+// milliseconds (the epoch-based `nowMillis` clock); `timeOrigin` and marks are
+// deferred.
+
+import { time as perfTime } from "zun:core";
+
+class performance {
+    static now(): number {
+        return perfTime.nowMillis() as number;
+    }
+}

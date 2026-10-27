@@ -1,0 +1,14 @@
+// Nucleus `TextEncoder` (WinterCG minimum common API, prelude class).
+//
+//   new TextEncoder().encode(input) -> Uint8Array   (UTF-8)
+//
+// Self-contained over the `nodeBuffer` group of `zun:core`. Deferred:
+// `encodeInto` and the `encoding` property.
+
+import { nodeBuffer as encBuffer } from "zun:core";
+
+class TextEncoder {
+    encode(input: string): Uint8Array {
+        return encBuffer.nodeBufferFromString(input, "utf8");
+    }
+}

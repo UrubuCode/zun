@@ -59,3 +59,25 @@ function fmax(a: float, b: float): float {
     if (a > b) { return a; }
     return b;
 }
+
+// --- WinterCG universal globals (self-contained over `zun:core`) ---
+
+import { serialize as serdeSerialize, deserialize as serdeDeserialize, nodeBuffer as globalsBuffer } from "zun:core";
+
+// Deep clone through the binary ser/de primitive; cycles and shared
+// references round-trip.
+function structuredClone(value: any): any {
+    return serdeDeserialize(serdeSerialize(value));
+}
+
+// Base64-encode a binary string (code points 0-255, as in the web `btoa`).
+function btoa(data: string): string {
+    let bytes = globalsBuffer.nodeBufferFromString(data, "latin1");
+    return globalsBuffer.nodeBufferToString(bytes, "base64", 0, bytes.length);
+}
+
+// Base64-decode to a binary string (inverse of `btoa`).
+function atob(data: string): string {
+    let bytes = globalsBuffer.nodeBufferFromString(data, "base64");
+    return globalsBuffer.nodeBufferToString(bytes, "latin1", 0, bytes.length);
+}

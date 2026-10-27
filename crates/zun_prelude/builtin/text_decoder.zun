@@ -1,0 +1,14 @@
+// Nucleus `TextDecoder` (WinterCG minimum common API, prelude class).
+//
+//   new TextDecoder().decode(input) -> string   (UTF-8, lossy on bad input)
+//
+// Self-contained over the `nodeBuffer` group of `zun:core`. Deferred: the
+// `encoding`/`fatal`/`ignoreBOM` options and streaming decode.
+
+import { nodeBuffer as decBuffer } from "zun:core";
+
+class TextDecoder {
+    decode(input: Uint8Array): string {
+        return decBuffer.nodeBufferToString(input, "utf8", 0, input.length);
+    }
+}
