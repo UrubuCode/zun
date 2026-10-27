@@ -3828,12 +3828,24 @@ impl<'a> Interp<'a> {
             }
             "promiseRejectStatic" => {
                 let value = args.first().ok_or(RunError::BadToken)?;
-                let message = value_to_error_string(value);
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 // Settle through the scheduler so a detached rejection (nothing
                 // awaiting or `.catch`-ing it) is tracked for turn-end
-                // unhandled-rejection reporting.
-                self.settle_promise_reject(promise, message);
+                // unhandled-rejection reporting. An object reason (e.g. an
+                // `Error`) is carried first-class — the same split as the
+                // executor `reject(..)` path — so `await`/`catch (e: Error)`
+                // sees the object, not a stringified "[object]".
+                match value {
+                    Value::Str(message) => {
+                        self.settle_promise_reject(promise, message.to_string());
+                    }
+                    other => {
+                        let reason = zun_gc::with_current_heap_mut(|heap| other.clone().box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null);
+                        let message = value_to_error_string(other);
+                        self.settle_promise_reject_value(promise, reason, message);
+                    }
+                }
                 Ok(Value::Object(promise))
             }
             "promiseAll" | "promiseAllSettled" | "promiseRace" | "promiseAny" => {
