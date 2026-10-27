@@ -201,8 +201,15 @@ pub struct NativeError(pub String);
 
 /// Output sink for `print`/`println`, so the host can capture program output.
 pub trait Sink {
-    /// Write one already-formatted line.
+    /// Write one already-formatted line to the standard output stream.
     fn println(&mut self, line: &str);
+
+    /// Write one already-formatted line to the error output stream (`stderr`),
+    /// used by `console.error`/`console.warn`. Defaults to [`println`](Self::println)
+    /// so existing sinks that do not distinguish the streams keep working.
+    fn eprintln(&mut self, line: &str) {
+        self.println(line);
+    }
 }
 
 /// The implementation of a native function: neutral args in, neutral value out.
