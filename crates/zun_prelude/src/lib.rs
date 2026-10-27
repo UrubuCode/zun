@@ -76,6 +76,14 @@ pub const TEXT_ENCODER: &str = include_str!("../builtin/text_encoder.zun");
 /// the `zun:core` `nodeBuffer` natives.
 pub const TEXT_DECODER: &str = include_str!("../builtin/text_decoder.zun");
 
+/// The `URLSearchParams` class (`builtin/url_search_params.zun`): query-string
+/// parsing and form-urlencoded serialization over the `zun:core` natives.
+pub const URL_SEARCH_PARAMS: &str = include_str!("../builtin/url_search_params.zun");
+
+/// The `URL` class (`builtin/url.zun`): absolute-URL parsing over the
+/// `zun:core` string natives; uses [`URL_SEARCH_PARAMS`].
+pub const URL: &str = include_str!("../builtin/url.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -129,6 +137,8 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     PERFORMANCE,
     TEXT_ENCODER,
     TEXT_DECODER,
+    URL_SEARCH_PARAMS,
+    URL,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

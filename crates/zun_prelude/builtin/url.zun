@@ -1,0 +1,264 @@
+// Nucleus `URL` (WHATWG URL, prelude class).
+//
+//   new URL(input)   href, protocol, hostname, host, port, pathname, search,
+//                    hash, username, password, origin, searchParams
+//
+// Simplifications (documented, not defects):
+//   * Only absolute `scheme://authority/...` URLs; the relative-URL `base`
+//     second argument is deferred.
+//   * Invalid input throws a `TypeError`, lazily: the URL is parsed on first
+//     property access (classes have no constructor bodies), not at `new`.
+//   * No IDNA/punycode, no IPv6 literal parsing, no path dot-segment
+//     normalization, no percent-encoding normalization of components.
+//   * The scheme and host are lower-cased; default ports (http 80, https 443,
+//     ftp 21, ws 80, wss 443) are dropped from `port`.
+//   * An empty path becomes "/". `searchParams` is a snapshot parsed from the
+//     query; mutating it does not rewrite `search`/`href`.
+//
+// Self-contained over the `zun:core` string natives.
+
+import { string as urlString } from "zun:core";
+
+class URL {
+    input: string;
+    loaded: boolean = false;
+    scheme: string = "";
+    userinfo: string = "";
+    hostName: string = "";
+    portText: string = "";
+    path: string = "/";
+    query: string = "";
+    fragment: string = "";
+    params: URLSearchParams = new URLSearchParams("");
+
+    // Parses `input` on first use, so an invalid URL throws from the first
+    // property read rather than from `new` (classes have no constructor
+    // bodies: a `new` call just fills the fields in declaration order).
+    ensure(): void {
+        if (this.loaded) {
+            return;
+        }
+        this.loaded = true;
+        let input = this.input;
+        let n: u64 = urlString.length(input);
+        // scheme
+        let colon: u64 = n;
+        let i: u64 = 0;
+        while (i < n) {
+            let c: u32 = urlString.charCodeAt(input, i);
+            let ok = false;
+            if (c >= 97) {
+                if (c <= 122) {
+                    ok = true;
+                }
+            }
+            if (c >= 65) {
+                if (c <= 90) {
+                    ok = true;
+                }
+            }
+            if (i > 0) {
+                if (c >= 48) {
+                    if (c <= 57) {
+                        ok = true;
+                    }
+                }
+                if (c == 43) {
+                    ok = true;
+                }
+                if (c == 45) {
+                    ok = true;
+                }
+                if (c == 46) {
+                    ok = true;
+                }
+            }
+            if (c == 58) {
+                if (i > 0) {
+                    colon = i;
+                }
+                i = n;
+            } else {
+                if (!ok) {
+                    i = n;
+                } else {
+                    i = i + 1;
+                }
+            }
+        }
+        if (colon == n) {
+            throw new TypeError("Invalid URL: " + input);
+        }
+        this.scheme = urlString.toLowerCase(urlString.substring(input, 0, colon));
+        if (colon + 3 > n) {
+            throw new TypeError("Invalid URL: " + input);
+        }
+        if (urlString.substring(input, colon + 1, colon + 3) != "//") {
+            throw new TypeError("Invalid URL: " + input);
+        }
+        let rest = urlString.substring(input, colon + 3, n);
+        // fragment
+        let hashAt: i32 = urlString.indexOf(rest, "#");
+        if (hashAt >= 0) {
+            let h = hashAt as u64;
+            let frag = urlString.substring(rest, h + 1, urlString.length(rest));
+            if (urlString.length(frag) > 0) {
+                this.fragment = "#" + frag;
+            }
+            rest = urlString.substring(rest, 0, h);
+        }
+        // query
+        let qAt: i32 = urlString.indexOf(rest, "?");
+        if (qAt >= 0) {
+            let q = qAt as u64;
+            let qs = urlString.substring(rest, q + 1, urlString.length(rest));
+            if (urlString.length(qs) > 0) {
+                this.query = "?" + qs;
+            }
+            rest = urlString.substring(rest, 0, q);
+        }
+        // authority / path
+        let slashAt: i32 = urlString.indexOf(rest, "/");
+        let authority = rest;
+        if (slashAt >= 0) {
+            let s = slashAt as u64;
+            authority = urlString.substring(rest, 0, s);
+            this.path = urlString.substring(rest, s, urlString.length(rest));
+        }
+        // userinfo
+        let atAt: i32 = urlString.lastIndexOf(authority, "@");
+        if (atAt >= 0) {
+            let a = atAt as u64;
+            this.userinfo = urlString.substring(authority, 0, a);
+            authority = urlString.substring(authority, a + 1, urlString.length(authority));
+        }
+        // port
+        let portAt: i32 = urlString.lastIndexOf(authority, ":");
+        if (portAt >= 0) {
+            let p = portAt as u64;
+            let portStr = urlString.substring(authority, p + 1, urlString.length(authority));
+            let pn: u64 = urlString.length(portStr);
+            let k: u64 = 0;
+            while (k < pn) {
+                let d: u32 = urlString.charCodeAt(portStr, k);
+                if (d < 48) {
+                    throw new TypeError("Invalid URL: " + input);
+                }
+                if (d > 57) {
+                    throw new TypeError("Invalid URL: " + input);
+                }
+                k = k + 1;
+            }
+            authority = urlString.substring(authority, 0, p);
+            if (pn > 0) {
+                if (!this.isDefaultPort(portStr)) {
+                    this.portText = portStr;
+                }
+            }
+        }
+        if (urlString.length(authority) == 0) {
+            throw new TypeError("Invalid URL: " + input);
+        }
+        this.hostName = urlString.toLowerCase(authority);
+        this.params = new URLSearchParams(this.query);
+    }
+
+    isDefaultPort(port: string): boolean {
+        if (this.scheme == "http") {
+            return port == "80";
+        }
+        if (this.scheme == "ws") {
+            return port == "80";
+        }
+        if (this.scheme == "https") {
+            return port == "443";
+        }
+        if (this.scheme == "wss") {
+            return port == "443";
+        }
+        if (this.scheme == "ftp") {
+            return port == "21";
+        }
+        return false;
+    }
+
+    get protocol(): string {
+        this.ensure();
+        return this.scheme + ":";
+    }
+
+    get hostname(): string {
+        this.ensure();
+        return this.hostName;
+    }
+
+    get port(): string {
+        this.ensure();
+        return this.portText;
+    }
+
+    get host(): string {
+        this.ensure();
+        if (urlString.length(this.portText) > 0) {
+            return this.hostName + ":" + this.portText;
+        }
+        return this.hostName;
+    }
+
+    get username(): string {
+        this.ensure();
+        let at: i32 = urlString.indexOf(this.userinfo, ":");
+        if (at >= 0) {
+            return urlString.substring(this.userinfo, 0, at as u64);
+        }
+        return this.userinfo;
+    }
+
+    get password(): string {
+        this.ensure();
+        let at: i32 = urlString.indexOf(this.userinfo, ":");
+        if (at >= 0) {
+            return urlString.substring(this.userinfo, (at as u64) + 1, urlString.length(this.userinfo));
+        }
+        return "";
+    }
+
+    get pathname(): string {
+        this.ensure();
+        return this.path;
+    }
+
+    get search(): string {
+        this.ensure();
+        return this.query;
+    }
+
+    get hash(): string {
+        this.ensure();
+        return this.fragment;
+    }
+
+    get searchParams(): URLSearchParams {
+        this.ensure();
+        return this.params;
+    }
+
+    get origin(): string {
+        this.ensure();
+        return this.scheme + "://" + this.host;
+    }
+
+    get href(): string {
+        this.ensure();
+        let out = this.scheme + "://";
+        if (urlString.length(this.userinfo) > 0) {
+            out = out + this.userinfo + "@";
+        }
+        return out + this.host + this.path + this.query + this.fragment;
+    }
+
+    toString(): string {
+        this.ensure();
+        return this.href;
+    }
+}

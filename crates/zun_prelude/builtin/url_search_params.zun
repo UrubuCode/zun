@@ -1,0 +1,303 @@
+// Nucleus `URLSearchParams` (WHATWG URL, prelude class).
+//
+//   new URLSearchParams(query)   leading "?" optional
+//   get / getAll / has / append / set / delete / toString
+//
+// Simplifications (documented, not defects):
+//   * The query is parsed lazily on first use (classes have no constructor
+//     bodies); the constructor accepts only a query string (no record / iterable init).
+//   * `get` returns "" (not null) for a missing name; use `has` to distinguish.
+//   * `forEach` (no function-typed parameters in prelude classes yet), `sort`,
+//     `size`, and `Symbol.iterator` are deferred.
+//   * Serialization follows application/x-www-form-urlencoded: space -> "+",
+//     bytes outside [A-Za-z0-9*-._] -> %XX over the UTF-8 encoding.
+//
+// Self-contained over the `zun:core` native surface (string + nodeBuffer).
+
+import { string as upString, nodeBuffer as upBuffer } from "zun:core";
+
+class URLSearchParams {
+    query: string;
+    loaded: boolean = false;
+    names: Array = [];
+    values: Array = [];
+
+    // Parses `query` on first use (Zun classes have no constructor bodies: a
+    // `new` call just fills the fields in declaration order).
+    ensure(): void {
+        if (this.loaded) {
+            return;
+        }
+        this.loaded = true;
+        let query = this.query;
+        let n: u64 = upString.length(query);
+        let start: u64 = 0;
+        if (n > 0) {
+            if (upString.charCodeAt(query, 0) == 63) {
+                start = 1;
+            }
+        }
+        let i: u64 = start;
+        let partStart: u64 = start;
+        while (i <= n) {
+            let atEnd = i == n;
+            if (!atEnd) {
+                if (upString.charCodeAt(query, i) == 38) {
+                    atEnd = true;
+                }
+            }
+            if (atEnd) {
+                if (i > partStart) {
+                    this.parsePair(upString.substring(query, partStart, i));
+                }
+                partStart = i + 1;
+            }
+            i = i + 1;
+        }
+    }
+
+    parsePair(part: string): void {
+        let n: u64 = upString.length(part);
+        let eq: u64 = n;
+        let i: u64 = 0;
+        while (i < n) {
+            if (upString.charCodeAt(part, i) == 61) {
+                eq = i;
+                i = n;
+            } else {
+                i = i + 1;
+            }
+        }
+        if (eq == n) {
+            this.names.push(URLSearchParams.decode(part));
+            this.values.push("");
+        } else {
+            this.names.push(URLSearchParams.decode(upString.substring(part, 0, eq)));
+            this.values.push(URLSearchParams.decode(upString.substring(part, eq + 1, n)));
+        }
+    }
+
+    // --- percent coding ----------------------------------------------------
+
+    static hexValue(c: u32): u32 {
+        if (c >= 48) {
+            if (c <= 57) {
+                return c - 48;
+            }
+        }
+        if (c >= 97) {
+            if (c <= 102) {
+                return c - 87;
+            }
+        }
+        if (c >= 65) {
+            if (c <= 70) {
+                return c - 55;
+            }
+        }
+        return 256;
+    }
+
+    static hexDigit(d: u32): string {
+        let digits = "0123456789ABCDEF";
+        let at = d as u64;
+        return upString.substring(digits, at, at + 1);
+    }
+
+    // Percent-decodes `s`, mapping "+" to a space; malformed escapes stay literal.
+    static decode(s: string): string {
+        let bytes = upBuffer.nodeBufferFromString(s, "utf8");
+        let n: u64 = bytes.length;
+        let out = upBuffer.nodeBufferAlloc(n, 0);
+        let count: u64 = 0;
+        let i: u64 = 0;
+        while (i < n) {
+            let b: u32 = bytes[i] as u32;
+            if (b == 43) {
+                out[count] = 32 as u8;
+                i = i + 1;
+            } else {
+                let handled = false;
+                if (b == 37) {
+                    if (i + 2 < n) {
+                        let hi: u32 = URLSearchParams.hexValue(bytes[i + 1] as u32);
+                        let lo: u32 = URLSearchParams.hexValue(bytes[i + 2] as u32);
+                        if (hi < 16) {
+                            if (lo < 16) {
+                                out[count] = (hi * 16 + lo) as u8;
+                                i = i + 3;
+                                handled = true;
+                            }
+                        }
+                    }
+                }
+                if (!handled) {
+                    out[count] = b as u8;
+                    i = i + 1;
+                }
+            }
+            count = count + 1;
+        }
+        return upBuffer.nodeBufferToString(out, "utf8", 0, count);
+    }
+
+    static isUnreserved(b: u32): boolean {
+        if (b >= 97) {
+            if (b <= 122) {
+                return true;
+            }
+        }
+        if (b >= 65) {
+            if (b <= 90) {
+                return true;
+            }
+        }
+        if (b >= 48) {
+            if (b <= 57) {
+                return true;
+            }
+        }
+        if (b == 42) {
+            return true;
+        }
+        if (b == 45) {
+            return true;
+        }
+        if (b == 46) {
+            return true;
+        }
+        return b == 95;
+    }
+
+    // application/x-www-form-urlencoded byte serializer.
+    static encode(s: string): string {
+        let bytes = upBuffer.nodeBufferFromString(s, "utf8");
+        let n: u64 = bytes.length;
+        let out = "";
+        let i: u64 = 0;
+        while (i < n) {
+            let b: u32 = bytes[i] as u32;
+            if (b == 32) {
+                out = out + "+";
+            } else {
+                if (URLSearchParams.isUnreserved(b)) {
+                    out = out + upString.fromCharCode1(b);
+                } else {
+                    out = out + "%" + URLSearchParams.hexDigit(b / 16) + URLSearchParams.hexDigit(b % 16);
+                }
+            }
+            i = i + 1;
+        }
+        return out;
+    }
+
+    // --- API ---------------------------------------------------------------
+
+    get(name: string): string {
+        this.ensure();
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == name) {
+                return this.values[i] as string;
+            }
+            i = i + 1;
+        }
+        return "";
+    }
+
+    getAll(name: string): Array {
+        this.ensure();
+        let found: Array = [];
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == name) {
+                found.push(this.values[i] as string);
+            }
+            i = i + 1;
+        }
+        return found;
+    }
+
+    has(name: string): boolean {
+        this.ensure();
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    append(name: string, value: string): void {
+        this.ensure();
+        this.names.push(name);
+        this.values.push(value);
+    }
+
+    // Removes every pair named `name`.
+    delete(name: string): void {
+        this.ensure();
+        let names: Array = [];
+        let values: Array = [];
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) != name) {
+                names.push(this.names[i] as string);
+                values.push(this.values[i] as string);
+            }
+            i = i + 1;
+        }
+        this.names = names;
+        this.values = values;
+    }
+
+    // Replaces the first pair named `name` (dropping the rest), or appends.
+    set(name: string, value: string): void {
+        this.ensure();
+        let names: Array = [];
+        let values: Array = [];
+        let placed = false;
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if ((this.names[i] as string) == name) {
+                if (!placed) {
+                    names.push(name);
+                    values.push(value);
+                    placed = true;
+                }
+            } else {
+                names.push(this.names[i] as string);
+                values.push(this.values[i] as string);
+            }
+            i = i + 1;
+        }
+        if (!placed) {
+            names.push(name);
+            values.push(value);
+        }
+        this.names = names;
+        this.values = values;
+    }
+
+    toString(): string {
+        this.ensure();
+        let out = "";
+        let n: u64 = this.names.length;
+        let i: u64 = 0;
+        while (i < n) {
+            if (i > 0) {
+                out = out + "&";
+            }
+            out = out + URLSearchParams.encode(this.names[i] as string) + "=" + URLSearchParams.encode(this.values[i] as string);
+            i = i + 1;
+        }
+        return out;
+    }
+}

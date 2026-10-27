@@ -88,3 +88,69 @@ fn structured_clone_copies_objects() {
     }"#);
     assert_eq!(out.lines, [r#"{"a":1,"list":[50,2],"nested":{"s":"x"}}"#, r#"{"a":1,"list":[1,2],"nested":{"s":"x"}}"#]);
 }
+
+#[test]
+fn url_parses_components() {
+    let out = run(r#"function main() {
+        let u = new URL("https://user@host.example:8080/a/b?x=1&y=two#frag");
+        console.log(u.protocol);
+        console.log(u.hostname);
+        console.log(u.host);
+        console.log(u.port);
+        console.log(u.pathname);
+        console.log(u.search);
+        console.log(u.hash);
+        console.log(u.href);
+        console.log(u.searchParams.get("x"));
+        console.log(u.searchParams.get("y"));
+        console.log(u.searchParams.has("x"));
+        console.log(u.searchParams.has("z"));
+    }"#);
+    assert_eq!(
+        out.lines,
+        [
+            "https:", "host.example", "host.example:8080", "8080", "/a/b", "?x=1&y=two", "#frag",
+            "https://user@host.example:8080/a/b?x=1&y=two#frag", "1", "two", "true", "false"
+        ]
+    );
+}
+
+#[test]
+fn url_invalid_input_throws() {
+    let out = run(r#"function main() {
+        try {
+            let bad = new URL("not a url");
+            console.log(bad.href);
+            console.log("no throw");
+        } catch (e: TypeError) {
+            console.log("TypeError");
+        }
+    }"#);
+    assert_eq!(out.lines, ["TypeError"]);
+}
+
+#[test]
+fn url_search_params_round_trip_and_encoding() {
+    let out = run(r#"function main() {
+        let p = new URLSearchParams("?a=1&b=x+y&a=2&c=%26%20z");
+        console.log(p.get("b"));
+        console.log(p.get("c"));
+        console.log(p.getAll("a").length);
+        console.log(p.toString());
+        p.append("d", "hello world&more");
+        console.log(p.toString());
+        p.set("a", "9");
+        p.delete("b");
+        console.log(p.toString());
+        let q = new URLSearchParams(p.toString());
+        console.log(q.get("d"));
+    }"#);
+    assert_eq!(
+        out.lines,
+        [
+            "x y", "& z", "2", "a=1&b=x+y&a=2&c=%26+z",
+            "a=1&b=x+y&a=2&c=%26+z&d=hello+world%26more",
+            "a=9&c=%26+z&d=hello+world%26more", "hello world&more"
+        ]
+    );
+}
