@@ -346,6 +346,28 @@
         assert_eq!(value, "a\nb\"c");
     }
     #[test]
+    fn string_escapes_cover_the_full_set() {
+        // `\b \f \v \xHH \uHHHH \u{..}` used to drop the backslash and keep the
+        // rest (so `A` became `u0041`); they now decode correctly. `\\`
+        // stays a single backslash and an unknown escape (`\q`) is the char.
+        let decode = |body: &str| -> String {
+            let src = format!("function f() {{ let s = {body}; }}");
+            let p = parse_ok(&src);
+            let Stmt::Let { init: Expr::String { value, .. }, .. } =
+                &p.functions[0].body.statements[0]
+            else {
+                panic!("expected string let");
+            };
+            value.clone()
+        };
+        assert_eq!(decode(r#""A""#), "A");
+        assert_eq!(decode(r#""\x41""#), "A");
+        assert_eq!(decode(r#""\u{1F600}""#), "\u{1F600}");
+        assert_eq!(decode(r#""\b\f\v""#), "\u{08}\u{0C}\u{0B}");
+        assert_eq!(decode(r#""a\\b""#), "a\\b");
+        assert_eq!(decode(r#""\q""#), "q");
+    }
+    #[test]
     fn unary_and_parens() {
         let src = "function f() { return -(1 + 2); }";
         let p = parse_ok(src);

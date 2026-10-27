@@ -3,18 +3,78 @@
 use super::*;
 
 pub(crate) fn decode_string(raw: &str) -> String {
-    let inner = &raw[1..raw.len() - 1];
+    let inner: Vec<char> = raw[1..raw.len() - 1].chars().collect();
     let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' { out.push(c); continue; }
-        match chars.next() {
-            Some('n') => out.push('\n'), Some('t') => out.push('\t'), Some('r') => out.push('\r'),
-            Some('\\') => out.push('\\'), Some('"') => out.push('"'), Some('0') => out.push('\0'),
-            Some(other) => out.push(other), None => {}
+    let mut i = 0;
+    while i < inner.len() {
+        let c = inner[i];
+        i += 1;
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        if i >= inner.len() {
+            break;
+        }
+        let escape = inner[i];
+        i += 1;
+        match escape {
+            'n' => out.push('\n'),
+            't' => out.push('\t'),
+            'r' => out.push('\r'),
+            'b' => out.push('\u{08}'),
+            'f' => out.push('\u{0C}'),
+            'v' => out.push('\u{0B}'),
+            '0' => out.push('\0'),
+            '\\' => out.push('\\'),
+            '"' => out.push('"'),
+            '\'' => out.push('\''),
+            '`' => out.push('`'),
+            // `\xHH` — exactly two hex digits.
+            'x' => match hex_escape(&inner[i..], 2) {
+                Some((ch, n)) => { out.push(ch); i += n; }
+                None => out.push('x'),
+            },
+            // `\uHHHH`, or `\u{H...}` with a braced code point.
+            'u' => {
+                if inner.get(i) == Some(&'{') {
+                    match inner[i + 1..].iter().position(|&h| h == '}') {
+                        Some(end) => {
+                            let hex: String = inner[i + 1..i + 1 + end].iter().collect();
+                            if let Some(ch) =
+                                u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                            {
+                                out.push(ch);
+                            }
+                            i += end + 2; // consume `{ … }`
+                        }
+                        None => out.push('u'),
+                    }
+                } else {
+                    match hex_escape(&inner[i..], 4) {
+                        Some((ch, n)) => { out.push(ch); i += n; }
+                        None => out.push('u'),
+                    }
+                }
+            }
+            // Any other escape is the character itself (JS semantics), e.g. `\y`
+            // is `y`.
+            other => out.push(other),
         }
     }
     out
+}
+
+/// Decode exactly `n` hex digits at the start of `rest` into a `char`, returning
+/// it with the count consumed. `None` if there are not `n` hex digits or the
+/// value is not a scalar value.
+fn hex_escape(rest: &[char], n: usize) -> Option<(char, usize)> {
+    if rest.len() < n || !rest[..n].iter().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let hex: String = rest[..n].iter().collect();
+    let code = u32::from_str_radix(&hex, 16).ok()?;
+    Some((char::from_u32(code)?, n))
 }
 
 pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
