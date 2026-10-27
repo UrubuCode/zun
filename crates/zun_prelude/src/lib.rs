@@ -8,8 +8,9 @@
 //! pure numeric code, so its functions are JIT-eligible like any other. When
 //! code-module imports land, this becomes the importable `zun:math` module.
 //!
-//! This is distinct from the **intrinsics** (`zun:io`, `zun:time`, ...), which are
-//! runtime-implemented in Rust (see `zun_intrinsics`).
+//! This is distinct from the **intrinsics** (the `zun:core` native surface:
+//! the `io`, `time`, `host`, ... groups), which are runtime-implemented in Rust
+//! (see `zun_natives`).
 
 /// The numeric helper portion of the prelude.
 pub const PRELUDE: &str = include_str!("prelude.zun");

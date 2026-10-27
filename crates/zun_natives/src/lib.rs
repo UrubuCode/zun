@@ -23,6 +23,7 @@ mod collections;
 pub use collections::USER_CLASS_FLAG;
 mod date;
 mod error;
+mod host;
 mod io;
 mod math;
 mod number;
@@ -199,7 +200,15 @@ pub enum NativeValue {
 #[derive(Debug, Clone)]
 pub struct NativeError(pub String);
 
-/// Output sink for `print`/`println`, so the host can capture program output.
+/// The host interface the native `zun:core` surface talks to: program output
+/// (`print`/`println`), and the terminal/process capabilities behind the host
+/// group (`stdin`, raw `stdout`/`stderr` writes, process exit). Every method
+/// beyond [`println`](Self::println) has a safe default (no output / no input /
+/// no-op), so existing sinks keep compiling and tests get an inert host unless
+/// they opt in.
+///
+/// Ambient, read-only process state (`env`, `cwd`, args, tty) is read directly
+/// from the OS inside the natives (like the clock), so it is not on this trait.
 pub trait Sink {
     /// Write one already-formatted line to the standard output stream.
     fn println(&mut self, line: &str);
@@ -210,6 +219,22 @@ pub trait Sink {
     fn eprintln(&mut self, line: &str) {
         self.println(line);
     }
+
+    /// Read one line from standard input, without its trailing newline.
+    /// `None` signals end-of-input. Defaults to no input.
+    fn read_line(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Write to standard output with no trailing newline. Defaults to no output.
+    fn write_out(&mut self, _text: &str) {}
+
+    /// Write to the error stream with no trailing newline. Defaults to no output.
+    fn write_err(&mut self, _text: &str) {}
+
+    /// Terminate the process with an exit code. Defaults to a no-op so a host
+    /// that captures output (tests) is not torn down; a real host exits.
+    fn exit(&mut self, _code: i32) {}
 }
 
 /// The implementation of a native function: neutral args in, neutral value out.
@@ -278,6 +303,9 @@ pub static MODULES: &[Module] = &[
     // The binary ser/de PRIMITIVE (NUCLEUS #27). Appended last so every
     // existing dispatch id stays stable.
     serde::MODULE,
+    // The host group (stdin/stdout/stderr/exit + ambient env/cwd/argv/tty).
+    // Appended last so every existing dispatch id stays stable.
+    host::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

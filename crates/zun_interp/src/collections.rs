@@ -6420,8 +6420,8 @@ fn as_function(value: &Option<Value>) -> Option<zun_core::FunctionHandle> {
     }
 }
 
-/// The real wall-clock time in milliseconds, read through the `zun:time`
-/// `nowMillis` native. Used only as the *base* the virtual timer clock is
+/// The real wall-clock time in milliseconds, read through the `zun:core`
+/// `time` group's `nowMillis` native. Used only as the *base* the virtual timer clock is
 /// seeded from; the event loop advances from there by fast-forward.
 fn real_now_millis(output: &mut dyn super::Output) -> i64 {
     match zun_natives::resolve("time", "nowMillis") {

@@ -1,4 +1,4 @@
-//! `zun:time` — clocks.
+//! `time` group of `zun:core` — clocks.
 
 use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
@@ -10,7 +10,7 @@ fn now_millis(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     Ok(NativeValue::Int(ms))
 }
 
-/// The `zun:time` module.
+/// The `time` group of `zun:core`.
 pub const MODULE: crate::Module = crate::Module {
     name: "time",
     functions: &[NativeFn {

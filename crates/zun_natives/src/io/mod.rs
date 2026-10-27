@@ -1,4 +1,4 @@
-//! `zun:io` — console output. Signature and logic together.
+//! `io` group of `zun:core` — console output. Signature and logic together.
 //!
 //! `print` is listed first so its registry id is 0 (the implicit builtin).
 
@@ -15,7 +15,7 @@ fn eprint_line(args: &[NativeArg], sink: &mut dyn Sink) -> Result<NativeValue, N
     Ok(NativeValue::Void)
 }
 
-/// The `zun:io` module. `print` accepts any primitive (checked by the compiler).
+/// The `io` group of `zun:core`. `print` accepts any primitive (checked by the compiler).
 ///
 /// `print`/`println` stay first so `print` keeps intrinsic id 0 (the implicit
 /// builtin). New functions are appended at the end of the module (see the

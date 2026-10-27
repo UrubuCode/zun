@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Native (runtime-implemented) modules: zun:io, zun:time. Each module is self-contained (signature + logic), using neutral value types so it depends on no other Zun crate."
+description = "The runtime-implemented native surface, exposed as the single importable module zun:core (grouped internally: io, time, host, string, ...). Each group is self-contained (signature + logic) over neutral value types, so it depends on no other Zun crate."
 
 [lints]
 workspace = true
