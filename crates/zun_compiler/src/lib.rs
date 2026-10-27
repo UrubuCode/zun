@@ -338,18 +338,16 @@ fn compile_with_cached_module(
     // run time, and without them `Error` and `Date` would exist on the plain
     // compile path and not this one.
     //
-    // Whatever `with_prelude` appends as classes has to be listed here too.
-    // `prelude_classes_match_the_linked_source` holds the two together.
-    let linked_source = format!(
-        "{source}\nimport {{ {imports} }} from \"{module_name}\";\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
-        zun_prelude::ERRORS,
-        zun_prelude::DATE,
-        zun_prelude::BOOLEAN,
-        zun_prelude::DECORATORS,
-        zun_prelude::INTL,
-        zun_prelude::CONSOLE,
-        zun_prelude::JSON
-    );
+    // Both compile paths draw the class list from `zun_prelude::PRELUDE_CLASSES`
+    // (classes cannot be imported across a module boundary, so they are
+    // concatenated as source); `prelude_classes_match_the_linked_source` keeps
+    // this path and `with_prelude` in sync.
+    let mut linked_source =
+        format!("{source}\nimport {{ {imports} }} from \"{module_name}\";\n");
+    for class in zun_prelude::PRELUDE_CLASSES {
+        linked_source.push_str(class);
+        linked_source.push('\n');
+    }
     let module = compile_source_with_externals(&linked_source, &externals)?;
     let mut loader = zun_loader::ModuleLoader::new();
     let app_scope = zun_loader::ModuleScope::from_bytes("app", &module.write())

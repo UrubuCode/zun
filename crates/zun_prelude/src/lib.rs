@@ -97,6 +97,25 @@ pub const REGEXP: &str = include_str!("../builtin/regexp.zun");
 /// `zun_sema::realm`. See [`MATH`]; kept here so the file lives in-crate.
 pub const REALM: &str = include_str!("../builtin/realm.zun");
 
+/// The prelude **classes**, in compile order. Classes cannot cross a module
+/// boundary in Zun (there is no way to import a type), so every compile path
+/// that needs them concatenates them as source: [`with_prelude`] on the plain
+/// path, and the cached-std linked source in `zun_compiler`. Both consume this
+/// one list, so adding a nucleus class means adding a single entry here — the
+/// `prelude_classes_match_the_linked_source` test guards that they stay in sync.
+///
+/// `PRELUDE` (the numeric helper *functions*) is not here: on the cached path it
+/// is linked by import, not re-compiled as source.
+pub const PRELUDE_CLASSES: &[&str] = &[
+    ERRORS,
+    DATE,
+    BOOLEAN,
+    DECORATORS,
+    INTL,
+    CONSOLE,
+    JSON,
+];
+
 /// Stable content fingerprint for cache invalidation of compiled prelude data.
 ///
 /// This is deliberately a small, deterministic identifier rather than a
@@ -117,26 +136,16 @@ pub const fn fingerprint() -> u64 {
 /// Combine user source with the base prelude, returning the full source to
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
-    let mut combined = String::with_capacity(
-        user_source.len() + PRELUDE.len() + ERRORS.len() + DATE.len() + BOOLEAN.len() + DECORATORS.len() + INTL.len() + CONSOLE.len() + JSON.len() + 8,
-    );
+    let classes_len: usize = PRELUDE_CLASSES.iter().map(|c| c.len() + 1).sum();
+    let mut combined =
+        String::with_capacity(user_source.len() + PRELUDE.len() + classes_len + 2);
     combined.push_str(user_source);
     combined.push('\n');
     combined.push_str(PRELUDE);
-    combined.push('\n');
-    combined.push_str(ERRORS);
-    combined.push('\n');
-    combined.push_str(DATE);
-    combined.push('\n');
-    combined.push_str(BOOLEAN);
-    combined.push('\n');
-    combined.push_str(DECORATORS);
-    combined.push('\n');
-    combined.push_str(INTL);
-    combined.push('\n');
-    combined.push_str(CONSOLE);
-    combined.push('\n');
-    combined.push_str(JSON);
+    for class in PRELUDE_CLASSES {
+        combined.push('\n');
+        combined.push_str(class);
+    }
     combined
 }
 
