@@ -1,0 +1,32 @@
+// Nucleus `Event` (DOM Events, prelude class).
+//
+//   new Event(type)
+//   type, defaultPrevented, preventDefault()
+//   stopPropagation(), stopImmediatePropagation()
+//
+// Simplifications (documented, not defects):
+//   * No bubbling / capture tree, so `stopPropagation` only records that it was
+//     called; `stopImmediatePropagation` additionally stops the remaining
+//     listeners of the current `EventTarget.dispatchEvent`.
+//   * No `cancelable` / `bubbles` options, `target`, `timeStamp` or `isTrusted`:
+//     every event is cancelable.
+
+class Event {
+    type: string;
+    defaultPrevented: boolean = false;
+    propagationStopped: boolean = false;
+    immediatePropagationStopped: boolean = false;
+
+    preventDefault(): void {
+        this.defaultPrevented = true;
+    }
+
+    stopPropagation(): void {
+        this.propagationStopped = true;
+    }
+
+    stopImmediatePropagation(): void {
+        this.propagationStopped = true;
+        this.immediatePropagationStopped = true;
+    }
+}

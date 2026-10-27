@@ -154,3 +154,84 @@ fn url_search_params_round_trip_and_encoding() {
         ]
     );
 }
+
+#[test]
+fn event_target_dispatches_listeners_in_order() {
+    let out = run(r#"function main() {
+        let t = new EventTarget();
+        let a = (e: Event) => { console.log("A " + e.type); };
+        let b = (e: Event) => { console.log("B " + e.type); };
+        t.addEventListener("x", a);
+        t.addEventListener("x", b);
+        t.addEventListener("y", a);
+        console.log(t.dispatchEvent(new Event("x")));
+        console.log(t.dispatchEvent(new Event("z")));
+    }"#);
+    assert_eq!(out.lines, ["A x", "B x", "true", "true"]);
+}
+
+#[test]
+fn event_target_remove_listener_stops_it() {
+    let out = run(r#"function main() {
+        let t = new EventTarget();
+        let a = (e: Event) => { console.log("A"); };
+        let b = (e: Event) => { console.log("B"); };
+        t.addEventListener("x", a);
+        t.addEventListener("x", b);
+        t.removeEventListener("x", a);
+        t.dispatchEvent(new Event("x"));
+    }"#);
+    assert_eq!(out.lines, ["B"]);
+}
+
+#[test]
+fn prevent_default_makes_dispatch_return_false() {
+    let out = run(r#"function main() {
+        let t = new EventTarget();
+        let a = (e: Event) => { e.preventDefault(); };
+        t.addEventListener("x", a);
+        let ev = new Event("x");
+        console.log(ev.defaultPrevented);
+        console.log(t.dispatchEvent(ev));
+        console.log(ev.defaultPrevented);
+    }"#);
+    assert_eq!(out.lines, ["false", "false", "true"]);
+}
+
+#[test]
+fn abort_controller_aborts_signal_and_fires_event() {
+    let out = run(r#"function main() {
+        let c = new AbortController();
+        let l = (e: Event) => { console.log("abort event " + e.type); };
+        c.signal.addEventListener("abort", l);
+        console.log(c.signal.aborted);
+        c.abort("stop");
+        console.log(c.signal.aborted);
+        console.log(c.signal.reason);
+        c.abort("again");
+        console.log(c.signal.reason);
+        let s = AbortSignal.abort("pre");
+        console.log(s.aborted);
+    }"#);
+    assert_eq!(
+        out.lines,
+        ["false", "abort event abort", "true", "stop", "stop", "true"]
+    );
+}
+
+#[test]
+fn throw_if_aborted_throws_after_abort() {
+    let out = run(r#"function main() {
+        let c = new AbortController();
+        c.signal.throwIfAborted();
+        console.log("not yet");
+        c.abort("boom");
+        try {
+            c.signal.throwIfAborted();
+            console.log("no throw");
+        } catch (e: Error) {
+            console.log("threw");
+        }
+    }"#);
+    assert_eq!(out.lines, ["not yet", "threw"]);
+}

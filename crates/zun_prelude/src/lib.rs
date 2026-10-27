@@ -84,6 +84,18 @@ pub const URL_SEARCH_PARAMS: &str = include_str!("../builtin/url_search_params.z
 /// `zun:core` string natives; uses [`URL_SEARCH_PARAMS`].
 pub const URL: &str = include_str!("../builtin/url.zun");
 
+/// The `Event` class (`builtin/event.zun`): DOM event with `type` and
+/// `preventDefault`; no bubbling tree.
+pub const EVENT: &str = include_str!("../builtin/event.zun");
+
+/// The `EventTarget` class (`builtin/event_target.zun`): synchronous listener
+/// dispatch; listeners are stored as `functionBox` records. Uses [`EVENT`].
+pub const EVENT_TARGET: &str = include_str!("../builtin/event_target.zun");
+
+/// The `AbortSignal` and `AbortController` classes (`builtin/abort.zun`); an
+/// `AbortSignal` owns an [`EVENT_TARGET`].
+pub const ABORT: &str = include_str!("../builtin/abort.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -139,6 +151,9 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     TEXT_DECODER,
     URL_SEARCH_PARAMS,
     URL,
+    EVENT,
+    EVENT_TARGET,
+    ABORT,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

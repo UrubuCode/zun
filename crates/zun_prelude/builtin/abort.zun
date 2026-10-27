@@ -1,0 +1,68 @@
+// Nucleus `AbortSignal` / `AbortController` (DOM, prelude classes).
+//
+//   new AbortController()  -> { signal, abort(reason?) }
+//   AbortSignal            -> { aborted, reason, addEventListener,
+//                               removeEventListener, dispatchEvent,
+//                               throwIfAborted() }, static AbortSignal.abort(reason?)
+//
+// An `AbortSignal` is an event target by composition (it owns an `EventTarget`
+// and forwards the three listener methods), because prelude classes have no
+// constructor bodies to chain through an `extends`. See `event_target.zun` for
+// how listener functions are stored.
+//
+// Simplifications (documented, not defects):
+//   * `AbortSignal.abort(reason)` requires its argument (a default on a static
+//     method is not honored by the engine yet); `AbortController.abort()` may omit it.
+//   * `abort()` without a reason sets `reason` to `null` (not a `DOMException`).
+//   * `AbortSignal.timeout` / `AbortSignal.any` and the `onabort` handler are
+//     deferred; `new AbortSignal()` directly is possible but not meaningful.
+//   * `throwIfAborted` throws an `Error("AbortError: <reason>")` (only `Error`
+//     values can be thrown), not the raw reason.
+
+class AbortSignal {
+    aborted: boolean = false;
+    reason: any = null;
+    target: EventTarget = new EventTarget();
+
+    addEventListener(type: string, listener: Function): void {
+        this.target.addEventListener(type, listener);
+    }
+
+    removeEventListener(type: string, listener: Function): void {
+        this.target.removeEventListener(type, listener);
+    }
+
+    dispatchEvent(event: Event): boolean {
+        return this.target.dispatchEvent(event);
+    }
+
+    throwIfAborted(): void {
+        if (this.aborted) {
+            throw new Error("AbortError: " + String(this.reason));
+        }
+    }
+
+    // Marks the signal aborted (once) and fires its "abort" event.
+    markAborted(reason: any): void {
+        if (this.aborted) {
+            return;
+        }
+        this.aborted = true;
+        this.reason = reason;
+        this.target.dispatchEvent(new Event("abort"));
+    }
+
+    static abort(reason: any): AbortSignal {
+        let signal = new AbortSignal();
+        signal.markAborted(reason);
+        return signal;
+    }
+}
+
+class AbortController {
+    signal: AbortSignal = new AbortSignal();
+
+    abort(reason: any = null): void {
+        this.signal.markAborted(reason);
+    }
+}

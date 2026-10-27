@@ -1,0 +1,88 @@
+// Nucleus `EventTarget` (DOM Events, prelude class).
+//
+//   addEventListener(type, listener)      duplicate (type, listener) ignored
+//   removeEventListener(type, listener)
+//   dispatchEvent(event) -> boolean       false if the event was canceled
+//
+// Listener storage. Function values cannot live in `Any`, a typed field or an
+// `Array` (GC-root precision), so each listener is wrapped by the
+// `functionBox` native into a GC-traced record carrying the callable; that
+// record is an ordinary object and is kept in the entry list. Dispatch calls
+// it with `Reflect.apply(box, event, [])` (the receiver slot becomes the
+// listener's first parameter, i.e. the event). `removeEventListener` and the
+// duplicate check match entries with `functionBoxIs` (function identity).
+//
+// Simplifications (documented, not defects):
+//   * Listeners run synchronously in registration order, on the listener list
+//     as it was when `dispatchEvent` started; no capture/bubble phases, no
+//     options argument (`once`, `passive`, `signal`), no listener objects with
+//     `handleEvent`.
+//   * A listener must declare exactly one `(event: Event)` parameter.
+//   * Exceptions thrown by a listener propagate out of `dispatchEvent`.
+
+import { collections as etCollections } from "zun:core";
+
+class ListenerEntry {
+    type: string;
+    box: any;
+}
+
+class EventTarget {
+    entries: Array = [];
+
+    indexOfListener(type: string, listener: Function): u64 {
+        let i: u64 = 0;
+        let n: u64 = this.entries.length;
+        while (i < n) {
+            let entry = this.entries[i] as ListenerEntry;
+            if (entry.type == type) {
+                if (etCollections.functionBoxIs(entry.box, listener)) {
+                    return i;
+                }
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    addEventListener(type: string, listener: Function): void {
+        if (this.indexOfListener(type, listener) < this.entries.length) {
+            return;
+        }
+        let boxed: any = etCollections.functionBox(listener);
+        this.entries.push(new ListenerEntry(type, boxed));
+    }
+
+    removeEventListener(type: string, listener: Function): void {
+        let index = this.indexOfListener(type, listener);
+        if (index < this.entries.length) {
+            this.entries.splice(index, 1);
+        }
+    }
+
+    dispatchEvent(event: Event): boolean {
+        // Snapshot so listeners added or removed during dispatch do not change
+        // this round.
+        let matching: Array = [];
+        let i: u64 = 0;
+        let n: u64 = this.entries.length;
+        while (i < n) {
+            let entry = this.entries[i] as ListenerEntry;
+            if (entry.type == event.type) {
+                matching.push(entry);
+            }
+            i = i + 1;
+        }
+        let j: u64 = 0;
+        let m: u64 = matching.length;
+        while (j < m) {
+            if (event.immediatePropagationStopped) {
+                break;
+            }
+            let entry = matching[j] as ListenerEntry;
+            Reflect.apply(entry.box, event, []);
+            j = j + 1;
+        }
+        return !event.defaultPrevented;
+    }
+}
