@@ -309,9 +309,7 @@ impl Parser<'_> {
                 methods.push(method);
             } else {
                 self.expect(TokenKind::Colon, "`:` (fields require a type)");
-                let ty = TypeAnnotation {
-                    name: self.type_name("a type name"),
-                };
+                let ty = self.type_annotation("a type name");
                 // `field: T = expr;` gives the field a default, which makes
                 // its constructor argument optional.
                 let initializer = if self.eat(TokenKind::Eq) {
@@ -358,6 +356,7 @@ impl Parser<'_> {
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let is_rest = self.eat(TokenKind::Ellipsis);
             let pname = self.name("a parameter name");
+            // `x?: T` is sugar for an optional `x: T = null` (see `parameters`).
             let ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
                 Some(Box::new(self.expression()))
@@ -415,6 +414,7 @@ impl Parser<'_> {
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let is_rest = self.eat(TokenKind::Ellipsis);
             let pname = self.name("a parameter name");
+            // `x?: T` is sugar for an optional `x: T = null` (see `parameters`).
             let ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
                 Some(Box::new(self.expression()))

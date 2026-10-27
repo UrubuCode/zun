@@ -238,7 +238,7 @@ impl Emitter {
         let name = self.name(&method.name);
         let return_type = method
             .return_type
-            .map(|ty| ast::TypeAnnotation { name: self.name(&ty) });
+            .map(|ty| ast::TypeAnnotation { name: self.name(&ty), is_array: false });
         let statements = method
             .body
             .into_iter()

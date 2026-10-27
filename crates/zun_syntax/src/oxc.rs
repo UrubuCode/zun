@@ -35,7 +35,14 @@ fn convert_type_annotation(
     let type_start = raw
         .find(|character: char| !character.is_ascii_whitespace() && character != ':')
         .ok_or_else(|| "OXC adapter received an empty type annotation".to_owned())?;
-    let type_text = raw[type_start..].trim();
+    let mut type_text = raw[type_start..].trim();
+    // Strip trailing `[]` array suffixes; Zun arrays are untyped, so `T[]`
+    // resolves to `Array` and the base name stays for diagnostics.
+    let mut is_array = false;
+    while let Some(stripped) = type_text.strip_suffix("[]") {
+        type_text = stripped.trim_end();
+        is_array = true;
+    }
     if type_text.is_empty()
         || !type_text
             .chars()
@@ -48,6 +55,7 @@ fn convert_type_annotation(
         name: Name {
             span: Span::new(name_start as u32, (name_start + type_text.len()) as u32),
         },
+        is_array,
     }))
 }
 
@@ -604,6 +612,7 @@ fn convert_try_statement(
                 name: Name {
                     span: Span::new(0, 0),
                 },
+                is_array: false,
             },
             body: convert_block_node(source, &handler.body)?,
         }]
@@ -723,6 +732,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                         assertion.type_annotation.span().end,
                     ),
                 },
+                is_array: false,
             },
             span: span(assertion.span),
         }),
@@ -735,6 +745,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                         assertion.type_annotation.span().end,
                     ),
                 },
+                is_array: false,
             },
             span: span(assertion.span),
         }),
@@ -747,6 +758,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                         assertion.type_annotation.span().end,
                     ),
                 },
+                is_array: false,
             },
             span: span(assertion.span),
         }),

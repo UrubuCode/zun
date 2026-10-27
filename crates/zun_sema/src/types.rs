@@ -5,6 +5,10 @@ use zun_syntax::ast;
 
 impl<'a> Checker<'a> {
     pub(super) fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
+        // `T[]` (any element type, any depth) is an untyped `Array`.
+        if annotation.is_array {
+            return Ty::Array;
+        }
         if annotation.name.span.start == annotation.name.span.end {
             return Ty::Any;
         }

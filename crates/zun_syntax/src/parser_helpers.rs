@@ -783,9 +783,7 @@ impl Parser<'_> {
     pub(crate) fn cast(&mut self) -> Expr {
         let mut expr = self.call();
         while self.eat(TokenKind::KwAs) {
-            let ty = TypeAnnotation {
-                name: self.type_name("a type name"),
-            };
+            let ty = self.type_annotation("a type name");
             let span = expr.span().to(ty.name.span);
             expr = Expr::Cast {
                 expr: Box::new(expr),
@@ -931,9 +929,7 @@ impl Parser<'_> {
             self.expect(TokenKind::LParen, "`(` after catch");
             let binding = self.name("a catch binding");
             self.expect(TokenKind::Colon, "`:` after catch binding");
-            let ty = TypeAnnotation {
-                name: self.type_name("a catch type"),
-            };
+            let ty = self.type_annotation("a catch type");
             self.expect(TokenKind::RParen, "`)` after catch binding");
             let catch_body = self.block();
             catches.push(CatchClause {
@@ -1091,6 +1087,9 @@ impl Parser<'_> {
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let is_rest = self.eat(TokenKind::Ellipsis);
             let name = self.name("a parameter name");
+            // `x?: T` marks the parameter optional. With no explicit default it
+            // is sugar for `x: T = null` (the omitted-argument sentinel), reusing
+            // the default-parameter machinery.
             let ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
                 Some(Box::new(self.expression()))
@@ -1161,11 +1160,22 @@ impl Parser<'_> {
         }
     }
 
+    /// Parse a type name plus any trailing `[]` array suffixes (`T`, `T[]`,
+    /// `T[][]`). Zun arrays are untyped, so any depth erases to `Array`.
+    pub(crate) fn type_annotation(&mut self, what: &str) -> TypeAnnotation {
+        let name = self.type_name(what);
+        let mut is_array = false;
+        while self.at(TokenKind::LBracket) {
+            self.bump();
+            self.expect(TokenKind::RBracket, "`]` to close an array type");
+            is_array = true;
+        }
+        TypeAnnotation { name, is_array }
+    }
+
     pub(crate) fn optional_type_annotation(&mut self) -> Option<TypeAnnotation> {
         if self.eat(TokenKind::Colon) {
-            Some(TypeAnnotation {
-                name: self.type_name("a type name"),
-            })
+            Some(self.type_annotation("a type name"))
         } else {
             None
         }

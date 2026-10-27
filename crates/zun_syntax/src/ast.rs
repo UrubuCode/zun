@@ -279,6 +279,10 @@ pub struct Param {
 pub struct TypeAnnotation {
     /// The type name.
     pub name: Name,
+    /// Set when the annotation had one or more `[]` suffixes (`T[]`, `T[][]`).
+    /// Zun arrays are untyped at runtime, so the element type is erased and any
+    /// array depth resolves to `Array`.
+    pub is_array: bool,
 }
 
 /// An identifier occurrence: its text lives in the source at `span`.
