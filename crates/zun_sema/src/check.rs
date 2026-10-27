@@ -10177,7 +10177,12 @@ impl Checker<'_> {
                 }
             }
             Eq | Ne => {
-                if lhs.ty == rhs.ty {
+                // Any two function values are comparable by reference identity,
+                // even with different signatures (distinct `Function(_)` types):
+                // different functions are simply unequal.
+                let both_functions =
+                    matches!(lhs.ty, Ty::Function(_)) && matches!(rhs.ty, Ty::Function(_));
+                if lhs.ty == rhs.ty || both_functions {
                     Ty::Boolean
                 } else {
                     self.error(

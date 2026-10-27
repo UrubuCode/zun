@@ -55,3 +55,22 @@ fn typed_array_length_constructor() {
         vec!["3", "255", "4", "16", "8"],
     );
 }
+
+#[test]
+fn function_values_compare_by_identity() {
+    // `==`/`!=` on function values is reference identity: the same function is
+    // equal to itself; a different function is not. (Functions are JIT-ineligible,
+    // so this is an interpreter path.)
+    assert_eq!(
+        out(r#"
+        function helper(): number { return 1.0; }
+        function other(): number { return 2.0; }
+        function main(): void {
+            let a = helper; let b = helper; let c = other;
+            print(a == b);
+            print(a != b);
+            print(a == c);
+        }"#),
+        vec!["true", "false", "false"],
+    );
+}

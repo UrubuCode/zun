@@ -47,6 +47,10 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
+        // Function values compare by identity (same method + captured
+        // environment), so `f == f` is true. Two distinct closures / bound
+        // functions differ, matching JS reference equality.
+        (Value::Function(x), Value::Function(y)) => x == y,
         (Value::Null, Value::Null) => true,
         (Value::Any(x), Value::Null) | (Value::Null, Value::Any(x)) => {
             x.tag() == zun_core::AnyTag::Null
