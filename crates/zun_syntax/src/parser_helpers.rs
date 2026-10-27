@@ -1090,9 +1090,17 @@ impl Parser<'_> {
             // `x?: T` marks the parameter optional. With no explicit default it
             // is sugar for `x: T = null` (the omitted-argument sentinel), reusing
             // the default-parameter machinery.
-            let ty = self.optional_type_annotation();
+            let optional = self.eat(TokenKind::Question);
+            let mut ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
                 Some(Box::new(self.expression()))
+            } else if optional {
+                // `x?: T` with no explicit default. Zun has no union types, so
+                // the parameter is `any` (it accepts the value or `null`),
+                // defaulting to `null` when the argument is omitted. The empty
+                // span resolves to `Ty::Any` in sema.
+                ty = Some(TypeAnnotation { name: Name { span: Span::empty_at(name.span.start) }, is_array: false });
+                Some(Box::new(Expr::Null { span: name.span }))
             } else {
                 None
             };

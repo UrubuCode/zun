@@ -357,9 +357,15 @@ impl Parser<'_> {
             let is_rest = self.eat(TokenKind::Ellipsis);
             let pname = self.name("a parameter name");
             // `x?: T` is sugar for an optional `x: T = null` (see `parameters`).
-            let ty = self.optional_type_annotation();
+            let optional = self.eat(TokenKind::Question);
+            let mut ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
                 Some(Box::new(self.expression()))
+            } else if optional {
+                // `x?: T` with no explicit default is nullable `any` (no union
+                // types), defaulting to `null` when omitted. Empty span → Ty::Any.
+                ty = Some(TypeAnnotation { name: Name { span: Span::empty_at(pname.span.start) }, is_array: false });
+                Some(Box::new(Expr::Null { span: pname.span }))
             } else {
                 None
             };
@@ -415,9 +421,15 @@ impl Parser<'_> {
             let is_rest = self.eat(TokenKind::Ellipsis);
             let pname = self.name("a parameter name");
             // `x?: T` is sugar for an optional `x: T = null` (see `parameters`).
-            let ty = self.optional_type_annotation();
+            let optional = self.eat(TokenKind::Question);
+            let mut ty = self.optional_type_annotation();
             let default_value = if self.eat(TokenKind::Eq) {
                 Some(Box::new(self.expression()))
+            } else if optional {
+                // `x?: T` with no explicit default is nullable `any` (no union
+                // types), defaulting to `null` when omitted. Empty span → Ty::Any.
+                ty = Some(TypeAnnotation { name: Name { span: Span::empty_at(pname.span.start) }, is_array: false });
+                Some(Box::new(Expr::Null { span: pname.span }))
             } else {
                 None
             };
