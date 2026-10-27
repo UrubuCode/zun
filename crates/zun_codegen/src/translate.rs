@@ -236,6 +236,31 @@ struct Translator<'a> {
 }
 
 impl Translator<'_> {
+    /// Thread the operand stack across a block edge. The front end may leave a
+    /// value on the stack at a block boundary (a `&&`/`||`/ternary result, or a
+    /// value live across a branch), which Cranelift models as a block parameter.
+    /// This ensures `target` has one parameter per stack slot — created once, on
+    /// the first edge into it — and returns the stack values as the jump
+    /// arguments so the value survives into the successor block. GC references
+    /// get a stack map on the parameter.
+    fn thread_edge(
+        &mut self,
+        block_sigs: &mut HashMap<Block, Vec<JitKind>>,
+        target: Block,
+        stack: &[Slot],
+    ) -> Vec<BlockArg> {
+        if !block_sigs.contains_key(&target) {
+            for &(_, kind) in stack {
+                let param = self.builder.append_block_param(target, clif_ty(kind));
+                if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
+                    self.builder.declare_value_needs_stack_map(param);
+                }
+            }
+            block_sigs.insert(target, stack.iter().map(|&(_, k)| k).collect());
+        }
+        stack.iter().map(|&(v, _)| BlockArg::from(v)).collect()
+    }
+
     fn run(
         &mut self,
         instrs: &[zun_il::Instruction],
@@ -243,16 +268,31 @@ impl Translator<'_> {
         index_of_offset: &BTreeMap<usize, usize>,
     ) -> Result<(), String> {
         let mut stack: Vec<Slot> = Vec::new();
+        // Per-block operand-stack signature (the kinds of its entry parameters),
+        // filled lazily by `thread_edge` on the first edge into a block.
+        let mut block_sigs: HashMap<Block, Vec<JitKind>> = HashMap::new();
         let mut builtin_ids: HashMap<&'static str, FuncId> = HashMap::new();
 
         for (i, instr) in instrs.iter().enumerate() {
             if i != 0 {
                 if let Some(&block) = self.blocks.get(&i) {
                     if !terminated(instrs, i) {
-                        self.builder.ins().jump(block, &[]);
+                        let args = self.thread_edge(&mut block_sigs, block, &stack);
+                        self.builder.ins().jump(block, &args);
                     }
                     self.builder.switch_to_block(block);
-                    stack.clear();
+                    // Rebuild the operand stack from the block's parameters (the
+                    // threaded edge values) rather than discarding it.
+                    stack = match block_sigs.get(&block) {
+                        Some(kinds) => self
+                            .builder
+                            .block_params(block)
+                            .iter()
+                            .zip(kinds)
+                            .map(|(&value, &kind)| (value, kind))
+                            .collect(),
+                        None => Vec::new(),
+                    };
                 }
             }
 
@@ -395,7 +435,8 @@ impl Translator<'_> {
                     if self.is_backedge(instr, i, offset_of_index, index_of_offset)? {
                         self.poll_backedge();
                     }
-                    self.builder.ins().jump(target, &[]);
+                    let args = self.thread_edge(&mut block_sigs, target, &stack);
+                    self.builder.ins().jump(target, &args);
                 }
                 Opcode::BranchTrue => {
                     let target = self.target(instr, i, offset_of_index, index_of_offset)?;
@@ -404,7 +445,11 @@ impl Translator<'_> {
                     }
                     let (cond, _) = stack.pop().ok_or("stack underflow")?;
                     let ft = self.fallthrough(i)?;
-                    self.builder.ins().brif(cond, target, &[], ft, &[]);
+                    // The remaining stack (after the condition) is live on both
+                    // edges, so it is threaded to each target.
+                    let args = self.thread_edge(&mut block_sigs, target, &stack);
+                    let ft_args = self.thread_edge(&mut block_sigs, ft, &stack);
+                    self.builder.ins().brif(cond, target, &args, ft, &ft_args);
                 }
                 Opcode::BranchFalse => {
                     let target = self.target(instr, i, offset_of_index, index_of_offset)?;
@@ -413,8 +458,11 @@ impl Translator<'_> {
                     }
                     let (cond, _) = stack.pop().ok_or("stack underflow")?;
                     let ft = self.fallthrough(i)?;
-                    // Taken when false: the true edge is the fall-through.
-                    self.builder.ins().brif(cond, ft, &[], target, &[]);
+                    // Taken when false: the true edge is the fall-through. The
+                    // remaining stack is live on both edges.
+                    let args = self.thread_edge(&mut block_sigs, target, &stack);
+                    let ft_args = self.thread_edge(&mut block_sigs, ft, &stack);
+                    self.builder.ins().brif(cond, ft, &ft_args, target, &args);
                 }
                 Opcode::Ret => {
                     if let Some((v, kind)) = stack.pop() {

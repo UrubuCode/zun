@@ -1716,21 +1716,24 @@ fn c_style_for_is_jit_equivalent() {
 
 #[test]
 fn short_circuit_logical_operators_are_jit_equivalent() {
-    let module = compile("function main(): boolean { return true || false && false; }");
-    assert!(
-        zun_codegen::Jit::compile(&module).is_err(),
-        "short-circuit joins remain on the interpreter fallback"
-    );
-    assert!(matches!(interp_entry(&module), Value::Bool(true)));
+    // The short-circuit join leaves its result on the operand stack across a
+    // block boundary; the translator now threads that value as a block
+    // parameter, so these functions JIT-compile and match the interpreter.
+    assert_equivalent("function main(): boolean { return true || false && false; }");
+    assert_equivalent("function main(): boolean { let a: int = 50; return a >= 48 && a <= 57; }");
+    assert_equivalent("function main(): boolean { let a: int = 5; return a < 1 || a > 3; }");
 }
 
 #[test]
 fn conditional_expression_is_jit_equivalent() {
-    let module = compile(
+    // The ternary join is threaded as a block parameter (see the short-circuit
+    // test), so it JIT-compiles and matches the interpreter.
+    assert_equivalent(
         "function main(): number { let choose: boolean = false; return choose ? 1.0 : 2.0; }",
     );
-    assert!(zun_codegen::Jit::compile(&module).is_err());
-    assert!(matches!(interp_entry(&module), Value::Float(2.0, _)));
+    assert_equivalent(
+        "function main(): number { let choose: boolean = true; return choose ? 1.0 : 2.0; }",
+    );
 }
 
 #[test]
