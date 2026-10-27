@@ -68,7 +68,7 @@ zun_runtime = { path = "crates/zun_runtime", version = "0.0.0" }
 version = "0.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Drysius/zun"
+repository = "https://github.com/urubucode/zun"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
