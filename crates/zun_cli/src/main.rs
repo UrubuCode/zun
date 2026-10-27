@@ -32,6 +32,21 @@ fn parse_aot_target(value: Option<String>) -> Result<target_lexicon::Triple, Str
 }
 
 fn main() -> ExitCode {
+    // The compiler runs recursive passes (parse/sema/codegen walk nested
+    // expressions and the growing prelude), and the OS default main-thread stack
+    // is small on some platforms (~1 MiB on Windows), which overflows as the
+    // nucleus prelude grows. Run the real work on a worker thread with a generous
+    // stack, the same pattern rustc uses. The size is reserved address space, not
+    // committed memory, so a large reserve is cheap.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run)
+        .expect("spawn zun worker thread")
+        .join()
+        .unwrap_or(ExitCode::FAILURE)
+}
+
+fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Ok(home) = zun_cli::zun_home() {
         zun_cli::cleanup_after_upgrade(&home);
