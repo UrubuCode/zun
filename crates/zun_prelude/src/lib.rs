@@ -96,6 +96,10 @@ pub const EVENT_TARGET: &str = include_str!("../builtin/event_target.zun");
 /// `AbortSignal` owns an [`EVENT_TARGET`].
 pub const ABORT: &str = include_str!("../builtin/abort.zun");
 
+/// The `crypto` class (`builtin/crypto.zun`): Web Crypto `randomUUID` and
+/// `getRandomValues` over the `zun:core` OS-randomness native.
+pub const CRYPTO: &str = include_str!("../builtin/crypto.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -154,6 +158,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     EVENT,
     EVENT_TARGET,
     ABORT,
+    CRYPTO,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

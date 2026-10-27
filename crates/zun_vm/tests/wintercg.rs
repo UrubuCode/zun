@@ -235,3 +235,45 @@ fn throw_if_aborted_throws_after_abort() {
     }"#);
     assert_eq!(out.lines, ["not yet", "threw"]);
 }
+
+#[test]
+fn crypto_random_uuid_is_a_v4_uuid() {
+    let out = run(r#"import { string as s } from "zun:core";
+    function ch(u: string, i: u64): string { return s.substring(u, i, i + 1); }
+    function main() {
+        let a = crypto.randomUUID();
+        let b = crypto.randomUUID();
+        console.log(s.length(a));
+        console.log(ch(a, 8) + ch(a, 13) + ch(a, 18) + ch(a, 23));
+        console.log(ch(a, 14));
+        console.log(s.indexOf("89ab", ch(a, 19)) >= 0);
+        console.log(a == b);
+    }"#);
+    assert_eq!(out.lines, ["36", "----", "4", "true", "false"]);
+}
+
+#[test]
+fn crypto_get_random_values_fills_a_uint8array() {
+    let out = run(r#"function main() {
+        let a = new Uint8Array(new ArrayBuffer(16), 0, 16);
+        let r = crypto.getRandomValues(a);
+        console.log(r.length);
+        let nonZero: u64 = 0;
+        let i: u64 = 0;
+        while (i < 16) {
+            if (a[i] != 0) { nonZero = nonZero + 1; }
+            i = i + 1;
+        }
+        console.log(nonZero > 0);
+        let b = new Uint8Array(new ArrayBuffer(16), 0, 16);
+        crypto.getRandomValues(b);
+        let same = true;
+        i = 0;
+        while (i < 16) {
+            if (a[i] != b[i]) { same = false; }
+            i = i + 1;
+        }
+        console.log(same);
+    }"#);
+    assert_eq!(out.lines, ["16", "true", "false"]);
+}

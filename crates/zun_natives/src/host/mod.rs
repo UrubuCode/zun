@@ -80,6 +80,20 @@ fn is_tty(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
     Ok(NativeValue::Bool(std::io::stdout().is_terminal()))
 }
 
+/// 64 bits of OS randomness (reinterpreted as an `i64`), for Web Crypto.
+fn crypto_random_u64(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let mut buf = [0u8; 8];
+    if getrandom::getrandom(&mut buf).is_err() {
+        // Essentially unreachable; degrade to a time-seeded value, not a panic.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15);
+        buf = nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_le_bytes();
+    }
+    Ok(NativeValue::Int(i64::from_le_bytes(buf)))
+}
+
 /// The `zun:core` host group. Appended last in [`MODULES`](crate::MODULES) so
 /// every existing dispatch id stays stable.
 pub const MODULE: crate::Module = crate::Module {
@@ -95,5 +109,6 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "argCount", params: &[], ret: I64, imp: arg_count },
         NativeFn { name: "argAt", params: &[I64], ret: Str, imp: arg_at },
         NativeFn { name: "isTty", params: &[], ret: Bool, imp: is_tty },
+        NativeFn { name: "cryptoRandomU64", params: &[], ret: I64, imp: crypto_random_u64 },
     ],
 };

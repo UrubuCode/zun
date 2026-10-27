@@ -17,3 +17,5 @@ zun_core = { workspace = true }
 icu = "2"
 # Host/IANA time zone offsets for local Date (DST-aware). ICU4X has no offset lookup.
 jiff = "0.2"
+# OS randomness for Web Crypto (`crypto.randomUUID` / `getRandomValues`).
+getrandom = "0.2"
