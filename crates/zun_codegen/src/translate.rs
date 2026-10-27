@@ -88,7 +88,11 @@ pub fn translate_body(
     for &leader in &leaders {
         blocks.insert(leader, builder.create_block());
     }
-    let entry = blocks[&0];
+    // The prologue gets its own entry block: a method whose first instruction is a
+    // loop header makes `blocks[&0]` a branch target, and Cranelift forbids
+    // jumping to the entry block.
+    let first = blocks[&0];
+    let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
 
     // Local kinds (params first); declare a typed Variable per local.
@@ -148,6 +152,8 @@ pub fn translate_body(
     let osr_counter = builder.declare_var(types::I64);
     let initial_osr_counter = builder.ins().iconst(types::I64, 1000);
     builder.def_var(osr_counter, initial_osr_counter);
+    builder.ins().jump(first, &[]);
+    builder.switch_to_block(first);
 
     let mut t = Translator {
         builder,
