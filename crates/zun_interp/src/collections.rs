@@ -2632,6 +2632,18 @@ impl<'a> Interp<'a> {
                 )))
             }
             "functionConstruct" => self.function_construct(args),
+            "functionBoxIs" => {
+                // Handle identity between a `functionBox` record and a function.
+                let boxed = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let target = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let same = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(boxed, "__boxedFn"))
+                    .is_some_and(|stored| stored == target);
+                Ok(Value::Bool(same))
+            }
             "functionBox" => {
                 // Wrap a callable in a GC-traced object so it can ride through
                 // an `Any`-boxing argument lane. The function is stored in a

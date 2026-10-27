@@ -539,6 +539,12 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "decoratorAddInstanceInitializer", params: &[F64, Function], ret: Void, imp: unavailable },
         NativeFn { name: "decoratorAccessGet", params: &[Opaque, F64, F64, Str], ret: Opaque, imp: unavailable },
         NativeFn { name: "decoratorAccessSet", params: &[Opaque, F64, F64, Str, Opaque], ret: Void, imp: unavailable },
+        // `functionBoxIs(box, fn)` — whether a `functionBox` record wraps exactly
+        // the function `fn` (handle identity). Function values have no `==`/`is`
+        // of their own, so this is how a stored boxed listener is matched against
+        // a function value (`EventTarget.removeEventListener`). Appended last so
+        // existing dispatch ids stay stable.
+        NativeFn { name: "functionBoxIs", params: &[Opaque, Function], ret: Bool, imp: unavailable },
     ],
 };
 
