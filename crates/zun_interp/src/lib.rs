@@ -178,6 +178,21 @@ pub fn run_method_loaded(
     run_method_with(scope.module(), method_rid, args, output, None, Some(loader), None)
 }
 
+/// Run a loaded method on the **current** heap (no fresh heap, no module
+/// initializer), for callers that already hold a heap with live managed values —
+/// notably the JIT→interpreter call bridge, which invokes an ineligible callee
+/// from a JIT frame on that frame's heap. Thin public wrapper over
+/// [`runner::run_method_loaded_on_current_heap`].
+pub fn run_method_on_current_heap(
+    scope: &zun_loader::ModuleScope,
+    loader: &zun_loader::ModuleLoader,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    runner::run_method_loaded_on_current_heap(scope, loader, method_rid, args, output)
+}
+
 impl Interp<'_> {
     /// Create the managed identity of a generator invocation. The execution
     /// body is deliberately not entered here; `generatorIteratorNext` owns

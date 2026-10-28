@@ -7,6 +7,7 @@
 
 mod ffi;
 mod extension;
+mod jit_bridge;
 mod jit_hook;
 mod native_hook;
 mod promise;

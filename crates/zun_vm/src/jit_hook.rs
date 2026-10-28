@@ -437,7 +437,7 @@ impl CallHook for JitHook<'_> {
 }
 
 /// Marshal a `Value` into a packed `u64` for parameter kind `k`.
-fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 {
+pub(crate) fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 {
     match k {
         JitKind::Num(NumKind::F64) => v.as_number().to_bits(),
         JitKind::Num(NumKind::F32) => (v.as_number() as f32).to_bits() as u64,
@@ -453,7 +453,7 @@ fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 {
 }
 
 /// Unmarshal a packed `u64` result into a `Value` of the return kind.
-fn unpack_value(bits: u64, ret: Option<JitKind>, heap: &zun_gc::Heap) -> Value {
+pub(crate) fn unpack_value(bits: u64, ret: Option<JitKind>, heap: &zun_gc::Heap) -> Value {
     match ret {
         None => Value::Void,
         Some(JitKind::Bool) => Value::Bool(bits != 0),
