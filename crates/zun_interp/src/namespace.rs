@@ -113,12 +113,12 @@ pub fn call_namespace_member(
 /// and decorator-driven instance hooks fire. Supplying more args than the class
 /// has fields is rejected with [`RunError::BadToken`].
 ///
-/// KNOWN v1 LIMITATION: the field snapshot is taken once at construction time. A
-/// method invoked through [`call_namespace_instance_method`] mutates the real
-/// typed instance, NOT the snapshot, so if a method writes `this.field` the
-/// snapshot's mirrored copy does not update — fields read off the snapshot and
-/// state seen by methods can diverge. This is acceptable for the runtime
-/// foundation; a later slice may route snapshot field reads to the live instance.
+/// Field consistency: the snapshot mirrors the instance's fields at construction
+/// time, and [`call_namespace_instance_method`] re-mirrors them after each method
+/// returns, so a method writing `this.field` is reflected on the next snapshot
+/// read. Residual gap: a field mutated by something other than a method call on
+/// this wrapper (e.g. the live instance aliased elsewhere) is not observed until
+/// the next method call resyncs it.
 ///
 /// Must run with a current heap installed.
 pub fn construct_namespace_class(
@@ -237,6 +237,14 @@ pub fn construct_namespace_class(
 /// `CallVirt`), with the supplied `args` following it. The method runs in its
 /// defining module's scope on the **current** heap (where the instance lives),
 /// so typed field access on `this` resolves correctly.
+///
+/// After the method returns, the live instance's current fields are mirrored
+/// back into the snapshot (see [`resync_snapshot_fields`]): a method that wrote
+/// `this.field` mutates only the real typed instance, so without this a later
+/// read off the snapshot would see the stale construction-time value. The
+/// wrapper and instance are rooted across the call so a moving collection
+/// triggered inside the method does not leave the resync reading dangling
+/// pointers.
 pub fn call_namespace_instance_method(
     loader: &ModuleLoader,
     instance_wrapper: &Value,
@@ -255,11 +263,70 @@ pub fn call_namespace_instance_method(
         .ok_or(RunError::BadToken)?;
     let instance = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     let scope = loader.get(function.module()).ok_or(RunError::BadToken)?;
+
+    // Root the wrapper and the real instance across the call and the post-call
+    // resync: the method body can allocate and trigger a moving collection that
+    // relocates both, and a native root scope lets the GC rewrite these slots so
+    // the volatile re-reads below stay valid.
+    let roots = [*wrapper, instance];
+    let _root_scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+    let current_wrapper = || unsafe { std::ptr::read_volatile(&roots[0]) };
+    let current_instance = || unsafe { std::ptr::read_volatile(&roots[1]) };
+
     // The receiver is argument 0; the call's own arguments follow it.
     let mut call_args = Vec::with_capacity(args.len() + 1);
-    call_args.push(Value::Object(instance));
+    call_args.push(Value::Object(current_instance()));
     call_args.extend(args);
-    run_method_loaded_on_current_heap(scope, loader, function.method_rid(), call_args, output)
+    let result =
+        run_method_loaded_on_current_heap(scope, loader, function.method_rid(), call_args, output)?;
+
+    // Mirror the (possibly mutated) instance fields back into the snapshot.
+    resync_snapshot_fields(scope, current_wrapper(), current_instance());
+    Ok(result)
+}
+
+/// Re-read the live typed instance's declared fields and write them back into the
+/// snapshot `DynamicObject`, keeping the two consistent after a method mutates
+/// `this`.
+///
+/// Field names and value-type codes come from the defining module's
+/// `TypeDef`/`FieldDef` layout (valid because `scope` is that module). All values
+/// are read first (no managed allocation), then boxed and stored; the wrapper
+/// address is re-read before each store because boxing a field value can allocate
+/// and move the wrapper. The caller roots the wrapper and instance.
+///
+/// Must run with a current heap installed.
+fn resync_snapshot_fields(scope: &ModuleScope, wrapper: zun_gc::Obj, instance: zun_gc::Obj) {
+    let module = scope.module();
+    let type_rid = instance.type_rid();
+    let Some(ty) = module.tables.type_defs.get(type_rid as usize - 1) else {
+        return;
+    };
+    let (field_start, field_end) = (ty.field_start, ty.field_end);
+    let fields: Vec<(String, u8)> = (field_start..field_end)
+        .map(|field_rid| {
+            let field = &module.tables.field_defs[field_rid as usize - 1];
+            (module.strings.get(field.name).to_owned(), field.kind)
+        })
+        .collect();
+    let values: Vec<(String, Value)> = zun_gc::with_current_heap(|heap| {
+        fields
+            .iter()
+            .enumerate()
+            .map(|(slot, (name, kind))| {
+                (name.clone(), crate::value::load_field(*kind, instance, slot, heap))
+            })
+            .collect()
+    });
+    let roots = [wrapper];
+    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+    let current_wrapper = || unsafe { std::ptr::read_volatile(&roots[0]) };
+    zun_gc::with_current_heap_mut(|heap| {
+        for (name, value) in &values {
+            let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+            heap.dynamic_set(current_wrapper(), name.clone(), boxed);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -592,6 +659,55 @@ mod tests {
             call_namespace_instance_method(&loader, &wrapper, "missing", vec![], &mut output)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn instance_method_mutation_is_reflected_on_the_snapshot() {
+        // A method that writes `this.n` mutates the real typed instance. After the
+        // call, the snapshot must reflect the new value (the resync in
+        // `call_namespace_instance_method`), not the construction-time snapshot.
+        let lib = zun_compiler::compile(
+            "class Counter { n: number; bump(): number { this.n = this.n + 1.0; return this.n; } } function main(): int { return 0; }",
+        )
+        .expect("compile lib");
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("lib", &lib.write()).unwrap();
+
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let namespace = materialize_namespace(loader.get("lib").unwrap()).unwrap();
+        let mut output = CaptureOutput::default();
+        let wrapper = construct_namespace_class(
+            &loader,
+            &namespace,
+            "Counter",
+            vec![Value::Float(41.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .unwrap();
+
+        // Snapshot reads the construction-time value before any method runs.
+        let before = {
+            let Value::Object(object) = wrapper else { panic!("object wrapper") };
+            zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "n")).and_then(|any| any.as_float())
+        };
+        assert_eq!(before, Some(41.0));
+
+        let result = call_namespace_instance_method(&loader, &wrapper, "bump", vec![], &mut output)
+            .unwrap();
+        let returned = match result {
+            Value::Float(value, _) => value,
+            Value::Any(any) => any.as_float().expect("numeric result"),
+            other => panic!("unexpected result shape: {other:?}"),
+        };
+        assert_eq!(returned, 42.0);
+
+        // After the mutating call the snapshot field agrees with the instance.
+        let after = {
+            let Value::Object(object) = wrapper else { panic!("object wrapper") };
+            zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "n")).and_then(|any| any.as_float())
+        };
+        assert_eq!(after, Some(42.0));
     }
 
     #[test]
