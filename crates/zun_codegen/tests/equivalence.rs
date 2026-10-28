@@ -6369,3 +6369,32 @@ fn same_frame_try_catch_is_jit_eligible() {
         Ok(2)
     ));
 }
+
+#[test]
+fn same_frame_try_catch_handles_subclass_and_multiple_throws() {
+    // Two throw points, one of a subclass of the catch type. Both are proven to
+    // land in this frame's `catch (e: Error)` (exact type or a subclass), so both
+    // lower to branches to the one catch block.
+    let module = compile(
+        "class Error {} class TypeError extends Error {} \
+         function classify(n: int): int { let result: int = 0; \
+           try { if (n < 0) { throw new TypeError(); } if (n == 0) { throw new Error(); } result = 1; } \
+           catch (e: Error) { result = 2; } \
+           return result; } \
+         function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "classify")
+        .expect("classify method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "subclass/multi-throw try/catch should be JIT-eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    assert!(matches!(jit.call_packed_with_heap(rid, &[5u64], &mut heap), Ok(1)));
+    assert!(matches!(jit.call_packed_with_heap(rid, &[0u64], &mut heap), Ok(2)));
+    assert!(matches!(jit.call_packed_with_heap(rid, &[(-1i64) as u64], &mut heap), Ok(2)));
+}

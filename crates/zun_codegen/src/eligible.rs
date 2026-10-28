@@ -197,7 +197,34 @@ fn try_region_op_allowed(op: Opcode) -> bool {
 /// A typed catch binds the exception to a concrete object local the typed JIT
 /// represents; a catch-all binds it to `any`, which the `local_kinds` gate
 /// already rejects.
-fn exception_regions_jit_safe(body: &zun_module::MethodBody<'_>, instrs: &[zun_il::Instruction]) -> bool {
+/// Whether a user class `throw_rid` is an instance of `catch_rid` — the same
+/// type or a subclass — by walking the `TypeDef` base chain. Used to prove a
+/// `throw new T()` is unconditionally caught by `catch (e: C)` in this frame.
+/// The walk is bounded so a malformed cyclic hierarchy cannot loop forever.
+fn jit_type_caught_by(module: &Module, throw_rid: u32, catch_rid: u32) -> bool {
+    let mut current = throw_rid;
+    for _ in 0..64 {
+        if current == catch_rid {
+            return true;
+        }
+        let Some(ty) = module.tables.type_defs.get(current as usize - 1) else {
+            return false;
+        };
+        // A non-`TypeDef` (external/`TypeRef`) or null base ends the chain: the
+        // hierarchy above it is not verifiable here, so it is not a match.
+        if ty.base.table() != Some(zun_metadata::TableKind::TypeDef) || ty.base.rid() == 0 {
+            return false;
+        }
+        current = ty.base.rid();
+    }
+    false
+}
+
+fn exception_regions_jit_safe(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+) -> bool {
     if body.handlers.len() != 1 {
         return false;
     }
@@ -215,9 +242,13 @@ fn exception_regions_jit_safe(body: &zun_module::MethodBody<'_>, instrs: &[zun_i
         let in_try = (handler.try_start as usize) <= offset && offset < handler.try_end as usize;
         if instr.opcode == Opcode::Throw {
             throw_count += 1;
-            // Must be inside the region and throw exactly the catch's type.
-            if !in_try || prev_newobj_type != Some(catch_type.rid()) {
-                return false;
+            // Must be inside the region and throw a freshly constructed object
+            // caught by this frame's handler (the catch type or a subclass), so
+            // it never escapes to an outer/cross-frame handler.
+            match prev_newobj_type {
+                Some(throw_rid)
+                    if in_try && jit_type_caught_by(module, throw_rid, catch_type.rid()) => {}
+                _ => return false,
             }
         }
         if in_try && !try_region_op_allowed(instr.opcode) {
@@ -229,7 +260,9 @@ fn exception_regions_jit_safe(body: &zun_module::MethodBody<'_>, instrs: &[zun_i
         };
         offset += instr.encoded_len();
     }
-    throw_count == 1
+    // At least one throw (a handler with no throw to route is pointless to JIT
+    // and would leave the catch block an unreachable, parameterless stub).
+    throw_count >= 1
 }
 
 
@@ -824,7 +857,7 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         // frame, with no call-type op in the protected region). A cross-frame
         // throw — one unwound out of a callee — still needs the deferred Cranelift
         // unwinding bridge, so such methods stay on Tier 0.
-        if !body.handlers.is_empty() && !exception_regions_jit_safe(&body, &instrs) {
+        if !body.handlers.is_empty() && !exception_regions_jit_safe(module, &body, &instrs) {
             continue;
         }
         if !body.local_kinds.iter().all(|&k| kind_supported(k))
