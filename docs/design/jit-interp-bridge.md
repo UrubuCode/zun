@@ -135,6 +135,36 @@ calls, which is what makes same-frame exceptions cover little real code.
 Dynamic objects / general `Any` on the typed stack remain a separate axis (a
 `JitKind::Any` carrier threaded through the stack), not covered here.
 
+## Revision (found building 1a→1b): bridging and exception propagation are coupled
+
+A "slice 1b with no exceptions" is **not independently correct**. A bridged
+callee can throw, and the JIT frame must then propagate — but a *direct* JIT→JIT
+call has no status channel, so a JIT method that can propagate a bridged throw
+could be entered by another JIT method that never learns it threw. Aborting on a
+bridged throw instead would diverge from the interpreter (which propagates),
+breaking the equivalence invariant. So safe bridging requires the exceptional
+path up front.
+
+The correct shared mechanism is a **uniform exceptional-return channel**, not an
+ABI change to every JIT function signature:
+- a thread-local "exception pending" flag + the thrown value, set by the bridge
+  wrapper (and by a future JIT `throw` that must leave the frame);
+- after **every** call in a JIT body (direct or bridged), a check of that flag;
+  if set, branch to the method's single **exceptional-exit block**, which returns
+  a dummy of the return type leaving the flag set (so callers up the chain also
+  branch out);
+- inside a protected region, the post-call check branches to the matching catch
+  block instead of the exceptional exit — this is exactly how the already-built
+  same-frame `throw` lowering routes, now reachable for *calls* in a `try`;
+- `JitHook`, after the top-level `call_packed_with_heap`, converts a set flag
+  into `RunError::Thrown` and resumes interpreter propagation.
+
+This folds the old slices 1b and 3 into one coherent unit ("bridged calls + the
+exceptional-return channel") and makes same-frame `try` regions finally admit
+calls. It is a large, cross-cutting codegen change (a post-call check and an
+exceptional-exit block in every eligible body) touching the calling convention,
+so it lands as one reviewed, GC-stress-verified piece — not piecemeal.
+
 ## Verification note
 
 The whole bridge is **in-process testable** via `Jit::compile` +
