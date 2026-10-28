@@ -385,6 +385,44 @@ mod tests {
         }
     }
 
+    const CLASS_APP_SOURCE: &str = "async function compute(): Promise { let ns: any = await import(\"lib\"); let p: any = new ns.Point(3.0, 4.0); let pr = new Promise(); pr.resolve(p.sum()); return pr; }
+\n        function main(): any { let r = compute(); return r.result(); }";
+
+    #[test]
+    fn new_on_dynamic_import_class_constructs_and_calls_methods_end_to_end() {
+        // `new ns.C(...)` on a dynamically imported namespace constructs the
+        // class export cross-module; a method call on the instance runs in the
+        // defining module's scope and reads the instance's typed fields.
+        let lib = zun_compiler::compile(
+            "class Point { x: number; y: number; sum(): number { return this.x + this.y; } } function main(): int { return 0; }",
+        )
+        .expect("compile lib");
+        for oxc in [false, true] {
+            let app = if oxc {
+                match zun_compiler::compile_with_oxc(CLASS_APP_SOURCE, true) {
+                    Ok(app) => app,
+                    // The OXC adapter does not surface every construct; the hand
+                    // parser is the primary path for this feature.
+                    Err(_) => continue,
+                }
+            } else {
+                zun_compiler::compile(CLASS_APP_SOURCE).expect("compile app with `new ns.C()`")
+            };
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("lib", &lib.write()).unwrap();
+            loader.load_bytes("app", &app.write()).unwrap();
+            let entry = loader.get("app").unwrap().module().entry_point.unwrap().rid();
+            let mut output = CaptureOutput::default();
+            let result =
+                run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output)
+                    .unwrap();
+            let Value::Any(any) = result else {
+                panic!("unexpected result shape: {result:?}");
+            };
+            assert_eq!(any.as_float(), Some(7.0));
+        }
+    }
+
     #[test]
     fn dynamic_import_promise_resolves_to_a_callable_namespace() {
         let loader = loader_with_lib();

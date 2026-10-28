@@ -290,6 +290,10 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "dynamicCall0", params: &[Opaque, Str], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall1", params: &[Opaque, Str, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall2", params: &[Opaque, Str, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `new ns.C(...args)` on a dynamic import namespace: construct a class
+        // export cross-module. `(namespace, className, argsArray)` — the array
+        // form carries any constructor arity (see `proxyConstruct`).
+        NativeFn { name: "dynamicConstruct", params: &[Opaque, Str, Array], ret: Opaque, imp: unavailable },
         // `Object.*` reflective statics. These touch the managed heap (dynamic
         // objects and typed field layouts), so the interpreter intercepts them
         // by name; the signatures here fix only the argument count the verifier

@@ -2189,6 +2189,27 @@ impl<'a> Interp<'a> {
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }
+                // A dynamically-imported class instance (built by
+                // `construct_namespace_class`) keeps its real typed instance in a
+                // hidden `__instance` slot and mirrors its methods as module
+                // functions. Route a method call to the real instance in its
+                // defining scope (the method runs on the current heap, so an
+                // object result is valid — unlike the namespace-function path).
+                let is_instance =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get(namespace, "__instance")).is_some();
+                if is_instance {
+                    let loader = self.loader.ok_or(RunError::BadToken)?;
+                    let result = super::namespace::call_namespace_instance_method(
+                        loader,
+                        &Value::Object(namespace),
+                        &member,
+                        call_args,
+                        &mut *self.output,
+                    )?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
+                }
                 let loader = self.loader.ok_or(RunError::BadToken)?;
                 let result = super::namespace::call_namespace_member(
                     loader,
@@ -2202,6 +2223,31 @@ impl<'a> Interp<'a> {
                     return Err(RunError::BadToken);
                 }
                 Ok(Value::Any(any(&result).ok_or(RunError::BadToken)?))
+            }
+            "dynamicConstruct" => {
+                // `new ns.C(...args)`: construct a class export of a dynamically
+                // imported namespace. `(namespace, className, argsArray)`.
+                let namespace = args.first().ok_or(RunError::BadToken)?.clone();
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let array = object(args.get(2).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let values = self.read_array_values(array)?;
+                let loader = self.loader.ok_or(RunError::BadToken)?;
+                let result = super::namespace::construct_namespace_class(
+                    loader,
+                    &namespace,
+                    &name,
+                    values,
+                    &mut *self.output,
+                )?;
+                // The snapshot object lives on the current heap, so box it as an
+                // object `Any` for the dynamic call site.
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                Ok(Value::Any(boxed))
             }
             "dynamicSetFunction" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)

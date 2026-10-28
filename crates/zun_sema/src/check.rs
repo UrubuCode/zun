@@ -8205,6 +8205,54 @@ impl Checker<'_> {
                 if name == "Function" && !self.classes_by_name.contains_key(&name) {
                     return self.lower_function_construct(cx, args, span);
                 }
+                // `new ns.C(...args)` where `ns` is a dynamic (`any`) local
+                // holding a module namespace from `import()`: construct the class
+                // export cross-module at run time. The parser collapses `ns.C`
+                // into one dotted class name, so split on the last `.` and check
+                // the base is a dynamic local (a known class/realm global takes
+                // precedence and is handled below).
+                if !self.classes_by_name.contains_key(&name)
+                    && !self.realm_globals.contains_key(&name)
+                {
+                    if let Some(dot) = name.rfind('.') {
+                        let base = &name[..dot];
+                        let member = name[dot + 1..].to_string();
+                        let base_is_dynamic = cx
+                            .lookup(base)
+                            .is_some_and(|slot| matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject));
+                        if base_is_dynamic {
+                            let base_name = ast::Name {
+                                span: Span::new(class.span.start, class.span.start + base.len() as u32),
+                            };
+                            let base_expr = self.check_expr(cx, &ast::Expr::Ident(base_name));
+                            let member_expr = hir::Expr {
+                                kind: hir::ExprKind::String(member),
+                                ty: Ty::String,
+                                span: class.span,
+                            };
+                            let elements: Vec<Option<hir::Expr>> =
+                                args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+                            let args_array = hir::Expr {
+                                kind: hir::ExprKind::ArrayLiteral { elements },
+                                ty: Ty::Array,
+                                span,
+                            };
+                            let Some((id, _)) = zun_natives::resolve("collections", "dynamicConstruct")
+                            else {
+                                self.error(span, "missing `dynamicConstruct` intrinsic");
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![base_expr, member_expr, args_array],
+                                },
+                                ty: Ty::Any,
+                                span,
+                            };
+                        }
+                    }
+                }
                 // `new proxy(...args)`: a local of proxy type routes through
                 // `proxyConstruct` (the handler's `construct` trap, else the
                 // wrapped class's default construction).
