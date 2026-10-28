@@ -5,6 +5,7 @@
 //! loaded module's exports are mirrored into a `DynamicObject` on the managed
 //! heap so they can be read and called without static knowledge of the module.
 
+use crate::runner::construct_class_loaded;
 use crate::{run_method_loaded, Output, RunError, Value};
 use zun_loader::{Export, ModuleLoader, ModuleScope};
 
@@ -20,9 +21,15 @@ pub fn materialize_namespace(scope: &ModuleScope) -> Result<Value, RunError> {
     Ok(zun_gc::with_current_heap_mut(|heap| {
         let namespace = heap.alloc_dynamic();
         for (name, export) in scope.exports() {
-            if let Export::Method(token) = export {
-                let function = zun_core::ModuleBoundFunction::new(scope.name(), token.rid());
-                heap.dynamic_set_module_function(namespace, name, function);
+            match export {
+                Export::Method(token) => {
+                    let function = zun_core::ModuleBoundFunction::new(scope.name(), token.rid());
+                    heap.dynamic_set_module_function(namespace, name, function);
+                }
+                Export::Type(token) => {
+                    let class = zun_core::ModuleBoundClass::new(scope.name(), token.rid());
+                    heap.dynamic_set_module_class(namespace, name, class);
+                }
             }
         }
         Value::Object(namespace)
@@ -80,6 +87,96 @@ pub fn call_namespace_member(
         .ok_or(RunError::BadToken)?;
     let scope = loader.get(function.module()).ok_or(RunError::BadToken)?;
     run_method_loaded(scope, loader, function.method_rid(), args, output)
+}
+
+/// Construct an instance of a class export of a materialized namespace by name,
+/// then snapshot its fields into a fresh `DynamicObject`.
+///
+/// The bound class is resolved through `loader` against its defining module, the
+/// same cross-module mechanism `call_namespace_member` uses for functions. The
+/// typed instance is built positionally on the current heap, then each of its
+/// declared fields (names and value-type codes from the defining module's
+/// `TypeDef`/`FieldDef` layout) is read back and mirrored into a dynamic object,
+/// boxed as `Any`. Methods and `this` routing are out of scope here (slice 2);
+/// only fields are snapshotted.
+///
+/// v1 constraint: every field must be supplied as an argument (`args.len()` must
+/// equal the class's field count). Trailing-field defaults are recorded only by
+/// the defining module's initializer, which has not run on this cross-module
+/// path, so an incomplete argument list cannot be completed and is rejected with
+/// [`RunError::BadToken`].
+///
+/// Must run with a current heap installed.
+pub fn construct_namespace_class(
+    loader: &ModuleLoader,
+    namespace: &Value,
+    name: &str,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let Value::Object(namespace) = namespace else {
+        return Err(RunError::BadToken);
+    };
+    let class = zun_gc::with_current_heap(|heap| heap.dynamic_get_module_class(*namespace, name))
+        .ok_or(RunError::BadToken)?;
+    let scope = loader.get(class.module()).ok_or(RunError::BadToken)?;
+    let type_rid = class.type_rid();
+
+    // Static layout of the class, read from the defining module's tables (valid
+    // cross-module because the interp for construction binds to this scope).
+    let ty = scope
+        .module()
+        .tables
+        .type_defs
+        .get(type_rid as usize - 1)
+        .ok_or(RunError::BadToken)?;
+    let field_start = ty.field_start;
+    let field_end = ty.field_end;
+    let field_count = (field_end - field_start) as usize;
+
+    // v1: all fields must be supplied positionally; defaults for trailing-absent
+    // args are not available cross-module (see the doc comment above).
+    if args.len() != field_count {
+        return Err(RunError::BadToken);
+    }
+
+    let fields: Vec<(String, u8)> = (field_start..field_end)
+        .map(|field_rid| {
+            let field = &scope.module().tables.field_defs[field_rid as usize - 1];
+            (scope.module().strings.get(field.name).to_owned(), field.kind)
+        })
+        .collect();
+
+    // Build the typed instance on the current heap.
+    let instance = construct_class_loaded(scope, loader, type_rid, args, output)?;
+    let Value::Any(any) = instance else {
+        return Err(RunError::BadToken);
+    };
+    let address = any.as_object().ok_or(RunError::BadToken)?;
+    let instance = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+
+    // Read each field value out first (no managed allocation), then mirror them
+    // into a fresh dynamic object. Reading before the `alloc_dynamic` below keeps
+    // the instance pointer valid across the only allocation on this path.
+    let values: Vec<(String, Value)> = zun_gc::with_current_heap(|heap| {
+        fields
+            .iter()
+            .enumerate()
+            .map(|(slot, (name, kind))| {
+                (name.clone(), crate::value::load_field(*kind, instance, slot, heap))
+            })
+            .collect()
+    });
+
+    let snapshot = zun_gc::with_current_heap_mut(|heap| {
+        let snapshot = heap.alloc_dynamic();
+        for (name, value) in &values {
+            let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+            heap.dynamic_set(snapshot, name.clone(), boxed);
+        }
+        snapshot
+    });
+    Ok(Value::Object(snapshot))
 }
 
 #[cfg(test)]
@@ -231,6 +328,56 @@ mod tests {
             .unwrap();
             assert!(matches!(result, Value::Int(42, zun_il::NumKind::I32)));
         }
+    }
+
+    #[test]
+    fn construct_namespace_class_snapshots_positional_fields() {
+        // A class with two positional fields and no constructor; `main` keeps the
+        // module valid. Dynamic construction supplies both fields and reads them
+        // back off the snapshot.
+        let lib = zun_compiler::compile(
+            "class Point { x: number; y: number; } function main(): int { return 0; }",
+        )
+        .expect("compile lib");
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("lib", &lib.write()).unwrap();
+
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let namespace = materialize_namespace(loader.get("lib").unwrap()).unwrap();
+        let mut output = CaptureOutput::default();
+        let Value::Object(object) = construct_namespace_class(
+            &loader,
+            &namespace,
+            "Point",
+            vec![
+                Value::Float(3.0, zun_il::NumKind::F64),
+                Value::Float(4.0, zun_il::NumKind::F64),
+            ],
+            &mut output,
+        )
+        .unwrap() else {
+            panic!("construction must return a dynamic object");
+        };
+        let x = zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "x"))
+            .and_then(|any| any.as_float());
+        let y = zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "y"))
+            .and_then(|any| any.as_float());
+        assert_eq!(x, Some(3.0));
+        assert_eq!(y, Some(4.0));
+
+        // v1 constraint: an incomplete argument list is rejected (defaults are not
+        // available cross-module).
+        assert!(construct_namespace_class(
+            &loader,
+            &namespace,
+            "Point",
+            vec![Value::Float(3.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .is_err());
+        // An unknown class name is not constructible.
+        assert!(construct_namespace_class(&loader, &namespace, "Missing", vec![], &mut output).is_err());
     }
 
     #[test]

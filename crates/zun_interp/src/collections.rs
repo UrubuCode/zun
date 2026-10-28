@@ -4687,7 +4687,7 @@ impl<'a> Interp<'a> {
     /// `function.prototype` + `this` model for arbitrary function constructors),
     /// and `newTarget` is approximated by the target class.
     /// Returns the instance boxed as an `Any`.
-    fn construct_class_from_descriptor(
+    pub(crate) fn construct_class_from_descriptor(
         &mut self,
         token: u32,
         mut values: Vec<Value>,

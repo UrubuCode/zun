@@ -1,4 +1,4 @@
-use super::{Any, FunctionHandle, ModuleBoundFunction, SymbolId};
+use super::{Any, FunctionHandle, ModuleBoundClass, ModuleBoundFunction, SymbolId};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A dictionary-backed object for opt-in dynamic property access.
@@ -64,6 +64,7 @@ pub struct DynamicObject {
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
     module_functions: BTreeMap<String, ModuleBoundFunction>,
+    module_classes: BTreeMap<String, ModuleBoundClass>,
 }
 
 impl PartialEq for DynamicObject {
@@ -82,6 +83,7 @@ impl PartialEq for DynamicObject {
             && self.symbol_functions == other.symbol_functions
             && self.string_functions == other.string_functions
             && self.module_functions == other.module_functions
+            && self.module_classes == other.module_classes
     }
 }
 
@@ -381,6 +383,12 @@ impl DynamicObject {
     }
     pub fn module_function_names(&self) -> impl Iterator<Item = &str> + '_ {
         self.module_functions.keys().map(String::as_str)
+    }
+    pub fn get_module_class(&self, name: &str) -> Option<&ModuleBoundClass> {
+        self.module_classes.get(name)
+    }
+    pub fn set_module_class(&mut self, name: impl Into<String>, class: ModuleBoundClass) -> Option<ModuleBoundClass> {
+        self.module_classes.insert(name.into(), class)
     }
     /// Remove a string property. A frozen object, or a **non-configurable**
     /// property, rejects removal (returns `None`).

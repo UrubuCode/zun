@@ -598,6 +598,52 @@ pub(super) fn run_method_with(
     Ok(result)
 }
 
+/// Construct an instance of a user class defined in `module` on the **current**
+/// heap, mirroring [`run_method_with`] but invoking the class-construction twin
+/// of `NewObj` instead of a method body.
+///
+/// Unlike [`run_method_with`], this does **not** install a fresh heap: the caller
+/// must have a current heap installed, because the constructed instance lives on
+/// it and is read back by the caller (the dynamic-namespace snapshot path). The
+/// module initializer is not run, so instance hooks / field defaults registered
+/// by it are absent — callers must supply every field positionally.
+pub(crate) fn construct_class_loaded(
+    scope: &zun_loader::ModuleScope,
+    loader: &zun_loader::ModuleLoader,
+    type_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let module = scope.module();
+    let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
+    let mut interp = Interp {
+        module,
+        output,
+        hook: None,
+        loader: Some(loader),
+        eval_host: None,
+        eval_cache: std::collections::HashMap::new(),
+        allocs: 0,
+        gc_interval: GC_INTERVAL,
+        minor_collections: 0,
+        types,
+        suspended: None,
+        resume_frame: None,
+        yielded: None,
+        static_fields: std::collections::HashMap::new(),
+        class_symbol_methods: std::collections::HashMap::new(),
+        class_named_methods: std::collections::HashMap::new(),
+        class_field_defaults: std::collections::HashMap::new(),
+        decorator_initializers: Vec::new(),
+        instance_initializers: Vec::new(),
+        field_transforms: Vec::new(),
+        active_frame: None,
+        call_stack: Vec::new(),
+        async_state: AsyncState::default(),
+    };
+    interp.construct_class_from_descriptor(type_rid | zun_natives::USER_CLASS_FLAG, args)
+}
+
 impl Interp<'_> {
     /// Deliver callbacks queued by completed GC cycles on this interpreter's
     /// heap. Callback invocation reuses the same interpreter and heap, so
