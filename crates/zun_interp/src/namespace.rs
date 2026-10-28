@@ -5,7 +5,7 @@
 //! loaded module's exports are mirrored into a `DynamicObject` on the managed
 //! heap so they can be read and called without static knowledge of the module.
 
-use crate::runner::construct_class_loaded;
+use crate::runner::{construct_class_loaded, run_method_loaded_on_current_heap};
 use crate::{run_method_loaded, Output, RunError, Value};
 use zun_loader::{Export, ModuleLoader, ModuleScope};
 
@@ -97,14 +97,29 @@ pub fn call_namespace_member(
 /// typed instance is built positionally on the current heap, then each of its
 /// declared fields (names and value-type codes from the defining module's
 /// `TypeDef`/`FieldDef` layout) is read back and mirrored into a dynamic object,
-/// boxed as `Any`. Methods and `this` routing are out of scope here (slice 2);
-/// only fields are snapshotted.
+/// boxed as `Any`.
+///
+/// Instance methods (slice 2) are also attached: the real typed instance is kept
+/// alive in a hidden `"__instance"` dynamic slot on the snapshot (boxed as an
+/// object `Any`, so it stays rooted and GC-rewritten), and each declared instance
+/// method is mirrored onto the snapshot as a [`zun_core::ModuleBoundFunction`]
+/// naming the defining module. [`call_namespace_instance_method`] uses the slot
+/// and the bound functions to run a method against the real instance in its
+/// defining module's scope (field access on `this` needs the typed instance, not
+/// the snapshot). The constructor and static/accessor/symbol methods are skipped.
 ///
 /// v1 constraint: every field must be supplied as an argument (`args.len()` must
 /// equal the class's field count). Trailing-field defaults are recorded only by
 /// the defining module's initializer, which has not run on this cross-module
 /// path, so an incomplete argument list cannot be completed and is rejected with
 /// [`RunError::BadToken`].
+///
+/// KNOWN v1 LIMITATION: the field snapshot is taken once at construction time. A
+/// method invoked through [`call_namespace_instance_method`] mutates the real
+/// typed instance, NOT the snapshot, so if a method writes `this.field` the
+/// snapshot's mirrored copy does not update — fields read off the snapshot and
+/// state seen by methods can diverge. This is acceptable for the runtime
+/// foundation; a later slice may route snapshot field reads to the live instance.
 ///
 /// Must run with a current heap installed.
 pub fn construct_namespace_class(
@@ -133,6 +148,8 @@ pub fn construct_namespace_class(
     let field_start = ty.field_start;
     let field_end = ty.field_end;
     let field_count = (field_end - field_start) as usize;
+    let method_start = ty.method_start;
+    let method_end = ty.method_end;
 
     // v1: all fields must be supplied positionally; defaults for trailing-absent
     // args are not available cross-module (see the doc comment above).
@@ -144,6 +161,24 @@ pub fn construct_namespace_class(
         .map(|field_rid| {
             let field = &scope.module().tables.field_defs[field_rid as usize - 1];
             (scope.module().strings.get(field.name).to_owned(), field.kind)
+        })
+        .collect();
+
+    // Instance methods to mirror onto the snapshot: skip statics (bound to the
+    // type, not an instance) and the constructor (not a callable member). v1
+    // also skips accessors and symbol methods — only plain named instance
+    // methods are attached.
+    let methods: Vec<(String, u32)> = (method_start..method_end)
+        .filter_map(|method_rid| {
+            let method = &scope.module().tables.method_defs[method_rid as usize - 1];
+            if method.is_static {
+                return None;
+            }
+            let name = scope.module().strings.get(method.name);
+            if name == "constructor" {
+                return None;
+            }
+            Some((name.to_owned(), method_rid))
         })
         .collect();
 
@@ -174,9 +209,55 @@ pub fn construct_namespace_class(
             let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
             heap.dynamic_set(snapshot, name.clone(), boxed);
         }
+        // Keep the real typed instance alive and reachable from the snapshot: a
+        // dynamic slot holding it as an object `Any` roots it and lets the GC
+        // rewrite the reference on compaction. `call_namespace_instance_method`
+        // reads it back as the method receiver.
+        let instance_any = zun_core::Any::object(instance.addr() as usize);
+        heap.dynamic_set(snapshot, "__instance", instance_any);
+        for (name, method_rid) in &methods {
+            let function = zun_core::ModuleBoundFunction::new(scope.name(), *method_rid);
+            heap.dynamic_set_module_function(snapshot, name.clone(), function);
+        }
         snapshot
     });
     Ok(Value::Object(snapshot))
+}
+
+/// Call an instance method of a dynamically-imported class instance by name.
+///
+/// `instance_wrapper` is the snapshot `DynamicObject` returned by
+/// [`construct_namespace_class`]. The method is resolved as a
+/// [`zun_core::ModuleBoundFunction`] attached to the snapshot; absent methods
+/// are rejected with [`RunError::BadToken`]. The real typed instance kept in the
+/// snapshot's `"__instance"` slot is retrieved and passed as the receiver
+/// (`this`, argument 0 — the interpreter's instance-call convention, see
+/// `CallVirt`), with the supplied `args` following it. The method runs in its
+/// defining module's scope on the **current** heap (where the instance lives),
+/// so typed field access on `this` resolves correctly.
+pub fn call_namespace_instance_method(
+    loader: &ModuleLoader,
+    instance_wrapper: &Value,
+    name: &str,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let Value::Object(wrapper) = instance_wrapper else {
+        return Err(RunError::BadToken);
+    };
+    let function = zun_gc::with_current_heap(|heap| heap.dynamic_get_module_function(*wrapper, name))
+        .ok_or(RunError::BadToken)?;
+    // Recover the kept real instance from the hidden slot.
+    let address = zun_gc::with_current_heap(|heap| heap.dynamic_get(*wrapper, "__instance"))
+        .and_then(|any| any.as_object())
+        .ok_or(RunError::BadToken)?;
+    let instance = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    let scope = loader.get(function.module()).ok_or(RunError::BadToken)?;
+    // The receiver is argument 0; the call's own arguments follow it.
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    call_args.push(Value::Object(instance));
+    call_args.extend(args);
+    run_method_loaded_on_current_heap(scope, loader, function.method_rid(), call_args, output)
 }
 
 #[cfg(test)]
@@ -378,6 +459,47 @@ mod tests {
         .is_err());
         // An unknown class name is not constructible.
         assert!(construct_namespace_class(&loader, &namespace, "Missing", vec![], &mut output).is_err());
+    }
+
+    #[test]
+    fn call_namespace_instance_method_runs_in_defining_scope() {
+        // A no-constructor class with one field and one instance method that
+        // reads `this.n`. Dynamic construction supplies the field, then the
+        // method runs against the real typed instance and returns n + 1.
+        let lib = zun_compiler::compile(
+            "class Counter { n: number; bump(): number { return this.n + 1.0; } } function main(): int { return 0; }",
+        )
+        .expect("compile lib");
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("lib", &lib.write()).unwrap();
+
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let namespace = materialize_namespace(loader.get("lib").unwrap()).unwrap();
+        let mut output = CaptureOutput::default();
+        let wrapper = construct_namespace_class(
+            &loader,
+            &namespace,
+            "Counter",
+            vec![Value::Float(41.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .unwrap();
+
+        let result = call_namespace_instance_method(&loader, &wrapper, "bump", vec![], &mut output)
+            .unwrap();
+        let value = match result {
+            Value::Float(value, _) => value,
+            Value::Any(any) => any.as_float().expect("numeric result"),
+            other => panic!("unexpected result shape: {other:?}"),
+        };
+        assert_eq!(value, 42.0);
+
+        // An unknown method name is not callable.
+        assert!(
+            call_namespace_instance_method(&loader, &wrapper, "missing", vec![], &mut output)
+                .is_err()
+        );
     }
 
     #[test]

@@ -644,6 +644,72 @@ pub(crate) fn construct_class_loaded(
     interp.construct_class_from_descriptor(type_rid | zun_natives::USER_CLASS_FLAG, args)
 }
 
+/// Run a method of a loaded module on the **current** heap, mirroring
+/// [`super::run_method_loaded`] but without installing a fresh heap and without
+/// running the module initializer.
+///
+/// This is required by the dynamic-namespace instance-method path: the receiver
+/// (`this`) is a typed instance built earlier by [`construct_class_loaded`] and
+/// living on the caller's current heap, so the method must execute against that
+/// same heap. Installing a new heap (as [`super::run_method_loaded`] does) would
+/// leave the receiver pointer dangling into a discarded heap.
+pub(crate) fn run_method_loaded_on_current_heap(
+    scope: &zun_loader::ModuleScope,
+    loader: &zun_loader::ModuleLoader,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let module = scope.module();
+    let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
+    let mut interp = Interp {
+        module,
+        output,
+        hook: None,
+        loader: Some(loader),
+        eval_host: None,
+        eval_cache: std::collections::HashMap::new(),
+        allocs: 0,
+        gc_interval: GC_INTERVAL,
+        minor_collections: 0,
+        types,
+        suspended: None,
+        resume_frame: None,
+        yielded: None,
+        static_fields: std::collections::HashMap::new(),
+        class_symbol_methods: std::collections::HashMap::new(),
+        class_named_methods: std::collections::HashMap::new(),
+        class_field_defaults: std::collections::HashMap::new(),
+        decorator_initializers: Vec::new(),
+        instance_initializers: Vec::new(),
+        field_transforms: Vec::new(),
+        active_frame: None,
+        call_stack: Vec::new(),
+        async_state: AsyncState::default(),
+    };
+    let first = interp.call(method_rid, args, None);
+    let outcome = match first {
+        Err(RunError::Suspended) => interp
+            .suspended
+            .take()
+            .map(ExecutionOutcome::Suspended)
+            .unwrap_or_else(|| {
+                ExecutionOutcome::Fault(RunError::Malformed(
+                    "suspended execution did not provide a frame".into(),
+                ))
+            }),
+        other => ExecutionOutcome::from_result(other),
+    };
+    let result = match interp.drive_to_completion(outcome) {
+        Ok(value) => value,
+        Err(error) => return Err(interp.annotate_error(error)),
+    };
+    if let Err(error) = interp.deliver_finalization_callbacks() {
+        return Err(interp.annotate_error(error));
+    }
+    Ok(result)
+}
+
 impl Interp<'_> {
     /// Deliver callbacks queued by completed GC cycles on this interpreter's
     /// heap. Callback invocation reuses the same interpreter and heap, so
