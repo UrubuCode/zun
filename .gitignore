@@ -1,3 +1,8 @@
 /target
 **/*.rs.bk
 Cargo.lock
+
+# Local, machine-specific Cargo config (e.g. parallel-job caps). Build
+# resource limits that belong to one machine live here, not in the repo.
+/.cargo/
+.docs-dotnet/*.zip

@@ -80,3 +80,16 @@ all = "warn"
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# Debug/test builds default to full debug info (`debug = 2`), which on Windows
+# produces very large `.pdb`/`.lib` artifacts and saturates disk I/O when many
+# crates and test binaries link at once. These settings keep usable panic line
+# numbers for workspace crates while dropping debug info for dependencies, which
+# dramatically shrinks linker output and target size. `profile.test` inherits
+# these. Bump `debug` back to 2 locally if you need to step through with a
+# debugger.
+[profile.dev]
+debug = 1          # line tables only (keeps panic line numbers)
+
+[profile.dev.package."*"]
+debug = false      # no debug info for third-party dependencies
