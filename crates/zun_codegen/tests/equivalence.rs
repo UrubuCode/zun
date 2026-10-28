@@ -6169,3 +6169,30 @@ fn float_remainder_uses_the_fmod_libcall() {
         "function main(): number { let a: number = 10.0; let b: number = 3.0; return (a % b) + 1.0; }",
     );
 }
+
+#[test]
+fn string_plus_uses_the_managed_concat_abi() {
+    // `a + b` on `string` emits the `Concat` opcode, which lowers to the same
+    // `zun_jit_string_concat` helper as the `.concat` method. String parameters
+    // keep the body free of `ConstStr`, so eligibility is exercised directly.
+    let module = compile(
+        "function measure(value: string, other: string): string { return value + other; } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "string `+` method should be JIT-eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let left = heap.intern_string(std::rc::Rc::from("zun "));
+    let right = heap.intern_string(std::rc::Rc::from("runtime"));
+    let handle = jit
+        .call_packed_with_heap(rid, &[left as u64, right as u64], &mut heap)
+        .expect("concat call");
+    assert_eq!(heap.string(handle as u32).as_ref(), "zun runtime");
+}

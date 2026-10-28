@@ -91,6 +91,10 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::StoreArray
             | Opcode::ArrayPop
             | Opcode::ArrayPush
+            // String `+`: lowers to the `zun_jit_string_concat` libcall, the
+            // same managed-string helper the `.concat` method uses. Both
+            // operands must be JIT string handles.
+            | Opcode::Concat
     );
     supported
         || (op == Opcode::CallBuiltin

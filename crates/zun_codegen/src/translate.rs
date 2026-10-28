@@ -403,6 +403,25 @@ impl Translator<'_> {
                 Opcode::MulF64 => self.float_bin(&mut stack, FloatOp::Mul)?,
                 Opcode::DivF64 => self.float_bin(&mut stack, FloatOp::Div)?,
                 Opcode::RemF64 => self.float_rem(&mut stack)?,
+                Opcode::Concat => {
+                    // String `+`: pop two managed string handles, call the shared
+                    // runtime concat helper (the same one the `.concat` method
+                    // lowers to), and push the new string. Both operands and the
+                    // result are GC references, so each is kept in a stack map
+                    // across the allocating call.
+                    let (right, right_kind) = stack.pop().ok_or("concat right")?;
+                    let (left, left_kind) = stack.pop().ok_or("concat left")?;
+                    if left_kind != JitKind::String || right_kind != JitKind::String {
+                        return Err("concat expects string operands".into());
+                    }
+                    self.builder.declare_value_needs_stack_map(left);
+                    self.builder.declare_value_needs_stack_map(right);
+                    let helper = self.string_concat_fref();
+                    let call = self.builder.ins().call(helper, &[left, right]);
+                    let result = self.builder.inst_results(call)[0];
+                    self.builder.declare_value_needs_stack_map(result);
+                    stack.push((result, JitKind::String));
+                }
                 // Float math machine ops: one Cranelift instruction each, so
                 // these are instructions in the generated code rather than the
                 // libm calls the native path still uses for transcendentals.
