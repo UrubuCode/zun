@@ -21,7 +21,6 @@ pub(super) struct Interp<'a> {
     pub(super) resume_frame: Option<ExecutionFrame>,
     /// Value produced by a generator yield at the current suspension point.
     pub(super) yielded: Option<Value>,
-    pub(super) static_fields: HashMap<(u32, u32), Value>,
     /// Class computed-symbol-key methods: `(class TypeDef rid, symbol id)` →
     /// the method as a function value. Populated by `classSetSymbolFunction`
     /// in the module initializer and consulted by `instanceofClass` for a

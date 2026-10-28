@@ -45,6 +45,23 @@ impl<'a> Interp<'a> {
         Ok((owner, token.rid()))
     }
 
+    /// The declared value-type code of a static field, used to restore the exact
+    /// numeric width when loading it back from the width-erasing `Any` store.
+    pub(crate) fn static_field_kind(
+        &self,
+        token: zun_metadata::Token,
+    ) -> Result<u8, RunError> {
+        if token.table() != Some(zun_metadata::TableKind::FieldDef) || token.rid() == 0 {
+            return Err(RunError::BadToken);
+        }
+        self.module
+            .tables
+            .field_defs
+            .get(token.rid() as usize - 1)
+            .map(|field| field.kind)
+            .ok_or(RunError::BadToken)
+    }
+
     pub(crate) fn dynamic_name(&self, operand: &Operand) -> Result<&str, RunError> {
         let index = operand_strref(operand);
         Ok(self.module.strings.get(zun_metadata::StringIndex(index)))

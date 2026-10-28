@@ -152,6 +152,17 @@ impl Heap {
                 }
             }
         }
+        // Heap-owned persistent roots: the realm global and the class-statics
+        // object outlive any single frame, so they are always live (their stored
+        // references are then traced through the work list like any other object).
+        for persistent in [self.global_object, self.statics].into_iter().flatten() {
+            if let Some(&idx) = self.by_addr.get(&(persistent.0 as usize)) {
+                if !self.records[idx].marked {
+                    self.records[idx].marked = true;
+                    work.push(idx);
+                }
+            }
+        }
         if young_only {
             for address in self.remembered_set.clone() {
                 if let Some(&idx) = self.by_addr.get(&address) {

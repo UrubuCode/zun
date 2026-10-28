@@ -231,6 +231,11 @@ pub struct Heap {
     remembered_set: HashSet<usize>,
     /// Per-heap realm singleton used by `globalThis`/`global` bindings.
     global_object: Option<Obj>,
+    /// Per-heap store for class-static field values, keyed by
+    /// `(owner type RID, field RID)`. A single dynamic object whose properties
+    /// are the static slots, so both the interpreter and JIT reach the same
+    /// values through one GC-rooted object (see [`Heap::statics_object`]).
+    statics: Option<Obj>,
 }
 
 impl Heap {
@@ -242,6 +247,62 @@ impl Heap {
         let object = self.alloc_dynamic();
         self.global_object = Some(object);
         object
+    }
+
+    /// Return the per-heap class-statics object, allocating it lazily. It is a
+    /// dynamic object whose string keys are static-field slots; both tiers read
+    /// and write it so static state is shared between interpreter and JIT.
+    pub fn statics_object(&mut self) -> Obj {
+        if let Some(object) = self.statics {
+            return object;
+        }
+        let object = self.alloc_dynamic();
+        self.statics = Some(object);
+        object
+    }
+
+    /// The slot key for a class-static field. Centralized here so the
+    /// interpreter and the JIT helpers derive the identical key.
+    fn static_slot_key(owner_type_rid: u32, field_rid: u32) -> String {
+        format!("{owner_type_rid}:{field_rid}")
+    }
+
+    /// Read a class-static field value (or `None` if unset).
+    pub fn static_get(&self, owner_type_rid: u32, field_rid: u32) -> Option<zun_core::Any> {
+        let object = self.statics?;
+        self.dynamic_get(object, &Self::static_slot_key(owner_type_rid, field_rid))
+    }
+
+    /// Write a class-static field value, allocating the statics object on first use.
+    pub fn static_set(&mut self, owner_type_rid: u32, field_rid: u32, value: zun_core::Any) {
+        let object = self.statics_object();
+        self.dynamic_set(object, Self::static_slot_key(owner_type_rid, field_rid), value);
+    }
+
+    /// Read a class-static field holding a function value (closures do not box
+    /// into `Any`, so they ride the dynamic function slot, like object methods).
+    pub fn static_get_function(
+        &self,
+        owner_type_rid: u32,
+        field_rid: u32,
+    ) -> Option<zun_core::FunctionHandle> {
+        let object = self.statics?;
+        self.dynamic_get_function(object, &Self::static_slot_key(owner_type_rid, field_rid))
+    }
+
+    /// Write a class-static field holding a function value.
+    pub fn static_set_function(
+        &mut self,
+        owner_type_rid: u32,
+        field_rid: u32,
+        function: zun_core::FunctionHandle,
+    ) {
+        let object = self.statics_object();
+        self.dynamic_set_function(
+            object,
+            Self::static_slot_key(owner_type_rid, field_rid),
+            function,
+        );
     }
     /// Publish the reference slots for a module type before entering JIT code.
     pub fn register_reference_slots(&mut self, type_rid: u32, slots: Vec<usize>) {
@@ -925,6 +986,13 @@ impl Heap {
             let mapped = relocation.relocate(object);
             if mapped != object {
                 self.global_object = Some(mapped);
+                rewritten += 1;
+            }
+        }
+        if let Some(object) = self.statics {
+            let mapped = relocation.relocate(object);
+            if mapped != object {
+                self.statics = Some(mapped);
                 rewritten += 1;
             }
         }

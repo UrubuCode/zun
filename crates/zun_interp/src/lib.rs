@@ -282,13 +282,33 @@ impl Interp<'_> {
             match instr.opcode {
                 Opcode::Nop => {}
                 Opcode::LoadStatic => {
-                    let key = self.static_field_key(operand_token(&instr.operand))?;
-                    stack.push(self.static_fields.entry(key).or_insert(Value::Void).clone());
+                    let token = operand_token(&instr.operand);
+                    let (owner, field) = self.static_field_key(token)?;
+                    let kind = self.static_field_kind(token)?;
+                    let value = zun_gc::with_current_heap(|heap| {
+                        // Prefer the data slot; a function-valued static (closures
+                        // do not box into `Any`) rides the function slot instead.
+                        if let Some(any) = heap.static_get(owner, field) {
+                            let value = Value::unbox_any(any, heap).unwrap_or(Value::Void);
+                            Some(crate::value::retag_static_numeric(value, kind))
+                        } else {
+                            heap.static_get_function(owner, field).map(Value::Function)
+                        }
+                    })
+                    .unwrap_or(Value::Void);
+                    stack.push(value);
                 }
                 Opcode::StoreStatic => {
-                    let key = self.static_field_key(operand_token(&instr.operand))?;
+                    let (owner, field) = self.static_field_key(operand_token(&instr.operand))?;
                     let value = pop(&mut stack)?;
-                    self.static_fields.insert(key, value.clone());
+                    zun_gc::with_current_heap_mut(|heap| {
+                        if let Value::Function(handle) = value {
+                            heap.static_set_function(owner, field, handle);
+                        } else {
+                            let any = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                            heap.static_set(owner, field, any);
+                        }
+                    });
                     stack.push(value);
                 }
                 Opcode::ConstF64 => stack.push(Value::Float(
@@ -1650,8 +1670,9 @@ impl Interp<'_> {
     /// `parent` chain. Reference fields are traced via the module's type layout.
     fn collect(&mut self, stack: &mut [Value], locals: &mut [Value], parent: Option<&RootLink>, full: bool) -> usize {
         let mut extra_roots = Vec::new();
-        let static_values: Vec<Value> = self.static_fields.values().cloned().collect();
-        roots::collect_frame_roots(&static_values, &[], &mut extra_roots);
+        // Class-static fields now live on the heap's statics object (a persistent
+        // GC root), so the heap marks and rewrites them; no interpreter-side root
+        // handling is needed here.
         if let Some(hook) = self.hook {
             hook.append_roots(&mut extra_roots);
         }
@@ -1668,9 +1689,6 @@ impl Interp<'_> {
                 locals,
                 &extra_roots,
                 &mut |relocation| {
-                    for value in self.static_fields.values_mut() {
-                        Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
-                    }
                     decorators::rewrite_decorator_fields(
                         &mut self.decorator_initializers,
                         &mut self.class_named_methods,
@@ -1695,9 +1713,6 @@ impl Interp<'_> {
                 parent,
                 &extra_roots,
                 &mut |relocation| {
-                    for value in self.static_fields.values_mut() {
-                        Value::rewrite_managed_references(std::slice::from_mut(value), relocation);
-                    }
                     decorators::rewrite_decorator_fields(
                         &mut self.decorator_initializers,
                         &mut self.class_named_methods,

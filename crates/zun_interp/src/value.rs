@@ -228,6 +228,19 @@ pub const FIELD_ANY: u8 = 14;
 /// `FIELD_ANY` slots and the inline slot otherwise. An absent `any` field is
 /// `undefined` (`Value::Void`); a stored `Any` is unboxed to its concrete value
 /// (mirroring array-element reads).
+/// Restore a static field value's exact numeric width after a round trip
+/// through the `Any` store, which collapses every integer to `I64` and every
+/// float to `F64`. The stored bits/value are unchanged; only the `NumKind` tag
+/// is set back to the field's declared kind. Non-numeric values pass through.
+pub fn retag_static_numeric(value: Value, kind: u8) -> Value {
+    use zun_il::{JitKind, NumKind};
+    match (value, JitKind::from_byte(kind)) {
+        (Value::Int(bits, _), JitKind::Num(n)) if n.int_parts().is_some() => Value::Int(bits, n),
+        (Value::Float(f, _), JitKind::Num(n @ (NumKind::F32 | NumKind::F64))) => Value::Float(f, n),
+        (other, _) => other,
+    }
+}
+
 pub fn load_field(kind: u8, obj: zun_gc::Obj, slot: usize, heap: &zun_gc::Heap) -> Value {
     if kind == FIELD_ANY {
         return match heap.load_any_field(obj, slot) {
