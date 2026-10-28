@@ -108,11 +108,10 @@ pub fn call_namespace_member(
 /// defining module's scope (field access on `this` needs the typed instance, not
 /// the snapshot). The constructor and static/accessor/symbol methods are skipped.
 ///
-/// v1 constraint: every field must be supplied as an argument (`args.len()` must
-/// equal the class's field count). Trailing-field defaults are recorded only by
-/// the defining module's initializer, which has not run on this cross-module
-/// path, so an incomplete argument list cannot be completed and is rejected with
-/// [`RunError::BadToken`].
+/// Fewer args than fields is allowed: `construct_class_loaded` runs the defining
+/// module's initializer first, so trailing fields take the defaults it records
+/// and decorator-driven instance hooks fire. Supplying more args than the class
+/// has fields is rejected with [`RunError::BadToken`].
 ///
 /// KNOWN v1 LIMITATION: the field snapshot is taken once at construction time. A
 /// method invoked through [`call_namespace_instance_method`] mutates the real
@@ -151,9 +150,12 @@ pub fn construct_namespace_class(
     let method_start = ty.method_start;
     let method_end = ty.method_end;
 
-    // v1: all fields must be supplied positionally; defaults for trailing-absent
-    // args are not available cross-module (see the doc comment above).
-    if args.len() != field_count {
+    // Args are positional. Fewer args than fields is allowed: trailing fields
+    // take the class's recorded defaults (the defining module's initializer runs
+    // inside `construct_class_loaded`, so those defaults are available). Supplying
+    // more args than fields is rejected here for a clearer error than the deeper
+    // `construct_class_from_descriptor` check.
+    if args.len() > field_count {
         return Err(RunError::BadToken);
     }
 
@@ -485,8 +487,10 @@ mod tests {
         assert_eq!(x, Some(3.0));
         assert_eq!(y, Some(4.0));
 
-        // v1 constraint: an incomplete argument list is rejected (defaults are not
-        // available cross-module).
+        // An incomplete argument list is rejected only when the absent trailing
+        // field has no recorded default — `Point` declares none, so dropping `y`
+        // is an error (the default-bearing case is covered by
+        // `construct_namespace_class_fills_field_defaults`).
         assert!(construct_namespace_class(
             &loader,
             &namespace,
@@ -497,6 +501,56 @@ mod tests {
         .is_err());
         // An unknown class name is not constructible.
         assert!(construct_namespace_class(&loader, &namespace, "Missing", vec![], &mut output).is_err());
+    }
+
+    #[test]
+    fn construct_namespace_class_fills_field_defaults() {
+        // A class whose fields carry literal initializer defaults. Those defaults
+        // are recorded by the defining module's initializer, which slice 4 runs
+        // inside `construct_class_loaded`. Constructing with fewer args than
+        // fields must fill the trailing fields from those defaults.
+        let lib = zun_compiler::compile(
+            "class Box { width: number = 10.0; height: number = 20.0; } function main(): int { return 0; }",
+        )
+        .expect("compile lib");
+        let mut loader = ModuleLoader::new();
+        loader.load_bytes("lib", &lib.write()).unwrap();
+
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let namespace = materialize_namespace(loader.get("lib").unwrap()).unwrap();
+        let mut output = CaptureOutput::default();
+
+        // No args: both fields take their defaults.
+        let Value::Object(object) =
+            construct_namespace_class(&loader, &namespace, "Box", vec![], &mut output).unwrap()
+        else {
+            panic!("construction must return a dynamic object");
+        };
+        let width = zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "width"))
+            .and_then(|any| any.as_float());
+        let height = zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "height"))
+            .and_then(|any| any.as_float());
+        assert_eq!(width, Some(10.0));
+        assert_eq!(height, Some(20.0));
+
+        // One arg: the leading field is supplied, the trailing field defaults.
+        let Value::Object(object) = construct_namespace_class(
+            &loader,
+            &namespace,
+            "Box",
+            vec![Value::Float(5.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .unwrap() else {
+            panic!("construction must return a dynamic object");
+        };
+        let width = zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "width"))
+            .and_then(|any| any.as_float());
+        let height = zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "height"))
+            .and_then(|any| any.as_float());
+        assert_eq!(width, Some(5.0));
+        assert_eq!(height, Some(20.0));
     }
 
     #[test]

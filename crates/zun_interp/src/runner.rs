@@ -604,9 +604,14 @@ pub(super) fn run_method_with(
 ///
 /// Unlike [`run_method_with`], this does **not** install a fresh heap: the caller
 /// must have a current heap installed, because the constructed instance lives on
-/// it and is read back by the caller (the dynamic-namespace snapshot path). The
-/// module initializer is not run, so instance hooks / field defaults registered
-/// by it are absent — callers must supply every field positionally.
+/// it and is read back by the caller (the dynamic-namespace snapshot path).
+///
+/// The defining module's initializer is run first (on this same interpreter and
+/// heap), so the class's field defaults, field transforms, and instance
+/// initializers registered by it are present. That lets a caller supply fewer
+/// args than the field count — trailing fields take their recorded defaults — and
+/// makes decorator-driven instance hooks fire, matching normal entry-point
+/// construction.
 pub(crate) fn construct_class_loaded(
     scope: &zun_loader::ModuleScope,
     loader: &zun_loader::ModuleLoader,
@@ -641,6 +646,18 @@ pub(crate) fn construct_class_loaded(
         call_stack: Vec::new(),
         async_state: AsyncState::default(),
     };
+    // Run the defining module's initializer first so field defaults, field
+    // transforms, and instance initializers are registered on this interpreter
+    // before the instance is built (see `run_method_with` for the entry-point
+    // equivalent). Without it, trailing-absent args have no defaults to fall back
+    // on and decorator hooks never fire. The initializer runs on the current heap
+    // (where the instance will live); its own side effects, such as seeding the
+    // realm global, are intended.
+    if let Some(init) = module.module_initializer {
+        if let Err(error) = interp.call(init.rid(), Vec::new(), None) {
+            return Err(interp.annotate_error(error));
+        }
+    }
     interp.construct_class_from_descriptor(type_rid | zun_natives::USER_CLASS_FLAG, args)
 }
 
