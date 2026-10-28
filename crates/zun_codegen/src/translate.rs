@@ -2209,6 +2209,34 @@ impl Translator<'_> {
                     }
                     stack.push((val, kind)); // stfld leaves the stored value
                 }
+                Opcode::LoadStatic => {
+                    let (kind, owner, field) = self.static_info(&instr.operand)?;
+                    let get = self.static_get_fref();
+                    let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
+                    let field_c = self.builder.ins().iconst(types::I64, field as i64);
+                    let kind_c = self.builder.ins().iconst(types::I64, kind.to_byte() as i64);
+                    let call = self.builder.ins().call(get, &[owner_c, field_c, kind_c]);
+                    let raw = self.builder.inst_results(call)[0];
+                    let v = crate::shim::unpack_arg(&mut self.builder, raw, kind);
+                    if matches!(kind, JitKind::Object | JitKind::Array) {
+                        self.builder.declare_value_needs_stack_map(v);
+                    }
+                    stack.push((v, kind));
+                }
+                Opcode::StoreStatic => {
+                    let (kind, owner, field) = self.static_info(&instr.operand)?;
+                    let (val, _) = stack.pop().ok_or("stack underflow")?;
+                    if matches!(kind, JitKind::Object | JitKind::Array) {
+                        self.builder.declare_value_needs_stack_map(val);
+                    }
+                    let raw = crate::shim::pack_result(&mut self.builder, val, kind);
+                    let set = self.static_set_fref();
+                    let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
+                    let field_c = self.builder.ins().iconst(types::I64, field as i64);
+                    let kind_c = self.builder.ins().iconst(types::I64, kind.to_byte() as i64);
+                    self.builder.ins().call(set, &[owner_c, field_c, raw, kind_c]);
+                    stack.push((val, kind)); // stsfld leaves the stored value
+                }
                 other => return Err(format!("opcode {other:?} not supported by the typed JIT")),
             }
         }
@@ -3165,6 +3193,58 @@ impl Translator<'_> {
         };
         let field = self.types.get_field(rid).ok_or("bad field token")?;
         Ok((JitKind::from_byte(field.kind), field.slot))
+    }
+
+    /// Resolve a static-field token to `(kind, owner type RID, field RID)`. The
+    /// `(owner, field)` pair is the shared slot key; it is computed exactly as the
+    /// interpreter's `static_field_key`, so both tiers address the same slot.
+    fn static_info(&self, operand: &Operand) -> Result<(JitKind, u32, u32), String> {
+        let field_rid = match operand {
+            Operand::Token(t) => t.rid(),
+            _ => return Err("static field operand".into()),
+        };
+        let field = self
+            .zm
+            .tables
+            .field_defs
+            .get(field_rid as usize - 1)
+            .ok_or("bad static field token")?;
+        let owner = self
+            .zm
+            .tables
+            .type_defs
+            .iter()
+            .enumerate()
+            .find(|(_, ty)| ty.field_start <= field_rid && field_rid < ty.field_end)
+            .map(|(index, _)| index as u32 + 1)
+            .ok_or("static field has no owner type")?;
+        Ok((JitKind::from_byte(field.kind), owner, field_rid))
+    }
+
+    fn static_get_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_static_get", Linkage::Import, &sig)
+            .expect("declare zun_jit_static_get");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn static_set_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_static_set", Linkage::Import, &sig)
+            .expect("declare zun_jit_static_set");
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 }
 

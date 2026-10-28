@@ -1353,6 +1353,53 @@ pub extern "C" fn zun_jit_math_atan2(left: f64, right: f64) -> f64 {
 pub extern "C" fn zun_jit_math_hypot(left: f64, right: f64) -> f64 {
     left.hypot(right)
 }
+/// Read a class-static field as a raw i64, matching the field-slot encoding that
+/// [`crate::shim::unpack_arg`] decodes (f64/f32 as bits, ints sign/zero handled by
+/// the caller, object as address, string as handle). The `kind` is the field's
+/// `JitKind` byte. Reads the shared heap statics store, so it sees interpreter
+/// writes and vice versa.
+#[inline]
+pub extern "C" fn zun_jit_static_get(owner: i64, field: i64, kind: i64) -> i64 {
+    use zun_il::{JitKind, NumKind};
+    zun_gc::with_current_heap(|heap| {
+        let any = heap.static_get(owner as u32, field as u32);
+        match JitKind::from_byte(kind as u8) {
+            JitKind::Num(NumKind::F64) => {
+                any.and_then(|a| a.as_float()).unwrap_or(0.0).to_bits() as i64
+            }
+            JitKind::Num(NumKind::F32) => {
+                (any.and_then(|a| a.as_float()).unwrap_or(0.0) as f32).to_bits() as i64
+            }
+            JitKind::Num(_) => any.and_then(|a| a.as_int()).unwrap_or(0),
+            JitKind::Bool => any.and_then(|a| a.as_bool()).unwrap_or(false) as i64,
+            JitKind::Object | JitKind::Array => any.and_then(|a| a.as_object()).unwrap_or(0) as i64,
+            JitKind::String => any.and_then(|a| a.as_string()).unwrap_or(0) as i64,
+            JitKind::Other => 0,
+        }
+    })
+}
+
+/// Write a class-static field from a raw i64 (the [`crate::shim::pack_result`]
+/// encoding), tagging the stored `Any` by the field's `JitKind` so the
+/// interpreter decodes it to the right value and the GC traces object/string
+/// references. Writes the shared heap statics store.
+#[inline]
+pub extern "C" fn zun_jit_static_set(owner: i64, field: i64, raw: i64, kind: i64) {
+    use zun_il::{JitKind, NumKind};
+    zun_gc::with_current_heap_mut(|heap| {
+        let any = match JitKind::from_byte(kind as u8) {
+            JitKind::Num(NumKind::F64) => zun_core::Any::float(f64::from_bits(raw as u64)),
+            JitKind::Num(NumKind::F32) => zun_core::Any::float(f32::from_bits(raw as u32) as f64),
+            JitKind::Num(_) => zun_core::Any::int(raw),
+            JitKind::Bool => zun_core::Any::bool(raw != 0),
+            JitKind::Object | JitKind::Array => zun_core::Any::object(raw as usize),
+            JitKind::String => zun_core::Any::string(raw as u32),
+            JitKind::Other => zun_core::Any::null(),
+        };
+        heap.static_set(owner as u32, field as u32, any);
+    });
+}
+
 #[inline]
 pub extern "C" fn zun_jit_math_fmod(left: f64, right: f64) -> f64 {
     // JS `%` remainder (truncated), matching the Tier 0 `a % b`: C `fmod`
@@ -1690,6 +1737,8 @@ impl Jit {
         builder.symbol("zun_jit_math_atan2", zun_jit_math_atan2 as *const u8);
         builder.symbol("zun_jit_math_hypot", zun_jit_math_hypot as *const u8);
         builder.symbol("zun_jit_math_fmod", zun_jit_math_fmod as *const u8);
+        builder.symbol("zun_jit_static_get", zun_jit_static_get as *const u8);
+        builder.symbol("zun_jit_static_set", zun_jit_static_set as *const u8);
         builder.symbol(
             "zun_jit_number_is_finite",
             zun_jit_number_is_finite as *const u8,

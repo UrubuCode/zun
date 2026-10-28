@@ -6196,3 +6196,52 @@ fn string_plus_uses_the_managed_concat_abi() {
         .expect("concat call");
     assert_eq!(heap.string(handle as u32).as_ref(), "zun runtime");
 }
+
+#[test]
+fn static_field_round_trips_through_the_jit_store() {
+    // `LoadStatic`/`StoreStatic` lower to the shared heap statics helpers. A
+    // method that writes, reads, updates, and reads back a static must be
+    // JIT-eligible and compute the same value as the interpreter would.
+    let module = compile(
+        "class Counter { static total: int; } function measure(): int { Counter.total = 5; Counter.total = Counter.total + 3; return Counter.total; } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "static-field method should be JIT-eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let result = jit
+        .call_packed_with_heap(rid, &[], &mut heap)
+        .expect("static field call");
+    assert_eq!(result, 8);
+}
+
+#[test]
+fn static_float_field_round_trips_through_the_jit_store() {
+    // A floating-point static exercises the `Any::float` tag and the f64
+    // encode/decode path of the statics helpers.
+    let module = compile(
+        "class Gauge { static value: number; } function measure(): number { Gauge.value = 2.5; Gauge.value = Gauge.value + 1.0; return Gauge.value; } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "float static method should be JIT-eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let bits = jit
+        .call_packed_with_heap(rid, &[], &mut heap)
+        .expect("float static call");
+    assert_eq!(f64::from_bits(bits as u64), 3.5);
+}

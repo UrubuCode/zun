@@ -95,6 +95,11 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             // same managed-string helper the `.concat` method uses. Both
             // operands must be JIT string handles.
             | Opcode::Concat
+            // Class-static field access: lowers to the `zun_jit_static_get`/`set`
+            // helpers over the shared heap statics store. The field's declared
+            // kind must be JIT-representable (checked in `instr_fields_ok`).
+            | Opcode::LoadStatic
+            | Opcode::StoreStatic
     );
     supported
         || (op == Opcode::CallBuiltin
@@ -292,6 +297,11 @@ fn field_jit_ok(module: &Module, field_rid: u32) -> bool {
 fn instr_fields_ok(module: &Module, instr: &zun_il::Instruction) -> bool {
     match (instr.opcode, instr.operand) {
         (Opcode::LoadField | Opcode::StoreField, Operand::Token(t)) => {
+            field_jit_ok(module, t.rid())
+        }
+        // A static field's declared type must be JIT-representable; the helpers
+        // store it in the shared `Any` statics slot by that kind.
+        (Opcode::LoadStatic | Opcode::StoreStatic, Operand::Token(t)) => {
             field_jit_ok(module, t.rid())
         }
         (Opcode::NewObj, Operand::Token(t)) => {
