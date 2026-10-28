@@ -1986,6 +1986,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         // The OXC adapter does not surface type aliases/interfaces yet; they
         // erase, so this only limits alias resolution on that secondary path.
         type_aliases: Vec::new(),
+        // Likewise, enum declarations are not surfaced on the OXC path yet.
+        enums: Vec::new(),
     })
 }
 

@@ -151,10 +151,12 @@ impl Parser<'_> {
         let mut classes = Vec::new();
         let mut imports = Vec::new();
         let mut type_aliases = Vec::new();
+        let mut enums = Vec::new();
         while !self.at(TokenKind::Eof) {
-            // `type X = ...;` and `interface X { ... }` are contextual: `type`
-            // and `interface` lex as identifiers. A following type name marks a
-            // declaration (top-level bare identifiers are otherwise invalid).
+            // `type X = ...;`, `interface X { ... }`, and `enum X { ... }` are
+            // contextual: the leading word lexes as an identifier. A following
+            // type name marks a declaration (top-level bare identifiers are
+            // otherwise invalid). `const enum` is `const` then `enum`.
             if self.at(TokenKind::Ident) && self.peek_n(1).kind == TokenKind::Ident {
                 let kw = self.text(self.peek());
                 if kw == "type" {
@@ -163,6 +165,15 @@ impl Parser<'_> {
                 }
                 if kw == "interface" {
                     type_aliases.push(self.interface_declaration());
+                    continue;
+                }
+                if kw == "enum" {
+                    enums.push(self.enum_declaration());
+                    continue;
+                }
+                if kw == "const" && self.text(self.peek_n(1)) == "enum" {
+                    self.bump(); // `const`
+                    enums.push(self.enum_declaration());
                     continue;
                 }
             }
@@ -211,7 +222,50 @@ impl Parser<'_> {
             classes,
             imports,
             type_aliases,
+            enums,
         }
+    }
+
+    /// Parse `enum Name { A, B = 2, C = "x", ... }`. The leading `enum` (and any
+    /// preceding `const`) is at the cursor. Members accept a numeric or string
+    /// initializer; bare members auto-increment numerically.
+    fn enum_declaration(&mut self) -> EnumDecl {
+        let start = self.bump().span; // `enum`
+        let name = self.name("an enum name");
+        self.expect(TokenKind::LBrace, "`{` to open an enum body");
+        let mut members = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
+            let member_name = self.member_name("an enum member name");
+            let value = if self.eat(TokenKind::Eq) {
+                self.enum_member_value()
+            } else {
+                EnumValue::Auto
+            };
+            members.push(EnumMember { name: member_name, value });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let close = self.peek().span;
+        self.expect(TokenKind::RBrace, "`}` to close an enum body");
+        EnumDecl { name, members, span: start.to(close) }
+    }
+
+    /// Parse an enum member initializer: a string literal, a number, or a
+    /// negated number. Anything else is diagnosed and treated as `Auto`.
+    fn enum_member_value(&mut self) -> EnumValue {
+        if self.at(TokenKind::String) {
+            let t = self.bump();
+            return EnumValue::Str(decode_string(self.text(t)));
+        }
+        let negate = self.eat(TokenKind::Minus);
+        if self.at(TokenKind::Number) {
+            let t = self.bump();
+            let n = self.text(t).parse::<f64>().unwrap_or(f64::NAN);
+            return EnumValue::Num(if negate { -n } else { n });
+        }
+        self.error_at(self.peek().span, "an enum member value must be a number or string literal");
+        EnumValue::Auto
     }
 
     /// Parse `type Name<params> = <type>;`. The generic parameters and the

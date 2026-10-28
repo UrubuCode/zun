@@ -21,6 +21,43 @@ pub struct Program {
     /// (an empty-span `value`). Sema registers each name so annotations that
     /// name it resolve to the aliased type (or `any`).
     pub type_aliases: Vec<TypeAliasDecl>,
+    /// `enum E { ... }` declarations, in source order. Members fold to
+    /// compile-time constants (`E.Member`); the enum name is usable as a type.
+    pub enums: Vec<EnumDecl>,
+}
+
+/// `enum Name { A, B = 2, ... }` (or `const enum`). Each member is a named
+/// compile-time constant; `Name.Member` folds to the member's value and `Name`
+/// resolves as a type to the members' shared representation (number/string/any).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDecl {
+    /// The enum name.
+    pub name: Name,
+    /// Members in declaration order.
+    pub members: Vec<EnumMember>,
+    /// Span of the whole declaration.
+    pub span: Span,
+}
+
+/// One `enum` member and its optional explicit initializer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumMember {
+    /// The member name.
+    pub name: Name,
+    /// The initializer form; `Auto` numeric members auto-increment.
+    pub value: EnumValue,
+}
+
+/// An `enum` member initializer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnumValue {
+    /// No initializer: a numeric member one past the previous numeric value
+    /// (the first such member is `0`).
+    Auto,
+    /// `= <number>` (a possibly-negated numeric literal).
+    Num(f64),
+    /// `= "<string>"`.
+    Str(String),
 }
 
 /// A `type X = <type>;` alias or an erased `interface X { ... }` declaration.

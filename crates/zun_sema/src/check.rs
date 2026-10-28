@@ -152,6 +152,7 @@ fn check_impl(
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
         type_param_names: HashSet::new(),
+        enums: HashMap::new(),
     };
     checker.collect_type_param_names(program);
     checker.resolve_imports(program, allow_external_modules, allow_core);
@@ -160,6 +161,7 @@ fn check_impl(
     // bodies. Methods are checked as functions with an implicit `this` param.
     checker.collect_classes(program);
     checker.collect_type_aliases(program);
+    checker.collect_enums(program);
     let mut classes = checker.check_classes(program);
     checker.collect_signatures(program);
     checker.collect_decorator_routing(program);
@@ -334,6 +336,10 @@ struct Checker<'a> {
     /// Classes (and subclasses of classes) with runtime-decorated instance
     /// members: `new` runs the instance-initializer and field-transform hooks.
     hooked_classes: HashSet<u32>,
+    /// `enum` declarations: enum name -> (member name -> constant value). A
+    /// `Enum.Member` field access folds to the member's number/string literal;
+    /// the enum name resolves as a type through `type_aliases`.
+    enums: HashMap<String, HashMap<String, types::EnumConst>>,
     /// Every generic type-parameter name declared anywhere in the program
     /// (`function f<T>`, `class C<U>`, `method m<K>`). Zun erases generics, so a
     /// type parameter has no distinct type: `resolve_annotation` treats a name
@@ -9002,6 +9008,29 @@ impl Checker<'_> {
             ast::Expr::Field { object, field, .. } => {
                 let fname = self.text(field).to_string();
                 if let ast::Expr::Ident(class_name) = object.as_ref() {
+                    // `Enum.Member` folds to the member's compile-time literal.
+                    let enum_name = self.text(class_name).to_string();
+                    if self.enums.contains_key(&enum_name) {
+                        match self.enums[&enum_name].get(&fname).cloned() {
+                            Some(types::EnumConst::Num(n)) => {
+                                return hir::Expr { kind: hir::ExprKind::Number(n), ty: Ty::F64, span };
+                            }
+                            Some(types::EnumConst::Str(s)) => {
+                                return hir::Expr {
+                                    kind: hir::ExprKind::String(s),
+                                    ty: Ty::String,
+                                    span,
+                                };
+                            }
+                            None => {
+                                self.error(
+                                    field.span,
+                                    format!("enum `{enum_name}` has no member `{fname}`"),
+                                );
+                                return hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::Error, span };
+                            }
+                        }
+                    }
                     if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
                         if let Some((field_slot, ty)) = self.static_field_of(class_index, &fname) {
                             return hir::Expr {

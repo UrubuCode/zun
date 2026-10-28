@@ -3,7 +3,62 @@ use crate::hir;
 use crate::hir::{IntKind, Ty};
 use zun_syntax::ast;
 
+/// A resolved `enum` member value, folded in at `Enum.Member` field accesses.
+#[derive(Debug, Clone)]
+pub(super) enum EnumConst {
+    /// A numeric member: folds to a `number` literal.
+    Num(f64),
+    /// A string member: folds to a `string` literal.
+    Str(String),
+}
+
 impl<'a> Checker<'a> {
+    /// Resolve every `enum` declaration: compute member values (numeric members
+    /// auto-increment from the previous numeric value, starting at 0; string
+    /// members require an explicit initializer) and record them for constant
+    /// folding. The enum name resolves as a type to the members' shared
+    /// representation — `number` when all-numeric, `string` when all-string,
+    /// else `any` — registered through `type_aliases`.
+    pub(super) fn collect_enums(&mut self, program: &ast::Program) {
+        for decl in &program.enums {
+            let enum_name = self.text(&decl.name).to_string();
+            let mut members: std::collections::HashMap<String, EnumConst> =
+                std::collections::HashMap::new();
+            let mut next_auto = 0.0_f64;
+            let mut any_num = false;
+            let mut any_str = false;
+            for member in &decl.members {
+                let mname = self.text(&member.name).to_string();
+                let value = match &member.value {
+                    ast::EnumValue::Auto => {
+                        let v = next_auto;
+                        next_auto += 1.0;
+                        any_num = true;
+                        EnumConst::Num(v)
+                    }
+                    ast::EnumValue::Num(n) => {
+                        next_auto = n + 1.0;
+                        any_num = true;
+                        EnumConst::Num(*n)
+                    }
+                    ast::EnumValue::Str(s) => {
+                        any_str = true;
+                        EnumConst::Str(s.clone())
+                    }
+                };
+                members.insert(mname, value);
+            }
+            let ty = match (any_num, any_str) {
+                (true, false) => Ty::F64,
+                (false, true) => Ty::String,
+                _ => Ty::Any,
+            };
+            // Make the enum name usable as a type and known to the fallback.
+            self.type_aliases.insert(enum_name.clone(), ty);
+            self.enums.insert(enum_name, members);
+        }
+    }
+
     /// Gather every generic type-parameter name declared in the program into
     /// `type_param_names` (see the field doc). Runs once before any annotation
     /// is resolved. Erasure means names, not bounds, are all that matter.
