@@ -1354,6 +1354,14 @@ pub extern "C" fn zun_jit_math_hypot(left: f64, right: f64) -> f64 {
     left.hypot(right)
 }
 #[inline]
+pub extern "C" fn zun_jit_math_fmod(left: f64, right: f64) -> f64 {
+    // JS `%` remainder (truncated), matching the Tier 0 `a % b`: C `fmod`
+    // semantics, including `fmod(finite, ±inf) == finite` and NaN for a zero or
+    // infinite divisor. A Cranelift inline (`a - b*trunc(a/b)`) would diverge on
+    // an infinite divisor, so the remainder goes through this libcall.
+    left % right
+}
+#[inline]
 pub extern "C" fn zun_jit_number_is_finite(value: f64) -> i32 {
     value.is_finite() as i32
 }
@@ -1681,6 +1689,7 @@ impl Jit {
         builder.symbol("zun_jit_math_pow", zun_jit_math_pow as *const u8);
         builder.symbol("zun_jit_math_atan2", zun_jit_math_atan2 as *const u8);
         builder.symbol("zun_jit_math_hypot", zun_jit_math_hypot as *const u8);
+        builder.symbol("zun_jit_math_fmod", zun_jit_math_fmod as *const u8);
         builder.symbol(
             "zun_jit_number_is_finite",
             zun_jit_number_is_finite as *const u8,

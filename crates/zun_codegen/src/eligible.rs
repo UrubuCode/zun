@@ -4,8 +4,8 @@
 //! parameter, and the return must be a JIT value type (any `int` width, `f32`,
 //! `f64`, or `bool`), and the body may use only opcodes the translator handles.
 //! Heap operations (strings, objects, fields, `callvirt`, and unsupported
-//! builtins) and the
-//! float-remainder libcall stay on the interpreter. Numeric array loads are a
+//! builtins) stay on the interpreter; float remainder is compiled through the
+//! `zun_jit_math_fmod` libcall. Numeric array loads are a
 //! narrow read-only exception. Eligibility is a
 //! whole-call-graph fixpoint, so a JIT frame never calls back into the
 //! interpreter.
@@ -50,6 +50,9 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::SubF64
             | Opcode::MulF64
             | Opcode::DivF64
+            // Float remainder lowers to the `zun_jit_math_fmod` libcall (no
+            // Cranelift frem); it cannot throw, so no exception bridge is needed.
+            | Opcode::RemF64
             // Float math machine ops: each lowers to a single Cranelift
             // instruction, none can throw, so none needs the exception bridge.
             | Opcode::SqrtF64

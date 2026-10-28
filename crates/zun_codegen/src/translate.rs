@@ -402,6 +402,7 @@ impl Translator<'_> {
                 Opcode::SubF64 => self.float_bin(&mut stack, FloatOp::Sub)?,
                 Opcode::MulF64 => self.float_bin(&mut stack, FloatOp::Mul)?,
                 Opcode::DivF64 => self.float_bin(&mut stack, FloatOp::Div)?,
+                Opcode::RemF64 => self.float_rem(&mut stack)?,
                 // Float math machine ops: one Cranelift instruction each, so
                 // these are instructions in the generated code rather than the
                 // libm calls the native path still uses for transcendentals.
@@ -2318,6 +2319,20 @@ impl Translator<'_> {
         Ok(())
     }
 
+    /// Float remainder (`RemF64`, JS `%`). Cranelift has no float-remainder
+    /// instruction, and the inline identity `a - b*trunc(a/b)` diverges when the
+    /// divisor is infinite (it yields NaN where C `fmod`, and the Tier 0 `a % b`,
+    /// return `a`), so the remainder is a libcall to `zun_jit_math_fmod`.
+    fn float_rem(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
+        let (b, _) = stack.pop().ok_or("stack underflow")?;
+        let (a, k) = stack.pop().ok_or("stack underflow")?;
+        let fref = self.math_fmod_fref();
+        let inst = self.builder.ins().call(fref, &[a, b]);
+        let r = self.builder.inst_results(inst)[0];
+        stack.push((r, k));
+        Ok(())
+    }
+
     /// `min`/`max` over integers, picking the signed or unsigned instruction
     /// from the operand kind — the same rule `compare` uses for `icmp`.
     fn int_minmax(&mut self, stack: &mut Vec<Slot>, is_min: bool) -> Result<(), String> {
@@ -2606,6 +2621,18 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_osr_poll", Linkage::Import, &sig)
             .expect("declare zun_jit_osr_poll");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn math_fmod_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::F64));
+        sig.params.push(AbiParam::new(types::F64));
+        sig.returns.push(AbiParam::new(types::F64));
+        let id = self
+            .module
+            .declare_function("zun_jit_math_fmod", Linkage::Import, &sig)
+            .expect("declare zun_jit_math_fmod");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

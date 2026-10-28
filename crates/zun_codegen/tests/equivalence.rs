@@ -6151,3 +6151,21 @@ fn instanceof_checks_class_hierarchy() {
     );
     assert!(matches!(interp_entry(&no), Value::Bool(false)));
 }
+
+#[test]
+fn float_remainder_uses_the_fmod_libcall() {
+    // `%` on `number` has no Cranelift instruction; it lowers to the
+    // `zun_jit_math_fmod` libcall. Locals keep the operation out of any
+    // compile-time constant fold so the opcode is actually exercised.
+    assert_equivalent(
+        "function main(): number { let a: number = 7.5; let b: number = 2.0; return a % b; }",
+    );
+    // Truncated-remainder sign: JS and Rust `%` both take the dividend's sign.
+    assert_equivalent(
+        "function main(): number { let a: number = -7.5; let b: number = 2.0; return a % b; }",
+    );
+    // A remainder appearing inside a larger JIT-eligible expression.
+    assert_equivalent(
+        "function main(): number { let a: number = 10.0; let b: number = 3.0; return (a % b) + 1.0; }",
+    );
+}
