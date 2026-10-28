@@ -6338,3 +6338,34 @@ fn string_literal_plus_variable_is_jit_eligible() {
         .expect("greet call");
     assert_eq!(heap.string(handle as u32).as_ref(), "Hi, world");
 }
+
+#[test]
+fn same_frame_try_catch_is_jit_eligible() {
+    // An explicit `throw new Error()` inside a `try`, caught by a typed catch of
+    // exactly that type, compiles to a same-frame branch to the catch block — no
+    // cross-frame unwinding. Verified in-process against both control-flow paths.
+    let module = compile(
+        "class Error {} function classify(n: int): int { let result: int = 0; try { if (n < 0) { throw new Error(); } result = 1; } catch (e: Error) { result = 2; } return result; } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "classify")
+        .expect("classify method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "same-frame try/catch should be JIT-eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    // n >= 0: no throw, normal path returns 1.
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[5u64], &mut heap),
+        Ok(1)
+    ));
+    // n < 0: throw is caught in-frame, returns 2.
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[(-1i64) as u64], &mut heap),
+        Ok(2)
+    ));
+}

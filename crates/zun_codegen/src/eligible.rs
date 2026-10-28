@@ -100,6 +100,10 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             // kind must be JIT-representable (checked in `instr_fields_ok`).
             | Opcode::LoadStatic
             | Opcode::StoreStatic
+            // Explicit `throw`: lowered as a same-frame branch to the catch
+            // handler. `exception_regions_jit_safe` gates the surrounding method
+            // so the throw is always routed to an in-frame catch-all.
+            | Opcode::Throw
     );
     supported
         || (op == Opcode::CallBuiltin
@@ -115,6 +119,117 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
 /// rule centralized instead of growing type- or container-specific allowlists.
 fn requires_exception_bridge(op: Opcode) -> bool {
     matches!(op, Opcode::CastClass)
+}
+
+/// Opcodes allowed inside a protected (`try`) region for the same-frame
+/// exception slice. The whitelist admits only operations that cannot raise a
+/// *catchable* exception that would need cross-frame unwinding: integer
+/// division by zero faults the VM (it is not a catchable throw), so arithmetic
+/// is fine, but any call-type op or `CastClass` could surface a thrown value
+/// from elsewhere. `BoxAny`/dynamic ops are excluded so the thrown value can
+/// never be an `Any` carrier the typed catch edge cannot thread.
+fn try_region_op_allowed(op: Opcode) -> bool {
+    matches!(
+        op,
+        Opcode::Nop
+            | Opcode::ConstI32
+            | Opcode::ConstI64
+            | Opcode::ConstF64
+            | Opcode::ConstTrue
+            | Opcode::ConstFalse
+            | Opcode::ConstStr
+            | Opcode::Conv
+            | Opcode::LoadLocal
+            | Opcode::StoreLocal
+            | Opcode::LoadField
+            | Opcode::StoreField
+            | Opcode::LoadStatic
+            | Opcode::StoreStatic
+            | Opcode::Pop
+            | Opcode::Dup
+            | Opcode::AddI32
+            | Opcode::SubI32
+            | Opcode::MulI32
+            | Opcode::DivI32
+            | Opcode::RemI32
+            | Opcode::NegI32
+            | Opcode::AndI32
+            | Opcode::OrI32
+            | Opcode::XorI32
+            | Opcode::NotI32
+            | Opcode::ShlI32
+            | Opcode::ShrI32
+            | Opcode::UShrI32
+            | Opcode::PowI32
+            | Opcode::AddF64
+            | Opcode::SubF64
+            | Opcode::MulF64
+            | Opcode::DivF64
+            | Opcode::RemF64
+            | Opcode::MinI32
+            | Opcode::MaxI32
+            | Opcode::CmpEq
+            | Opcode::CmpNe
+            | Opcode::CmpLt
+            | Opcode::CmpLe
+            | Opcode::CmpGt
+            | Opcode::CmpGe
+            | Opcode::Branch
+            | Opcode::BranchTrue
+            | Opcode::BranchFalse
+            | Opcode::NewObj
+            | Opcode::Concat
+            | Opcode::Throw
+    )
+}
+
+/// Whether a method's exception regions are limited to the same-frame slice the
+/// typed JIT can lower. The conditions guarantee a `throw` always lands in this
+/// frame's catch, so it compiles to a plain branch with no cross-frame unwinding:
+///
+/// - exactly one handler, a typed `catch` (no `finally`, no catch-all);
+/// - exactly one `throw`, inside the protected region, whose value is a freshly
+///   constructed object of *exactly* the catch's declared type (`new T` then
+///   `throw`), so it is unconditionally caught here (no type-mismatch escape);
+/// - every instruction in the protected region is on the `try_region_op_allowed`
+///   whitelist (no call-type op whose callee could surface a thrown value).
+///
+/// A typed catch binds the exception to a concrete object local the typed JIT
+/// represents; a catch-all binds it to `any`, which the `local_kinds` gate
+/// already rejects.
+fn exception_regions_jit_safe(body: &zun_module::MethodBody<'_>, instrs: &[zun_il::Instruction]) -> bool {
+    if body.handlers.len() != 1 {
+        return false;
+    }
+    let handler = &body.handlers[0];
+    if handler.kind != zun_module::HandlerKind::Catch {
+        return false;
+    }
+    let Some(catch_type) = handler.catch_type else {
+        return false;
+    };
+    let mut throw_count = 0usize;
+    let mut offset = 0usize;
+    let mut prev_newobj_type: Option<u32> = None;
+    for instr in instrs {
+        let in_try = (handler.try_start as usize) <= offset && offset < handler.try_end as usize;
+        if instr.opcode == Opcode::Throw {
+            throw_count += 1;
+            // Must be inside the region and throw exactly the catch's type.
+            if !in_try || prev_newobj_type != Some(catch_type.rid()) {
+                return false;
+            }
+        }
+        if in_try && !try_region_op_allowed(instr.opcode) {
+            return false;
+        }
+        prev_newobj_type = match (instr.opcode, instr.operand) {
+            (Opcode::NewObj, Operand::Token(token)) => Some(token.rid()),
+            _ => None,
+        };
+        offset += instr.encoded_len();
+    }
+    throw_count == 1
 }
 
 
@@ -695,11 +810,6 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         let Ok(body) = read_body(&module.code, method.body_offset) else {
             continue;
         };
-        // Exception regions require interpreter unwind/landing-pad support;
-        // keep them on Tier 0 until the Cranelift EH lowering is implemented.
-        if !body.handlers.is_empty() {
-            continue;
-        }
         // Return and every local must be a representable JIT type.
         if !kind_supported(body.return_kind) && body.returns_value {
             if JitKind::from_byte(body.return_kind) != JitKind::Other {
@@ -709,6 +819,14 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
+        // Exception regions are supported only for the same-frame slice the typed
+        // JIT can lower (an explicit `throw` routed to a catch-all handler in this
+        // frame, with no call-type op in the protected region). A cross-frame
+        // throw — one unwound out of a callee — still needs the deferred Cranelift
+        // unwinding bridge, so such methods stay on Tier 0.
+        if !body.handlers.is_empty() && !exception_regions_jit_safe(&body, &instrs) {
+            continue;
+        }
         if !body.local_kinds.iter().all(|&k| kind_supported(k))
             && !any_param_return_only(&instrs, &body)
             && !any_direct_call_return_only(&instrs, &body)

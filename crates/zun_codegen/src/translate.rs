@@ -81,7 +81,15 @@ pub fn translate_body(
         index_of_offset.insert(off, instrs.len());
     }
 
-    let leaders = find_leaders(&instrs, &offset_of_index, &index_of_offset)?;
+    let mut leaders = find_leaders(&instrs, &offset_of_index, &index_of_offset)?;
+    // Each catch handler's entry is a branch target (the `throw` jumps to it), so
+    // it must be a block leader even though no textual branch points at it.
+    for handler in &body.handlers {
+        let &idx = index_of_offset
+            .get(&(handler.handler_start as usize))
+            .ok_or("handler start not on an instruction boundary")?;
+        leaders.insert(idx);
+    }
 
     let mut builder = FunctionBuilder::new(&mut ctx.func, fb_ctx);
     let mut blocks: BTreeMap<usize, Block> = BTreeMap::new();
@@ -169,6 +177,7 @@ pub fn translate_body(
         zm,
         osr_counter,
         method_return_kind: JitKind::from_byte(body.return_kind),
+        handlers: body.handlers.clone(),
     };
     t.run(&instrs, &offset_of_index, &index_of_offset)?;
     t.builder.finalize();
@@ -205,7 +214,9 @@ fn find_leaders(
                     leaders.insert(i + 1);
                 }
             }
-            Opcode::Ret => {
+            Opcode::Ret | Opcode::Throw => {
+                // `throw` lowers to a branch to the catch block, so it ends its
+                // block like `ret`: the next instruction begins a new one.
                 if i + 1 < instrs.len() {
                     leaders.insert(i + 1);
                 }
@@ -233,6 +244,8 @@ struct Translator<'a> {
     literal_data_ids: *const u32,
     osr_counter: Variable,
     method_return_kind: JitKind,
+    /// Exception regions of the method body (same-frame catch-all slice only).
+    handlers: Vec<zun_module::ExceptionHandler>,
 }
 
 impl Translator<'_> {
@@ -2324,6 +2337,34 @@ impl Translator<'_> {
                     self.builder.ins().call(set, &[owner_c, field_c, raw, kind_c]);
                     stack.push((val, kind)); // stsfld leaves the stored value
                 }
+                Opcode::Throw => {
+                    // Same-frame throw: branch to the innermost enclosing
+                    // catch-all handler (smallest region, as the interpreter
+                    // picks), carrying only the thrown value — the interpreter
+                    // clears the operand stack and pushes the exception before
+                    // entering the handler, so the catch block starts with just
+                    // it. `exception_regions_jit_safe` guarantees an enclosing
+                    // handler exists and the thrown value is a representable kind.
+                    let (exc, exc_kind) = stack.pop().ok_or("throw operand")?;
+                    let throw_off = offset_of_index[i];
+                    let handler = self
+                        .handlers
+                        .iter()
+                        .filter(|h| {
+                            h.try_start as usize <= throw_off && throw_off < h.try_end as usize
+                        })
+                        .min_by_key(|h| h.try_end - h.try_start)
+                        .ok_or("throw has no enclosing handler")?;
+                    let target_idx = *index_of_offset
+                        .get(&(handler.handler_start as usize))
+                        .ok_or("handler start not on an instruction boundary")?;
+                    let target = *self.blocks.get(&target_idx).ok_or("handler block missing")?;
+                    if matches!(exc_kind, JitKind::Object | JitKind::Array | JitKind::String) {
+                        self.builder.declare_value_needs_stack_map(exc);
+                    }
+                    let args = self.thread_edge(&mut block_sigs, target, &[(exc, exc_kind)]);
+                    self.builder.ins().jump(target, &args);
+                }
                 other => return Err(format!("opcode {other:?} not supported by the typed JIT")),
             }
         }
@@ -3402,7 +3443,7 @@ enum Cmp {
 fn terminated(instrs: &[zun_il::Instruction], i: usize) -> bool {
     matches!(
         instrs[i - 1].opcode,
-        Opcode::Branch | Opcode::Ret | Opcode::BranchTrue | Opcode::BranchFalse
+        Opcode::Branch | Opcode::Ret | Opcode::BranchTrue | Opcode::BranchFalse | Opcode::Throw
     )
 }
 
