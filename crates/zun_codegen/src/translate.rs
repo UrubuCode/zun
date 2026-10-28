@@ -1714,6 +1714,76 @@ impl Translator<'_> {
                                 JitKind::Bool,
                                 types::I32,
                             ),
+                            Some("dataViewGetInt8") => (
+                                "zun_jit_data_view_get_i8",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::I8),
+                                types::I8,
+                            ),
+                            Some("dataViewGetUint8") => (
+                                "zun_jit_data_view_get_u8",
+                                2,
+                                types::I64,
+                                JitKind::Num(NumKind::U8),
+                                types::I8,
+                            ),
+                            Some("dataViewGetInt16") => (
+                                "zun_jit_data_view_get_i16",
+                                3,
+                                types::I64,
+                                JitKind::Num(NumKind::I16),
+                                types::I16,
+                            ),
+                            Some("dataViewGetInt32") => (
+                                "zun_jit_data_view_get_i32",
+                                3,
+                                types::I64,
+                                JitKind::Num(NumKind::I32),
+                                types::I32,
+                            ),
+                            Some("dataViewGetFloat32") => (
+                                "zun_jit_data_view_get_f32",
+                                3,
+                                types::I64,
+                                JitKind::Num(NumKind::F32),
+                                types::F32,
+                            ),
+                            Some("dataViewSetInt8") => (
+                                "zun_jit_data_view_set_i8",
+                                3,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("dataViewSetUint8") => (
+                                "zun_jit_data_view_set_u8",
+                                3,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("dataViewSetInt16") => (
+                                "zun_jit_data_view_set_i16",
+                                4,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("dataViewSetInt32") => (
+                                "zun_jit_data_view_set_i32",
+                                4,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
+                            Some("dataViewSetFloat32") => (
+                                "zun_jit_data_view_set_f32",
+                                4,
+                                types::I64,
+                                JitKind::Bool,
+                                types::I32,
+                            ),
                             Some("u8ArrayGet") => (
                                 "zun_jit_u8_array_get",
                                 2,
@@ -1795,6 +1865,23 @@ impl Translator<'_> {
                         "zun_jit_data_view_set_u32" => vec![types::I64, types::I64, types::I32, types::I32],
                         "zun_jit_data_view_set_u16" => vec![types::I64, types::I64, types::I16, types::I32],
                         "zun_jit_data_view_set_f64" => vec![types::I64, types::I64, types::F64, types::I32],
+                        // 8-bit accessors take no endianness argument.
+                        "zun_jit_data_view_set_i8" | "zun_jit_data_view_set_u8" => {
+                            vec![types::I64, types::I64, types::I8]
+                        }
+                        "zun_jit_data_view_get_i16" | "zun_jit_data_view_get_i32"
+                        | "zun_jit_data_view_get_f32" => {
+                            vec![types::I64, types::I64, types::I32]
+                        }
+                        "zun_jit_data_view_set_i16" => {
+                            vec![types::I64, types::I64, types::I16, types::I32]
+                        }
+                        "zun_jit_data_view_set_i32" => {
+                            vec![types::I64, types::I64, types::I32, types::I32]
+                        }
+                        "zun_jit_data_view_set_f32" => {
+                            vec![types::I64, types::I64, types::F32, types::I32]
+                        }
                         "zun_jit_u8_array_get" => vec![types::I64, types::I64],
                         "zun_jit_u8_array_set" => vec![types::I64, types::I64, types::I8],
                         "zun_jit_u16_array_get" => vec![types::I64, types::I64],

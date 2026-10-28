@@ -530,6 +530,132 @@ pub extern "C" fn zun_jit_data_view_set_f64(
     })
 }
 
+// DataView typed accessors beyond the u16/u32/f64 fast paths. Each mirrors the
+// pattern above: a negative offset or an out-of-range access yields the `-1` /
+// NaN sentinel (matching `get_u16`), stores return the success flag as i32. The
+// 8-bit forms take no endianness argument.
+#[inline]
+pub extern "C" fn zun_jit_data_view_get_i8(address: i64, offset: i64) -> i8 {
+    if offset < 0 {
+        return -1;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| heap.data_view_get_i8(object, offset as usize).unwrap_or(-1))
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_get_u8(address: i64, offset: i64) -> i8 {
+    if offset < 0 {
+        return -1;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_get_u8(object, offset as usize)
+            .map(|value| value as i8)
+            .unwrap_or(-1)
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_get_i16(address: i64, offset: i64, little_endian: i32) -> i16 {
+    if offset < 0 {
+        return -1;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_get_i16(object, offset as usize, little_endian != 0)
+            .unwrap_or(-1)
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_get_i32(address: i64, offset: i64, little_endian: i32) -> i32 {
+    if offset < 0 {
+        return -1;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_get_i32(object, offset as usize, little_endian != 0)
+            .unwrap_or(-1)
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_get_f32(address: i64, offset: i64, little_endian: i32) -> f32 {
+    if offset < 0 {
+        return f32::NAN;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_get_f32(object, offset as usize, little_endian != 0)
+            .unwrap_or(f32::NAN)
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_i8(address: i64, offset: i64, value: i8) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_i8(object, offset as usize, value).unwrap_or(false) as i32
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_u8(address: i64, offset: i64, value: i8) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_u8(object, offset as usize, value as u8).unwrap_or(false) as i32
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_i16(
+    address: i64,
+    offset: i64,
+    value: i16,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_i16(object, offset as usize, value, little_endian != 0)
+            .unwrap_or(false) as i32
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_i32(
+    address: i64,
+    offset: i64,
+    value: i32,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_i32(object, offset as usize, value, little_endian != 0)
+            .unwrap_or(false) as i32
+    })
+}
+#[inline]
+pub extern "C" fn zun_jit_data_view_set_f32(
+    address: i64,
+    offset: i64,
+    value: f32,
+    little_endian: i32,
+) -> i32 {
+    if offset < 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.data_view_set_f32(object, offset as usize, value, little_endian != 0)
+            .unwrap_or(false) as i32
+    })
+}
+
 /// Read one element from a managed Uint8Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_u8_array_get(address: i64, index: i64) -> i8 {
@@ -1620,6 +1746,16 @@ impl Jit {
     builder.symbol("zun_jit_data_view_set_u32", zun_jit_data_view_set_u32 as *const u8);
     builder.symbol("zun_jit_data_view_set_u16", zun_jit_data_view_set_u16 as *const u8);
     builder.symbol("zun_jit_data_view_set_f64", zun_jit_data_view_set_f64 as *const u8);
+    builder.symbol("zun_jit_data_view_get_i8", zun_jit_data_view_get_i8 as *const u8);
+    builder.symbol("zun_jit_data_view_get_u8", zun_jit_data_view_get_u8 as *const u8);
+    builder.symbol("zun_jit_data_view_get_i16", zun_jit_data_view_get_i16 as *const u8);
+    builder.symbol("zun_jit_data_view_get_i32", zun_jit_data_view_get_i32 as *const u8);
+    builder.symbol("zun_jit_data_view_get_f32", zun_jit_data_view_get_f32 as *const u8);
+    builder.symbol("zun_jit_data_view_set_i8", zun_jit_data_view_set_i8 as *const u8);
+    builder.symbol("zun_jit_data_view_set_u8", zun_jit_data_view_set_u8 as *const u8);
+    builder.symbol("zun_jit_data_view_set_i16", zun_jit_data_view_set_i16 as *const u8);
+    builder.symbol("zun_jit_data_view_set_i32", zun_jit_data_view_set_i32 as *const u8);
+    builder.symbol("zun_jit_data_view_set_f32", zun_jit_data_view_set_f32 as *const u8);
     builder.symbol("zun_jit_u8_array_get", zun_jit_u8_array_get as *const u8);
     builder.symbol("zun_jit_u8_array_set", zun_jit_u8_array_set as *const u8);
     builder.symbol("zun_jit_u16_array_get", zun_jit_u16_array_get as *const u8);

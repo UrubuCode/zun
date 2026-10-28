@@ -6245,3 +6245,62 @@ fn static_float_field_round_trips_through_the_jit_store() {
         .expect("float static call");
     assert_eq!(f64::from_bits(bits as u64), 3.5);
 }
+
+#[test]
+fn data_view_extended_scalar_widths_use_the_typed_view_abi() {
+    // The signed/8-bit/float32 DataView accessors lower to their own width-
+    // specific helpers, just like the u16/u32/f64 fast paths. Writes are verified
+    // against the heap; reads are verified through the JIT return value.
+    let module = compile(
+        "import { dataViewSetInt8, dataViewSetInt16, dataViewSetInt32, dataViewSetFloat32, dataViewGetInt32, dataViewGetFloat32 } from \"zun:core\"; \
+         function setI8(view: DataView, offset: u64, value: i8): boolean { return dataViewSetInt8(view, offset, value); } \
+         function setI16(view: DataView, offset: u64, value: i16, little: boolean): boolean { return dataViewSetInt16(view, offset, value, little); } \
+         function setI32(view: DataView, offset: u64, value: i32, little: boolean): boolean { return dataViewSetInt32(view, offset, value, little); } \
+         function setF32(view: DataView, offset: u64, value: f32, little: boolean): boolean { return dataViewSetFloat32(view, offset, value, little); } \
+         function getI32(view: DataView, offset: u64, little: boolean): i32 { return dataViewGetInt32(view, offset, little); } \
+         function getF32(view: DataView, offset: u64, little: boolean): f32 { return dataViewGetFloat32(view, offset, little); } \
+         function main(): u64 { return 0; }",
+    );
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("method") as u32
+            + 1
+    };
+    let (set_i8, set_i16, set_i32, set_f32, get_i32, get_f32) = (
+        find("setI8"),
+        find("setI16"),
+        find("setI32"),
+        find("setF32"),
+        find("getI32"),
+        find("getF32"),
+    );
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    for rid in [set_i8, set_i16, set_i32, set_f32, get_i32, get_f32] {
+        assert!(jit.is_compiled(rid), "extended DataView method should be JIT-eligible");
+    }
+    let mut heap = zun_gc::Heap::new();
+    let buffer = heap.alloc_buffer(16);
+    let view = heap.alloc_data_view(buffer, 0, 16).expect("data view");
+
+    // -5 as an unsigned i8 byte is 251; it must round-trip as signed -5.
+    assert!(matches!(jit.call_packed_with_heap(set_i8, &[view.addr() as u64, 0, 251], &mut heap), Ok(1)));
+    assert_eq!(heap.data_view_get_i8(view, 0), Some(-5));
+    // -1000 as a u16 is 64536.
+    assert!(matches!(jit.call_packed_with_heap(set_i16, &[view.addr() as u64, 2, 64536, 1], &mut heap), Ok(1)));
+    assert_eq!(heap.data_view_get_i16(view, 2, true), Some(-1000));
+    assert!(matches!(jit.call_packed_with_heap(set_i32, &[view.addr() as u64, 4, 0x1234_5678, 1], &mut heap), Ok(1)));
+    assert_eq!(heap.data_view_get_i32(view, 4, true), Some(0x1234_5678));
+    assert!(matches!(jit.call_packed_with_heap(set_f32, &[view.addr() as u64, 8, 2.5f32.to_bits() as u64, 1], &mut heap), Ok(1)));
+    assert_eq!(heap.data_view_get_f32(view, 8, true), Some(2.5));
+
+    // Reads back through the JIT.
+    assert!(matches!(jit.call_packed_with_heap(get_i32, &[view.addr() as u64, 4, 1], &mut heap), Ok(0x1234_5678)));
+    assert!(matches!(
+        jit.call_packed_with_heap(get_f32, &[view.addr() as u64, 8, 1], &mut heap),
+        Ok(value) if f32::from_bits(value as u32) == 2.5
+    ));
+}
