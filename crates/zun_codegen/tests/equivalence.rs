@@ -5943,13 +5943,21 @@ fn nested_exception_control_flow_keeps_interpreter_result_under_jit_fallback() {
 
 #[test]
 fn template_literals_match_interpreter_and_jit_fallback() {
+    // A string-only template literal lowers to `ConstStr`/`Concat`, which the
+    // typed JIT now compiles (the ConstStr gate admits literal-fed `Concat`). The
+    // JIT result must match the interpreter's.
     let module = compile(
         "function main(): string { let name: string = \"Zun\"; return `hello ${name}!`; }",
     );
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry));
+    assert!(jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Str(value) if value.as_ref() == "hello Zun!"));
+    let mut heap = zun_gc::Heap::new();
+    let handle = jit
+        .call_packed_with_heap(entry, &[], &mut heap)
+        .expect("template literal call");
+    assert_eq!(heap.string(handle as u32).as_ref(), "hello Zun!");
 }
 
 #[test]
@@ -6303,4 +6311,30 @@ fn data_view_extended_scalar_widths_use_the_typed_view_abi() {
         jit.call_packed_with_heap(get_f32, &[view.addr() as u64, 8, 1], &mut heap),
         Ok(value) if f32::from_bits(value as u32) == 2.5
     ));
+}
+
+#[test]
+fn string_literal_plus_variable_is_jit_eligible() {
+    // `"literal" + value` mixes a `ConstStr` with `Concat`. Both already lower;
+    // this checks the ConstStr eligibility gate now admits the pattern (runtime
+    // JIT), since literal-prefixed concatenation is extremely common.
+    let module = compile(
+        "function greet(name: string): string { return \"Hi, \" + name; } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "greet")
+        .expect("greet method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "literal + variable concat should be JIT-eligible");
+
+    let mut heap = zun_gc::Heap::new();
+    let name = heap.intern_string(std::rc::Rc::from("world"));
+    let handle = jit
+        .call_packed_with_heap(rid, &[name as u64], &mut heap)
+        .expect("greet call");
+    assert_eq!(heap.string(handle as u32).as_ref(), "Hi, world");
 }

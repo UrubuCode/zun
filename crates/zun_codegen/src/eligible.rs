@@ -739,6 +739,12 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
                         | Opcode::StoreLocal
                         | Opcode::LoadField
                         | Opcode::StoreField
+                        // String `+` with literal operands, and static-field
+                        // access, all lower with explicit typed handles, so a
+                        // literal feeding `Concat` or a `ldsfld`/`stsfld` is safe.
+                        | Opcode::Concat
+                        | Opcode::LoadStatic
+                        | Opcode::StoreStatic
                         | Opcode::Pop
                         | Opcode::Ret
                 )
