@@ -249,6 +249,7 @@ impl Emitter {
         let span = name.span;
         ast::Function {
             name,
+            type_params: Vec::new(),
             decorators: Vec::new(),
             params: Vec::new(),
             return_type,

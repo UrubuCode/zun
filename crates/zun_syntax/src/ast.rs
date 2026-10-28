@@ -68,6 +68,10 @@ pub struct Decorator {
 pub struct Class {
     /// The class name.
     pub name: Name,
+    /// Generic type parameters (`class C<T, U> {...}`), in declaration order.
+    /// Erased like function type parameters: they resolve to `any` inside the
+    /// class body. Empty for non-generic classes.
+    pub type_params: Vec<Name>,
     /// Base class name, if the class `extends` another.
     pub base: Option<Name>,
     /// Decorators applied to the class (`@foo class C {}`), in source order.
@@ -121,6 +125,11 @@ pub struct ClassField {
 pub struct Function {
     /// The function name.
     pub name: Name,
+    /// Generic type parameters (`function f<T, U>(...)`), in declaration order.
+    /// Zun erases generics (PLAN: typed-TS pragmatism, like untyped arrays), so
+    /// these only register names that resolve to `any` inside the signature and
+    /// body; no specialization is produced. Empty for non-generic declarations.
+    pub type_params: Vec<Name>,
     /// Decorators applied to this declaration, in source order. Populated for
     /// decorated class methods (`@foo method() {}`); empty for top-level
     /// functions (function decorators are not parsed in Phase 1). Inert in

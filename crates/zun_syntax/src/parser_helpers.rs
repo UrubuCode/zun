@@ -222,7 +222,7 @@ pub(crate) fn parse_tagged_template_parts(
 
 pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
     let tokens = lex(source, diagnostics);
-    let mut parser = Parser { source, tokens, pos: 0, diagnostics };
+    let mut parser = Parser { source, tokens, pos: 0, diagnostics, splits: Vec::new() };
     let expression = parser.expression();
     if parser.at(TokenKind::Eof) && diagnostics.is_empty() { Some(expression) } else { None }
 }
@@ -365,6 +365,10 @@ impl Parser<'_> {
                     return Expr::NewDynamic { callee: Box::new(callee), args, span: start.to(close) };
                 }
                 let class = self.dotted_name("a class name");
+                // `new Box<number>(...)`: constructor type arguments are erased.
+                if self.at(TokenKind::Lt) {
+                    self.skip_type_arguments();
+                }
                 self.expect(TokenKind::LParen, "`(`");
                 let args = self.arguments();
                 let close = self.tokens[self.pos - 1].span;
@@ -647,6 +651,13 @@ impl Parser<'_> {
         let mut expr = self.primary();
         loop {
             match self.peek().kind {
+                TokenKind::Lt if self.try_call_type_arguments() => {
+                    // A generic call `f<T>(...)`: the type arguments were erased
+                    // and a `(` now follows, so loop to the `LParen` arm. (If the
+                    // `<` were a comparison, `try_call_type_arguments` would have
+                    // restored the cursor and this arm would not have matched.)
+                    continue;
+                }
                 TokenKind::LParen => {
                     self.bump();
                     let args = self.arguments();
@@ -682,7 +693,7 @@ impl Parser<'_> {
                         continue;
                     }
                     let member = self.member_name("a field or method name");
-                    if self.at(TokenKind::LParen) {
+                    if self.at(TokenKind::LParen) || self.try_call_type_arguments() {
                         self.bump();
                         let args = self.arguments();
                         let close = self.tokens[self.pos - 1].span;
@@ -705,7 +716,7 @@ impl Parser<'_> {
                 TokenKind::QuestionDot => {
                     self.bump();
                     let field = self.member_name("an optional field or method name");
-                    if self.at(TokenKind::LParen) {
+                    if self.at(TokenKind::LParen) || self.try_call_type_arguments() {
                         self.bump();
                         let args = self.arguments();
                         let close = self.tokens[self.pos - 1].span;
@@ -1172,6 +1183,12 @@ impl Parser<'_> {
     /// `T[][]`). Zun arrays are untyped, so any depth erases to `Array`.
     pub(crate) fn type_annotation(&mut self, what: &str) -> TypeAnnotation {
         let name = self.type_name(what);
+        // Generic type arguments (`Array<T>`, `Map<K, V>`, `Box<number>`) are
+        // parsed and erased: the base name drives the resolved type and the
+        // arguments carry no runtime meaning (see `ast::Function::type_params`).
+        if self.at(TokenKind::Lt) {
+            self.skip_type_arguments();
+        }
         let mut is_array = false;
         while self.at(TokenKind::LBracket) {
             self.bump();
@@ -1179,6 +1196,118 @@ impl Parser<'_> {
             is_array = true;
         }
         TypeAnnotation { name, is_array }
+    }
+
+    /// Parse an optional generic parameter list `<T, U extends Base = Default>`
+    /// that follows a function, method, or class name. Constraints (`extends`)
+    /// and defaults (`=`) are parsed and discarded — Zun erases generics — so
+    /// only the bare parameter names are returned. Empty when there is no `<`.
+    pub(crate) fn type_params(&mut self) -> Vec<Name> {
+        let mut params = Vec::new();
+        if !self.eat(TokenKind::Lt) {
+            return params;
+        }
+        loop {
+            if self.eat_type_gt() || self.at(TokenKind::Eof) {
+                return params;
+            }
+            // An optional `const` modifier on a parameter (`<const T>`).
+            if self.at(TokenKind::Ident) && self.text(self.peek()) == "const" {
+                self.bump();
+            }
+            params.push(self.name("a type parameter name"));
+            if self.eat(TokenKind::KwExtends) {
+                self.skip_type();
+            }
+            if self.eat(TokenKind::Eq) {
+                self.skip_type();
+            }
+            if !self.eat(TokenKind::Comma) {
+                self.eat_type_gt();
+                return params;
+            }
+        }
+    }
+
+    /// Skip a generic type-argument list `<T, U, ...>`, assuming the cursor is
+    /// at the opening `<`. Returns true if a well-formed list was consumed.
+    /// Used both in type position (annotations) and at call/`new` sites, where
+    /// the argument types are erased.
+    pub(crate) fn skip_type_arguments(&mut self) -> bool {
+        if !self.eat(TokenKind::Lt) {
+            return false;
+        }
+        loop {
+            if self.eat_type_gt() {
+                return true;
+            }
+            if self.at(TokenKind::Eof) {
+                return false;
+            }
+            self.skip_type();
+            if self.eat_type_gt() {
+                return true;
+            }
+            if !self.eat(TokenKind::Comma) {
+                return self.eat_type_gt();
+            }
+        }
+    }
+
+    /// Skip exactly one type expression in type position. Robust to nested
+    /// generics, arrays/tuples, object and function types, and unions/
+    /// intersections by tracking bracket depth; `<`/`>` are treated as brackets
+    /// because this is only reached inside a type. Stops at a top-level `,`,
+    /// `;`, `=`, a closing `)`/`]`/`}`, or a closing `>` of the enclosing list.
+    pub(crate) fn skip_type(&mut self) {
+        let mut depth: i32 = 0;
+        loop {
+            match self.peek().kind {
+                TokenKind::Eof => return,
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace | TokenKind::Lt => {
+                    depth += 1;
+                    self.bump();
+                }
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    if depth == 0 {
+                        return;
+                    }
+                    depth -= 1;
+                    self.bump();
+                }
+                TokenKind::Gt
+                | TokenKind::Shr
+                | TokenKind::UShr
+                | TokenKind::GtEq
+                | TokenKind::ShrEq
+                | TokenKind::UShrEq => {
+                    if depth == 0 {
+                        return;
+                    }
+                    depth -= 1;
+                    self.eat_type_gt();
+                }
+                TokenKind::Comma | TokenKind::Semi | TokenKind::Eq if depth == 0 => return,
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    /// At a postfix `<` after a callee or member, speculatively consume a
+    /// generic call's type arguments (`f<T>(...)`, `obj.m<T>(...)`). Because
+    /// `<` is also the comparison operator, the type arguments are only
+    /// committed when they parse cleanly and are immediately followed by `(`;
+    /// otherwise the cursor is restored and `<` is left to the binary layer.
+    /// Returns true when type arguments were consumed and a `(` follows.
+    pub(crate) fn try_call_type_arguments(&mut self) -> bool {
+        let checkpoint = self.checkpoint();
+        if self.skip_type_arguments() && self.at(TokenKind::LParen) {
+            return true;
+        }
+        self.restore(checkpoint);
+        false
     }
 
     pub(crate) fn optional_type_annotation(&mut self) -> Option<TypeAnnotation> {

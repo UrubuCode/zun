@@ -1635,6 +1635,10 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             .map_err(|error| vec![error])?;
                         let function = Function {
                             name: Name { span: name_span },
+                            // The OXC adapter is a partial secondary path; it
+                            // erases generic type parameters (the hand parser
+                            // carries them). Generics are erased either way.
+                            type_params: Vec::new(),
                             decorators,
                             params,
                             return_type: convert_type_annotation(
@@ -1680,6 +1684,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 name: Name {
                     span: Span::new(id.span.start, id.span.end),
                 },
+                // OXC adapter erases generic type parameters (see above).
+                type_params: Vec::new(),
                 base,
                 decorators: class_declaration
                     .decorators
@@ -1954,6 +1960,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             name: Name {
                 span: span(id.span),
             },
+            // OXC adapter erases generic type parameters (see above).
+            type_params: Vec::new(),
             decorators: Vec::new(),
             params,
             return_type: convert_type_annotation(source, function.return_type.as_deref())

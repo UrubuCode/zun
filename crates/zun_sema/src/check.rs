@@ -151,7 +151,9 @@ fn check_impl(
         closure_param_hint: None,
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
+        type_param_names: HashSet::new(),
     };
+    checker.collect_type_param_names(program);
     checker.resolve_imports(program, allow_external_modules, allow_core);
     // Classes first so field and signature annotations can name them, then
     // function and method signatures so calls can be forward references, then
@@ -331,6 +333,13 @@ struct Checker<'a> {
     /// Classes (and subclasses of classes) with runtime-decorated instance
     /// members: `new` runs the instance-initializer and field-transform hooks.
     hooked_classes: HashSet<u32>,
+    /// Every generic type-parameter name declared anywhere in the program
+    /// (`function f<T>`, `class C<U>`, `method m<K>`). Zun erases generics, so a
+    /// type parameter has no distinct type: `resolve_annotation` treats a name
+    /// in this set as `Ty::Any`, but only as the final fallback — after every
+    /// real type (class, builtin, alias) has had its chance — so it never masks
+    /// a concrete type, it only rescues an otherwise-unknown generic name.
+    type_param_names: HashSet<String>,
 }
 
 /// One lexical scope: name -> local slot.

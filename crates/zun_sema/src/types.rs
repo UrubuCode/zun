@@ -4,6 +4,31 @@ use crate::hir::{IntKind, Ty};
 use zun_syntax::ast;
 
 impl<'a> Checker<'a> {
+    /// Gather every generic type-parameter name declared in the program into
+    /// `type_param_names` (see the field doc). Runs once before any annotation
+    /// is resolved. Erasure means names, not bounds, are all that matter.
+    pub(super) fn collect_type_param_names(&mut self, program: &ast::Program) {
+        let mut names: Vec<String> = Vec::new();
+        let mut record = |source: &str, params: &[ast::Name]| {
+            for p in params {
+                names.push(source[p.span.start as usize..p.span.end as usize].to_string());
+            }
+        };
+        for f in &program.functions {
+            record(self.source, &f.type_params);
+        }
+        for c in &program.classes {
+            record(self.source, &c.type_params);
+            for m in &c.methods {
+                record(self.source, &m.type_params);
+            }
+            for sm in &c.symbol_methods {
+                record(self.source, &sm.function.type_params);
+            }
+        }
+        self.type_param_names.extend(names);
+    }
+
     pub(super) fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
         // `T[]` (any element type, any depth) is an untyped `Array`.
         if annotation.is_array {
@@ -68,13 +93,17 @@ impl<'a> Checker<'a> {
                 if let Some(&func) = self.by_name.get(other) {
                     return Ty::Function(func);
                 }
-                match self.classes_by_name.get(other) {
-                    Some(&index) => Ty::Instance(index),
-                    None => {
-                        self.error(annotation.name.span, format!("unknown type `{other}`"));
-                        Ty::Error
-                    }
+                if let Some(&index) = self.classes_by_name.get(other) {
+                    return Ty::Instance(index);
                 }
+                // Final fallback: an erased generic type parameter (`T`) has no
+                // concrete type, so it resolves to `any`. Checked last so it
+                // never shadows a real class/builtin/alias of the same name.
+                if self.type_param_names.contains(other) {
+                    return Ty::Any;
+                }
+                self.error(annotation.name.span, format!("unknown type `{other}`"));
+                Ty::Error
             }
         }
     }

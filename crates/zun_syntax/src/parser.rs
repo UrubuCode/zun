@@ -21,6 +21,7 @@ pub fn parse(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Program {
         tokens,
         pos: 0,
         diagnostics,
+        splits: Vec::new(),
     }
     .program()
 }
@@ -30,6 +31,12 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     pos: usize,
     diagnostics: &'a mut Vec<Diagnostic>,
+    /// Log of glued `>>`/`>>>`/`>=` tokens split in place while parsing a
+    /// closing `>` of a generic list (see `eat_type_gt`). Each entry records a
+    /// token position and its value before the split so a speculative
+    /// backtrack (`restore`) can put the original token back — otherwise a
+    /// `<` that turned out to be a comparison would leave a corrupted `>>`.
+    splits: Vec<(usize, Token)>,
 }
 
 impl Parser<'_> {
@@ -67,6 +74,55 @@ impl Parser<'_> {
 
     fn text(&self, token: Token) -> &str {
         &self.source[token.span.start as usize..token.span.end as usize]
+    }
+
+    /// Consume one closing `>` of a generic list. A glued `>>`, `>>>`, `>=`,
+    /// `>>=`, or `>>>=` token is split in place: its leading `>` is consumed and
+    /// the remainder is left for the next read, so nested generics such as
+    /// `Map<K, Array<V>>` close correctly. Returns false (consuming nothing) if
+    /// the current token does not begin with `>`.
+    fn eat_type_gt(&mut self) -> bool {
+        let t = self.peek();
+        let remainder = match t.kind {
+            TokenKind::Gt => {
+                self.bump();
+                return true;
+            }
+            TokenKind::Shr => TokenKind::Gt,
+            TokenKind::UShr => TokenKind::Shr,
+            TokenKind::GtEq => TokenKind::Eq,
+            TokenKind::ShrEq => TokenKind::GtEq,
+            TokenKind::UShrEq => TokenKind::ShrEq,
+            _ => return false,
+        };
+        // Record the original so a speculative backtrack can undo the split,
+        // then replace it with its remainder (one leading `>` consumed). `pos`
+        // does not advance: the remainder is read next.
+        self.splits.push((self.pos, t));
+        self.tokens[self.pos] = Token {
+            kind: remainder,
+            span: Span {
+                start: t.span.start + 1,
+                end: t.span.end,
+            },
+        };
+        true
+    }
+
+    /// Restore the cursor, diagnostics, and any split tokens to a checkpoint
+    /// taken by `checkpoint`, abandoning a speculative parse.
+    fn restore(&mut self, (pos, diag_len, split_len): (usize, usize, usize)) {
+        self.pos = pos;
+        self.diagnostics.truncate(diag_len);
+        while self.splits.len() > split_len {
+            let (i, original) = self.splits.pop().expect("split log underflow");
+            self.tokens[i] = original;
+        }
+    }
+
+    /// Capture a checkpoint for `restore`.
+    fn checkpoint(&self) -> (usize, usize, usize) {
+        (self.pos, self.diagnostics.len(), self.splits.len())
     }
 
     fn error_at(&mut self, span: Span, message: impl Into<String>) {
@@ -227,8 +283,14 @@ impl Parser<'_> {
     fn class_with_decorators(&mut self, decorators: Vec<Decorator>) -> Class {
         let start = self.bump().span; // `class`
         let name = self.name("a class name");
+        let type_params = self.type_params();
         let base = if self.eat(TokenKind::KwExtends) {
-            Some(self.name("a base class name"))
+            let base = self.name("a base class name");
+            // `extends Base<T>`: the base's generic arguments are erased.
+            if self.at(TokenKind::Lt) {
+                self.skip_type_arguments();
+            }
+            Some(base)
         } else {
             None
         };
@@ -301,8 +363,9 @@ impl Parser<'_> {
                 let kind = if self.text(self.tokens[self.pos - 1]) == "get" { AccessorKind::Get } else { AccessorKind::Set };
                 Some((kind, self.name("a property name")))
             } else { None };
-            // A `(` after the name starts a method; `:` starts a field.
-            if self.at(TokenKind::LParen) {
+            // A `(` after the name starts a method; a `<` starts a generic
+            // method (`m<T>()`); `:` starts a field.
+            if self.at(TokenKind::LParen) || self.at(TokenKind::Lt) {
                 let (accessor, name) = accessor.map_or((None, member_name), |(kind, name)| (Some(kind), name));
                 let mut method = self.method(name, is_extern, is_static, accessor);
                 method.decorators = member_decorators;
@@ -339,6 +402,7 @@ impl Parser<'_> {
         self.expect(TokenKind::RBrace, "`}`");
         Class {
             name,
+            type_params,
             base,
             decorators,
             fields,
@@ -351,6 +415,7 @@ impl Parser<'_> {
     /// Parse a method, given its already-consumed name. Shares the parameter,
     /// return-type, and body grammar with top-level functions.
     fn method(&mut self, name: Name, is_extern: bool, is_static: bool, accessor: Option<AccessorKind>) -> Function {
+        let type_params = self.type_params();
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
@@ -396,6 +461,7 @@ impl Parser<'_> {
         let span = name.span.to(body.span);
         Function {
             name,
+            type_params,
             decorators: Vec::new(),
             params,
             return_type,
@@ -414,6 +480,7 @@ impl Parser<'_> {
         let start = self.bump().span; // `function`
         let is_generator = self.eat(TokenKind::Star);
         let name = self.name("a function name");
+        let type_params = self.type_params();
 
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
@@ -465,6 +532,7 @@ impl Parser<'_> {
         let span = start.to(body.span);
         Function {
             name,
+            type_params,
             decorators: Vec::new(),
             params,
             return_type,
