@@ -150,7 +150,22 @@ impl Parser<'_> {
         let mut functions = Vec::new();
         let mut classes = Vec::new();
         let mut imports = Vec::new();
+        let mut type_aliases = Vec::new();
         while !self.at(TokenKind::Eof) {
+            // `type X = ...;` and `interface X { ... }` are contextual: `type`
+            // and `interface` lex as identifiers. A following type name marks a
+            // declaration (top-level bare identifiers are otherwise invalid).
+            if self.at(TokenKind::Ident) && self.peek_n(1).kind == TokenKind::Ident {
+                let kw = self.text(self.peek());
+                if kw == "type" {
+                    type_aliases.push(self.type_alias());
+                    continue;
+                }
+                if kw == "interface" {
+                    type_aliases.push(self.interface_declaration());
+                    continue;
+                }
+            }
             // Decorators may precede a top-level `class` declaration. Phase 1
             // only decorates classes and class members at the top level, so a
             // decorator run here must be followed by a `class`.
@@ -195,6 +210,75 @@ impl Parser<'_> {
             functions,
             classes,
             imports,
+            type_aliases,
+        }
+    }
+
+    /// Parse `type Name<params> = <type>;`. The generic parameters and the
+    /// right-hand side are erased (see `ast::TypeAliasDecl`); a simple named
+    /// right-hand side keeps its name so the alias resolves to that type.
+    fn type_alias(&mut self) -> TypeAliasDecl {
+        let start = self.bump().span; // `type`
+        let name = self.name("a type alias name");
+        // A generic alias (`type Box<T> = T`) has no single frozen type and its
+        // right-hand side may reference its own (erased) parameters, so the
+        // whole value erases to `any`.
+        let generic = !self.type_params().is_empty();
+        self.expect(TokenKind::Eq, "`=` in a type alias");
+        let value = if generic {
+            self.skip_type();
+            TypeAnnotation { name: Name { span: Span::empty_at(start.start) }, is_array: false }
+        } else {
+            self.type_annotation("a type")
+        };
+        self.eat(TokenKind::Semi);
+        TypeAliasDecl { name, value }
+    }
+
+    /// Parse and erase `interface Name<params> [extends A, B] { ... }`. The body
+    /// and heritage are discarded; the name resolves to `any`.
+    fn interface_declaration(&mut self) -> TypeAliasDecl {
+        let start = self.bump().span; // `interface`
+        let name = self.name("an interface name");
+        self.type_params(); // erased
+        if self.eat(TokenKind::KwExtends) {
+            // `extends A, B<T>, ...` — skip the heritage clause up to the body.
+            while !self.at(TokenKind::LBrace) && !self.at(TokenKind::Eof) {
+                self.bump();
+            }
+        }
+        // Skip the balanced `{ ... }` body.
+        if self.at(TokenKind::LBrace) {
+            let mut depth = 0i32;
+            loop {
+                match self.peek().kind {
+                    TokenKind::Eof => break,
+                    TokenKind::LBrace => {
+                        depth += 1;
+                        self.bump();
+                    }
+                    TokenKind::RBrace => {
+                        depth -= 1;
+                        self.bump();
+                        if depth <= 0 {
+                            break;
+                        }
+                    }
+                    _ => {
+                        self.bump();
+                    }
+                }
+            }
+        } else {
+            self.expect(TokenKind::LBrace, "`{` to open an interface body");
+        }
+        // An interface has no runtime type: resolve the name to `any`.
+        TypeAliasDecl {
+            name,
+            value: TypeAnnotation {
+                name: Name { span: Span::empty_at(start.start) },
+                is_array: false,
+            },
         }
     }
 

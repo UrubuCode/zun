@@ -159,6 +159,7 @@ fn check_impl(
     // function and method signatures so calls can be forward references, then
     // bodies. Methods are checked as functions with an implicit `this` param.
     checker.collect_classes(program);
+    checker.collect_type_aliases(program);
     let mut classes = checker.check_classes(program);
     checker.collect_signatures(program);
     checker.collect_decorator_routing(program);

@@ -16,6 +16,21 @@ pub struct Program {
     pub classes: Vec<Class>,
     /// `import { ... } from "..."` declarations, in source order.
     pub imports: Vec<Import>,
+    /// `type X = ...;` aliases and `interface X { ... }` declarations, in source
+    /// order. Both are erased: an interface is recorded as an alias to `any`
+    /// (an empty-span `value`). Sema registers each name so annotations that
+    /// name it resolve to the aliased type (or `any`).
+    pub type_aliases: Vec<TypeAliasDecl>,
+}
+
+/// A `type X = <type>;` alias or an erased `interface X { ... }` declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAliasDecl {
+    /// The alias/interface name being introduced.
+    pub name: Name,
+    /// The aliased type. For an `interface` (and for structural/union right-hand
+    /// sides) this is an empty-span annotation that resolves to `Ty::Any`.
+    pub value: TypeAnnotation,
 }
 
 /// `import { a, b } from "module";`

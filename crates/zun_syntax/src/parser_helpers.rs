@@ -1182,20 +1182,94 @@ impl Parser<'_> {
     /// Parse a type name plus any trailing `[]` array suffixes (`T`, `T[]`,
     /// `T[][]`). Zun arrays are untyped, so any depth erases to `Array`.
     pub(crate) fn type_annotation(&mut self, what: &str) -> TypeAnnotation {
-        let name = self.type_name(what);
-        // Generic type arguments (`Array<T>`, `Map<K, V>`, `Box<number>`) are
-        // parsed and erased: the base name drives the resolved type and the
-        // arguments carry no runtime meaning (see `ast::Function::type_params`).
-        if self.at(TokenKind::Lt) {
-            self.skip_type_arguments();
-        }
+        let start = self.peek().span.start;
+        // The leading type atom. Object/tuple/function/parenthesized type
+        // literals (`{ a: number }`, `[T, U]`, `(x: T) => U`, `(A | B)`) have
+        // no runtime representation, so they erase to `any` (an empty-span name,
+        // which `resolve_annotation` maps to `Ty::Any`). A plain named type
+        // keeps its name so it still resolves to its frozen type.
+        let name = if matches!(
+            self.peek().kind,
+            TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket
+        ) {
+            self.skip_type_atom();
+            Name { span: Span::empty_at(start) }
+        } else {
+            let name = self.type_name(what);
+            // Generic type arguments (`Array<T>`, `Map<K, V>`, `Box<number>`)
+            // are parsed and erased: the base name drives the resolved type.
+            if self.at(TokenKind::Lt) {
+                self.skip_type_arguments();
+            }
+            name
+        };
+        // `T[]`, `(A | B)[]`, `{ ... }[]` — an array suffix keeps array-ness
+        // even when the element type was erased, so `.length`/indexing work.
         let mut is_array = false;
         while self.at(TokenKind::LBracket) {
             self.bump();
             self.expect(TokenKind::RBracket, "`]` to close an array type");
             is_array = true;
         }
+        // Union/intersection types (`number | string`, `A & B`) erase to `any`:
+        // there is no sum/product type at runtime. A union is not an array even
+        // if one member was, so array-ness is dropped.
+        if self.at(TokenKind::Pipe) || self.at(TokenKind::Amp) {
+            self.skip_union_rest();
+            return TypeAnnotation { name: Name { span: Span::empty_at(start) }, is_array: false };
+        }
         TypeAnnotation { name, is_array }
+    }
+
+    /// Consume exactly one erased type atom beginning at an opening `(`, `{`, or
+    /// `[`: the balanced bracket group, plus a trailing `=> ReturnType` when it
+    /// was a function type's parameter list. Leaves any `[]`/`|`/`&` suffix for
+    /// the caller so array-ness and unions are handled uniformly.
+    fn skip_type_atom(&mut self) {
+        let mut depth: i32 = 0;
+        loop {
+            match self.peek().kind {
+                TokenKind::Eof => return,
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace | TokenKind::Lt => {
+                    depth += 1;
+                    self.bump();
+                }
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    depth -= 1;
+                    self.bump();
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                TokenKind::Gt
+                | TokenKind::Shr
+                | TokenKind::UShr
+                | TokenKind::GtEq
+                | TokenKind::ShrEq
+                | TokenKind::UShrEq
+                    if depth > 0 =>
+                {
+                    depth -= 1;
+                    self.eat_type_gt();
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+        // Function type: `(params) => ReturnType`.
+        if self.eat(TokenKind::Arrow) {
+            self.skip_type();
+        }
+    }
+
+    /// Consume a run of `| T` / `& T` union/intersection members (each erased).
+    /// A no-op when the cursor is not at `|`/`&`.
+    fn skip_union_rest(&mut self) {
+        while self.at(TokenKind::Pipe) || self.at(TokenKind::Amp) {
+            self.bump();
+            self.skip_type();
+        }
     }
 
     /// Parse an optional generic parameter list `<T, U extends Base = Default>`
@@ -1261,11 +1335,19 @@ impl Parser<'_> {
     /// `;`, `=`, a closing `)`/`]`/`}`, or a closing `>` of the enclosing list.
     pub(crate) fn skip_type(&mut self) {
         let mut depth: i32 = 0;
+        // Whether a type token has already been consumed. A `{` at depth 0 is an
+        // object-type literal only when it opens the type (first token or after
+        // `|`/`&`/`(`); once a type atom has been read, a depth-0 `{` is a
+        // function/class body or block and must terminate the type — otherwise
+        // `: number | string { body }` would swallow the body.
+        let mut started = false;
         loop {
             match self.peek().kind {
                 TokenKind::Eof => return,
+                TokenKind::LBrace if depth == 0 && started => return,
                 TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace | TokenKind::Lt => {
                     depth += 1;
+                    started = true;
                     self.bump();
                 }
                 TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
@@ -1289,6 +1371,7 @@ impl Parser<'_> {
                 }
                 TokenKind::Comma | TokenKind::Semi | TokenKind::Eq if depth == 0 => return,
                 _ => {
+                    started = true;
                     self.bump();
                 }
             }

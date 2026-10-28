@@ -29,6 +29,24 @@ impl<'a> Checker<'a> {
         self.type_param_names.extend(names);
     }
 
+    /// Register `type X = ...` aliases and (erased) `interface X { ... }`
+    /// declarations. Each name is first seeded into the erased-name fallback so
+    /// forward and self references degrade to `any` rather than erroring, then
+    /// its right-hand side is resolved and recorded in `type_aliases`, which
+    /// `resolve_annotation` consults first (so a simple `type Id = number`
+    /// keeps its frozen type while a structural/interface alias stays `any`).
+    pub(super) fn collect_type_aliases(&mut self, program: &ast::Program) {
+        for alias in &program.type_aliases {
+            let name = self.text(&alias.name).to_string();
+            self.type_param_names.insert(name);
+        }
+        for alias in &program.type_aliases {
+            let name = self.text(&alias.name).to_string();
+            let ty = self.resolve_annotation(&alias.value);
+            self.type_aliases.insert(name, ty);
+        }
+    }
+
     pub(super) fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
         // `T[]` (any element type, any depth) is an untyped `Array`.
         if annotation.is_array {
