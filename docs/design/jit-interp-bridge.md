@@ -111,11 +111,19 @@ calls, which is what makes same-frame exceptions cover little real code.
 
 ## Incremental slices (each in-process verifiable in `zun_vm`, no `.exe` link)
 
-1. **Bridge seam + direct bridged call, no exceptions.** Add the symbol-injection
-   path and eligibility "bridge available" flag; lower a direct `Call` to an
-   ineligible target through `zun_jit_call_interp`. Verify in `zun_vm` tests: a
-   JIT method calling a dynamic/ineligible callee returns the same value as the
-   pure interpreter (incl. under forced GC).
+1. **Bridge seam + direct bridged call, no exceptions.**
+   - **1a (DONE** — `crates/zun_vm/src/jit_bridge.rs`, `bridge_call`): the safe
+     core. Runs an ineligible callee on the interpreter on the current heap with
+     packed args, returns the packed result + a returned/threw status. Unit
+     tested in isolation (scalar + throwing call). No codegen change, no unsafe.
+   - **1b (next):** the `extern "C" zun_jit_call_interp` wrapper + a thread-local
+     execution context (scope/loader/output) installed around JIT entry by
+     `JitHook`; the `Jit` symbol-injection path; the eligibility "bridge
+     available" flag (relax the fixpoint so a method with an ineligible *direct*
+     callee is eligible, its call bridged); and the `translate.rs` call-site
+     lowering (pack args into a stack buffer, call the pointer, unpack result).
+     Verify in `zun_vm`: a JIT method calling a dynamic/ineligible callee matches
+     the pure interpreter, incl. under forced GC.
 2. **`CallIndirect` via the bridge.** Represent a function value as its method
    rid (+ optional environment object) in a new `JitKind::Function` carrier;
    lower `CallIndirect` to "resolve rid → direct if JIT-defined else bridge".
