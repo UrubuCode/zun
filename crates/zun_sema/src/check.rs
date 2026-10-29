@@ -5476,15 +5476,8 @@ impl Checker<'_> {
                     // `const { resolve } = Promise.withResolvers()` produces).
                     // Lowered like a generic `Function` callback (single arg).
                     if function_ty == Ty::Any {
-                        if args.len() != 1 {
-                            self.error(
-                                span,
-                                format!(
-                                    "a dynamic (`any`) callee expects exactly one argument, found {}",
-                                    args.len()
-                                ),
-                            );
-                        }
+                        // A dynamic callee may be invoked with any argument count
+                        // (JS); the counted indirect-call form carries the arity.
                         let callee_expr = hir::Expr {
                             kind: callee_kind(),
                             ty: function_ty,

@@ -157,7 +157,10 @@ impl<'a> Checker<'a> {
             "DataView" => Ty::BufferView(hir::BufferViewKind::DataView),
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "Symbol" | "symbol" => Ty::Symbol,
-            "any" => Ty::Any,
+            // `any`, and the other top/erased TS types, resolve to the dynamic
+            // type (Zun erases types; `unknown`/`object`/`never` carry no
+            // distinct runtime representation here).
+            "any" | "unknown" | "object" | "never" => Ty::Any,
             "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
             "Predicate" => Ty::Function(hir::DYNAMIC_PREDICATE),
             "Reducer" => Ty::Function(hir::DYNAMIC_REDUCER),
