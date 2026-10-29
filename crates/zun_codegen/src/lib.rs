@@ -13,6 +13,7 @@
 
 mod eligible;
 mod any_abi;
+mod fn_abi;
 mod shim;
 mod translate;
 

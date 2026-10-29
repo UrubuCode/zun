@@ -47,6 +47,27 @@ impl FunctionHandle {
         }
     }
 
+    /// Pack this handle into the two machine words of the JIT function carrier:
+    /// the identity word is `method_rid` in the low 32 bits and `reserved`
+    /// (the bound discriminant) in the high 32 bits; the second word is the
+    /// `environment` address (a managed GC pointer, or 0). The carrier mirrors
+    /// this layout so a function value can cross the JIT boundary without
+    /// losing its closure environment to the one-word rid representation.
+    pub const fn to_carrier_words(self) -> (u64, u64) {
+        let identity = (self.method_rid as u64) | ((self.reserved as u64) << 32);
+        (identity, self.environment as u64)
+    }
+
+    /// Reconstruct a handle from the two carrier words produced by
+    /// [`Self::to_carrier_words`]. Inverse of that packing; the bound
+    /// discriminant in the high half of `identity` is preserved.
+    pub const fn from_carrier_words(identity: u64, environment: u64) -> Self {
+        Self {
+            method_rid: identity as u32,
+            reserved: (identity >> 32) as u32,
+            environment: environment as usize,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -69,5 +90,34 @@ mod tests {
         let moved = handle.relocate_environment(Some(0x3000));
         assert!(moved.is_bound(), "relocation must keep the bound discriminant");
         assert_eq!(moved.environment(), Some(0x3000));
+    }
+
+    #[test]
+    fn carrier_words_round_trip_a_plain_closure_handle() {
+        let handle = FunctionHandle::new(7, Some(0x4000));
+        let (identity, environment) = handle.to_carrier_words();
+        assert_eq!(identity, 7, "no bound tag, so identity is just the rid");
+        assert_eq!(environment, 0x4000);
+        assert_eq!(FunctionHandle::from_carrier_words(identity, environment), handle);
+    }
+
+    #[test]
+    fn carrier_words_round_trip_a_no_environment_handle() {
+        let handle = FunctionHandle::new(42, None);
+        let (identity, environment) = handle.to_carrier_words();
+        assert_eq!(environment, 0, "a no-closure function has a zero environment word");
+        let back = FunctionHandle::from_carrier_words(identity, environment);
+        assert_eq!(back, handle);
+        assert_eq!(back.environment(), None);
+    }
+
+    #[test]
+    fn carrier_words_round_trip_a_bound_handle_preserving_the_tag() {
+        let handle = FunctionHandle::new_bound(0x5000);
+        let (identity, environment) = handle.to_carrier_words();
+        let back = FunctionHandle::from_carrier_words(identity, environment);
+        assert_eq!(back, handle);
+        assert!(back.is_bound(), "the bound discriminant survives the carrier round-trip");
+        assert_eq!(back.environment(), Some(0x5000));
     }
 }
