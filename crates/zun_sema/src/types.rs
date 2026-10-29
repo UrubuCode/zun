@@ -157,7 +157,7 @@ impl<'a> Checker<'a> {
             "DataView" => Ty::BufferView(hir::BufferViewKind::DataView),
             "dynamic" | "DynamicObject" => Ty::DynamicObject,
             "Symbol" | "symbol" => Ty::Symbol,
-            "any" => Ty::Any,
+            "any" | "unknown" => Ty::Any,
             "Function" => Ty::Function(hir::DYNAMIC_FUNCTION),
             "Predicate" => Ty::Function(hir::DYNAMIC_PREDICATE),
             "Reducer" => Ty::Function(hir::DYNAMIC_REDUCER),

@@ -330,6 +330,19 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span_all,
                 });
             }
+            Statement::BlockStatement(block) => {
+                // A bare block is a scope: lower it to `if (true) { ... }`.
+                let block_span = Span::new(block.span.start, block.span.end);
+                statements.push(Stmt::If {
+                    cond: Expr::Bool { value: true, span: block_span },
+                    then_block: Block {
+                        statements: convert_statement_list(source, &block.body)?,
+                        span: block_span,
+                    },
+                    else_block: None,
+                    span: block_span,
+                });
+            }
             _ => {
                 return Err(
                     "OXC adapter currently supports return and expression statements in branches"
@@ -697,6 +710,10 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 _ => Ok(Expr::Ident(Name { span: span(identifier.span) })),
             }
         }
+        // `super.method(...)`: the receiver name is the source text `super`.
+        Expression::Super(super_expression) => Ok(Expr::Ident(Name {
+            span: span(super_expression.span),
+        })),
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
         })),
@@ -1015,6 +1032,14 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 args.push(convert_argument(source, argument)?);
             }
             match &call.callee {
+                // `super(args)`: the callee name is the source text `super`.
+                Expression::Super(super_expression) => Ok(Expr::Call {
+                    callee: Name {
+                        span: span(super_expression.span),
+                    },
+                    args,
+                    span: span(call.span),
+                }),
                 Expression::Identifier(identifier) => Ok(Expr::Call {
                     callee: Name {
                         span: span(identifier.span),
@@ -1553,148 +1578,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         let Some(body) = method.value.body.as_ref() else {
                             return Err(vec!["OXC adapter requires class method bodies".into()]);
                         };
-                        let mut method_statements = Vec::with_capacity(body.statements.len());
-                        for statement in &body.statements {
-                            match statement {
-                                Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
-                                Statement::VariableDeclaration(declaration) => {
-                                    for declarator in &declaration.declarations {
-                                        let BindingPattern::BindingIdentifier(identifier) =
-                                            &declarator.id
-                                        else {
-                                            return Err(vec![
-                                                "OXC adapter currently supports identifier local bindings".into(),
-                                            ]);
-                                        };
-                                        let Some(initializer) = declarator.init.as_ref() else {
-                                            return Err(vec![
-                                                "OXC adapter requires an initializer for local bindings".into(),
-                                            ]);
-                                        };
-                                        method_statements.push(Stmt::Let {
-                                            name: Name {
-                                                span: Span::new(
-                                                    identifier.span.start,
-                                                    identifier.span.end,
-                                                ),
-                                            },
-                                            ty: convert_type_annotation(
-                                                source,
-                                                declarator.type_annotation.as_deref(),
-                                            )
-                                            .map_err(|error| vec![error])?,
-                                            init: convert_expression(source, initializer)
-                                                .map_err(|error| vec![error])?,
-                                            span: Span::new(
-                                                declarator.span.start,
-                                                declarator.span.end,
-                                            ),
-                                        });
-                                    }
-                                }
-                                Statement::ReturnStatement(return_statement) => {
-                                    method_statements.push(Stmt::Return {
-                                        value: return_statement
-                                            .argument
-                                            .as_ref()
-                                            .map(|expression| convert_expression(source, expression))
-                                            .transpose()
-                                            .map_err(|error| vec![error])?,
-                                        span: Span::new(
-                                            return_statement.span.start,
-                                            return_statement.span.end,
-                                        ),
-                                    });
-                                }
-                                Statement::ExpressionStatement(expression_statement) => {
-                                    method_statements.push(Stmt::Expr(
-                                        convert_expression(source, &expression_statement.expression)
-                                            .map_err(|error| vec![error])?,
-                                    ));
-                                }
-                                Statement::BreakStatement(break_statement) => {
-                                    method_statements.push(Stmt::Break {
-                                        label: break_statement.label.as_ref().map(|label| Name {
-                                            span: Span::new(label.span.start, label.span.end),
-                                        }),
-                                        span: Span::new(
-                                            break_statement.span.start,
-                                            break_statement.span.end,
-                                        ),
-                                    });
-                                }
-                                Statement::ContinueStatement(continue_statement) => {
-                                    method_statements.push(Stmt::Continue {
-                                        label: continue_statement.label.as_ref().map(|label| Name {
-                                            span: Span::new(label.span.start, label.span.end),
-                                        }),
-                                        span: Span::new(
-                                            continue_statement.span.start,
-                                            continue_statement.span.end,
-                                        ),
-                                    });
-                                }
-                                Statement::ThrowStatement(throw_statement) => {
-                                    method_statements.push(Stmt::Throw {
-                                        value: convert_expression(source, &throw_statement.argument)
-                                            .map_err(|error| vec![error])?,
-                                        span: Span::new(
-                                            throw_statement.span.start,
-                                            throw_statement.span.end,
-                                        ),
-                                    });
-                                }
-                                Statement::IfStatement(if_statement) => {
-                                    method_statements.push(
-                                        convert_if_statement(source, if_statement)
-                                            .map_err(|error| vec![error])?,
-                                    );
-                                }
-                                Statement::TryStatement(try_statement) => {
-                                    method_statements.push(
-                                        convert_try_statement(source, try_statement)
-                                            .map_err(|error| vec![error])?,
-                                    );
-                                }
-                                Statement::WhileStatement(while_statement) => {
-                                    method_statements.push(Stmt::While {
-                                        cond: convert_expression(source, &while_statement.test)
-                                            .map_err(|error| vec![error])?,
-                                        body: convert_if_branch(source, &while_statement.body)
-                                            .map_err(|error| vec![error])?,
-                                        span: Span::new(
-                                            while_statement.span.start,
-                                            while_statement.span.end,
-                                        ),
-                                    });
-                                }
-                                Statement::DoWhileStatement(do_while_statement) => {
-                                    method_statements.push(Stmt::DoWhile {
-                                        body: convert_if_branch(source, &do_while_statement.body)
-                                            .map_err(|error| vec![error])?,
-                                        cond: convert_expression(source, &do_while_statement.test)
-                                            .map_err(|error| vec![error])?,
-                                        span: Span::new(
-                                            do_while_statement.span.start,
-                                            do_while_statement.span.end,
-                                        ),
-                                    });
-                                }
-                                Statement::ForStatement(_) => {
-                                    let nested = convert_if_branch(source, statement)
-                                        .map_err(|error| vec![error])?;
-                                    method_statements.extend(nested.statements);
-                                }
-                                Statement::ForOfStatement(_) => {
-                                    let nested = convert_if_branch(source, statement)
-                                        .map_err(|error| vec![error])?;
-                                    method_statements.extend(nested.statements);
-                                }
-                                _ => return Err(vec![
-                                    "OXC adapter class methods currently support local, conditional, loop-control, throw, return, expression, and loop statements".into(),
-                                ]),
-                            }
-                        }
+                        let method_statements = convert_statement_list(source, &body.statements)
+                            .map_err(|error| vec![error])?;
                         let mut params = Vec::with_capacity(method.value.params.items.len());
                         for parameter in &method.value.params.items {
                             let (identifier_span, is_rest) = match &parameter.pattern {

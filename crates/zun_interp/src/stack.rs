@@ -38,12 +38,28 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
     Ok(())
 }
 
+/// Project a boxed `Any` operand onto the primitive it carries, so a dynamic
+/// value read from an object compares against an unboxed literal (`o.v === true`).
+/// Opaque `Any` payloads (class descriptors, symbols) stay boxed.
+fn unbox_for_compare(value: Value) -> Value {
+    match value {
+        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+            .unwrap_or(Value::Any(any)),
+        other => other,
+    }
+}
+
 pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
-    let b = pop(stack)?;
-    let a = pop(stack)?;
+    let b = unbox_for_compare(pop(stack)?);
+    let a = unbox_for_compare(pop(stack)?);
     let equal = match (&a, &b) {
         (Value::Float(x, _), Value::Float(y, _)) => x == y,
         (Value::Int(x, _), Value::Int(y, _)) => x == y,
+        (Value::Int(x, _), Value::Float(y, _)) | (Value::Float(y, _), Value::Int(x, _)) => {
+            (*x as f64) == *y
+        }
+        (Value::Void, Value::Void) => true,
+        (Value::Void, Value::Null) | (Value::Null, Value::Void) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),

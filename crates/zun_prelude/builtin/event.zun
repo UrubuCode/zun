@@ -1,24 +1,80 @@
-// Nucleus `Event` (DOM Events, prelude class).
+// Nucleus `Event` and `CustomEvent` (DOM Events, prelude classes).
 //
-//   new Event(type)
-//   type, defaultPrevented, preventDefault()
-//   stopPropagation(), stopImmediatePropagation()
+//   new Event(type, { bubbles, cancelable, composed }?)
+//   new CustomEvent(type, { detail, bubbles, cancelable, composed }?)
+//   type, bubbles, cancelable, composed, defaultPrevented, isTrusted,
+//   eventPhase, target, currentTarget, detail
+//   preventDefault(), stopPropagation(), stopImmediatePropagation()
+//   Event.NONE / CAPTURING_PHASE / AT_TARGET / BUBBLING_PHASE
+//
+// The init bag is kept as a dynamic `any` value and the flags are read through
+// getters, so `new Event("x", { cancelable: true })` needs no per-field
+// constructor argument.
 //
 // Simplifications (documented, not defects):
 //   * No bubbling / capture tree, so `stopPropagation` only records that it was
 //     called; `stopImmediatePropagation` additionally stops the remaining
 //     listeners of the current `EventTarget.dispatchEvent`.
-//   * No `cancelable` / `bubbles` options, `target`, `timeStamp` or `isTrusted`:
-//     every event is cancelable.
+//   * `detail` lives on `Event` (null unless the init bag carries one) so a
+//     listener whose parameter is typed `Event` can read it.
 
 class Event {
+    static NONE: number = 0;
+    static CAPTURING_PHASE: number = 1;
+    static AT_TARGET: number = 2;
+    static BUBBLING_PHASE: number = 3;
+
     type: string;
+    init: any;
     defaultPrevented: boolean = false;
     propagationStopped: boolean = false;
     immediatePropagationStopped: boolean = false;
+    eventPhase: number = 0;
+    target: any = null;
+    currentTarget: any = null;
+    isTrusted: boolean = false;
+
+    constructor(type: string, init: any = null) {
+        this.type = type;
+        this.init = init;
+    }
+
+    get bubbles(): boolean {
+        if (this.init == null) {
+            return false;
+        }
+        return this.init.bubbles == true;
+    }
+
+    get cancelable(): boolean {
+        if (this.init == null) {
+            return false;
+        }
+        return this.init.cancelable == true;
+    }
+
+    get composed(): boolean {
+        if (this.init == null) {
+            return false;
+        }
+        return this.init.composed == true;
+    }
+
+    get detail(): any {
+        if (this.init == null) {
+            return null;
+        }
+        let value: any = this.init.detail;
+        if (value == null) {
+            return null;
+        }
+        return value;
+    }
 
     preventDefault(): void {
-        this.defaultPrevented = true;
+        if (this.cancelable) {
+            this.defaultPrevented = true;
+        }
     }
 
     stopPropagation(): void {
@@ -28,5 +84,11 @@ class Event {
     stopImmediatePropagation(): void {
         this.propagationStopped = true;
         this.immediatePropagationStopped = true;
+    }
+}
+
+class CustomEvent extends Event {
+    constructor(type: string, init: any = null) {
+        super(type, init);
     }
 }

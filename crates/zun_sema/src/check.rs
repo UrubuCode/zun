@@ -794,6 +794,39 @@ impl Checker<'_> {
                 }
             }
         }
+        // Static fields with a literal initializer (`static NONE: number = 0`)
+        // are stored once at module initialization.
+        for class_idx in 0..self.classes.len() {
+            let fields = self.full_fields(class_idx as u32);
+            let initializers = self.full_initializers(class_idx as u32);
+            for (slot, (_, field_ty, is_static, _)) in fields.iter().enumerate() {
+                if !*is_static {
+                    continue;
+                }
+                let Some(Some(init)) = initializers.get(slot) else { continue };
+                let (kind, ty) = match (init.as_ref(), *field_ty) {
+                    (ast::Expr::Number { value, .. }, Ty::F64) => {
+                        (hir::ExprKind::Number(*value), Ty::F64)
+                    }
+                    (ast::Expr::String { value, .. }, Ty::String) => {
+                        (hir::ExprKind::String(value.clone()), Ty::String)
+                    }
+                    (ast::Expr::Bool { value, .. }, Ty::Boolean) => {
+                        (hir::ExprKind::Boolean(*value), Ty::Boolean)
+                    }
+                    _ => continue,
+                };
+                body.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::StaticFieldSet {
+                        class: class_idx as u32,
+                        field_slot: slot as u16,
+                        value: Box::new(hir::Expr { kind, ty, span }),
+                    },
+                    ty,
+                    span,
+                }));
+            }
+        }
         if let Some((set_default, _)) = zun_natives::resolve("collections", "classSetFieldDefault") {
             for class_idx in 0..self.classes.len() {
                 let fields = self.full_fields(class_idx as u32);
@@ -8111,6 +8144,21 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                 };
+                // `addEventListener` / `removeEventListener` accept either a
+                // function or a `{ handleEvent }` object. A function cannot be
+                // stored in `any`, so the object form routes to a sibling
+                // `<name>Object` method taking an `any` listener.
+                let mut mname = mname;
+                if matches!(mname.as_str(), "addEventListener" | "removeEventListener")
+                    && args.len() >= 2
+                    && !matches!(args[1], ast::Expr::Function(_))
+                    && self.method_of(class, &format!("{mname}Object")).is_some()
+                {
+                    let probe = self.check_expr(cx, &args[1]);
+                    if matches!(probe.ty, Ty::DynamicObject | Ty::Any | Ty::Instance(_)) {
+                        mname = format!("{mname}Object");
+                    }
+                }
                 let Some(func) = self.method_of(class, &mname) else {
                     self.error(method.span, format!("no method `{mname}` on this type"));
                     return self.poison(span);
@@ -8183,8 +8231,21 @@ impl Checker<'_> {
                 };
                 // param_tys[0] is `this`; the remaining are the declared params.
                 let mut call_args = vec![receiver];
-                for a in args {
+                let listener_hint = if mname == "addEventListener" {
+                    self.classes_by_name.get("Event").map(|&event| Ty::Instance(event))
+                } else {
+                    None
+                };
+                for (arg_index, a) in args.iter().enumerate() {
+                    // Contextual typing: an unannotated listener closure
+                    // receives the `Event`.
+                    if arg_index == 1 && matches!(a, ast::Expr::Function(_)) {
+                        if let Some(event_ty) = listener_hint {
+                            self.closure_param_hint = Some(vec![event_ty]);
+                        }
+                    }
                     call_args.push(self.check_expr(cx, a));
+                    self.closure_param_hint = None;
                 }
                 let sig = Signature {
                     name: signature_name,
@@ -9962,6 +10023,35 @@ impl Checker<'_> {
                                 value: Box::new(boxed),
                             },
                             ty: Ty::Any,
+                            span,
+                        }
+                    }
+                    // `arr.length = n` (truncation; growth is not supported):
+                    // lowered to a clamped splice removing the tail.
+                    Ty::Array if fname == "length" => {
+                        coerce_numeric_literal(&mut value, Ty::Int(IntKind::U64));
+                        if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::Int(IntKind::U64)) {
+                            self.error(value.span, "`Array.length` must be assigned an integer");
+                            return self.poison(span);
+                        }
+                        let Some((id, _)) = zun_natives::resolve("array", "arraySpliceInsert") else {
+                            self.error(span, "missing Array intrinsic `arraySpliceInsert`");
+                            return self.poison(span);
+                        };
+                        let mut count = hir::Expr {
+                            kind: hir::ExprKind::Number(4294967295.0),
+                            ty: Ty::F64,
+                            span,
+                        };
+                        coerce_numeric_literal(&mut count, Ty::Int(IntKind::U64));
+                        let items = hir::Expr {
+                            kind: hir::ExprKind::ArrayLiteral { elements: Vec::new() },
+                            ty: Ty::Array,
+                            span,
+                        };
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, value, count, items] },
+                            ty: Ty::Array,
                             span,
                         }
                     }

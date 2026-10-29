@@ -75,10 +75,24 @@ impl Checker<'_> {
                 .as_ref()
                 .map(|annotation| self.resolve_annotation(annotation))
                 .or_else(|| param_hint.as_ref().and_then(|hints| hints.get(index).copied()))
-                .unwrap_or(Ty::F64);
+                .unwrap_or(Ty::Any);
             inner.declare(self.text(&parameter.name), ty);
         }
         let body = self.check_block(&mut inner, &function.body);
+        // An expression-bodied arrow whose body is a void call (`() => log(x)`)
+        // returns nothing: evaluate it as a statement, then return bare.
+        let body: Vec<hir::Stmt> = if function.return_type.is_none() {
+            body.into_iter()
+                .flat_map(|statement| match statement {
+                    hir::Stmt::Return(Some(value)) if value.ty == Ty::Void => {
+                        vec![hir::Stmt::Expr(value), hir::Stmt::Return(None)]
+                    }
+                    other => vec![other],
+                })
+                .collect()
+        } else {
+            body
+        };
         let return_ty = if function.return_type.is_some() {
             inner.return_ty
         } else {
