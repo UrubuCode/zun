@@ -5056,10 +5056,20 @@ impl Checker<'_> {
                             || t == Ty::String
                             || t == Ty::F64
                             || t == Ty::Boolean
+                            || t == Ty::BigInt
+                            || matches!(t, Ty::Int(_))
                     };
-                    if (objectish(lhs.ty) || objectish(rhs.ty))
-                        && operable(lhs.ty)
+                    // Route through the runtime `addAny` (ECMAScript
+                    // ToPrimitive + string concat / numeric add) whenever an
+                    // operand is object/any, or a string meets a non-string
+                    // primitive (`"x" + 1`, `"x" + true`). Same-type numeric and
+                    // string+string keep their direct lowerings below.
+                    let involves_string = lhs.ty == Ty::String || rhs.ty == Ty::String;
+                    if operable(lhs.ty)
                         && operable(rhs.ty)
+                        && (objectish(lhs.ty)
+                            || objectish(rhs.ty)
+                            || (involves_string && lhs.ty != rhs.ty))
                     {
                         if let Some((id, _)) = zun_natives::resolve("collections", "addAny") {
                             let to_any = |e: hir::Expr| {
