@@ -3654,6 +3654,38 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        // `Math.min`/`max`/`hypot` are variadic: fold the 2-arg native left to
+        // right (`f(a,b,c)` → `f(f(a,b),c)`). 0 args give the identity.
+        if matches!(method, "min" | "max" | "hypot") {
+            let native_name = match method {
+                "min" => "minNumber",
+                "max" => "maxNumber",
+                _ => "hypotNumber",
+            };
+            let Some((id, _)) = zun_natives::resolve("math", native_name) else {
+                self.error(span, format!("missing Math intrinsic `{native_name}`"));
+                return self.poison(span);
+            };
+            let identity = match method {
+                "min" => f64::INFINITY,
+                "max" => f64::NEG_INFINITY,
+                _ => 0.0,
+            };
+            // Start from the identity and fold every argument through the 2-arg
+            // native: `f(identity, a) = a` for min/max, `hypot(0, a) = |a|`, so
+            // 0/1/N arguments all get the correct value.
+            let mut acc = hir::Expr { kind: hir::ExprKind::Number(identity), ty: Ty::F64, span };
+            for arg in args {
+                let mut value = self.check_expr(cx, arg);
+                coerce_numeric_literal(&mut value, Ty::F64);
+                acc = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
+                    ty: Ty::F64,
+                    span,
+                };
+            }
+            return acc;
+        }
         let native_name = match method {
             "floor" => "floorNumber",
             "ceil" => "ceilNumber",
@@ -5038,7 +5070,11 @@ impl Checker<'_> {
                 // exponent semantics, NaN/Infinity edges included). Integer `**`
                 // stays an IL opcode (`pow.i32`), lowered below via binary_result.
                 if let ast::BinaryOp::Pow = op {
-                    if lhs.ty == Ty::F64 && rhs.ty == Ty::F64 {
+                    // `number ** number`, and any `**` with a dynamic operand,
+                    // route to `Math.pow` (the dynamic side coerces to f64 at
+                    // run time). Pure-int `**` stays the `pow.i32` opcode below.
+                    let numberish = |t: Ty| t == Ty::F64 || t == Ty::Any;
+                    if numberish(lhs.ty) && numberish(rhs.ty) {
                         if let Some((id, native)) = zun_natives::resolve("math", "powNumber") {
                             return hir::Expr {
                                 kind: hir::ExprKind::CallBuiltin {
@@ -8380,6 +8416,19 @@ impl Checker<'_> {
             ast::Expr::Cast { expr, ty, .. } => {
                 let value = self.check_expr(cx, expr);
                 let target = self.resolve_annotation(ty);
+                // `x as any` is a widening assertion: box a concrete value into
+                // the dynamic carrier (a value already `any` passes through).
+                if target == Ty::Any {
+                    return if value.ty == Ty::Any || value.ty.is_error() {
+                        value
+                    } else {
+                        hir::Expr {
+                            span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                        }
+                    };
+                }
                 // Numeric conversions may also explicitly unbox an `any` value.
                 let numeric = |t: Ty| t.is_int() || t.is_float();
                 if !value.ty.is_error()
@@ -10052,7 +10101,10 @@ impl Checker<'_> {
                             hir::DYNAMIC_PREDICATE => (1, Ty::Boolean),
                             _ => (1, Ty::Any),
                         };
-                        if args.len() != expected {
+                        // A plain dynamic function value accepts any argument
+                        // count (JS); only the fixed-shape predicate/reducer
+                        // callbacks enforce their arity.
+                        if func != hir::DYNAMIC_FUNCTION && args.len() != expected {
                             self.error(
                                 span,
                                 format!("dynamic function value expects {expected} argument(s), found {}", args.len()),
