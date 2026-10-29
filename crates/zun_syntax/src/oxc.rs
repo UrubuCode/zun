@@ -760,6 +760,39 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(source, &parenthesized.expression)
         }
+        Expression::SequenceExpression(sequence) => {
+            // Desugar `(a, b, c)` into an immediately-invoked arrow
+            // `(() => { a; b; return c; })()` so evaluation order and side
+            // effects of the earlier expressions are preserved while the whole
+            // sequence still yields the last expression's value.
+            let whole = span(sequence.span);
+            let (last, leading) = sequence
+                .expressions
+                .split_last()
+                .ok_or("OXC adapter: empty sequence expression")?;
+            let mut statements = Vec::with_capacity(sequence.expressions.len());
+            for expression in leading {
+                statements.push(Stmt::Expr(convert_expression(source, expression)?));
+            }
+            statements.push(Stmt::Return {
+                value: Some(convert_expression(source, last)?),
+                span: span(last.span()),
+            });
+            let iife = Expr::Function(FunctionExpr {
+                params: Vec::new(),
+                return_type: convert_type_annotation(source, None)?,
+                body: Block { statements, span: whole },
+                is_arrow: true,
+                is_async: false,
+                is_generator: false,
+                span: whole,
+            });
+            Ok(Expr::ComputedCall {
+                callee: Box::new(iife),
+                args: Vec::new(),
+                span: whole,
+            })
+        }
         Expression::TSAsExpression(assertion) => Ok(Expr::Cast {
             expr: Box::new(convert_expression(source, &assertion.expression)?),
             ty: crate::ast::TypeAnnotation {
@@ -1560,14 +1593,18 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 ])
                             }
                         };
-                        let Some(type_annotation) =
+                        // A field without an explicit (or nameable) type erases
+                        // to `any`, encoded as a zero-width type span that sema
+                        // resolves to `Ty::Any` (JS/TS erasure semantics).
+                        let type_annotation =
                             convert_type_annotation(source, property.type_annotation.as_deref())
                                 .map_err(|error| vec![error])?
-                        else {
-                            return Err(vec![
-                                "OXC adapter requires class fields to have named types".into(),
-                            ]);
-                        };
+                                .unwrap_or(crate::ast::TypeAnnotation {
+                                    name: Name {
+                                        span: Span::new(field_span.start, field_span.start),
+                                    },
+                                    is_array: false,
+                                });
                         fields.push(crate::ast::ClassField {
                             name: Name { span: field_span },
                             decorators: property
@@ -1579,13 +1616,23 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             ty: type_annotation,
                             is_static: property.r#static,
                             is_private,
-                            initializer: property
-                                .value
-                                .as_ref()
-                                .map(|expression| convert_expression(source, expression))
-                                .transpose()
-                                .map_err(|error| vec![error])?
-                                .map(Box::new),
+                            // A field without an initializer defaults to
+                            // `undefined` (`void 0`), so the implicit
+                            // constructor always has a value for every slot.
+                            initializer: Some(Box::new(
+                                match property.value.as_ref() {
+                                    Some(expression) => convert_expression(source, expression)
+                                        .map_err(|error| vec![error])?,
+                                    None => Expr::Unary {
+                                        op: crate::ast::UnaryOp::Void,
+                                        operand: Box::new(Expr::Number {
+                                            value: 0.0,
+                                            span: field_span,
+                                        }),
+                                        span: field_span,
+                                    },
+                                },
+                            )),
                         });
                     }
                     ClassElement::MethodDefinition(method) => {

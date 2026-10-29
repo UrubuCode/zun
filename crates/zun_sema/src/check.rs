@@ -1432,7 +1432,13 @@ impl Checker<'_> {
                 }
                 let return_ty = match &m.return_type {
                     Some(t) => self.resolve_annotation(t),
-                    None => Ty::Void,
+                    None => {
+                        if block_returns_value(&m.body) {
+                            Ty::Any
+                        } else {
+                            Ty::Void
+                        }
+                    }
                 };
                 let func_index = self.signatures.len() as u32;
                 if self.methods_by_class[class_idx]
@@ -1480,7 +1486,13 @@ impl Checker<'_> {
                 }
                 let return_ty = match &sm.function.return_type {
                     Some(t) => self.resolve_annotation(t),
-                    None => Ty::Void,
+                    None => {
+                        if block_returns_value(&sm.function.body) {
+                            Ty::Any
+                        } else {
+                            Ty::Void
+                        }
+                    }
                 };
                 let func_index = self.signatures.len() as u32;
                 self.signatures.push(Signature {
