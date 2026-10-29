@@ -8066,37 +8066,47 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // String/Number/Array are primitives with no concatenated class
+                // (see PRELUDE_CLASSES): resolve a method not already handled by
+                // the tables above directly against its native group by name —
+                // covering every native method without re-listing each.
+                let primitive_group = match receiver.ty {
+                    Ty::String => Some(("string", "String")),
+                    Ty::F64 => Some(("number", "Number")),
+                    Ty::Array => Some(("array", "Array")),
+                    _ => None,
+                };
+                if let Some((group, class_name)) = primitive_group {
+                    if !self.classes_by_name.contains_key(class_name) {
+                        if let Some((id, native)) = zun_natives::resolve(group, &mname) {
+                            if native.params.len() == args.len() + 1 {
+                                let mut call_args = vec![receiver];
+                                for (arg, expected) in args
+                                    .iter()
+                                    .zip(native.params[1..].iter().map(|t| native_ty(*t)))
+                                {
+                                    let mut value = self.check_expr(cx, arg);
+                                    coerce_numeric_literal(&mut value, expected);
+                                    call_args.push(value);
+                                }
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                    ty: native_ty(native.ret),
+                                    span,
+                                };
+                            }
+                        }
+                        self.error(
+                            method.span,
+                            format!("no method `{mname}` on {class_name}"),
+                        );
+                        return self.poison(span);
+                    }
+                }
                 let class = match receiver.ty {
-                    Ty::String => match self.classes_by_name.get("String") {
-                        Some(&class) => class,
-                        None => {
-                            self.error(
-                                receiver.span,
-                                "String methods are not available without class String",
-                            );
-                            return self.poison(span);
-                        }
-                    },
-                    Ty::F64 => match self.classes_by_name.get("Number") {
-                        Some(&class) => class,
-                        None => {
-                            self.error(
-                                receiver.span,
-                                "Number methods are not available without class Number",
-                            );
-                            return self.poison(span);
-                        }
-                    },
-                    Ty::Array => match self.classes_by_name.get("Array") {
-                        Some(&class) => class,
-                        None => {
-                            self.error(
-                                receiver.span,
-                                "Array methods are not available without class Array",
-                            );
-                            return self.poison(span);
-                        }
-                    },
+                    Ty::String => self.classes_by_name["String"],
+                    Ty::F64 => self.classes_by_name["Number"],
+                    Ty::Array => self.classes_by_name["Array"],
                     Ty::Instance(c) => c,
                     Ty::Error => return self.poison(span),
                     other => {
