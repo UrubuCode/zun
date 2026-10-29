@@ -2022,6 +2022,46 @@ impl<'a> Interp<'a> {
                     heap.dynamic_delete(object, name)
                 })))
             }
+            "reflectSet" => {
+                // `Reflect.set(target, key, value)` returns a boolean success,
+                // respecting writability (existing own data property) and
+                // extensibility (adding a new property). Non-object targets and
+                // failed stores return `false` rather than throwing.
+                let Some(object) = object(args.first().ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Bool(false));
+                };
+                let key_value = args.get(1).ok_or(RunError::BadToken)?;
+                let name = match key_value {
+                    Value::Str(name) => name.to_string(),
+                    Value::Any(any) => match zun_gc::with_current_heap(|heap| {
+                        any.as_string().and_then(|handle| heap.try_string(handle).map(|s| s.to_string()))
+                    }) {
+                        Some(text) => text,
+                        None => return Ok(Value::Bool(false)),
+                    },
+                    Value::Int(n, _) => n.to_string(),
+                    _ => return Ok(Value::Bool(false)),
+                };
+                let value = any(args.get(2).ok_or(RunError::BadToken)?)
+                    .unwrap_or_else(zun_core::Any::null);
+                let ok = zun_gc::with_current_heap_mut(|heap| {
+                    let exists = heap.dynamic_get(object, &name).is_some();
+                    if exists {
+                        if heap.dynamic_is_writable(object, &name) {
+                            heap.dynamic_set(object, name.clone(), value);
+                            true
+                        } else {
+                            false
+                        }
+                    } else if heap.dynamic_is_extensible(object) {
+                        heap.dynamic_set(object, name.clone(), value);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                Ok(Value::Bool(ok))
+            }
             "proxyNew" => {
                 let target = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;

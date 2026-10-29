@@ -2820,25 +2820,26 @@ impl Checker<'_> {
                 }
             }
             "set" => {
+                // `Reflect.set` returns a boolean success and respects
+                // writability/extensibility (unlike `target[key] = value`),
+                // so it routes to the dedicated `reflectSet` native.
                 let value = checked.pop().unwrap();
                 let key = checked.pop().unwrap();
                 let object = checked.pop().unwrap();
-                let boxed = if value.ty == Ty::Any {
-                    value
-                } else {
-                    hir::Expr {
-                        span: value.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
-                        ty: Ty::Any,
-                    }
+                let Some((id, _)) = zun_natives::resolve("collections", "reflectSet") else {
+                    self.error(span, "missing `reflectSet` intrinsic");
+                    return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::DynamicSetValue {
-                        object: Box::new(object),
-                        key: Box::new(key),
-                        value: Box::new(boxed),
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![
+                            Self::box_to_any(object),
+                            Self::box_to_any(key),
+                            Self::box_to_any(value),
+                        ],
                     },
-                    ty: Ty::Any,
+                    ty: Ty::Boolean,
                     span,
                 }
             }

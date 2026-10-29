@@ -572,6 +572,10 @@ pub const MODULE: crate::Module = crate::Module {
         // receiver. Appended last so existing dispatch ids stay stable.
         NativeFn { name: "mapSetChain", params: &[Map, Opaque, Opaque], ret: Map, imp: unavailable },
         NativeFn { name: "setAddChain", params: &[Set, Opaque], ret: Set, imp: unavailable },
+        // `Reflect.set(target, key, value)` — stores respecting writability and
+        // extensibility, returning a boolean success (never the value, unlike
+        // `target[key] = value`). Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "reflectSet", params: &[Opaque, Opaque, Opaque], ret: Bool, imp: unavailable },
         // ToNumber that throws a TypeError for BigInt and Symbol (the `Math.*`
         // argument coercion), unlike `numberCoerce` (`Number(x)`).
         NativeFn { name: "numberCoerceStrict", params: &[Opaque], ret: F64, imp: unavailable },
