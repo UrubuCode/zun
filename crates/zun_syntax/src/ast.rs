@@ -24,6 +24,12 @@ pub struct Program {
     /// `enum E { ... }` declarations, in source order. Members fold to
     /// compile-time constants (`E.Member`); the enum name is usable as a type.
     pub enums: Vec<EnumDecl>,
+    /// Executable top-level statements, in source order (module body). Function,
+    /// class, import, type, and enum declarations are hoisted into the lists
+    /// above; everything else (a `const`/`let`, an expression, a loop, an `if`)
+    /// is collected here and lowered into a synthetic entry that runs as the
+    /// program, matching JS/TS module semantics.
+    pub top_level: Vec<Stmt>,
 }
 
 /// `enum Name { A, B = 2, ... }` (or `const enum`). Each member is a named

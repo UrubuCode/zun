@@ -422,11 +422,15 @@
             .any(|d| d.message.contains("assignment target")));
     }
     #[test]
-    fn stray_top_level_tokens_recover_to_next_function() {
+    fn top_level_statements_are_collected_alongside_declarations() {
+        // Executable top-level code (a module body) is valid: a `let` is
+        // collected as a top-level statement, and a following `function` is a
+        // normal declaration. No diagnostics — this is ordinary JS/TS.
         let mut diags = Vec::new();
         let p = parse("let x = 1; function ok() {}", &mut diags);
         assert_eq!(p.functions.len(), 1);
-        assert!(!diags.is_empty());
+        assert_eq!(p.top_level.len(), 1, "the `let` is a top-level statement");
+        assert!(diags.is_empty(), "top-level statements are not an error: {diags:?}");
     }
     #[test]
     fn parses_class_with_fields() {

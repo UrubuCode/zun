@@ -209,33 +209,19 @@ fn convert_declarator(
 
 fn convert_argument(source: &str, argument: &Argument<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
-    match argument {
-        Argument::NumericLiteral(number) => Ok(Expr::Number {
-            value: number.value,
-            span: span(number.span),
-        }),
-        Argument::StringLiteral(string) => {
-            let Some(value) = string.value.as_str() else {
-                return Err("OXC adapter cannot represent non-UTF-8 string literals".into());
-            };
-            Ok(Expr::String {
-                value: value.to_owned(),
-                span: span(string.span),
-            })
-        }
-        Argument::BooleanLiteral(boolean) => Ok(Expr::Bool {
-            value: boolean.value,
-            span: span(boolean.span),
-        }),
-        Argument::Identifier(identifier) => Ok(Expr::Ident(Name {
-            span: span(identifier.span),
-        })),
-        Argument::SpreadElement(spread) => Ok(Expr::Spread {
+    // `...spread` is the only argument form that is not itself an expression;
+    // every other argument is an ordinary expression, so route it through the
+    // full expression converter rather than re-listing a subset here.
+    if let Argument::SpreadElement(spread) = argument {
+        return Ok(Expr::Spread {
             expr: Box::new(convert_expression(source, &spread.argument)?),
             span: span(spread.span),
-        }),
-        _ => Err("OXC adapter currently supports literal, identifier, and spread arguments".into()),
+        });
     }
+    let expression = argument
+        .as_expression()
+        .ok_or("OXC adapter cannot represent this argument")?;
+    convert_expression(source, expression)
 }
 
 fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
@@ -310,13 +296,11 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span(do_while_statement.span),
                 });
             }
-            Statement::ForStatement(_) => {
-                let nested = convert_if_branch(source, statement)?;
-                statements.extend(nested.statements);
+            Statement::ForStatement(for_statement) => {
+                statements.push(convert_for_statement(source, for_statement)?);
             }
-            Statement::ForOfStatement(_) => {
-                let nested = convert_if_branch(source, statement)?;
-                statements.extend(nested.statements);
+            Statement::ForOfStatement(for_of_statement) => {
+                statements.push(convert_for_of(source, for_of_statement)?);
             }
             _ => {
                 return Err(
@@ -385,150 +369,66 @@ fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr
 }
 
 fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
-    match statement {
-        Statement::EmptyStatement(empty) => Ok(Block {
-            statements: Vec::new(),
-            span: Span::new(empty.span.start, empty.span.end),
-        }),
-        Statement::DebuggerStatement(debugger) => Ok(Block {
-            statements: Vec::new(),
-            span: Span::new(debugger.span.start, debugger.span.end),
-        }),
-        Statement::BlockStatement(_) => convert_block_statement(source, statement),
-        Statement::IfStatement(if_statement) => Ok(Block {
-            span: Span::new(if_statement.span.start, if_statement.span.end),
-            statements: vec![convert_if_statement(source, if_statement)?],
-        }),
-        Statement::TryStatement(try_statement) => Ok(Block {
-            span: Span::new(try_statement.span.start, try_statement.span.end),
-            statements: vec![convert_try_statement(source, try_statement)?],
-        }),
-        Statement::VariableDeclaration(declaration) => {
-            let mut statements = Vec::with_capacity(declaration.declarations.len());
-            for declarator in &declaration.declarations {
-                statements.push(convert_declarator(source, declarator)?);
+    // A branch is a block (convert its inner list) or any single statement
+    // (a one-element list). Delegating to `convert_statement_list` keeps one
+    // statement converter, so a branch supports exactly what a block body does.
+    let statements = match statement {
+        Statement::BlockStatement(block) => convert_statement_list(source, &block.body)?,
+        other => convert_statement_list(source, std::slice::from_ref(other))?,
+    };
+    Ok(Block {
+        statements,
+        span: Span::new(statement.span().start, statement.span().end),
+    })
+}
+
+/// Convert a C-style `for (init; cond; update) body` statement.
+fn convert_for_statement(
+    source: &str,
+    for_statement: &oxc_ast::ast::ForStatement<'_>,
+) -> Result<Stmt, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let init = match &for_statement.init {
+        None => None,
+        Some(ForStatementInit::VariableDeclaration(declaration)) => {
+            if declaration.declarations.len() != 1 {
+                return Err("OXC adapter supports one for-loop initializer binding".into());
             }
-            Ok(Block {
-                span: Span::new(declaration.span.start, declaration.span.end),
-                statements,
-            })
-        }
-        Statement::ReturnStatement(return_statement) => Ok(Block {
-            span: Span::new(return_statement.span.start, return_statement.span.end),
-            statements: vec![Stmt::Return {
-                value: return_statement
-                    .argument
-                    .as_ref()
-                    .map(|expression| convert_expression(source, expression))
-                    .transpose()?,
-                span: Span::new(return_statement.span.start, return_statement.span.end),
-            }],
-        }),
-        Statement::ExpressionStatement(expression_statement) => Ok(Block {
-            span: Span::new(
-                expression_statement.span.start,
-                expression_statement.span.end,
-            ),
-            statements: vec![Stmt::Expr(convert_expression(source, 
-                &expression_statement.expression,
-            )?)],
-        }),
-        Statement::ThrowStatement(throw_statement) => Ok(Block {
-            span: Span::new(throw_statement.span.start, throw_statement.span.end),
-            statements: vec![Stmt::Throw {
-                value: convert_expression(source, &throw_statement.argument)?,
-                span: Span::new(throw_statement.span.start, throw_statement.span.end),
-            }],
-        }),
-        Statement::BreakStatement(break_statement) => Ok(Block {
-            span: Span::new(break_statement.span.start, break_statement.span.end),
-            statements: vec![Stmt::Break {
-                label: break_statement.label.as_ref().map(|label| Name {
-                    span: Span::new(label.span.start, label.span.end),
-                }),
-                span: Span::new(break_statement.span.start, break_statement.span.end),
-            }],
-        }),
-        Statement::ContinueStatement(continue_statement) => Ok(Block {
-            span: Span::new(continue_statement.span.start, continue_statement.span.end),
-            statements: vec![Stmt::Continue {
-                label: continue_statement.label.as_ref().map(|label| Name {
-                    span: Span::new(label.span.start, label.span.end),
-                }),
-                span: Span::new(continue_statement.span.start, continue_statement.span.end),
-            }],
-        }),
-        Statement::WhileStatement(while_statement) => Ok(Block {
-            span: Span::new(while_statement.span.start, while_statement.span.end),
-            statements: vec![Stmt::While {
-                cond: convert_expression(source, &while_statement.test)?,
-                body: convert_if_branch(source, &while_statement.body)?,
-                span: Span::new(while_statement.span.start, while_statement.span.end),
-            }],
-        }),
-        Statement::DoWhileStatement(do_while_statement) => Ok(Block {
-            span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
-            statements: vec![Stmt::DoWhile {
-                body: convert_if_branch(source, &do_while_statement.body)?,
-                cond: convert_expression(source, &do_while_statement.test)?,
-                span: Span::new(do_while_statement.span.start, do_while_statement.span.end),
-            }],
-        }),
-        Statement::ForStatement(for_statement) => {
-            let init = match &for_statement.init {
-                None => None,
-                Some(ForStatementInit::VariableDeclaration(declaration)) => {
-                    if declaration.declarations.len() != 1 {
-                        return Err("OXC adapter supports one for-loop initializer binding".into());
-                    }
-                    let declarator = &declaration.declarations[0];
-                    let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
-                        return Err("OXC adapter supports identifier for-loop bindings".into());
-                    };
-                    let Some(initializer) = declarator.init.as_ref() else {
-                        return Err(
-                            "OXC adapter requires an initializer for for-loop bindings".into()
-                        );
-                    };
-                    Some(Box::new(Stmt::Let {
-                        name: Name {
-                            span: Span::new(identifier.span.start, identifier.span.end),
-                        },
-                        ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                        init: convert_expression(source, initializer)?,
-                        span: Span::new(declarator.span.start, declarator.span.end),
-                    }))
-                }
-                Some(init) => Some(Box::new(Stmt::Expr(convert_expression(source, 
-                    init.as_expression()
-                        .ok_or("OXC adapter does not support this for-loop initializer yet")?,
-                )?))),
+            let declarator = &declaration.declarations[0];
+            let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                return Err("OXC adapter supports identifier for-loop bindings".into());
             };
-            Ok(Block {
-                span: Span::new(for_statement.span.start, for_statement.span.end),
-                statements: vec![Stmt::For {
-                    init,
-                    cond: for_statement
-                        .test
-                        .as_ref()
-                        .map(|expression| convert_expression(source, expression))
-                        .transpose()?,
-                    update: for_statement
-                        .update
-                        .as_ref()
-                        .map(|expression| convert_expression(source, expression))
-                        .transpose()?,
-                    body: convert_if_branch(source, &for_statement.body)?,
-                    span: Span::new(for_statement.span.start, for_statement.span.end),
-                }],
-            })
+            let Some(initializer) = declarator.init.as_ref() else {
+                return Err("OXC adapter requires an initializer for for-loop bindings".into());
+            };
+            Some(Box::new(Stmt::Let {
+                name: Name { span: span(identifier.span) },
+                ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                init: convert_expression(source, initializer)?,
+                span: span(declarator.span),
+            }))
         }
-        Statement::ForOfStatement(for_of_statement) => Ok(Block {
-            span: Span::new(for_of_statement.span.start, for_of_statement.span.end),
-            statements: vec![convert_for_of(source, for_of_statement)?],
-        }),
-        _ => Err("OXC adapter requires a supported statement branch".into()),
-    }
+        Some(init) => Some(Box::new(Stmt::Expr(convert_expression(
+            source,
+            init.as_expression()
+                .ok_or("OXC adapter does not support this for-loop initializer yet")?,
+        )?))),
+    };
+    Ok(Stmt::For {
+        init,
+        cond: for_statement
+            .test
+            .as_ref()
+            .map(|expression| convert_expression(source, expression))
+            .transpose()?,
+        update: for_statement
+            .update
+            .as_ref()
+            .map(|expression| convert_expression(source, expression))
+            .transpose()?,
+        body: convert_if_branch(source, &for_statement.body)?,
+        span: span(for_statement.span),
+    })
 }
 
 /// Convert a `for (… of …)` statement, with an identifier or destructuring
@@ -1244,7 +1144,17 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     let mut functions = Vec::new();
     let mut imports = Vec::new();
     let mut classes = Vec::new();
+    let mut top_level = Vec::new();
     for statement in parsed.program.body {
+        // TS type-only declarations erase: a type alias or interface carries no
+        // runtime value, so it is dropped (annotations that name it resolve to
+        // `any` on this path, like the native parser's erasure).
+        if matches!(
+            statement,
+            Statement::TSTypeAliasDeclaration(_) | Statement::TSInterfaceDeclaration(_)
+        ) {
+            continue;
+        }
         if let Statement::ImportDeclaration(import_declaration) = statement {
             let Some(module) = import_declaration.source.value.as_str() else {
                 return Err(vec![
@@ -1713,9 +1623,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             _ => None,
         };
         let Some(function) = function else {
-            return Err(vec![
-                "OXC adapter does not support this top-level declaration yet".into(),
-            ]);
+            // Any other top-level node is an executable module statement (a JS/TS
+            // module body): convert it and collect it to run as the program.
+            top_level.extend(
+                convert_statement_list(source, std::slice::from_ref(&statement))
+                    .map_err(|error| vec![error])?,
+            );
+            continue;
         };
         let Some(id) = function.id.as_ref() else {
             return Err(vec!["OXC adapter requires named functions".into()]);
@@ -1988,6 +1902,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         type_aliases: Vec::new(),
         // Likewise, enum declarations are not surfaced on the OXC path yet.
         enums: Vec::new(),
+        top_level,
     })
 }
 

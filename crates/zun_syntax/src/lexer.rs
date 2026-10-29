@@ -310,14 +310,17 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Token> {
                     TokenKind::Number
                 }
             }
-            b'"' => {
+            b'"' | b'\'' => {
+                // Single- and double-quoted strings are equivalent in JS/TS; the
+                // delimiter is whichever opened the literal.
+                let quote = b;
                 pos += 1;
-                while pos < bytes.len() && bytes[pos] != b'"' && bytes[pos] != b'\n' {
+                while pos < bytes.len() && bytes[pos] != quote && bytes[pos] != b'\n' {
                     // Skip the escaped character so an escaped quote does not
                     // terminate the literal.
                     pos += if bytes[pos] == b'\\' { 2 } else { 1 };
                 }
-                if bytes.get(pos) == Some(&b'"') {
+                if bytes.get(pos) == Some(&quote) {
                     pos += 1;
                     TokenKind::String
                 } else {

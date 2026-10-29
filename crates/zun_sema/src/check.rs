@@ -194,10 +194,23 @@ fn check_impl(
         }
     }
 
-    let main = checker.by_name.get("main").copied();
-    // Generate the module initializer only for an executable module (one with a
-    // `main`). It is appended last so every existing function, method, and
-    // class-method index is unchanged — `main`'s IL in particular is untouched.
+    // Executable top-level statements (a JS/TS module body) lower into a
+    // synthetic entry that becomes the program's `main`. A program that instead
+    // defines a `function main()` (classic Zun style, no top-level statements)
+    // keeps that as the entry. The synthetic entry is appended last so every
+    // existing function/method/class-method index is unchanged.
+    let top_level_main = if program.top_level.is_empty() {
+        None
+    } else {
+        let function = checker.check_top_level(&program.top_level);
+        let index = functions.len() as u32;
+        functions.push(function);
+        Some(index)
+    };
+    let main = top_level_main.or_else(|| checker.by_name.get("main").copied());
+    // Generate the module initializer only for an executable module (one with
+    // an entry). It is appended last so every existing function, method, and
+    // class-method index is unchanged.
     let module_init = main.and_then(|_| {
         checker.build_module_initializer(program).map(|function| {
             let index = functions.len() as u32;
@@ -446,6 +459,46 @@ impl Checker<'_> {
     /// class-definition time, with `(value, context)`. See
     /// [`Self::append_runtime_decorator_calls`] for the protocol and its
     /// documented deferrals.
+    /// Lower the module's executable top-level statements into a synthetic
+    /// entry function (`<main>`), a static no-arg void function whose body is
+    /// those statements. Top-level `const`/`let` become its locals; it may call
+    /// any hoisted top-level function or class, which were registered before any
+    /// body was checked. This is how a JS/TS module body runs as the program.
+    fn check_top_level(&mut self, statements: &[ast::Stmt]) -> hir::Function {
+        let block = ast::Block { statements: statements.to_vec(), span: Span::new(0, 0) };
+        let mut cx = FunctionCx {
+            locals: Vec::new(),
+            scopes: vec![Scope::new()],
+            return_ty: Ty::Void,
+            is_generator: false,
+            loop_depth: 0,
+            loop_labels: Vec::new(),
+            mutated: HashSet::new(),
+            mutated_names: HashSet::new(),
+            boxed: HashSet::new(),
+            captures: HashMap::new(),
+            this_class: None,
+            is_constructor: false,
+        };
+        self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
+        let mut body = self.check_block(&mut cx, &block);
+        self.rewrite_boxed_lets(&mut body, &cx.boxed);
+        hir::Function {
+            name: "<main>".to_string(),
+            param_count: 0,
+            rest_param: None,
+            defaults: Vec::new(),
+            locals: cx.locals,
+            return_ty: Ty::Void,
+            is_async: false,
+            is_static: true,
+            is_generator: false,
+            async_plan: None,
+            generator_plan: None,
+            body,
+        }
+    }
+
     fn build_module_initializer(&self, program: &ast::Program) -> Option<hir::Function> {
         let span = Span::new(0, 0);
         let mut body: Vec<hir::Stmt> = Vec::new();

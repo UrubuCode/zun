@@ -244,7 +244,7 @@ fn run_with_extensions(file: &str, ext_paths: &[&str]) -> ExitCode {
 
     let oxc_typescript = matches!(
         path.extension().and_then(|extension| extension.to_str()),
-        Some("mts") | Some("tsx")
+        Some("ts") | Some("mts") | Some("tsx")
     );
     let use_oxc = oxc_typescript
         || matches!(
@@ -308,7 +308,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
     };
     let oxc_typescript = matches!(
         path.extension().and_then(|extension| extension.to_str()),
-        Some("mts") | Some("tsx")
+        Some("ts") | Some("mts") | Some("tsx")
     );
     let use_oxc = oxc_typescript
         || matches!(

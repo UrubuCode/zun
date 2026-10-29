@@ -507,14 +507,19 @@ pub fn compile_with_oxc_and_externals(
     typescript: bool,
     external_functions: &[zun_sema::check::ExternalFunction],
 ) -> Result<Module, Vec<Diagnostic>> {
-    let ast = zun_syntax::oxc::parse_subset(source, typescript)
+    // The OXC front-end is the single parser for the whole program: concatenate
+    // the standard prelude (classes + functions) and parse it together with the
+    // user source, exactly as the native path does with `with_prelude`. Spans in
+    // the HIR therefore refer to this combined source.
+    let combined = zun_prelude::with_prelude(source);
+    let ast = zun_syntax::oxc::parse_subset(&combined, typescript)
         .map_err(|errors| {
             errors
                 .into_iter()
                 .map(Diagnostic::error)
                 .collect::<Vec<_>>()
         })?;
-    compile_program_with_externals(source, ast, Vec::new(), external_functions)
+    compile_program_with_externals(&combined, ast, Vec::new(), external_functions)
 }
 
 /// Compile one named source into a loadable module scope.

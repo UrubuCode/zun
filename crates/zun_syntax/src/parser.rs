@@ -152,6 +152,7 @@ impl Parser<'_> {
         let mut imports = Vec::new();
         let mut type_aliases = Vec::new();
         let mut enums = Vec::new();
+        let mut top_level = Vec::new();
         while !self.at(TokenKind::Eof) {
             // `type X = ...;`, `interface X { ... }`, and `enum X { ... }` are
             // contextual: the leading word lexes as an identifier. A following
@@ -202,16 +203,17 @@ impl Parser<'_> {
                     functions.push(self.function(true, false));
                 }
                 TokenKind::KwClass => classes.push(self.class()),
+                // Any other token begins an executable top-level statement (a
+                // module body in JS/TS): a `const`/`let`, an expression, a
+                // loop, an `if`, etc. Collect it; a synthetic entry runs them.
                 _ => {
-                    let t = self.peek();
-                    self.error_at(t.span, "expected a function, class, or import declaration");
-                    // Synchronize to the next top-level declaration or EOF.
-                    while !self.at(TokenKind::Eof)
-                        && !self.at(TokenKind::KwFunction)
-                        && !self.at(TokenKind::KwClass)
-                        && !self.at(TokenKind::KwImport)
-                        && !self.at(TokenKind::At)
-                    {
+                    let before = self.pos;
+                    let statement = self.statement();
+                    top_level.push(statement);
+                    // Guard against a non-advancing parse (an unparseable token
+                    // that `statement` reported but did not consume) so the loop
+                    // cannot spin forever.
+                    if self.pos == before {
                         self.bump();
                     }
                 }
@@ -223,6 +225,7 @@ impl Parser<'_> {
             imports,
             type_aliases,
             enums,
+            top_level,
         }
     }
 
