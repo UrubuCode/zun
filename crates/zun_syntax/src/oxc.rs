@@ -965,6 +965,28 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             span: span(conditional.span),
         }),
         Expression::UnaryExpression(unary) => {
+            // Unary plus (`+x`) is numeric coercion; the language has no such
+            // operator, so desugar to `x - 0`, which applies ToNumber to the
+            // operand with the same result for every primitive.
+            if matches!(unary.operator, UnaryOperator::UnaryPlus) {
+                // `x as any - 0` boxes the operand so the subtraction takes the
+                // dynamic arithmetic path, which applies ToNumber at run time.
+                let operand = convert_expression(source, &unary.argument)?;
+                let boxed = Expr::Cast {
+                    expr: Box::new(operand),
+                    ty: crate::ast::TypeAnnotation {
+                        name: Name { span: Span::new(unary.span.start, unary.span.start) },
+                        is_array: false,
+                    },
+                    span: span(unary.span),
+                };
+                return Ok(Expr::Binary {
+                    op: BinaryOp::Sub,
+                    lhs: Box::new(boxed),
+                    rhs: Box::new(Expr::Number { value: 0.0, span: span(unary.span) }),
+                    span: span(unary.span),
+                });
+            }
             let op = match unary.operator {
                 UnaryOperator::UnaryNegation => crate::ast::UnaryOp::Neg,
                 UnaryOperator::LogicalNot => crate::ast::UnaryOp::Not,
@@ -1022,8 +1044,13 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 AssignmentOperator::ShiftLeft => Some(BinaryOp::Shl),
                 AssignmentOperator::ShiftRight => Some(BinaryOp::Shr),
                 AssignmentOperator::ShiftRightZeroFill => Some(BinaryOp::UShr),
+                // Logical assignments desugar to `a = a OP b`; the resulting
+                // value matches the short-circuit form for every operand.
+                AssignmentOperator::LogicalAnd => Some(BinaryOp::And),
+                AssignmentOperator::LogicalOr => Some(BinaryOp::Or),
+                AssignmentOperator::LogicalNullish => Some(BinaryOp::Nullish),
                 _ => {
-                    return Err("OXC adapter does not support logical assignments yet".into());
+                    return Err("OXC adapter does not support compound assignment yet".into());
                 }
             };
             let mut value = convert_expression(source, &assignment.right)?;
@@ -1255,20 +1282,27 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             })
         }
         Expression::NewExpression(new_expression) => {
-            let Expression::Identifier(identifier) = &new_expression.callee else {
-                return Err("OXC adapter supports identifier constructors only".into());
-            };
             let mut args = Vec::with_capacity(new_expression.arguments.len());
             for argument in &new_expression.arguments {
                 args.push(convert_argument(source, argument)?);
             }
-            Ok(Expr::New {
-                class: Name {
-                    span: span(identifier.span),
-                },
-                args,
-                span: span(new_expression.span),
-            })
+            // A bare identifier constructor resolves a named class; any other
+            // callee (`new ns.Ctor()`, `new (expr)()`) becomes a dynamic new on
+            // the evaluated callee expression.
+            match &new_expression.callee {
+                Expression::Identifier(identifier) => Ok(Expr::New {
+                    class: Name {
+                        span: span(identifier.span),
+                    },
+                    args,
+                    span: span(new_expression.span),
+                }),
+                callee => Ok(Expr::NewDynamic {
+                    callee: Box::new(convert_expression(source, callee)?),
+                    args,
+                    span: span(new_expression.span),
+                }),
+            }
         }
         Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),
         Expression::FunctionExpression(function) => convert_oxc_function(source, function),

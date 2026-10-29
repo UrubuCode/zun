@@ -821,7 +821,8 @@ impl Interp<'_> {
                     *pc = target;
                 }
                 Opcode::BranchTrue => {
-                    if pop(&mut stack)?.as_bool() {
+                    let condition = pop(&mut stack)?;
+                    if zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&condition, heap)) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
@@ -833,7 +834,8 @@ impl Interp<'_> {
                     }
                 }
                 Opcode::BranchFalse => {
-                    if !pop(&mut stack)?.as_bool() {
+                    let condition = pop(&mut stack)?;
+                    if !zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&condition, heap)) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {

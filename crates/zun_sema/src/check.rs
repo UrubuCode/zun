@@ -5196,7 +5196,55 @@ impl Checker<'_> {
                         }
                     }
                 }
+                // Dynamic numeric operators (`-`, `*`, `/`, `%`) apply
+                // ECMAScript ToNumber to both operands when a non-numeric or
+                // dynamic operand is involved (`"5" * 2`, `+x`, `any - 1`), then
+                // run the ordinary f64 op. Same-type numeric operands keep their
+                // direct lowering below.
+                if matches!(*op, ast::BinaryOp::Sub | ast::BinaryOp::Mul | ast::BinaryOp::Div | ast::BinaryOp::Rem) {
+                    let numericish = |t: Ty| {
+                        matches!(t, Ty::Int(_)) || matches!(t, Ty::Float(_)) || t == Ty::F64
+                    };
+                    let needs_coerce = !lhs.ty.is_error()
+                        && !rhs.ty.is_error()
+                        && !(numericish(lhs.ty) && numericish(rhs.ty))
+                        && lhs.ty != Ty::BigInt
+                        && rhs.ty != Ty::BigInt;
+                    if needs_coerce {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") {
+                            let coerce = |e: hir::Expr| hir::Expr {
+                                span: e.span,
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![Self::box_to_any(e)],
+                                },
+                                ty: Ty::F64,
+                            };
+                            let lhs = coerce(lhs);
+                            let rhs = coerce(rhs);
+                            return hir::Expr {
+                                kind: hir::ExprKind::Binary {
+                                    op: *op,
+                                    lhs: Box::new(lhs),
+                                    rhs: Box::new(rhs),
+                                },
+                                ty: Ty::F64,
+                                span,
+                            };
+                        }
+                    }
+                }
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
+                // A logical/nullish operator whose result is dynamic keeps the
+                // deciding operand's value (value-preserving short-circuit), so
+                // both operands must be boxed to a uniform `any` carrier.
+                let (lhs, rhs) = if ty == Ty::Any
+                    && matches!(*op, ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
+                {
+                    (Self::box_to_any(lhs), Self::box_to_any(rhs))
+                } else {
+                    (lhs, rhs)
+                };
                 hir::Expr {
                     kind: hir::ExprKind::Binary {
                         op: *op,
@@ -5214,8 +5262,8 @@ impl Checker<'_> {
                 ..
             } => {
                 let condition = self.check_condition(cx, condition);
-                let when_true = self.check_expr(cx, when_true);
-                let when_false = self.check_expr(cx, when_false);
+                let mut when_true = self.check_expr(cx, when_true);
+                let mut when_false = self.check_expr(cx, when_false);
                 let ty = if when_true.ty == when_false.ty {
                     when_true.ty
                 } else if matches!(when_true.ty, Ty::Function(_))
@@ -5233,8 +5281,12 @@ impl Checker<'_> {
                     // the runtime value (token rid 0) and yields `any`.
                     Ty::Function(hir::DYNAMIC_FUNCTION)
                 } else {
-                    self.error(span, "conditional branches must have matching types");
-                    Ty::Error
+                    // Branches of differing types form a union, erased to a
+                    // dynamic value. Box both sides so the stack value is a
+                    // proper `any` carrier regardless of which branch runs.
+                    when_true = Self::box_to_any(when_true);
+                    when_false = Self::box_to_any(when_false);
+                    Ty::Any
                 };
                 hir::Expr {
                     kind: hir::ExprKind::Conditional {
@@ -10653,19 +10705,22 @@ impl Checker<'_> {
         };
         match op {
             Nullish => {
+                // `a ?? b` yields `b`'s type when `a` is dynamic; any other
+                // operand pairing coerces through the dynamic path (JS).
                 if lhs.ty == Ty::Any {
                     rhs.ty
                 } else {
-                    self.error(span, "left operand of `??` must be nullable");
-                    Ty::Error
+                    Ty::Any
                 }
             }
             And | Or => {
+                // Boolean operands keep a boolean result; otherwise the
+                // operator follows JS truthiness over arbitrary values and the
+                // result is dynamic.
                 if lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean {
                     Ty::Boolean
                 } else {
-                    self.error(span, "logical operators require boolean operands");
-                    Ty::Error
+                    Ty::Any
                 }
             }
             Add => {

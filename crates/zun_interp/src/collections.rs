@@ -6635,7 +6635,7 @@ fn unbox_arg(value: &Value) -> Result<Value, RunError> {
 /// ECMAScript truthiness for a callback result (unboxing an `Any` carrier
 /// first): `false`, `0`/`NaN`, `""`, `null` and `undefined` are falsy; every
 /// object, function and non-empty string is truthy.
-fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
+pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
     let concrete = match value {
         Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),
         other => other.clone(),

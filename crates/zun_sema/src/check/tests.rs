@@ -235,8 +235,10 @@
     }
 
     #[test]
-    fn condition_must_be_boolean() {
-        assert!(first_error("function f() { if (1) {} }").contains("must be boolean"));
+    fn condition_accepts_any_truthy_value() {
+        // JS evaluates any value for truthiness; a numeric condition is valid
+        // and coerced by the branch opcodes at run time.
+        check_ok("function f() { if (1) {} }");
     }
 
     #[test]

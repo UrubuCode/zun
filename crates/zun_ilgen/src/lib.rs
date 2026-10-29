@@ -1083,21 +1083,22 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     return;
                 }
                 if matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    // Value-preserving short-circuit (JS semantics): the result
+                    // is the operand that decided the outcome, not a boolean.
+                    //   a || b: keep a when a is truthy, else evaluate b.
+                    //   a && b: keep a when a is falsy, else evaluate b.
+                    // Branch opcodes test truthiness, so this is correct for both
+                    // boolean and dynamic operands.
                     self.expr(lhs);
-                    let short = self.emit_branch(if *op == BinaryOp::And {
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    let keep = self.emit_branch(if *op == BinaryOp::And {
                         Opcode::BranchFalse
                     } else {
                         Opcode::BranchTrue
                     });
+                    self.emit(Instruction::simple(Opcode::Pop));
                     self.expr(rhs);
-                    let end = self.emit_branch(Opcode::Branch);
-                    self.patch_to_here(short);
-                    self.emit(Instruction::simple(if *op == BinaryOp::And {
-                        Opcode::ConstFalse
-                    } else {
-                        Opcode::ConstTrue
-                    }));
-                    self.patch_to_here(end);
+                    self.patch_to_here(keep);
                     return;
                 }
                 // JS-number bitwise/shift: both operands are `number` (f64).
