@@ -468,4 +468,24 @@ mod tests {
             "indirect call should reach target(5)=15, got {result:?}"
         );
     }
+
+    /// A function value selected by a ternary and stored in a local, then called
+    /// indirectly. The two branches are distinct `Ty::Function` with the same
+    /// signature; sema joins them to a single typed function so `f(n)` resolves.
+    #[test]
+    fn a_ternary_selected_function_value_is_called_indirectly() {
+        let src = "function inc(n: int): int { return n + 1; } \
+             function dec(n: int): int { return n - 1; } \
+             function choose(up: boolean, n: int): int { let f = up ? inc : dec; return f(n) as int; } \
+             function main(): int { return choose(MAIN_UP, 10); }";
+        let mut output = CaptureOutput::default();
+
+        let up = zun_compiler::compile(&src.replace("MAIN_UP", "true")).expect("compile");
+        let r_up = crate::execute_with(&up.write(), &mut output).expect("run");
+        assert!(matches!(r_up, Value::Int(11, _)), "choose(true,10)=inc(10)=11, got {r_up:?}");
+
+        let dn = zun_compiler::compile(&src.replace("MAIN_UP", "false")).expect("compile");
+        let r_dn = crate::execute_with(&dn.write(), &mut output).expect("run");
+        assert!(matches!(r_dn, Value::Int(9, _)), "choose(false,10)=dec(10)=9, got {r_dn:?}");
+    }
 }

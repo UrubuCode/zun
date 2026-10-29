@@ -4973,6 +4973,20 @@ impl Checker<'_> {
                 let when_false = self.check_expr(cx, when_false);
                 let ty = if when_true.ty == when_false.ty {
                     when_true.ty
+                } else if matches!(when_true.ty, Ty::Function(_))
+                    && matches!(when_false.ty, Ty::Function(_))
+                {
+                    // Two function-typed branches (e.g. `cond ? inc : dec`). Each
+                    // function is a distinct nominal `Ty::Function(index)`. A
+                    // *concrete* function type lowers to a monomorphic
+                    // `call.indirect` whose token pins the callee to that one
+                    // method (the interpreter rejects a value whose `method_rid`
+                    // differs — see `CallIndirect` in zun_interp), so a join to
+                    // either branch's index would be unsound: the other branch's
+                    // value would fail the pin at run time. The sound join is the
+                    // dynamic any-arity function type, which dispatches purely on
+                    // the runtime value (token rid 0) and yields `any`.
+                    Ty::Function(hir::DYNAMIC_FUNCTION)
                 } else {
                     self.error(span, "conditional branches must have matching types");
                     Ty::Error
