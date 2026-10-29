@@ -402,6 +402,15 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span(function.span),
                 });
             }
+            // A block-local / nested named class declaration is hoisted to the
+            // program's class list (Zun classes are program-global); its name
+            // binds through `classes_by_name` in sema, so no statement is
+            // emitted here.
+            Statement::ClassDeclaration(class_declaration) => {
+                let class = convert_class_declaration(source, class_declaration)
+                    .map_err(|errors| errors.join("; "))?;
+                HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
+            }
             other => {
                 let dbg = format!("{other:?}");
                 let kind = dbg
@@ -1631,6 +1640,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             .collect());
     }
 
+    // Reset the hoisted-class collector for this parse; the statement converter
+    // pushes block-local / nested class declarations here while converting the
+    // module body, and they are drained into `classes` before the Program is
+    // built.
+    HOISTED_CLASSES.with(|cells| cells.borrow_mut().clear());
+
     let mut functions = Vec::new();
     let mut imports = Vec::new();
     let mut classes = Vec::new();
@@ -1748,212 +1763,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             _ => None,
         };
         if let Some(class_declaration) = class_declaration {
-            let Some(id) = class_declaration.id.as_ref() else {
-                return Err(vec!["OXC adapter requires named classes".into()]);
-            };
-            let base = class_declaration
-                .heritage
-                .as_ref()
-                .map(|heritage| {
-                    let Expression::Identifier(identifier) = &heritage.expression else {
-                        return Err("OXC adapter supports identifier class bases only".into());
-                    };
-                    Ok(Name {
-                        span: Span::new(identifier.span.start, identifier.span.end),
-                    })
-                })
-                .transpose()
-                .map_err(|error| vec![error])?;
-            let mut fields = Vec::new();
-            let mut methods = Vec::new();
-            let mut symbol_methods = Vec::new();
-            for element in &class_declaration.body.body {
-                match element {
-                    ClassElement::PropertyDefinition(property) => {
-                        let (field_span, is_private) = match &property.key {
-                            PropertyKey::StaticIdentifier(identifier) => {
-                                (Span::new(identifier.span.start, identifier.span.end), false)
-                            }
-                            PropertyKey::PrivateIdentifier(identifier) => {
-                                (Span::new(identifier.span.start, identifier.span.end), true)
-                            }
-                            _ => {
-                                return Err(vec![
-                                    "OXC adapter supports identifier class fields only".into(),
-                                ])
-                            }
-                        };
-                        // A field without an explicit (or nameable) type erases
-                        // to `any`, encoded as a zero-width type span that sema
-                        // resolves to `Ty::Any` (JS/TS erasure semantics).
-                        let type_annotation =
-                            convert_type_annotation(source, property.type_annotation.as_deref())
-                                .map_err(|error| vec![error])?
-                                .unwrap_or(crate::ast::TypeAnnotation {
-                                    name: Name {
-                                        span: Span::new(field_span.start, field_span.start),
-                                    },
-                                    is_array: false,
-                                });
-                        fields.push(crate::ast::ClassField {
-                            name: Name { span: field_span },
-                            decorators: property
-                                .decorators
-                                .iter()
-                                .map(|decorator| convert_decorator(source, decorator))
-                                .collect::<Result<Vec<_>, _>>()
-                                .map_err(|error| vec![error])?,
-                            ty: type_annotation,
-                            is_static: property.r#static,
-                            is_private,
-                            // A field without an initializer defaults to
-                            // `undefined` (`void 0`), so the implicit
-                            // constructor always has a value for every slot.
-                            initializer: Some(Box::new(
-                                match property.value.as_ref() {
-                                    Some(expression) => convert_expression(source, expression)
-                                        .map_err(|error| vec![error])?,
-                                    None => Expr::Unary {
-                                        op: crate::ast::UnaryOp::Void,
-                                        operand: Box::new(Expr::Number {
-                                            value: 0.0,
-                                            span: field_span,
-                                        }),
-                                        span: field_span,
-                                    },
-                                },
-                            )),
-                        });
-                    }
-                    ClassElement::MethodDefinition(method) => {
-                        // A computed key (`[Symbol.iterator]() {}`) is lowered
-                        // to a Symbol-keyed side-table entry; a plain name is a
-                        // vtable method. `name_span` carries the key span in the
-                        // computed case (used only for diagnostics).
-                        let (name_span, computed_key) = if method.computed {
-                            let key_expression = method.key.as_expression().ok_or_else(|| {
-                                vec!["OXC adapter requires an expression computed method key".to_owned()]
-                            })?;
-                            let key = convert_expression(source, key_expression)
-                                .map_err(|error| vec![error])?;
-                            (key.span(), Some(key))
-                        } else if let PropertyKey::StaticIdentifier(identifier) = &method.key {
-                            (Span::new(identifier.span.start, identifier.span.end), None)
-                        } else {
-                            return Err(vec![
-                                "OXC adapter supports identifier class method names only".into(),
-                            ]);
-                        };
-                        let Some(body) = method.value.body.as_ref() else {
-                            return Err(vec!["OXC adapter requires class method bodies".into()]);
-                        };
-                        // The method body uses the unified statement converter so
-                        // class methods support the same statement surface as any
-                        // other function body.
-                        let mut method_prologue = Vec::new();
-                        let mut params = Vec::with_capacity(method.value.params.items.len());
-                        for parameter in &method.value.params.items {
-                            params.push(
-                                convert_formal_param(source, parameter, &mut method_prologue)
-                                    .map_err(|error| vec![error])?,
-                            );
-                        }
-                        let mut method_statements = method_prologue;
-                        method_statements.extend(
-                            convert_statement_list(source, &body.statements)
-                                .map_err(|error| vec![error])?,
-                        );
-                        if let Some(rest) = method.value.params.rest.as_ref() {
-                            let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument
-                            else {
-                                return Err(vec![
-                                    "OXC adapter supports identifier rest parameters only".into(),
-                                ]);
-                            };
-                            params.push(crate::ast::Param {
-                                name: Name {
-                                    span: Span::new(identifier.span.start, identifier.span.end),
-                                },
-                                ty: convert_type_annotation(
-                                    source,
-                                    rest.type_annotation.as_deref(),
-                                )
-                                .map_err(|error| vec![error])?,
-                                default_value: None,
-                                is_rest: true,
-                            });
-                        }
-                        let decorators = method
-                            .decorators
-                            .iter()
-                            .map(|decorator| convert_decorator(source, decorator))
-                            .collect::<Result<Vec<_>, _>>()
-                            .map_err(|error| vec![error])?;
-                        let function = Function {
-                            name: Name { span: name_span },
-                            // The OXC adapter is a partial secondary path; it
-                            // erases generic type parameters (the hand parser
-                            // carries them). Generics are erased either way.
-                            type_params: Vec::new(),
-                            decorators,
-                            params,
-                            return_type: convert_type_annotation(
-                                source,
-                                method.value.return_type.as_deref(),
-                            )
-                            .map_err(|error| vec![error])?,
-                            is_extern: false,
-                            // A computed-key member is modeled as a static
-                            // method (no implicit `this`).
-                            is_static: method.r#static || computed_key.is_some(),
-                            accessor: match method.kind {
-                                MethodDefinitionKind::Get => Some(crate::ast::AccessorKind::Get),
-                                MethodDefinitionKind::Set => Some(crate::ast::AccessorKind::Set),
-                                _ => None,
-                            },
-                            external_module: None,
-                            is_async: method.value.r#async,
-                            is_generator: method.value.generator,
-                            body: Block {
-                                statements: method_statements,
-                                span: Span::new(body.span.start, body.span.end),
-                            },
-                            span: Span::new(method.span.start, method.span.end),
-                        };
-                        match computed_key {
-                            Some(key) => symbol_methods.push(crate::ast::ClassSymbolMethod {
-                                key,
-                                function,
-                                span: Span::new(method.span.start, method.span.end),
-                            }),
-                            None => methods.push(function),
-                        }
-                    }
-                    _ => {
-                        return Err(vec![
-                            "OXC adapter does not support this class element yet".into()
-                        ])
-                    }
-                }
-            }
-            classes.push(crate::ast::Class {
-                name: Name {
-                    span: Span::new(id.span.start, id.span.end),
-                },
-                // OXC adapter erases generic type parameters (see above).
-                type_params: Vec::new(),
-                base,
-                decorators: class_declaration
-                    .decorators
-                    .iter()
-                    .map(|decorator| convert_decorator(source, decorator))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| vec![error])?,
-                fields,
-                methods,
-                symbol_methods,
-                span: Span::new(class_declaration.span.start, class_declaration.span.end),
-            });
+            classes.push(convert_class_declaration(source, class_declaration)?);
             continue;
         }
         let function = match &statement {
@@ -2039,6 +1849,9 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             span: function_span,
         });
     }
+    // Drain the block-local / nested classes collected while converting the
+    // module body (and function/method bodies) into the program's class list.
+    HOISTED_CLASSES.with(|cells| classes.append(&mut cells.borrow_mut()));
     Ok(Program {
         functions,
         classes,
@@ -3047,4 +2860,224 @@ mod tests {
         assert!(matches!(elements[2], crate::ast::ArrayElement::Hole));
         assert!(matches!(elements[3], crate::ast::ArrayElement::Expr(_)));
     }
+}
+
+thread_local! {
+    /// Block-local / nested class declarations collected while converting a
+    /// module body. Drained into the program's class list in `parse_subset`.
+    /// Thread-local so the recursive statement converter can reach it without
+    /// threading a collector through every conversion function.
+    static HOISTED_CLASSES: std::cell::RefCell<Vec<crate::ast::Class>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Convert a single OXC class declaration into the AST class (shared by the
+/// top-level scan and the statement converter for block-local classes).
+fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Class<'_>) -> Result<crate::ast::Class, Vec<String>> {
+            let Some(id) = class_declaration.id.as_ref() else {
+                return Err(vec!["OXC adapter requires named classes".into()]);
+            };
+            let base = class_declaration
+                .heritage
+                .as_ref()
+                .map(|heritage| {
+                    let Expression::Identifier(identifier) = &heritage.expression else {
+                        return Err("OXC adapter supports identifier class bases only".into());
+                    };
+                    Ok(Name {
+                        span: Span::new(identifier.span.start, identifier.span.end),
+                    })
+                })
+                .transpose()
+                .map_err(|error| vec![error])?;
+            let mut fields = Vec::new();
+            let mut methods = Vec::new();
+            let mut symbol_methods = Vec::new();
+            for element in &class_declaration.body.body {
+                match element {
+                    ClassElement::PropertyDefinition(property) => {
+                        let (field_span, is_private) = match &property.key {
+                            PropertyKey::StaticIdentifier(identifier) => {
+                                (Span::new(identifier.span.start, identifier.span.end), false)
+                            }
+                            PropertyKey::PrivateIdentifier(identifier) => {
+                                (Span::new(identifier.span.start, identifier.span.end), true)
+                            }
+                            _ => {
+                                return Err(vec![
+                                    "OXC adapter supports identifier class fields only".into(),
+                                ])
+                            }
+                        };
+                        // A field without an explicit (or nameable) type erases
+                        // to `any`, encoded as a zero-width type span that sema
+                        // resolves to `Ty::Any` (JS/TS erasure semantics).
+                        let type_annotation =
+                            convert_type_annotation(source, property.type_annotation.as_deref())
+                                .map_err(|error| vec![error])?
+                                .unwrap_or(crate::ast::TypeAnnotation {
+                                    name: Name {
+                                        span: Span::new(field_span.start, field_span.start),
+                                    },
+                                    is_array: false,
+                                });
+                        fields.push(crate::ast::ClassField {
+                            name: Name { span: field_span },
+                            decorators: property
+                                .decorators
+                                .iter()
+                                .map(|decorator| convert_decorator(source, decorator))
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|error| vec![error])?,
+                            ty: type_annotation,
+                            is_static: property.r#static,
+                            is_private,
+                            // A field without an initializer defaults to
+                            // `undefined` (`void 0`), so the implicit
+                            // constructor always has a value for every slot.
+                            initializer: Some(Box::new(
+                                match property.value.as_ref() {
+                                    Some(expression) => convert_expression(source, expression)
+                                        .map_err(|error| vec![error])?,
+                                    None => Expr::Unary {
+                                        op: crate::ast::UnaryOp::Void,
+                                        operand: Box::new(Expr::Number {
+                                            value: 0.0,
+                                            span: field_span,
+                                        }),
+                                        span: field_span,
+                                    },
+                                },
+                            )),
+                        });
+                    }
+                    ClassElement::MethodDefinition(method) => {
+                        // A computed key (`[Symbol.iterator]() {}`) is lowered
+                        // to a Symbol-keyed side-table entry; a plain name is a
+                        // vtable method. `name_span` carries the key span in the
+                        // computed case (used only for diagnostics).
+                        let (name_span, computed_key) = if method.computed {
+                            let key_expression = method.key.as_expression().ok_or_else(|| {
+                                vec!["OXC adapter requires an expression computed method key".to_owned()]
+                            })?;
+                            let key = convert_expression(source, key_expression)
+                                .map_err(|error| vec![error])?;
+                            (key.span(), Some(key))
+                        } else if let PropertyKey::StaticIdentifier(identifier) = &method.key {
+                            (Span::new(identifier.span.start, identifier.span.end), None)
+                        } else {
+                            return Err(vec![
+                                "OXC adapter supports identifier class method names only".into(),
+                            ]);
+                        };
+                        let Some(body) = method.value.body.as_ref() else {
+                            return Err(vec!["OXC adapter requires class method bodies".into()]);
+                        };
+                        // The method body uses the unified statement converter so
+                        // class methods support the same statement surface as any
+                        // other function body.
+                        let mut method_prologue = Vec::new();
+                        let mut params = Vec::with_capacity(method.value.params.items.len());
+                        for parameter in &method.value.params.items {
+                            params.push(
+                                convert_formal_param(source, parameter, &mut method_prologue)
+                                    .map_err(|error| vec![error])?,
+                            );
+                        }
+                        let mut method_statements = method_prologue;
+                        method_statements.extend(
+                            convert_statement_list(source, &body.statements)
+                                .map_err(|error| vec![error])?,
+                        );
+                        if let Some(rest) = method.value.params.rest.as_ref() {
+                            let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument
+                            else {
+                                return Err(vec![
+                                    "OXC adapter supports identifier rest parameters only".into(),
+                                ]);
+                            };
+                            params.push(crate::ast::Param {
+                                name: Name {
+                                    span: Span::new(identifier.span.start, identifier.span.end),
+                                },
+                                ty: convert_type_annotation(
+                                    source,
+                                    rest.type_annotation.as_deref(),
+                                )
+                                .map_err(|error| vec![error])?,
+                                default_value: None,
+                                is_rest: true,
+                            });
+                        }
+                        let decorators = method
+                            .decorators
+                            .iter()
+                            .map(|decorator| convert_decorator(source, decorator))
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|error| vec![error])?;
+                        let function = Function {
+                            name: Name { span: name_span },
+                            // The OXC adapter is a partial secondary path; it
+                            // erases generic type parameters (the hand parser
+                            // carries them). Generics are erased either way.
+                            type_params: Vec::new(),
+                            decorators,
+                            params,
+                            return_type: convert_type_annotation(
+                                source,
+                                method.value.return_type.as_deref(),
+                            )
+                            .map_err(|error| vec![error])?,
+                            is_extern: false,
+                            // A computed-key member is modeled as a static
+                            // method (no implicit `this`).
+                            is_static: method.r#static || computed_key.is_some(),
+                            accessor: match method.kind {
+                                MethodDefinitionKind::Get => Some(crate::ast::AccessorKind::Get),
+                                MethodDefinitionKind::Set => Some(crate::ast::AccessorKind::Set),
+                                _ => None,
+                            },
+                            external_module: None,
+                            is_async: method.value.r#async,
+                            is_generator: method.value.generator,
+                            body: Block {
+                                statements: method_statements,
+                                span: Span::new(body.span.start, body.span.end),
+                            },
+                            span: Span::new(method.span.start, method.span.end),
+                        };
+                        match computed_key {
+                            Some(key) => symbol_methods.push(crate::ast::ClassSymbolMethod {
+                                key,
+                                function,
+                                span: Span::new(method.span.start, method.span.end),
+                            }),
+                            None => methods.push(function),
+                        }
+                    }
+                    _ => {
+                        return Err(vec![
+                            "OXC adapter does not support this class element yet".into()
+                        ])
+                    }
+                }
+            }
+            return Ok(crate::ast::Class {
+                name: Name {
+                    span: Span::new(id.span.start, id.span.end),
+                },
+                // OXC adapter erases generic type parameters (see above).
+                type_params: Vec::new(),
+                base,
+                decorators: class_declaration
+                    .decorators
+                    .iter()
+                    .map(|decorator| convert_decorator(source, decorator))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| vec![error])?,
+                fields,
+                methods,
+                symbol_methods,
+                span: Span::new(class_declaration.span.start, class_declaration.span.end),
+            });
 }
