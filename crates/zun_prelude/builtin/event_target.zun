@@ -1,43 +1,84 @@
 // Nucleus `EventTarget` (DOM Events, prelude class).
 //
-//   addEventListener(type, listener)      duplicate (type, listener) ignored
-//   removeEventListener(type, listener)
-//   dispatchEvent(event) -> boolean       false if the event was canceled
+//   addEventListener(type, listener, options?)      duplicate (type, listener,
+//                                                    capture) ignored
+//   removeEventListener(type, listener, options?)
+//   dispatchEvent(event) -> boolean                 false if the event was canceled
+//
+// `listener` is a function or an object with a `handleEvent` method. The
+// object form is routed by the compiler to the `addEventListenerObject` /
+// `removeEventListenerObject` siblings, because a function value cannot be
+// stored in an `any` parameter.
 //
 // Listener storage. Function values cannot live in `Any`, a typed field or an
-// `Array` (GC-root precision), so each listener is wrapped by the
+// `Array` (GC-root precision), so each function listener is wrapped by the
 // `functionBox` native into a GC-traced record carrying the callable; that
 // record is an ordinary object and is kept in the entry list. Dispatch calls
 // it with `Reflect.apply(box, event, [])` (the receiver slot becomes the
-// listener's first parameter, i.e. the event). `removeEventListener` and the
-// duplicate check match entries with `functionBoxIs` (function identity).
+// listener's first parameter, i.e. the event). Entries match by
+// `functionBoxIs` (function identity).
 //
 // Simplifications (documented, not defects):
 //   * Listeners run synchronously in registration order, on the listener list
-//     as it was when `dispatchEvent` started; no capture/bubble phases, no
-//     options argument (`once`, `passive`, `signal`), no listener objects with
-//     `handleEvent`.
-//   * A listener must declare exactly one `(event: Event)` parameter.
+//     as it was when `dispatchEvent` started (a listener removed during the
+//     dispatch is skipped); no capture/bubble phases, `capture` is only part of
+//     the listener identity. `passive` and `signal` options are ignored.
+//   * A function listener must declare at most one `(event: Event)` parameter.
 //   * Exceptions thrown by a listener propagate out of `dispatchEvent`.
 
 import { collections as etCollections } from "zun:core";
 
 class ListenerEntry {
     type: string;
+    capture: boolean;
+    once: boolean;
+    removed: boolean;
+    isObject: boolean;
     box: any;
+    obj: any;
 }
 
 class EventTarget {
     entries: Array = [];
 
-    indexOfListener(type: string, listener: Function): u64 {
+    captureOf(options: any): boolean {
+        if (options == null) {
+            return false;
+        }
+        if (options == true) {
+            return true;
+        }
+        if (options == false) {
+            return false;
+        }
+        return options.capture == true;
+    }
+
+    onceOf(options: any): boolean {
+        if (options == null) {
+            return false;
+        }
+        if (options == true) {
+            return false;
+        }
+        if (options == false) {
+            return false;
+        }
+        return options.once == true;
+    }
+
+    indexOfListener(type: string, capture: boolean, listener: Function): u64 {
         let i: u64 = 0;
         let n: u64 = this.entries.length;
         while (i < n) {
             let entry = this.entries[i] as ListenerEntry;
             if (entry.type == type) {
-                if (etCollections.functionBoxIs(entry.box, listener)) {
-                    return i;
+                if (entry.capture == capture) {
+                    if (entry.isObject == false) {
+                        if (etCollections.functionBoxIs(entry.box, listener)) {
+                            return i;
+                        }
+                    }
                 }
             }
             i = i + 1;
@@ -45,24 +86,74 @@ class EventTarget {
         return n;
     }
 
-    addEventListener(type: string, listener: Function): void {
-        if (this.indexOfListener(type, listener) < this.entries.length) {
+    indexOfObject(type: string, capture: boolean, listener: any): u64 {
+        let i: u64 = 0;
+        let n: u64 = this.entries.length;
+        while (i < n) {
+            let entry = this.entries[i] as ListenerEntry;
+            if (entry.type == type) {
+                if (entry.capture == capture) {
+                    if (entry.isObject) {
+                        if (entry.obj == listener) {
+                            return i;
+                        }
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    removeAt(index: u64): void {
+        let entry = this.entries[index] as ListenerEntry;
+        entry.removed = true;
+        this.entries.splice(index, 1);
+    }
+
+    addEventListener(type: string, listener: Function, options: any = null): void {
+        let capture: boolean = this.captureOf(options);
+        if (this.indexOfListener(type, capture, listener) < this.entries.length) {
             return;
         }
         let boxed: any = etCollections.functionBox(listener);
-        this.entries.push(new ListenerEntry(type, boxed));
+        this.entries.push(new ListenerEntry(type, capture, this.onceOf(options), false, false, boxed, null));
     }
 
-    removeEventListener(type: string, listener: Function): void {
-        let index = this.indexOfListener(type, listener);
+    addEventListenerObject(type: string, listener: any, options: any = null): void {
+        if (listener == null) {
+            return;
+        }
+        let capture: boolean = this.captureOf(options);
+        if (this.indexOfObject(type, capture, listener) < this.entries.length) {
+            return;
+        }
+        this.entries.push(new ListenerEntry(type, capture, this.onceOf(options), false, true, null, listener));
+    }
+
+    removeEventListener(type: string, listener: Function, options: any = null): void {
+        let index = this.indexOfListener(type, this.captureOf(options), listener);
         if (index < this.entries.length) {
-            this.entries.splice(index, 1);
+            this.removeAt(index);
         }
     }
 
-    dispatchEvent(event: Event): boolean {
-        // Snapshot so listeners added or removed during dispatch do not change
-        // this round.
+    removeEventListenerObject(type: string, listener: any, options: any = null): void {
+        if (listener == null) {
+            return;
+        }
+        let index = this.indexOfObject(type, this.captureOf(options), listener);
+        if (index < this.entries.length) {
+            this.removeAt(index);
+        }
+    }
+
+    dispatchEvent(candidate: any): boolean {
+        if (!(candidate instanceof Event)) {
+            throw new TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.");
+        }
+        let event = candidate as Event;
+        // Snapshot so listeners added during dispatch do not run this round.
         let matching: Array = [];
         let i: u64 = 0;
         let n: u64 = this.entries.length;
@@ -73,6 +164,9 @@ class EventTarget {
             }
             i = i + 1;
         }
+        event.target = this;
+        event.currentTarget = this;
+        event.eventPhase = 2;
         let j: u64 = 0;
         let m: u64 = matching.length;
         while (j < m) {
@@ -80,9 +174,31 @@ class EventTarget {
                 break;
             }
             let entry = matching[j] as ListenerEntry;
-            Reflect.apply(entry.box, event, []);
             j = j + 1;
+            if (entry.removed) {
+                continue;
+            }
+            if (entry.once) {
+                let at: u64 = 0;
+                let total: u64 = this.entries.length;
+                while (at < total) {
+                    let candidate = this.entries[at] as ListenerEntry;
+                    if (candidate == entry) {
+                        this.removeAt(at);
+                        break;
+                    }
+                    at = at + 1;
+                }
+            }
+            if (entry.isObject) {
+                entry.obj.handleEvent(event);
+            } else {
+                Reflect.apply(entry.box, event, []);
+            }
         }
+        event.currentTarget = null;
+        event.eventPhase = 0;
+        event.immediatePropagationStopped = false;
         return !event.defaultPrevented;
     }
 }

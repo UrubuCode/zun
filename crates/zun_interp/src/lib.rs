@@ -558,6 +558,21 @@ impl Interp<'_> {
                             }
                         })
                     };
+                    // A typed class instance reached through `any`: read its
+                    // declared field or getter by name.
+                    let value = if matches!(value, Value::Void) {
+                        match self.instance_member_get(object, &name)? {
+                            Some(member) => {
+                                match zun_gc::with_current_heap_mut(|heap| member.box_any(heap)) {
+                                    Some(any) => Value::Any(any),
+                                    None => member,
+                                }
+                            }
+                            None => Value::Void,
+                        }
+                    } else {
+                        value
+                    };
                     stack.push(value);
                 }
                 Opcode::StoreDynamic => {

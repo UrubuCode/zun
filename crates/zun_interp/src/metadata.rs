@@ -2,6 +2,7 @@
 
 use super::{Interp, RunError};
 use super::operands::operand_strref;
+use super::value::Value;
 use zun_il::Operand;
 
 impl<'a> Interp<'a> {
@@ -60,6 +61,64 @@ impl<'a> Interp<'a> {
             .get(token.rid() as usize - 1)
             .map(|field| field.kind)
             .ok_or(RunError::BadToken)
+    }
+
+    /// The method RID implementing `name` on a typed instance (most-derived
+    /// override), or `None` when the object is not a typed instance or has no
+    /// such method.
+    pub(crate) fn instance_method_rid(&self, object: zun_gc::Obj, name: &str) -> Option<u32> {
+        let type_rid = object.type_rid();
+        if type_rid == 0 {
+            return None;
+        }
+        let descriptor = self.types.get(type_rid)?;
+        descriptor.vtable.iter().copied().find(|&rid| {
+            rid != 0
+                && self
+                    .module
+                    .tables
+                    .method_defs
+                    .get(rid as usize - 1)
+                    .is_some_and(|method| self.module.strings.get(method.name) == name)
+        })
+    }
+
+    /// Read member `name` of a typed class instance reached through `any`: an
+    /// instance field, else a `get_<name>` accessor. `Ok(None)` when the object
+    /// is not a typed instance or has no such member.
+    pub(crate) fn instance_member_get(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+    ) -> Result<Option<Value>, RunError> {
+        let type_rid = object.type_rid();
+        if type_rid == 0 {
+            return Ok(None);
+        }
+        let Some(type_def) = self.module.tables.type_defs.get(type_rid as usize - 1) else {
+            return Ok(None);
+        };
+        let (start, end) = (type_def.field_start, type_def.field_end);
+        for field_rid in start..end {
+            let Some(field) = self.module.tables.field_defs.get(field_rid as usize - 1) else {
+                continue;
+            };
+            if field.is_static || self.module.strings.get(field.name) != name {
+                continue;
+            }
+            let Some(layout) = self.types.get_field(field_rid) else {
+                continue;
+            };
+            let value = zun_gc::with_current_heap(|heap| {
+                crate::value::load_field(layout.kind, object, layout.slot, heap)
+            });
+            return Ok(Some(value));
+        }
+        let getter = format!("get_{name}");
+        if let Some(rid) = self.instance_method_rid(object, &getter) {
+            return self.call(rid, vec![Value::Object(object)], None).map(Some);
+        }
+        Ok(None)
     }
 
     pub(crate) fn dynamic_name(&self, operand: &Operand) -> Result<&str, RunError> {

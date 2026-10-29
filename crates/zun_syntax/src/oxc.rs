@@ -843,6 +843,10 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 _ => Ok(Expr::Ident(Name { span: span(identifier.span) })),
             }
         }
+        // `super.method(...)`: the receiver name is the source text `super`.
+        Expression::Super(super_expression) => Ok(Expr::Ident(Name {
+            span: span(super_expression.span),
+        })),
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
         })),
@@ -1229,6 +1233,14 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 args.push(convert_argument(source, argument)?);
             }
             match &call.callee {
+                // `super(args)`: the callee name is the source text `super`.
+                Expression::Super(super_expression) => Ok(Expr::Call {
+                    callee: Name {
+                        span: span(super_expression.span),
+                    },
+                    args,
+                    span: span(call.span),
+                }),
                 Expression::Identifier(identifier) => Ok(Expr::Call {
                     callee: Name {
                         span: span(identifier.span),

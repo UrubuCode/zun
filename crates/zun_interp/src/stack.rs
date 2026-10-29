@@ -38,6 +38,17 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
     Ok(())
 }
 
+/// Project a boxed `Any` operand onto the primitive it carries, so a dynamic
+/// value read from an object compares against an unboxed literal (`o.v === true`).
+/// Opaque `Any` payloads (class descriptors, symbols) stay boxed.
+fn unbox_for_compare(value: Value) -> Value {
+    match value {
+        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+            .unwrap_or(Value::Any(any)),
+        other => other,
+    }
+}
+
 pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
     let b = pop(stack)?;
     let a = pop(stack)?;

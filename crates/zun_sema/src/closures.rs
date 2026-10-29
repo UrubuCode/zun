@@ -23,6 +23,7 @@ impl Checker<'_> {
         // once so a nested/sibling closure does not inherit it.
         let param_hint = self.closure_param_hint.take();
         let captures = self.analyze_closure_captures(outer, function);
+        let takes_this = std::mem::take(&mut self.closure_takes_this);
         let mut saw_default = false;
         for parameter in &function.params {
             if parameter.is_rest {
@@ -67,6 +68,9 @@ impl Checker<'_> {
         // The hidden environment is always local zero. User parameters and
         // ordinary locals follow it, matching the indirect-call ABI.
         inner.declare("__closure_environment", Ty::DynamicObject);
+        if takes_this {
+            inner.declare("this", Ty::DynamicObject);
+        }
         for (index, parameter) in function.params.iter().enumerate() {
             // Explicit annotation wins; otherwise a contextual hint types the
             // parameter (e.g. a Promise executor's `res`/`rej` become
@@ -81,6 +85,20 @@ impl Checker<'_> {
             inner.declare(self.text(&parameter.name), ty);
         }
         let body = self.check_block(&mut inner, &function.body);
+        // An expression-bodied arrow whose body is a void call (`() => log(x)`)
+        // returns nothing: evaluate it as a statement, then return bare.
+        let body: Vec<hir::Stmt> = if function.return_type.is_none() {
+            body.into_iter()
+                .flat_map(|statement| match statement {
+                    hir::Stmt::Return(Some(value)) if value.ty == Ty::Void => {
+                        vec![hir::Stmt::Expr(value), hir::Stmt::Return(None)]
+                    }
+                    other => vec![other],
+                })
+                .collect()
+        } else {
+            body
+        };
         let return_ty = if function.return_type.is_some() {
             inner.return_ty
         } else {
@@ -99,7 +117,7 @@ impl Checker<'_> {
             .map(|(index, parameter)| {
                 parameter.default_value.as_deref().map(|value| {
                     let mut checked = self.check_expr(&mut inner, value);
-                    let expected = inner.locals[index + 1];
+                    let expected = inner.locals[index + 1 + usize::from(takes_this)];
                     coerce_numeric_literal(&mut checked, expected);
                     if !checked.ty.is_error() && !self.is_assignable(checked.ty, expected) {
                         self.error(
@@ -113,15 +131,23 @@ impl Checker<'_> {
                     checked
                 })
             })
-            .collect();
+            .collect::<Vec<Option<hir::Expr>>>();
+        let mut defaults = defaults;
+        if takes_this {
+            defaults.insert(0, None);
+        }
         self.closures.push(hir::ClosureFunction {
-            name: format!("<closure@{}>", span.start),
-            param_count: function.params.len() as u16,
+            name: if takes_this {
+                format!("<closure@{}@this>", span.start)
+            } else {
+                format!("<closure@{}>", span.start)
+            },
+            param_count: function.params.len() as u16 + u16::from(takes_this),
             rest_param: function
                 .params
                 .iter()
                 .position(|parameter| parameter.is_rest)
-                .map(|index| index as u16),
+                .map(|index| index as u16 + u16::from(takes_this)),
             defaults,
             locals: inner.locals,
             return_ty,
@@ -173,11 +199,14 @@ impl Checker<'_> {
         cx: &FunctionCx,
         function: &ast::FunctionExpr,
     ) -> Vec<hir::Capture> {
-        let parameters: HashSet<String> = function
+        let mut parameters: HashSet<String> = function
             .params
             .iter()
             .map(|param| self.text(&param.name).to_string())
             .collect();
+        if self.closure_takes_this {
+            parameters.insert("this".to_string());
+        }
         let mut uses = CaptureUse::default();
         for statement in &function.body.statements {
             self.collect_capture_stmt(cx, &parameters, statement, &mut uses);
