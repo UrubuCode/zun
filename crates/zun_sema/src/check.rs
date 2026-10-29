@@ -2352,7 +2352,18 @@ impl Checker<'_> {
                 let value = value.as_ref().map(|v| {
                     let mut e = self.check_expr(cx, v);
                     coerce_numeric_literal(&mut e, cx.return_ty);
-                    Self::unbox_to(e, cx.return_ty)
+                    let e = Self::unbox_to(e, cx.return_ty);
+                    // Implicit widening of an integer value to `number`.
+                    if matches!(e.ty, Ty::Int(_)) && cx.return_ty == Ty::F64 {
+                        let span = e.span;
+                        hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(e) },
+                            ty: Ty::F64,
+                            span,
+                        }
+                    } else {
+                        e
+                    }
                 });
                 match (&value, cx.return_ty) {
                     (None, Ty::Void) => {}
@@ -2511,7 +2522,7 @@ impl Checker<'_> {
             | "getOwnPropertyNames" | "getOwnPropertySymbols" | "seal" | "isSealed"
             | "preventExtensions" | "isExtensible" => Some(1usize),
             "setPrototypeOf" | "is" | "getOwnPropertyDescriptor"
-            | "defineProperties" => Some(2usize),
+            | "defineProperties" | "hasOwn" => Some(2usize),
             "defineProperty" => Some(3usize),
             "assign" => None,
             _ => {
@@ -2546,6 +2557,7 @@ impl Checker<'_> {
                 builtin(self, name, checked, Ty::Array)
             }
             "freeze" => builtin(self, "objectFreeze", checked, Ty::Any),
+            "hasOwn" => builtin(self, "objectHasOwn", checked, Ty::Boolean),
             "isFrozen" => builtin(self, "objectIsFrozen", checked, Ty::Boolean),
             "create" => builtin(self, "objectCreate", checked, Ty::DynamicObject),
             "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
@@ -5034,10 +5046,28 @@ impl Checker<'_> {
                 };
                 let descriptor = hir::Expr {
                     kind: hir::ExprKind::DynamicObjectLiteral {
-                        entries: vec![hir::ObjectEntry::Install {
-                            builtin: set_fn,
-                            args: vec![Self::string_literal(accessor_slot.to_string(), span), func],
-                        }],
+                        entries: vec![
+                            hir::ObjectEntry::Install {
+                                builtin: set_fn,
+                                args: vec![
+                                    Self::string_literal(accessor_slot.to_string(), span),
+                                    func,
+                                ],
+                            },
+                            // Literal accessors are enumerable and configurable.
+                            decorator_context_entry(
+                                "enumerable",
+                                hir::ExprKind::Boolean(true),
+                                Ty::Boolean,
+                                span,
+                            ),
+                            decorator_context_entry(
+                                "configurable",
+                                hir::ExprKind::Boolean(true),
+                                Ty::Boolean,
+                                span,
+                            ),
+                        ],
                     },
                     ty: Ty::DynamicObject,
                     span,
@@ -5318,6 +5348,21 @@ impl Checker<'_> {
                             };
                         }
                         if let Some(&func) = self.by_name.get(&text) {
+                            return hir::Expr {
+                                kind: hir::ExprKind::FunctionRef { func },
+                                ty: Ty::Function(func),
+                                span,
+                            };
+                        }
+                        // `String` / `Number` / `Boolean` as first-class values
+                        // (callbacks such as `xs.map(String)`).
+                        let coerce_name = match text.as_str() {
+                            "String" => Some("__coerceString"),
+                            "Number" => Some("__coerceNumber"),
+                            "Boolean" => Some("__coerceBoolean"),
+                            _ => None,
+                        };
+                        if let Some(&func) = coerce_name.and_then(|n| self.by_name.get(n)) {
                             return hir::Expr {
                                 kind: hir::ExprKind::FunctionRef { func },
                                 ty: Ty::Function(func),
@@ -11303,11 +11348,12 @@ impl Checker<'_> {
                 (object.as_ref(), key)
             }
             _ => {
-                self.error(
+                // `delete <non-reference>` evaluates to `true`.
+                return hir::Expr {
+                    kind: hir::ExprKind::Boolean(true),
+                    ty: Ty::Boolean,
                     span,
-                    "`delete` requires a property reference (`obj.k` or `obj[k]`)",
-                );
-                return self.poison(span);
+                };
             }
         };
         let object = self.check_expr(cx, object_ast);

@@ -2784,6 +2784,13 @@ impl<'a> Interp<'a> {
                             }
                         }
                     }
+                    Value::Any(a) if a.as_symbol().is_some() => {
+                        let id = a.as_symbol().unwrap_or_else(|| unreachable!());
+                        let description = zun_gc::with_current_heap(|heap| {
+                            heap.symbol_description(id).map(|d| d.to_string())
+                        });
+                        format!("Symbol({})", description.unwrap_or_default())
+                    }
                     other => other.display(),
                 };
                 Ok(Value::Str(text.into()))
@@ -4440,8 +4447,115 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(array))
             }
             "objectAssign" => {
-                let target = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let source = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(target) = object(args.first().ok_or(RunError::BadToken)?) else {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot convert undefined or null to object".into(),
+                    ));
+                };
+                // A string source contributes its indexed characters.
+                let string_source = match args.get(1) {
+                    Some(Value::Str(text)) => Some(text.to_string()),
+                    Some(Value::Any(a)) => zun_gc::with_current_heap(|heap| {
+                        a.as_string().and_then(|h| heap.try_string(h).map(|s| s.to_string()))
+                    }),
+                    _ => None,
+                };
+                if let Some(text) = string_source {
+                    for (index, ch) in text.chars().enumerate() {
+                        let boxed = zun_gc::with_current_heap_mut(|heap| {
+                            Value::Str(ch.to_string().into())
+                                .box_any(heap)
+                                .unwrap_or_else(zun_core::Any::null)
+                        });
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set(target, index.to_string(), boxed);
+                        });
+                    }
+                    return Ok(Value::Object(target));
+                }
+                // A nullish (or other primitive) source contributes nothing.
+                let Some(source) = object(args.get(1).ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Object(target));
+                };
+                let dynamic_source =
+                    zun_gc::with_current_heap(|heap| heap.is_dynamic_object(source));
+                if dynamic_source {
+                    // Enumerable own keys in order; source getters and target
+                    // setters run; a refused write is a TypeError (strict mode).
+                    let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(source))
+                        .unwrap_or_default();
+                    for key in keys {
+                        let (enumerable, getter) = zun_gc::with_current_heap(|heap| {
+                            (
+                                heap.dynamic_is_enumerable(source, &key),
+                                heap.dynamic_accessor_getter(source, &key),
+                            )
+                        });
+                        if !enumerable {
+                            continue;
+                        }
+                        let boxed = if let Some(getter) = getter {
+                            let got = self.invoke_function_value(getter, Vec::new())?;
+                            zun_gc::with_current_heap_mut(|heap| got.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null)
+                        } else {
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get(source, &key))
+                                .unwrap_or_else(zun_core::Any::null)
+                        };
+                        let target_dynamic =
+                            zun_gc::with_current_heap(|heap| heap.is_dynamic_object(target));
+                        if !target_dynamic {
+                            continue;
+                        }
+                        let (is_accessor, setter, has, writable, extensible) =
+                            zun_gc::with_current_heap(|heap| {
+                                (
+                                    heap.dynamic_is_accessor(target, &key),
+                                    heap.dynamic_accessor_setter(target, &key),
+                                    heap.dynamic_has(target, &key),
+                                    heap.dynamic_is_writable(target, &key),
+                                    heap.dynamic_is_extensible(target),
+                                )
+                            });
+                        if is_accessor {
+                            match setter {
+                                Some(setter) => {
+                                    self.invoke_function_value(setter, vec![Value::Any(boxed)])?;
+                                }
+                                None => {
+                                    return Err(RunError::Native(format!(
+                                        "TypeError: Cannot set property {key} which has only a getter"
+                                    )));
+                                }
+                            }
+                        } else if has && !writable {
+                            return Err(RunError::Native(format!(
+                                "TypeError: Cannot assign to read only property '{key}'"
+                            )));
+                        } else if !has && !extensible {
+                            return Err(RunError::Native(format!(
+                                "TypeError: Cannot add property {key}, object is not extensible"
+                            )));
+                        } else {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set(target, key, boxed);
+                            });
+                        }
+                    }
+                    // Own enumerable symbol-keyed properties.
+                    let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(source));
+                    for symbol in symbols {
+                        let value = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(source, symbol)
+                        });
+                        if let Some(value) = value {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set_symbol(target, symbol, value);
+                            });
+                        }
+                    }
+                    return Ok(Value::Object(target));
+                }
                 let entries = self.object_own_entries(source)?;
                 for (key, value) in entries {
                     let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
@@ -4993,16 +5107,34 @@ impl<'a> Interp<'a> {
     /// object (declared instance fields, base classes first, static and private
     /// fields excluded).
     pub(crate) fn object_own_entries(
-        &self,
+        &mut self,
         obj: zun_gc::Obj,
     ) -> Result<Vec<(String, Value)>, RunError> {
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
-            let entries = zun_gc::with_current_heap(|heap| heap.dynamic_entries(obj))
+            let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj))
                 .ok_or(RunError::BadToken)?;
-            let mut out = Vec::with_capacity(entries.len());
-            for (key, value) in entries {
-                let value = zun_gc::with_current_heap(|heap| Value::unbox_any(value, heap))
-                    .ok_or(RunError::BadToken)?;
+            let mut out = Vec::with_capacity(keys.len());
+            for key in keys {
+                let (enumerable, getter, data) = zun_gc::with_current_heap(|heap| {
+                    (
+                        heap.dynamic_is_enumerable(obj, &key),
+                        heap.dynamic_accessor_getter(obj, &key),
+                        heap.dynamic_get(obj, &key),
+                    )
+                });
+                if !enumerable {
+                    continue;
+                }
+                let value = if let Some(getter) = getter {
+                    self.invoke_function_value(getter, Vec::new())?
+                } else if zun_gc::with_current_heap(|heap| heap.dynamic_is_accessor(obj, &key)) {
+                    Value::Void
+                } else if let Some(data) = data {
+                    zun_gc::with_current_heap(|heap| Value::unbox_any(data, heap))
+                        .ok_or(RunError::BadToken)?
+                } else {
+                    continue;
+                };
                 out.push((key, value));
             }
             return Ok(out);
@@ -5096,7 +5228,7 @@ impl<'a> Interp<'a> {
 
     /// Own string property names of `obj` (dynamic or typed), including
     /// non-enumerable keys (`getOwnPropertyNames`).
-    fn object_own_names(&self, obj: zun_gc::Obj) -> Result<Vec<String>, RunError> {
+    fn object_own_names(&mut self, obj: zun_gc::Obj) -> Result<Vec<String>, RunError> {
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
             zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
         } else {
@@ -5107,7 +5239,7 @@ impl<'a> Interp<'a> {
     /// Build a descriptor object `{ value, writable, enumerable, configurable }`
     /// or `{ get, set, enumerable, configurable }` for `obj[key]`, or `None` if
     /// there is no own property.
-    fn build_descriptor(&self, obj: zun_gc::Obj, key: &str) -> Result<Option<zun_gc::Obj>, RunError> {
+    fn build_descriptor(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<zun_gc::Obj>, RunError> {
         let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
         if is_dynamic {
             let Some(descriptor) = zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key)) else {

@@ -504,6 +504,36 @@ impl Interp<'_> {
                         }
                         other => other.clone(),
                     };
+                    if name == "constructor" {
+                        if let Value::Object(obj) = &concrete {
+                            let obj = *obj;
+                            let typed = zun_gc::with_current_heap(|heap| {
+                                !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
+                            });
+                            let type_rid = obj.type_rid();
+                            if typed && type_rid >= 1 {
+                                if let Some(def) = self.module.tables.type_defs.get(type_rid as usize - 1) {
+                                    let class_name = self.module.strings.get(def.name).to_string();
+                                    let token = type_rid | zun_natives::USER_CLASS_FLAG;
+                                    let record = zun_gc::with_current_heap_mut(|heap| {
+                                        let record = heap.alloc_dynamic();
+                                        let name_any = Value::Str(class_name.into())
+                                            .box_any(heap)
+                                            .unwrap_or_else(zun_core::Any::null);
+                                        heap.dynamic_set(record, "name", name_any);
+                                        heap.dynamic_set(
+                                            record,
+                                            "__classDesc",
+                                            zun_core::Any::class_descriptor(token),
+                                        );
+                                        record
+                                    });
+                                    stack.push(Value::Object(record));
+                                    continue;
+                                }
+                            }
+                        }
+                    }
                     if name == "length" {
                         match &concrete {
                             Value::Str(text) => {
@@ -539,9 +569,27 @@ impl Interp<'_> {
                         None
                     };
                     let value = if let Some(getter) = getter {
-                        self.invoke_function_value(getter, Vec::new())?
+                        match self.invoke_function_value(getter, Vec::new()) {
+                            Ok(v) => v,
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
                     } else if let Some(getter) = typed_getter {
-                        self.invoke_function_value(getter, vec![Value::Object(object)])?
+                        match self.invoke_function_value(getter, vec![Value::Object(object)]) {
+                            Ok(v) => v,
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
                     } else {
                         zun_gc::with_current_heap(|heap| {
                             if let Some(any) = heap.dynamic_get(object, &name) {
@@ -610,7 +658,16 @@ impl Interp<'_> {
                         });
                         if is_accessor {
                             if let Some(setter) = setter {
-                                self.invoke_function_value(setter, vec![Value::Any(any)])?;
+                                match self.invoke_function_value(setter, vec![Value::Any(any)]) {
+                                    Ok(_) => {}
+                                    Err(RunError::Thrown(exception)) => {
+                                        if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                            continue;
+                                        }
+                                        return Err(RunError::Thrown(exception));
+                                    }
+                                    Err(error) => return Err(error),
+                                }
                             }
                         } else {
                             zun_gc::with_current_heap_mut(|heap| {
@@ -1466,6 +1523,13 @@ impl Interp<'_> {
                             let Some(exception) = exception else {
                                 return Err(RunError::Native(message));
                             };
+                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(RunError::Thrown(exception)) => {
+                            // A user callback invoked by the native threw.
                             if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
                                 continue;
                             }

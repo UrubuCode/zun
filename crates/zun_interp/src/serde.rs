@@ -53,7 +53,7 @@ impl Interp<'_> {
     // ---- serialize ---------------------------------------------------------
 
     /// `serialize(value)` → a fresh `Uint8Array` of the encoded bytes.
-    pub(crate) fn serialize_value(&self, value: &Value) -> Result<Value, RunError> {
+    pub(crate) fn serialize_value(&mut self, value: &Value) -> Result<Value, RunError> {
         let mut out = vec![SERDE_VERSION];
         let mut memo: HashMap<usize, u32> = HashMap::new();
         self.ser_value(value, &mut out, &mut memo)?;
@@ -71,7 +71,7 @@ impl Interp<'_> {
     }
 
     fn ser_value(
-        &self,
+        &mut self,
         value: &Value,
         out: &mut Vec<u8>,
         memo: &mut HashMap<usize, u32>,
@@ -124,7 +124,7 @@ impl Interp<'_> {
     }
 
     fn ser_object(
-        &self,
+        &mut self,
         obj: Obj,
         out: &mut Vec<u8>,
         memo: &mut HashMap<usize, u32>,

@@ -102,12 +102,7 @@ impl Checker<'_> {
         let return_ty = if function.return_type.is_some() {
             inner.return_ty
         } else {
-            body.iter()
-                .find_map(|statement| match statement {
-                    hir::Stmt::Return(Some(value)) => Some(value.ty),
-                    _ => None,
-                })
-                .unwrap_or(Ty::Void)
+            first_return_ty(&body).unwrap_or(Ty::Void)
         };
         let function_index = self.closures.len() as u32;
         let defaults = function
@@ -563,4 +558,25 @@ impl Checker<'_> {
     }
 
 
+}
+
+/// The type of the first `return <value>` anywhere in a closure body
+/// (descending into control flow, not into nested closures).
+fn first_return_ty(statements: &[hir::Stmt]) -> Option<Ty> {
+    statements.iter().find_map(|statement| match statement {
+        hir::Stmt::Return(Some(value)) => Some(value.ty),
+        hir::Stmt::Group(body) => first_return_ty(body),
+        hir::Stmt::If { then_body, else_body, .. } => {
+            first_return_ty(then_body).or_else(|| first_return_ty(else_body))
+        }
+        hir::Stmt::While { body, .. }
+        | hir::Stmt::DoWhile { body, .. }
+        | hir::Stmt::For { body, .. }
+        | hir::Stmt::ForOf { body, .. } => first_return_ty(body),
+        hir::Stmt::Labeled { body, .. } => first_return_ty(std::slice::from_ref(&**body)),
+        hir::Stmt::Try { body, catches, finally_body } => first_return_ty(body)
+            .or_else(|| catches.iter().find_map(|c| first_return_ty(&c.body)))
+            .or_else(|| finally_body.as_ref().and_then(|b| first_return_ty(b))),
+        _ => None,
+    })
 }

@@ -81,3 +81,17 @@ function atob(data: string): string {
     let bytes = globalsBuffer.nodeBufferFromString(data, "base64");
     return globalsBuffer.nodeBufferToString(bytes, "latin1", 0, bytes.length);
 }
+
+// Coercion constructors read as first-class values (`xs.map(String)`,
+// `xs.filter(Boolean)`); the checker maps the identifiers to these.
+function __coerceString(value: any): string {
+    return String(value);
+}
+
+function __coerceNumber(value: any): number {
+    return Number(value);
+}
+
+function __coerceBoolean(value: any): boolean {
+    return Boolean(value);
+}
