@@ -330,6 +330,20 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span_all,
                 });
             }
+            Statement::FunctionDeclaration(function) => {
+                let Some(id) = function.id.as_ref() else {
+                    return Err("OXC adapter requires a named nested function".into());
+                };
+                statements.push(Stmt::Let {
+                    name: Name { span: span(id.span) },
+                    ty: None,
+                    init: convert_oxc_function(source, function)?,
+                    span: span(function.span),
+                });
+            }
+            Statement::BlockStatement(block) => {
+                statements.extend(convert_statement_list(source, &block.body)?);
+            }
             _ => {
                 return Err(
                     "OXC adapter currently supports return and expression statements in branches"
