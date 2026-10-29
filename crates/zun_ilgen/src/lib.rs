@@ -1163,8 +1163,8 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     BinaryOp::UShr => Opcode::UShrI32,
                     // Comparisons share one opcode set; the runtime compares by
                     // the operands' actual kind.
-                    BinaryOp::Eq => Opcode::CmpEq,
-                    BinaryOp::Ne => Opcode::CmpNe,
+                    BinaryOp::Eq | BinaryOp::LooseEq => Opcode::CmpEq,
+                    BinaryOp::Ne | BinaryOp::LooseNe => Opcode::CmpNe,
                     BinaryOp::Lt => Opcode::CmpLt,
                     BinaryOp::Le => Opcode::CmpLe,
                     BinaryOp::Gt => Opcode::CmpGt,

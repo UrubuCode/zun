@@ -968,8 +968,10 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         },
         Expression::BinaryExpression(binary) => {
             let op = match binary.operator {
-                BinaryOperator::Equality | BinaryOperator::StrictEquality => BinaryOp::Eq,
-                BinaryOperator::Inequality | BinaryOperator::StrictInequality => BinaryOp::Ne,
+                BinaryOperator::Equality => BinaryOp::LooseEq,
+                BinaryOperator::StrictEquality => BinaryOp::Eq,
+                BinaryOperator::Inequality => BinaryOp::LooseNe,
+                BinaryOperator::StrictInequality => BinaryOp::Ne,
                 BinaryOperator::LessThan => BinaryOp::Lt,
                 BinaryOperator::LessEqualThan => BinaryOp::Le,
                 BinaryOperator::GreaterThan => BinaryOp::Gt,

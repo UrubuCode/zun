@@ -5281,6 +5281,70 @@ impl Checker<'_> {
                 // Let an integral number literal take on an Int sibling's type
                 // so `x + 1` type-checks when `x: int` (and vice versa).
                 unify_numeric_literal(&mut lhs, &mut rhs);
+                // JS loose equality (`==` / `!=` from the OXC front end).
+                // Operands of one primitive type compare like `===`; anything
+                // else (mixed types, `any`, objects) goes through the runtime
+                // IsLooselyEqual algorithm.
+                let strict_op;
+                let op = if matches!(op, ast::BinaryOp::LooseEq | ast::BinaryOp::LooseNe) {
+                    let negate = matches!(op, ast::BinaryOp::LooseNe);
+                    let simple = lhs.ty == rhs.ty
+                        && (lhs.ty == Ty::F64
+                            || lhs.ty == Ty::String
+                            || lhs.ty == Ty::Boolean
+                            || lhs.ty == Ty::BigInt
+                            || lhs.ty.is_int()
+                            || lhs.ty.is_float());
+                    if lhs.ty.is_error() || rhs.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    if !simple {
+                        let Some((id, _)) = zun_natives::resolve("collections", "looseEquals")
+                        else {
+                            self.error(span, "missing `looseEquals` intrinsic");
+                            return self.poison(span);
+                        };
+                        let call = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::box_to_any(lhs), Self::box_to_any(rhs)],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                        return if negate {
+                            hir::Expr {
+                                kind: hir::ExprKind::Unary {
+                                    op: ast::UnaryOp::Not,
+                                    operand: Box::new(call),
+                                },
+                                ty: Ty::Boolean,
+                                span,
+                            }
+                        } else {
+                            call
+                        };
+                    }
+                    strict_op = if negate { ast::BinaryOp::Ne } else { ast::BinaryOp::Eq };
+                    &strict_op
+                } else {
+                    op
+                };
+                // Strict equality across different static types is simply
+                // `false` in JS (never an error): compare through `any`, where
+                // the runtime sees two unequal kinds.
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Ne)
+                    && lhs.ty != rhs.ty
+                    && !lhs.ty.is_error()
+                    && !rhs.ty.is_error()
+                    && lhs.ty != Ty::Any
+                    && rhs.ty != Ty::Any
+                    && !(matches!(lhs.ty, Ty::Function(_)) && matches!(rhs.ty, Ty::Function(_)))
+                    && !(matches!(lhs.ty, Ty::Instance(_)) && matches!(rhs.ty, Ty::Instance(_)))
+                {
+                    lhs = Self::box_to_any(lhs);
+                    rhs = Self::box_to_any(rhs);
+                }
                 if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
                     // `>>>` has no BigInt form in ECMAScript: it is a TypeError.
                     if let ast::BinaryOp::UShr = op {
@@ -5552,6 +5616,25 @@ impl Checker<'_> {
                         };
                     }
                 }
+                // `!x` on a non-boolean operand: JS ToBoolean first.
+                let operand = if matches!(op, ast::UnaryOp::Not)
+                    && operand.ty != Ty::Boolean
+                    && !operand.ty.is_error()
+                {
+                    match zun_natives::resolve("boolean", "booleanCoerce") {
+                        Some((id, _)) => {
+                            let operand_span = operand.span;
+                            hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![operand] },
+                                ty: Ty::Boolean,
+                                span: operand_span,
+                            }
+                        }
+                        None => operand,
+                    }
+                } else {
+                    operand
+                };
                 // `-x` / `~x` on a non-numeric operand: JS ToNumber first.
                 let operand = if matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot)
                     && !operand.ty.is_int()
@@ -5609,6 +5692,30 @@ impl Checker<'_> {
                     && !self.by_name.contains_key(&name)
                 {
                     return self.check_number_static(cx, &name, callee.span, args, span);
+                }
+                // `Object(x)`: primitives become their wrapper objects, anything
+                // already an object is returned unchanged.
+                if name == "Object"
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                    && args.len() == 1
+                {
+                    let arg = self.check_expr(cx, &args[0]);
+                    let wrapper_name = match arg.ty {
+                        Ty::F64 => Some("NumberObject"),
+                        Ty::Boolean => Some("BooleanObject"),
+                        _ => None,
+                    };
+                    if let Some(wrapper) =
+                        wrapper_name.and_then(|name| self.classes_by_name.get(name).copied())
+                    {
+                        return hir::Expr {
+                            kind: hir::ExprKind::New { class: wrapper, args: vec![arg] },
+                            ty: Ty::Instance(wrapper),
+                            span,
+                        };
+                    }
+                    return arg;
                 }
                 // Global `isNaN`/`isFinite` coerce with ToNumber first (unlike
                 // the strict `Number.*` predicates).
@@ -7428,7 +7535,23 @@ impl Checker<'_> {
                     };
                     let mut acc = receiver;
                     for arg in args {
-                        let value = self.check_expr(cx, arg);
+                        let mut value = self.check_expr(cx, arg);
+                        // Non-string arguments are converted with ToString.
+                        if !value.ty.is_error() && value.ty != Ty::String {
+                            if let Some((coerce_id, _)) =
+                                zun_natives::resolve("collections", "stringCoerce")
+                            {
+                                let value_span = value.span;
+                                value = hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id: coerce_id,
+                                        args: vec![Self::box_to_any(value)],
+                                    },
+                                    ty: Ty::String,
+                                    span: value_span,
+                                };
+                            }
+                        }
                         if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::String) {
                             self.error(value.span, "`concat` expects string arguments");
                         }
@@ -9733,6 +9856,35 @@ impl Checker<'_> {
                 // `new Boolean(x)`: the wrapper object. Lowered to
                 // `new BooleanObject(<truthiness of x>)` (the prelude class in
                 // `builtin/boolean.zun`); bare `Boolean(x)` stays a primitive.
+                // `new Number(x)`: the wrapper object, lowered to
+                // `new NumberObject(<ToNumber of x>)`.
+                if name == "Number" && !self.classes_by_name.contains_key(&name) {
+                    let Some(&wrapper) = self.classes_by_name.get("NumberObject") else {
+                        self.error(class.span, "missing `NumberObject` wrapper class");
+                        return self.poison(span);
+                    };
+                    if args.len() > 1 {
+                        self.error(span, "`Number` expects at most one argument");
+                        return self.poison(span);
+                    }
+                    let value = match args.first() {
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(0.0),
+                            ty: Ty::F64,
+                            span,
+                        },
+                        Some(arg) => {
+                            let mut arg = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut arg, Ty::F64);
+                            self.to_number_for_arg(arg)
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::New { class: wrapper, args: vec![value] },
+                        ty: Ty::Instance(wrapper),
+                        span,
+                    };
+                }
                 if name == "Boolean" && !self.classes_by_name.contains_key(&name) {
                     let Some(&wrapper) = self.classes_by_name.get("BooleanObject") else {
                         self.error(class.span, "missing `BooleanObject` wrapper class");
@@ -11233,7 +11385,7 @@ impl Checker<'_> {
                     Ty::Error
                 }
             }
-            Eq | Ne => {
+            Eq | Ne | LooseEq | LooseNe => {
                 // Any two function values are comparable by reference identity,
                 // even with different signatures (distinct `Function(_)` types):
                 // different functions are simply unequal. A dynamic (`any`)

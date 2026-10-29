@@ -559,6 +559,8 @@ pub const MODULE: crate::Module = crate::Module {
         // stable.
         NativeFn { name: "dynamicCall3", params: &[Opaque, Str, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall4", params: &[Opaque, Str, Opaque, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // ECMAScript IsLooselyEqual (`==`) on two `any` operands.
+        NativeFn { name: "looseEquals", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
     ],
 };
 

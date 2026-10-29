@@ -2216,6 +2216,54 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // A number reached through `any` carries the Number.prototype
+                // formatters (`x.toString(2)`, `x.toFixed(2)`, ...).
+                if let Value::Float(_, _) | Value::Int(_, _) = &receiver_concrete {
+                    let x = match &receiver_concrete {
+                        Value::Float(number, _) => *number,
+                        Value::Int(number, _) => *number as f64,
+                        _ => unreachable!(),
+                    };
+                    let formatter = match member.as_ref() {
+                        "toString" | "toFixed" | "toExponential" | "toPrecision" => true,
+                        "valueOf" => {
+                            return Ok(Value::Any(zun_core::Any::float(x)));
+                        }
+                        _ => false,
+                    };
+                    if formatter {
+                        let argument = match args.get(2) {
+                            Some(arg) => unbox_arg(arg)?,
+                            None => Value::Void,
+                        };
+                        let argument = match argument {
+                            Value::Void => None,
+                            other => Some(self.to_number_value(other)?),
+                        };
+                        let result = match member.as_ref() {
+                            "toFixed" => zun_natives::js_to_fixed(x, argument.unwrap_or(0.0)),
+                            "toExponential" => zun_natives::js_to_exponential(x, argument),
+                            "toPrecision" => zun_natives::js_to_precision(x, argument),
+                            _ => zun_natives::js_to_radix_string(x, argument),
+                        };
+                        return match result {
+                            Ok(text) => {
+                                let boxed = zun_gc::with_current_heap_mut(|heap| {
+                                    Value::Str(text.into()).box_any(heap)
+                                })
+                                .unwrap_or_else(zun_core::Any::null);
+                                Ok(Value::Any(boxed))
+                            }
+                            Err(message) => {
+                                let text = message.strip_prefix("RangeError: ").unwrap_or(&message);
+                                match self.new_error_object("RangeError", text) {
+                                    Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                                    None => Err(RunError::Native(message)),
+                                }
+                            }
+                        };
+                    }
+                }
                 let namespace = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
                 // A built-in iterator object (from `Array`/`Map`/`Set`
@@ -2577,6 +2625,11 @@ impl<'a> Interp<'a> {
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let number = self.to_number_value(value)?;
                 Ok(Value::Float(number, zun_il::NumKind::F64))
+            }
+            "looseEquals" => {
+                let left = args.first().ok_or(RunError::BadToken)?.clone();
+                let right = args.get(1).ok_or(RunError::BadToken)?.clone();
+                Ok(Value::Bool(self.loose_equals(left, right)?))
             }
             "numberToFixedJs" | "numberToExponentialJs" | "numberToPrecisionJs"
             | "numberToStringRadixJs" => {
@@ -6103,6 +6156,69 @@ impl<'a> Interp<'a> {
     /// `toString` first). Returns the first primitive, or `None`.
     /// A typed instance's `valueOf`/`toString` come from `class_named_methods`
     /// (registered by `classSetMethod`) and receive the instance as `this`.
+    /// ECMAScript IsLooselyEqual (`==`).
+    pub(crate) fn loose_equals(&mut self, left: Value, right: Value) -> Result<bool, RunError> {
+        let left = unbox_arg(&left)?;
+        let right = unbox_arg(&right)?;
+        let nullish = |value: &Value| matches!(value, Value::Void | Value::Null);
+        let number = |value: &Value| match value {
+            Value::Int(n, _) => Some(*n as f64),
+            Value::Float(n, _) => Some(*n),
+            _ => None,
+        };
+        if nullish(&left) || nullish(&right) {
+            return Ok(nullish(&left) && nullish(&right));
+        }
+        if let (Some(a), Some(b)) = (number(&left), number(&right)) {
+            return Ok(a == b);
+        }
+        match (&left, &right) {
+            (Value::Str(a), Value::Str(b)) => return Ok(a == b),
+            (Value::Bool(a), Value::Bool(b)) => return Ok(a == b),
+            (Value::Object(a), Value::Object(b)) => return Ok(a.addr() == b.addr()),
+            (Value::Function(a), Value::Function(b)) => return Ok(a == b),
+            _ => {}
+        }
+        // Booleans become numbers first.
+        if let Value::Bool(flag) = &left {
+            let as_number = Value::Float(if *flag { 1.0 } else { 0.0 }, zun_il::NumKind::F64);
+            return self.loose_equals(as_number, right);
+        }
+        if let Value::Bool(flag) = &right {
+            let as_number = Value::Float(if *flag { 1.0 } else { 0.0 }, zun_il::NumKind::F64);
+            return self.loose_equals(left, as_number);
+        }
+        // Number against string: the string is converted.
+        if let (Some(a), Value::Str(text)) = (number(&left), &right) {
+            return Ok(a == js_string_to_number(text));
+        }
+        if let (Value::Str(text), Some(b)) = (&left, number(&right)) {
+            return Ok(js_string_to_number(text) == b);
+        }
+        // An object against a primitive: ToPrimitive(object), then compare again.
+        if let Value::Object(obj) = &left {
+            let primitive = self.to_primitive_default(*obj)?;
+            return self.loose_equals(primitive, right);
+        }
+        if let Value::Object(obj) = &right {
+            let primitive = self.to_primitive_default(*obj)?;
+            return self.loose_equals(left, primitive);
+        }
+        Ok(false)
+    }
+
+    /// ToPrimitive with the default hint: arrays join, objects run their
+    /// `valueOf`/`toString` hooks, a bare object is `"[object Object]"`.
+    fn to_primitive_default(&mut self, obj: zun_gc::Obj) -> Result<Value, RunError> {
+        if let Some(text) = array_join_text(obj) {
+            return Ok(Value::Str(text.into()));
+        }
+        Ok(match self.ordinary_to_primitive(obj, "number")? {
+            Some(primitive) => primitive,
+            None => Value::Str("[object Object]".into()),
+        })
+    }
+
     /// ECMAScript ToNumber of an (already unboxed) value, running object
     /// coercion hooks (`valueOf` / `toString` / `[Symbol.toPrimitive]`).
     pub(crate) fn to_number_value(&mut self, value: Value) -> Result<f64, RunError> {
@@ -6879,14 +6995,19 @@ fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<String> {
     match Value::unbox_any(any, heap)? {
         Value::Str(text) => Some(text.to_string()),
         Value::Int(value, _) => Some(value.to_string()),
-        Value::Float(value, _) => Some(
-            if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e15 {
-                format!("{}", value as i64)
-            } else {
-                format!("{value}")
-            },
-        ),
+        Value::Float(value, _) => Some(zun_natives::format_float(value)),
         Value::Bool(value) => Some(value.to_string()),
+        // A nested array joins recursively (`[[1, 2], 3].join()` is "1,2,3").
+        Value::Object(obj) => {
+            let length = heap.array_len(obj)?;
+            let parts: Vec<String> = (0..length)
+                .map(|index| {
+                    let element = heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void);
+                    stringify_any(element, heap).unwrap_or_default()
+                })
+                .collect();
+            Some(parts.join(","))
+        }
         _ => None,
     }
 }

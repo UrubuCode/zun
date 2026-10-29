@@ -46,6 +46,10 @@ pub const DATE: &str = include_str!("../builtin/date.zun");
 /// every program for the same reason as [`ERRORS`] and [`DATE`].
 pub const BOOLEAN: &str = include_str!("../builtin/boolean.zun");
 
+/// The `new Number(x)` wrapper class (`builtin/number_object.zun`), compiled
+/// with every program for the same reason as [`BOOLEAN`].
+pub const NUMBER_OBJECT: &str = include_str!("../builtin/number_object.zun");
+
 /// The typed decorator context (`builtin/decorators.zun`), compiled with every
 /// program for the same reason as [`ERRORS`].
 pub const DECORATORS: &str = include_str!("../builtin/decorators.zun");
@@ -153,6 +157,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     ERRORS,
     DATE,
     BOOLEAN,
+    NUMBER_OBJECT,
     DECORATORS,
     INTL,
     CONSOLE,
