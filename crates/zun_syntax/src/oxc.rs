@@ -1244,8 +1244,16 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     value,
                     span: span(assignment.span),
                 }),
-                AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::PrivateFieldAssign {
-                    object: Box::new(convert_expression(source, &member.object)?),
+                // Sema lowers a private store from `FieldAssign` over a
+                // `PrivateField` target (the shape the hand parser emits).
+                AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::FieldAssign {
+                    object: Box::new(Expr::PrivateField {
+                        object: Box::new(convert_expression(source, &member.object)?),
+                        field: Name {
+                            span: span(member.field.span),
+                        },
+                        span: span(member.span),
+                    }),
                     field: Name {
                         span: span(member.field.span),
                     },
@@ -1299,6 +1307,19 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     Ok(Expr::Call {
                         callee: Name {
                             span: span(member.span),
+                        },
+                        args,
+                        span: span(call.span),
+                    })
+                }
+                // `this.#m(args)`: a private method is an ordinary vtable
+                // method whose name keeps the `#` (so it cannot collide with a
+                // public member).
+                Expression::PrivateFieldExpression(member) if !member.optional => {
+                    Ok(Expr::MethodCall {
+                        receiver: Box::new(convert_expression(source, &member.object)?),
+                        method: Name {
+                            span: span(member.field.span),
                         },
                         args,
                         span: span(call.span),
@@ -1542,6 +1563,22 @@ fn convert_update(
             Ok(Expr::IndexAssign {
                 object: Box::new(convert_expression(source, &member.object)?),
                 index: Box::new(convert_expression(source, &member.expression)?),
+                value: Box::new(step(read)),
+                span: whole,
+            })
+        }
+        SimpleAssignmentTarget::PrivateFieldExpression(member) => {
+            let private = |source: &str| -> Result<Expr, String> {
+                Ok(Expr::PrivateField {
+                    object: Box::new(convert_expression(source, &member.object)?),
+                    field: Name { span: span(member.field.span) },
+                    span: span(member.span),
+                })
+            };
+            let read = private(source)?;
+            Ok(Expr::FieldAssign {
+                object: Box::new(private(source)?),
+                field: Name { span: span(member.field.span) },
                 value: Box::new(step(read)),
                 span: whole,
             })
@@ -2568,7 +2605,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             program.functions[0].body.statements[0],
-            crate::ast::Stmt::Expr(crate::ast::Expr::PrivateFieldAssign { .. })
+            crate::ast::Stmt::Expr(crate::ast::Expr::FieldAssign { .. })
         ));
         assert!(matches!(
             program.functions[0].body.statements[1],
@@ -2965,6 +3002,8 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                             (key.span(), Some(key))
                         } else if let PropertyKey::StaticIdentifier(identifier) = &method.key {
                             (Span::new(identifier.span.start, identifier.span.end), None)
+                        } else if let PropertyKey::PrivateIdentifier(identifier) = &method.key {
+                            (Span::new(identifier.span.start, identifier.span.end), None)
                         } else {
                             return Err(vec![
                                 "OXC adapter supports identifier class method names only".into(),
@@ -3052,7 +3091,24 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                                 function,
                                 span: Span::new(method.span.start, method.span.end),
                             }),
-                            None => methods.push(function),
+                            None => {
+                                // A later declaration of the same member (same
+                                // name, accessor kind, staticness) replaces the
+                                // earlier one, as in JS.
+                                let text = |f: &Function| {
+                                    source[f.name.span.start as usize..f.name.span.end as usize]
+                                        .to_owned()
+                                };
+                                let key = (text(&function), function.accessor, function.is_static);
+                                if let Some(existing) = methods
+                                    .iter_mut()
+                                    .find(|m| (text(m), m.accessor, m.is_static) == key)
+                                {
+                                    *existing = function;
+                                } else {
+                                    methods.push(function);
+                                }
+                            }
                         }
                     }
                     _ => {

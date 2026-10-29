@@ -9497,8 +9497,17 @@ impl Checker<'_> {
                 hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span }
             }
             ast::Expr::PrivateField { object, field, .. } => {
+                let ast_object = object.clone();
                 let object = self.check_expr(cx, object);
                 let name = self.text(field).to_string();
+                // Private accessor (`get #x()`): not a slot, so read it through
+                // the ordinary member path under its `#`-prefixed name.
+                if let Ty::Instance(class) = object.ty {
+                    if self.private_field_of(class, &name).is_none() && self.has_private_member(class, &name) {
+                        let fallback = ast::Expr::Field { object: ast_object, field: field.clone(), span };
+                        return self.check_expr(cx, &fallback);
+                    }
+                }
                 let Some(class) = (match object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
                     self.error(span, "private fields require an instance receiver");
                     return self.poison(span);
@@ -11149,8 +11158,19 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                     let Some((field_slot, ty)) = self.private_field_of(class, &name) else {
-                        self.error(field.span, format!("unknown private field `#{name}`"));
-                        return self.poison(span);
+                        if !self.has_private_member(class, &name) {
+                            self.error(field.span, format!("unknown private field `#{name}`"));
+                            return self.poison(span);
+                        }
+                        // Private setter (`set #x(v)`): store through the
+                        // ordinary member path under the `#`-prefixed name.
+                        let fallback = ast::Expr::FieldAssign {
+                            object: private_object.clone(),
+                            field: field.clone(),
+                            value: value.clone(),
+                            span,
+                        };
+                        return self.check_expr(cx, &fallback);
                     };
                     let mut value = self.check_expr(cx, value);
                     coerce_numeric_literal(&mut value, ty);

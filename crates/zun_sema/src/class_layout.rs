@@ -43,6 +43,17 @@ impl<'a> Checker<'a> {
             .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
     }
 
+    /// True when `class` declares a private method or accessor named `name`
+    /// (the name keeps its `#`), i.e. `#name` is not a slot but a member.
+    pub(super) fn has_private_member(&self, class: u32, name: &str) -> bool {
+        let Some(methods) = self.methods_by_class.get(class as usize) else {
+            return false;
+        };
+        methods.contains_key(name)
+            || methods.contains_key(&format!("get_{name}"))
+            || methods.contains_key(&format!("set_{name}"))
+    }
+
     pub(super) fn private_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
         let owner = self
             .classes_by_name
