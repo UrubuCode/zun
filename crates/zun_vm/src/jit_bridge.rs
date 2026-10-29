@@ -15,6 +15,8 @@
 //!
 //! See `docs/design/jit-interp-bridge.md`.
 
+use std::cell::RefCell;
+
 use zun_codegen::JitKind;
 use zun_interp::value::Value;
 use zun_interp::{run_method_on_current_heap, Output, RunError};
@@ -104,6 +106,86 @@ pub(crate) fn bridge_call(
     }
 }
 
+/// Execution context the `extern "C"` bridge entry reads to reach the
+/// interpreter. The pointers are lifetime-erased; [`BridgeScope`] installs them
+/// for the duration of a JIT call and restores the previous value on drop, so
+/// they are valid whenever bridged code can run.
+#[derive(Clone, Copy)]
+struct BridgeContext {
+    scope: *const ModuleScope,
+    loader: *const ModuleLoader,
+    output: *mut (dyn Output + 'static),
+}
+
+thread_local! {
+    static BRIDGE_CONTEXT: RefCell<Option<BridgeContext>> = const { RefCell::new(None) };
+}
+
+/// Install the bridge execution context for the current thread, restoring the
+/// previous one when dropped. Must wrap any JIT execution that can reach a
+/// bridged call; the borrowed `scope`/`loader`/`output` must outlive the guard.
+// Consumed by `JitHook` (the tiering bridge) in the next step; until then only
+// the bridge's own tests reach it.
+#[allow(dead_code)]
+pub(crate) struct BridgeScope {
+    previous: Option<BridgeContext>,
+}
+
+#[allow(dead_code)]
+impl BridgeScope {
+    pub(crate) fn enter(
+        scope: &ModuleScope,
+        loader: &ModuleLoader,
+        output: &mut dyn Output,
+    ) -> Self {
+        // Erase the output's lifetime; the guard's Drop clears the context before
+        // the borrow can end (the caller must keep the borrows alive until then).
+        let output: *mut (dyn Output + 'static) =
+            unsafe { std::mem::transmute::<*mut dyn Output, *mut (dyn Output + 'static)>(output) };
+        let context = BridgeContext {
+            scope,
+            loader,
+            output,
+        };
+        let previous = BRIDGE_CONTEXT.with(|cell| cell.borrow_mut().replace(context));
+        BridgeScope { previous }
+    }
+}
+
+impl Drop for BridgeScope {
+    fn drop(&mut self) {
+        BRIDGE_CONTEXT.with(|cell| *cell.borrow_mut() = self.previous);
+    }
+}
+
+/// The `extern "C"` entry JIT code calls for a bridged call. Reads the installed
+/// context, runs the ineligible callee via [`bridge_call`], and returns the
+/// packed result. Only non-throwing callees are bridged (eligibility guarantees
+/// it), so a throw cannot occur here; a VM fault returns 0 (the callee cannot
+/// fault on valid input, and faults are abort-level in both tiers).
+// Passed as a symbol into the JIT by `JitHook` in the next step; until then only
+// the bridge's own tests take its address.
+#[allow(dead_code)]
+pub(crate) extern "C" fn zun_jit_call_interp(rid: i64, args_ptr: *const u64, argc: i64) -> u64 {
+    // Copy the context out and drop the borrow before re-entering the
+    // interpreter (which could, in principle, reach another bridged call).
+    let context = BRIDGE_CONTEXT
+        .with(|cell| *cell.borrow())
+        .expect("bridge context must be installed before bridged code runs");
+    let scope = unsafe { &*context.scope };
+    let loader = unsafe { &*context.loader };
+    let output = unsafe { &mut *context.output };
+    let args: &[u64] = if argc > 0 {
+        unsafe { std::slice::from_raw_parts(args_ptr, argc as usize) }
+    } else {
+        &[]
+    };
+    match bridge_call(scope, loader, output, rid as u32, args) {
+        Ok(outcome) => outcome.packed,
+        Err(_) => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +255,61 @@ mod tests {
 
         let thrown = bridge_call(scope, &loader, &mut output, rid, &[(-1i64) as u64]).unwrap();
         assert_eq!(thrown.status, STATUS_THREW);
+    }
+
+    /// End-to-end: a JIT-compiled method that calls an ineligible, non-throwing
+    /// method (one using dynamic-object ops) is eligible via the bridge, and the
+    /// bridged call routes through the interpreter to the same result.
+    #[test]
+    fn jit_bridges_a_call_to_an_ineligible_nonthrowing_callee() {
+        let module = zun_compiler::compile(
+            "function helper(n: int): int { let o: any = {}; o.v = n; return (o.v) as int; } \
+             function caller(n: int): int { return helper(n) + 1; } \
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let loader = {
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("app", &module.write()).unwrap();
+            loader
+        };
+        let scope = loader.get("app").unwrap();
+        let find = |name: &str| {
+            scope
+                .module()
+                .tables
+                .method_defs
+                .iter()
+                .position(|m| scope.module().strings.get(m.name) == name)
+                .expect("method") as u32
+                + 1
+        };
+        let (helper_rid, caller_rid) = (find("helper"), find("caller"));
+
+        let jit = unsafe {
+            zun_codegen::Jit::compile_with_bridge(
+                scope.module(),
+                zun_jit_call_interp as *const u8,
+            )
+        }
+        .expect("jit compiles with bridge");
+        assert!(
+            !jit.is_compiled(helper_rid),
+            "the dynamic helper must stay on the interpreter"
+        );
+        assert!(
+            jit.is_compiled(caller_rid),
+            "caller should be JIT-eligible via the bridge to the ineligible helper"
+        );
+
+        let mut heap = zun_gc::Heap::new();
+        let _hscope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let mut output = CaptureOutput::default();
+        let _bridge = BridgeScope::enter(scope, &loader, &mut output);
+        // caller(5) = helper(5) + 1 = 5 + 1 = 6.
+        let result = jit
+            .call_packed_with_heap(caller_rid, &[5], &mut heap)
+            .expect("bridged call");
+        assert_eq!(result as i64, 6);
     }
 }
