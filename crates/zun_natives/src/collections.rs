@@ -549,6 +549,11 @@ pub const MODULE: crate::Module = crate::Module {
         // a function value (`EventTarget.removeEventListener`). Appended last so
         // existing dispatch ids stay stable.
         NativeFn { name: "functionBoxIs", params: &[Opaque, Function], ret: Bool, imp: unavailable },
+        // `globalGet(name)` — read a module-level binding previously registered
+        // with `globalSet` from the realm global singleton; `undefined` when the
+        // name is absent. Backs top-level `let`/`const` visibility inside
+        // functions. Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "globalGet", params: &[Str], ret: Opaque, imp: unavailable },
     ],
 };
 

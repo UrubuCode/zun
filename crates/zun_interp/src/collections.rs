@@ -4018,6 +4018,18 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Void)
             }
+            "globalGet" => {
+                // Read a module-level binding from the realm global singleton.
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    heap.dynamic_get(global, &name)
+                });
+                Ok(value.map(Value::Any).unwrap_or(Value::Void))
+            }
             "realmDescriptor" => {
                 // Box a base-type metadata token into an opaque class-descriptor
                 // `Any` (PLAN §3.1). The token arrives as a `number`.

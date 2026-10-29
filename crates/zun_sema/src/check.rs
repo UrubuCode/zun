@@ -153,6 +153,7 @@ fn check_impl(
         hooked_classes: HashSet::new(),
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
+        module_globals: HashSet::new(),
     };
     checker.collect_type_param_names(program);
     checker.resolve_imports(program, allow_external_modules, allow_core);
@@ -165,6 +166,14 @@ fn check_impl(
     let mut classes = checker.check_classes(program);
     checker.collect_signatures(program);
     checker.collect_decorator_routing(program);
+    // Top-level `let`/`const` bindings are module globals, visible inside every
+    // function (JS module scope). Register their names before any function body
+    // is checked so a forward reference resolves through `globalGet`.
+    for statement in &program.top_level {
+        if let ast::Stmt::Let { name, .. } = statement {
+            checker.module_globals.insert(checker.text(name).to_string());
+        }
+    }
 
     let mut functions: Vec<hir::Function> = Vec::new();
     // Top-level functions occupy the first func indices (see collect_signatures).
@@ -353,6 +362,11 @@ struct Checker<'a> {
     /// `Enum.Member` field access folds to the member's number/string literal;
     /// the enum name resolves as a type through `type_aliases`.
     enums: HashMap<String, HashMap<String, types::EnumConst>>,
+    /// Names of top-level `let`/`const` bindings (module globals). They are
+    /// stored on the realm global singleton (`globalSet`/`globalGet`) so a
+    /// function body can read them, matching JS module scope. All are dynamic
+    /// (`any`).
+    module_globals: HashSet<String>,
     /// Every generic type-parameter name declared anywhere in the program
     /// (`function f<T>`, `class C<U>`, `method m<K>`). Zun erases generics, so a
     /// type parameter has no distinct type: `resolve_annotation` treats a name
@@ -380,6 +394,10 @@ struct FunctionCx {
     this_class: Option<u32>,
     /// True while checking a class `constructor` body (where `super(...)` is legal).
     is_constructor: bool,
+    /// True while checking the synthetic top-level `<main>` body, where a
+    /// `let`/`const` declaration binds a module global (stored via `globalSet`)
+    /// rather than a frame local.
+    is_module_scope: bool,
 }
 
 #[derive(Default)]
@@ -479,6 +497,7 @@ impl Checker<'_> {
             captures: HashMap::new(),
             this_class: None,
             is_constructor: false,
+            is_module_scope: true,
         };
         self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
         let mut body = self.check_block(&mut cx, &block);
@@ -1603,6 +1622,7 @@ impl Checker<'_> {
             captures: HashMap::new(),
             this_class,
             is_constructor: this_class.is_some() && self.text(&f.name) == "constructor",
+            is_module_scope: false,
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -4648,6 +4668,38 @@ impl Checker<'_> {
         hir::Expr { kind: hir::ExprKind::String(text), ty: Ty::String, span }
     }
 
+    /// `globalSet(name, box(value), false)` — store a module global.
+    fn global_set_expr(&self, name: &str, value: hir::Expr, span: Span) -> hir::Expr {
+        let (id, _) = zun_natives::resolve("collections", "globalSet")
+            .expect("globalSet intrinsic must exist");
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![
+                    Self::string_literal(name.to_string(), span),
+                    Self::box_to_any(value),
+                    hir::Expr { kind: hir::ExprKind::Boolean(false), ty: Ty::Boolean, span },
+                ],
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
+    /// `globalGet(name)` — read a module global (dynamic).
+    fn global_get_expr(&self, name: &str, span: Span) -> hir::Expr {
+        let (id, _) = zun_natives::resolve("collections", "globalGet")
+            .expect("globalGet intrinsic must exist");
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![Self::string_literal(name.to_string(), span)],
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
     /// Lower an object literal's members (data properties, method shorthand,
     /// computed-symbol methods, getters/setters, and spread) into
     /// [`hir::ObjectEntry`] entries evaluated in source order.
@@ -5070,6 +5122,11 @@ impl Checker<'_> {
                             let token = zun_natives::USER_CLASS_FLAG | (class_idx + 1);
                             return self.realm_descriptor_expr(token, span);
                         }
+                        // A module global (top-level `let`/`const`) read from any
+                        // scope resolves through `globalGet` (dynamic).
+                        if self.module_globals.contains(&text) {
+                            return self.global_get_expr(&text, span);
+                        }
                         self.error(span, format!("unknown variable `{text}`"));
                         self.poison(span)
                     }
@@ -5128,6 +5185,11 @@ impl Checker<'_> {
                                 ty: capture.ty,
                                 span,
                             };
+                        }
+                        // Assignment to a module global (top-level `let`/`const`)
+                        // stores through `globalSet`.
+                        if self.module_globals.contains(&text) {
+                            return self.global_set_expr(&text, value, span);
                         }
                         self.error(target.span, format!("unknown variable `{text}`"));
                         self.poison(span)
