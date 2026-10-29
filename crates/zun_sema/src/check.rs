@@ -10562,6 +10562,9 @@ impl Checker<'_> {
             Sub | Mul | Div | Rem => {
                 if same_numeric(lhs.ty, rhs.ty) {
                     lhs.ty
+                } else if lhs.ty == Ty::Any || rhs.ty == Ty::Any {
+                    // A dynamic operand arithmetically coerces at run time (JS).
+                    Ty::Any
                 } else {
                     self.error(
                         span,
@@ -10601,6 +10604,9 @@ impl Checker<'_> {
                 let both_number = lhs.ty == Ty::F64 && rhs.ty == Ty::F64;
                 if both_int || both_number {
                     lhs.ty
+                } else if lhs.ty == Ty::Any || rhs.ty == Ty::Any {
+                    // A dynamic operand is coerced to int32/uint32 at run time (JS).
+                    Ty::Any
                 } else {
                     self.error(
                         span,
