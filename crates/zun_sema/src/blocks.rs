@@ -24,15 +24,23 @@ impl<'a> Checker<'a> {
                             &lowered
                         {
                             let slot = *slot;
-                            let span = name.span;
-                            let read = hir::Expr {
-                                kind: hir::ExprKind::Local(slot),
-                                ty: cx.locals[slot as usize],
-                                span,
-                            };
-                            stmts.push(lowered);
-                            stmts.push(hir::Stmt::Expr(self.global_set_expr(&name_text, read, span)));
-                            continue;
+                            let slot_ty = cx.locals[slot as usize];
+                            // Function values do not box to `Any`, so they cannot
+                            // ride the realm global store; such a binding stays a
+                            // local only (it is still callable within `<main>`).
+                            if !matches!(slot_ty, crate::hir::Ty::Function(_)) {
+                                let span = name.span;
+                                let read = hir::Expr {
+                                    kind: hir::ExprKind::Local(slot),
+                                    ty: slot_ty,
+                                    span,
+                                };
+                                stmts.push(lowered);
+                                stmts.push(hir::Stmt::Expr(
+                                    self.global_set_expr(&name_text, read, span),
+                                ));
+                                continue;
+                            }
                         }
                     }
                 }
