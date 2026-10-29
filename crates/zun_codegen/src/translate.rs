@@ -67,6 +67,7 @@ pub fn translate_body(
     literal_data_ids: *const u32,
     body: &MethodBody<'_>,
     bridge_enabled: bool,
+    pending_slot_addr: u64,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
 
@@ -178,8 +179,11 @@ pub fn translate_body(
         zm,
         osr_counter,
         method_return_kind: JitKind::from_byte(body.return_kind),
+        method_returns_value: body.returns_value,
         handlers: body.handlers.clone(),
         bridge_enabled,
+        pending_slot_addr,
+        exc_exit: None,
     };
     t.run(&instrs, &offset_of_index, &index_of_offset)?;
     t.builder.finalize();
@@ -251,6 +255,14 @@ struct Translator<'a> {
     /// Whether a call to an ineligible (non-`func_ids`) method is lowered to a
     /// bridged call to the interpreter instead of an error.
     bridge_enabled: bool,
+    /// Whether the method returns a value (for the exceptional-exit block's ABI).
+    method_returns_value: bool,
+    /// Address of the pending-exception slot loaded after each call when the
+    /// bridge is enabled (0 otherwise).
+    pending_slot_addr: u64,
+    /// The method's single exceptional-exit block (returns an ABI-shaped dummy,
+    /// leaving the pending slot set), created lazily on the first post-call check.
+    exc_exit: Option<Block>,
 }
 
 impl Translator<'_> {
@@ -858,6 +870,7 @@ impl Translator<'_> {
                         && !self.func_ids.contains_key(&rid)
                     {
                         self.emit_bridge_call(rid, &arg_values, &callee, &mut stack)?;
+                        self.after_call_pending_check(&mut block_sigs, &mut stack)?;
                         continue;
                     }
                     let direct_string_call = instr.opcode == Opcode::CallVirt
@@ -986,6 +999,9 @@ impl Translator<'_> {
                             stack.push((r, kind));
                         }
                     }
+                    // A direct/virtual callee may itself have propagated a throw
+                    // (through a bridged call); check and unwind if so.
+                    self.after_call_pending_check(&mut block_sigs, &mut stack)?;
                 }
                 Opcode::CallBuiltin => {
                     let id = match instr.operand {
@@ -2384,6 +2400,7 @@ impl Translator<'_> {
             }
         }
 
+        self.finish_exc_exit();
         self.builder.seal_all_blocks();
         Ok(())
     }
@@ -2890,6 +2907,78 @@ impl Translator<'_> {
             }
             stack.push((v, kind));
         }
+        Ok(())
+    }
+
+    /// The method's single exceptional-exit block (created lazily). Its body is
+    /// emitted by [`Self::finish_exc_exit`] after the main translation, so this
+    /// only needs to hand back the block to branch to.
+    fn exc_exit_block(&mut self) -> Block {
+        if let Some(block) = self.exc_exit {
+            return block;
+        }
+        let block = self.builder.create_block();
+        self.exc_exit = Some(block);
+        block
+    }
+
+    /// Emit the exceptional-exit block's body: return an ABI-shaped dummy value
+    /// (never used — the pending exception the interpreter reads overrides it),
+    /// leaving the pending slot set so callers up the chain also unwind.
+    fn finish_exc_exit(&mut self) {
+        let Some(block) = self.exc_exit else {
+            return;
+        };
+        self.builder.switch_to_block(block);
+        if !self.method_returns_value {
+            self.builder.ins().return_(&[]);
+        } else if self.method_return_kind == JitKind::Other {
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            self.builder.ins().return_(&[zero, zero]);
+        } else {
+            let zero = typed_zero(&mut self.builder, self.method_return_kind);
+            self.builder.ins().return_(&[zero]);
+        }
+    }
+
+    /// After a method call, if the bridge is enabled, check the pending-exception
+    /// slot: on a pending throw branch to the exceptional-exit block; otherwise
+    /// continue in a fresh block with the operand stack threaded through. This is
+    /// how a throw propagated out of a bridged (or transitively bridging) callee
+    /// unwinds the JIT frame.
+    fn after_call_pending_check(
+        &mut self,
+        block_sigs: &mut HashMap<Block, Vec<JitKind>>,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
+        if !self.bridge_enabled {
+            return Ok(());
+        }
+        let addr = self
+            .builder
+            .ins()
+            .iconst(types::I64, self.pending_slot_addr as i64);
+        let pending = self
+            .builder
+            .ins()
+            .load(types::I64, MemFlags::trusted(), addr, 0);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let is_pending = self.builder.ins().icmp(IntCC::NotEqual, pending, zero);
+        let cont = self.builder.create_block();
+        let args = self.thread_edge(block_sigs, cont, stack);
+        let exc = self.exc_exit_block();
+        self.builder.ins().brif(is_pending, exc, &[], cont, &args);
+        self.builder.switch_to_block(cont);
+        *stack = match block_sigs.get(&cont) {
+            Some(kinds) => self
+                .builder
+                .block_params(cont)
+                .iter()
+                .zip(kinds)
+                .map(|(&value, &kind)| (value, kind))
+                .collect(),
+            None => Vec::new(),
+        };
         Ok(())
     }
 

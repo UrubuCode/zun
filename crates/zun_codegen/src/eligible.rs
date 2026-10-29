@@ -824,10 +824,10 @@ fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBod
 /// errors), or if it has no body (an extern/native target, conservatively
 /// assumed to throw). It throws transitively if it calls a may-throw method.
 ///
-/// The JIT→interpreter bridge uses this: a JIT method may bridge a call to an
-/// ineligible callee **only when that callee cannot throw**, because the bridge
-/// slice without the exceptional-return channel has no way to propagate a throw
-/// out of the JIT frame (see `docs/design/jit-interp-bridge.md`).
+/// The JIT→interpreter bridge no longer needs this for eligibility (the
+/// exceptional-return channel propagates throws), but it is kept for the
+/// upcoming same-frame-catch routing of bridged throws (calls inside `try`).
+#[allow(dead_code)]
 pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
@@ -936,11 +936,6 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
 /// whole-call-graph fixpoint so a method that directly calls an ineligible but
 /// non-throwing method stays eligible (the call is bridged to the interpreter).
 fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool) -> HashSet<u32> {
-    let may_throw = if bridge_available {
-        methods_that_may_throw(module)
-    } else {
-        HashSet::new()
-    };
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
         methods_by_name
@@ -948,7 +943,10 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             .or_default()
             .push(index as u32 + 1);
     }
-    let mut candidate: HashMap<u32, Vec<u32>> = HashMap::new();
+    // Callees per candidate, tagged `is_virtual`: a `CallVirt` callee must be
+    // eligible (the translator lowers it through the vtable, not the bridge),
+    // while a direct `Call` callee may be bridged when ineligible.
+    let mut candidate: HashMap<u32, Vec<(u32, bool)>> = HashMap::new();
     for (i, method) in module.tables.method_defs.iter().enumerate() {
         let rid = i as u32 + 1;
         if method.body_offset == u32::MAX {
@@ -1120,10 +1118,11 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
                         .copied()
                         .filter(|rid| {
                             module.tables.method_defs[*rid as usize - 1].body_offset != u32::MAX
-                        }),
+                        })
+                        .map(|rid| (rid, true)),
                 );
             } else {
-                callees.push(token.rid());
+                callees.push((token.rid(), false));
             }
         }
         candidate.insert(rid, callees);
@@ -1135,11 +1134,16 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
         // A callee must be eligible, OR (with a bridge) ineligible but provably
         // non-throwing — then the call is routed to the interpreter.
         eligible.retain(|rid| {
-            candidate[rid].iter().all(|c| {
-                prev.contains(c)
-                    || (bridge_available
-                        && !may_throw.contains(c)
-                        && bridge_marshalable(module, *c))
+            candidate[rid].iter().all(|&(c, is_virtual)| {
+                if prev.contains(&c) {
+                    return true;
+                }
+                // Only a direct `Call` to an ineligible method is bridged (the
+                // translator does not bridge `CallVirt`). With the exceptional-
+                // return channel, such a callee may be bridged whether or not it
+                // can throw — a throw propagates out via the pending slot — as
+                // long as its signature is marshalable by the packed-value ABI.
+                !is_virtual && bridge_available && bridge_marshalable(module, c)
             })
         });
         if eligible.len() == prev.len() {

@@ -133,8 +133,6 @@ pub(crate) fn set_pending_exception(handle: u64) {
 
 /// Address of the per-thread pending-exception slot, for the JIT to load after a
 /// call. Stable for the thread's life; the JIT runs on the thread that built it.
-// Consumed by the translate post-call check (step 2.2) next.
-#[allow(dead_code)]
 pub(crate) fn pending_slot_addr() -> u64 {
     PENDING_EXCEPTION.with(|slot| slot.as_ptr() as u64)
 }
@@ -323,6 +321,7 @@ mod tests {
             zun_codegen::Jit::compile_with_bridge(
                 scope.module(),
                 zun_jit_call_interp as *const u8,
+                pending_slot_addr(),
             )
         }
         .expect("jit compiles with bridge");
@@ -344,5 +343,28 @@ mod tests {
             .call_packed_with_heap(caller_rid, &[5], &mut heap)
             .expect("bridged call");
         assert_eq!(result as i64, 6);
+    }
+
+    /// Full exceptional-return channel: a JIT `caller` bridges an ineligible,
+    /// throwing `helper`; the throw propagates out of the JIT frame (pending
+    /// slot → exceptional exit) back to the interpreter, which routes it to the
+    /// same-frame catch in the interpreted `main`.
+    #[test]
+    fn a_bridged_throw_propagates_to_an_interpreter_catch() {
+        let module = zun_compiler::compile(
+            "class Boom {} \
+             function helper(n: int): int { let o: any = {}; o.v = n; throw new Boom(); return (o.v) as int; } \
+             function caller(n: int): int { return helper(n) + 1; } \
+             function main(): int { try { return caller(5); } catch (e: Boom) { return 42; } }",
+        )
+        .expect("compile");
+        let bytes = module.write();
+        let mut output = CaptureOutput::default();
+        // Runs through the production `execute` path (bridge + JitHook active).
+        let result = crate::execute_with(&bytes, &mut output).expect("run");
+        assert!(
+            matches!(result, Value::Int(42, _)),
+            "the bridged throw should reach main's catch, got {result:?}"
+        );
     }
 }

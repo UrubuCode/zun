@@ -1667,6 +1667,9 @@ pub struct Jit {
     /// symbol registered and eligibility relaxed). When set, a call to an
     /// ineligible, non-throwing callee is lowered to a bridged call.
     bridge_enabled: bool,
+    /// Address of the per-thread pending-exception slot the JIT loads after a
+    /// call to detect a propagated throw (0 when no bridge).
+    bridge_pending_addr: u64,
 }
 
 impl core::fmt::Debug for Jit {
@@ -1705,8 +1708,12 @@ impl Jit {
     /// # Safety
     /// `bridge_fn` must be a valid `extern "C"` function pointer with the bridge
     /// signature, valid for as long as compiled code can run.
-    pub unsafe fn new_bridged(zm: &Module, bridge_fn: *const u8) -> Result<Self, JitError> {
-        Self::new_impl(zm, Some(bridge_fn))
+    pub unsafe fn new_bridged(
+        zm: &Module,
+        bridge_fn: *const u8,
+        pending_slot_addr: u64,
+    ) -> Result<Self, JitError> {
+        Self::new_impl(zm, Some((bridge_fn, pending_slot_addr)))
     }
 
     /// Compile every eligible method eagerly with a bridge wired (see
@@ -1714,8 +1721,12 @@ impl Jit {
     ///
     /// # Safety
     /// See [`Jit::new_bridged`].
-    pub unsafe fn compile_with_bridge(zm: &Module, bridge_fn: *const u8) -> Result<Self, JitError> {
-        let mut jit = unsafe { Self::new_bridged(zm, bridge_fn)? };
+    pub unsafe fn compile_with_bridge(
+        zm: &Module,
+        bridge_fn: *const u8,
+        pending_slot_addr: u64,
+    ) -> Result<Self, JitError> {
+        let mut jit = unsafe { Self::new_bridged(zm, bridge_fn, pending_slot_addr)? };
         let all: Vec<u32> = jit.eligible.iter().copied().collect();
         for rid in all {
             jit.ensure_compiled(zm, rid)?;
@@ -1723,7 +1734,9 @@ impl Jit {
         Ok(jit)
     }
 
-    fn new_impl(zm: &Module, bridge_fn: Option<*const u8>) -> Result<Self, JitError> {
+    fn new_impl(zm: &Module, bridge: Option<(*const u8, u64)>) -> Result<Self, JitError> {
+        let bridge_fn = bridge.map(|(fn_ptr, _)| fn_ptr);
+        let bridge_pending_addr = bridge.map(|(_, addr)| addr).unwrap_or(0);
         let mut flags = settings::builder();
         // Optimize for speed; the e-graph optimizer is on by default in this
         // Cranelift version, so there is no flag to set for it.
@@ -1991,6 +2004,7 @@ impl Jit {
             stack_maps: HashMap::new(),
             stack_map_registry: zun_gc::StackMapRegistry::new(),
             bridge_enabled: bridge_fn.is_some(),
+            bridge_pending_addr,
         };
 
         let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
@@ -2130,6 +2144,7 @@ impl Jit {
             core::ptr::null(),
             &body,
             self.bridge_enabled,
+            self.bridge_pending_addr,
         ) {
             // Translation failed partway, so `FunctionBuilder::finalize` never
             // ran: the builder context is left dirty and `ctx.func` holds a
@@ -2708,6 +2723,7 @@ pub fn compile_object_for_target(
             literal_data_ids.as_ptr(),
             &body,
             false,
+            0,
         )
         .map_err(|detail| JitError::Compile {
             method_rid: rid,
