@@ -100,6 +100,12 @@ fn pow(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("pow: expected two numbers".to_string())),
     };
+    // ECMAScript Number::exponentiate differs from IEEE `pow` at the edges:
+    // a NaN exponent is NaN even for base 1, and |base| == 1 with an infinite
+    // exponent is NaN.
+    if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
+        return Ok(NativeValue::Float(f64::NAN));
+    }
     Ok(NativeValue::Float(base.powf(exponent)))
 }
 

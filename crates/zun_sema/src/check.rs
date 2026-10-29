@@ -4803,7 +4803,20 @@ impl Checker<'_> {
         };
         match property.kind {
             ast::PropertyKind::Init => {
-                let value = Self::box_to_any(self.check_expr(cx, &property.value));
+                let checked = self.check_expr(cx, &property.value);
+                // A function-valued data property (`{ f: () => 1 }`) lives in the
+                // object's function slot, exactly like method shorthand, so
+                // `obj.f()` and the `valueOf`/`toString` coercion hooks find it.
+                if let (Ty::Function(_), Some(name)) = (checked.ty, named_key.clone()) {
+                    if let Some(builtin) = self.resolve_collection(span, "dynamicSetFunction") {
+                        entries.push(hir::ObjectEntry::Install {
+                            builtin,
+                            args: vec![Self::string_literal(name, span), checked],
+                        });
+                        return;
+                    }
+                }
+                let value = Self::box_to_any(checked);
                 let key = match &property.key {
                     ast::PropertyKey::Computed(key) => {
                         hir::ObjectKey::Computed(self.check_expr(cx, key))
@@ -5596,6 +5609,29 @@ impl Checker<'_> {
                     && !self.by_name.contains_key(&name)
                 {
                     return self.check_number_static(cx, &name, callee.span, args, span);
+                }
+                // Global `isNaN`/`isFinite` coerce with ToNumber first (unlike
+                // the strict `Number.*` predicates).
+                if matches!(name.as_str(), "isNaN" | "isFinite")
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                {
+                    if args.len() != 1 {
+                        self.error(span, format!("`{name}` expects 1 argument, found {}", args.len()));
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("number", &name) else {
+                        self.error(span, format!("missing Number intrinsic `{name}`"));
+                        return self.poison(span);
+                    };
+                    let mut arg = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut arg, Ty::F64);
+                    let arg = self.to_number_for_arg(arg);
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::Boolean,
+                        span,
+                    };
                 }
                 // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
                 if name == "Function"
@@ -8239,6 +8275,51 @@ impl Checker<'_> {
                         cx, receiver, &mname, func, args, span, method.span,
                     );
                 }
+                // JS-conformant `toFixed` / `toExponential` / `toPrecision` /
+                // `toString(radix)`: the raw argument is passed as `any` and
+                // coerced, range-checked (managed `RangeError`) and formatted
+                // exactly on the interpreter floor.
+                if receiver.ty == Ty::F64
+                    && matches!(
+                        mname.as_str(),
+                        "toFixed" | "toExponential" | "toPrecision" | "toString"
+                    )
+                    && args.len() <= 1
+                {
+                    let native_name = match mname.as_str() {
+                        "toFixed" => "numberToFixedJs",
+                        "toExponential" => "numberToExponentialJs",
+                        "toPrecision" => "numberToPrecisionJs",
+                        _ => "numberToStringRadixJs",
+                    };
+                    let Some((id, _)) = zun_natives::resolve("number", native_name) else {
+                        self.error(span, format!("missing Number intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let arg = match args.first() {
+                        Some(arg) => {
+                            let value = self.check_expr(cx, arg);
+                            Self::box_to_any(value)
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Number(0.0),
+                                    ty: Ty::F64,
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, arg] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 // `number.toString(radix?)` — base-`radix` (2..=36) rendering,
                 // default 10. Intercepted before class dispatch so it supersedes
                 // the no-arg extern `toString` for the radix form and the
@@ -10293,6 +10374,16 @@ impl Checker<'_> {
                         let mut value = self.check_expr(cx, value);
                         let value_ty = value.ty;
                         coerce_numeric_literal(&mut value, elem_ty);
+                        // A JS `number` stored into an integer element is
+                        // converted (NaN -> 0, truncation) like a typed-array set.
+                        if elem_ty.is_int() && value.ty == Ty::F64 {
+                            let value_span = value.span;
+                            value = hir::Expr {
+                                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                                ty: elem_ty,
+                                span: value_span,
+                            };
+                        }
                         if !value.ty.is_error() && !self.is_assignable(value.ty, elem_ty) {
                             self.error(value.span, format!("buffer element must be {elem_ty:?}"));
                         }

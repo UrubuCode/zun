@@ -2575,29 +2575,37 @@ impl<'a> Interp<'a> {
                 // "number": call `[Symbol.toPrimitive]("number")` if present and
                 // ToNumber its result, else ToNumber of its string coercion.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
-                let number = match value {
-                    Value::Int(number, _) => number as f64,
-                    Value::Float(number, _) => number,
-                    Value::Bool(flag) => if flag { 1.0 } else { 0.0 },
-                    Value::Null => 0.0,
-                    Value::Void => f64::NAN,
-                    Value::Str(text) => js_string_to_number(&text),
-                    Value::Object(obj) if array_join_text(obj).is_some() => {
-                        js_string_to_number(&array_join_text(obj).unwrap_or_default())
-                    }
-                    Value::Object(obj) => {
-                        if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
-                            match prim {
-                                Value::Str(text) => js_string_to_number(&text),
-                                other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
-                            }
-                        } else {
-                            f64::NAN
+                let number = self.to_number_value(value)?;
+                Ok(Value::Float(number, zun_il::NumKind::F64))
+            }
+            "numberToFixedJs" | "numberToExponentialJs" | "numberToPrecisionJs"
+            | "numberToStringRadixJs" => {
+                let x = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Float(number, _) => *number,
+                    Value::Int(number, _) => *number as f64,
+                    _ => return Err(RunError::BadToken),
+                };
+                let arg = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                let arg_number = match arg {
+                    Value::Void => None,
+                    other => Some(self.to_number_value(other)?),
+                };
+                let result = match name {
+                    "numberToFixedJs" => zun_natives::js_to_fixed(x, arg_number.unwrap_or(0.0)),
+                    "numberToExponentialJs" => zun_natives::js_to_exponential(x, arg_number),
+                    "numberToPrecisionJs" => zun_natives::js_to_precision(x, arg_number),
+                    _ => zun_natives::js_to_radix_string(x, arg_number),
+                };
+                match result {
+                    Ok(text) => Ok(Value::Str(text.into())),
+                    Err(message) => {
+                        let text = message.strip_prefix("RangeError: ").unwrap_or(&message);
+                        match self.new_error_object("RangeError", text) {
+                            Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                            None => Err(RunError::Native(message)),
                         }
                     }
-                    _ => f64::NAN,
-                };
-                Ok(Value::Float(number, zun_il::NumKind::F64))
+                }
             }
             "stringSymbolDispatch" => {
                 // `str.match/replace/search/split(arg)` with a dynamic `arg`:
@@ -6079,6 +6087,39 @@ impl<'a> Interp<'a> {
     /// `toString` first). Returns the first primitive, or `None`.
     /// A typed instance's `valueOf`/`toString` come from `class_named_methods`
     /// (registered by `classSetMethod`) and receive the instance as `this`.
+    /// ECMAScript ToNumber of an (already unboxed) value, running object
+    /// coercion hooks (`valueOf` / `toString` / `[Symbol.toPrimitive]`).
+    pub(crate) fn to_number_value(&mut self, value: Value) -> Result<f64, RunError> {
+        Ok(match value {
+            Value::Int(number, _) => number as f64,
+            Value::Float(number, _) => number,
+            Value::Bool(flag) => {
+                if flag {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Value::Null => 0.0,
+            Value::Void => f64::NAN,
+            Value::Str(text) => js_string_to_number(&text),
+            Value::Object(obj) if array_join_text(obj).is_some() => {
+                js_string_to_number(&array_join_text(obj).unwrap_or_default())
+            }
+            Value::Object(obj) => {
+                if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
+                    match prim {
+                        Value::Str(text) => js_string_to_number(&text),
+                        other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
+                    }
+                } else {
+                    f64::NAN
+                }
+            }
+            _ => f64::NAN,
+        })
+    }
+
     fn ordinary_to_primitive(
         &mut self,
         obj: zun_gc::Obj,

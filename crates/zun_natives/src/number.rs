@@ -433,6 +433,227 @@ fn intl_number_format(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValu
     Ok(NativeValue::Str(formatter.format(&decimal).to_string()))
 }
 
+// ---------------------------------------------------------------------------
+// ECMAScript Number.prototype formatters (exact decimal arithmetic).
+// ---------------------------------------------------------------------------
+
+/// ToIntegerOrInfinity: NaN -> 0, truncate toward zero, keep +/-Infinity.
+fn integer_or_infinity(value: f64) -> f64 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.trunc() + 0.0
+    }
+}
+
+/// The exact decimal expansion of `|x|` as significant digits (no leading or
+/// trailing zeros, `"0"` for zero) and the decimal exponent of the first digit.
+fn exact_decimal(x: f64) -> (Vec<u8>, i32) {
+    let x = x.abs();
+    if x == 0.0 {
+        return (vec![b'0'], 0);
+    }
+    // A double has at most 1074 fractional decimal digits, so this is exact.
+    let text = format!("{x:.1100}");
+    let dot = text.find('.').expect("fixed rendering has a point");
+    let all: Vec<u8> = text.bytes().filter(|b| *b != b'.').collect();
+    let first = all.iter().position(|b| *b != b'0').expect("non-zero value");
+    let exponent = dot as i32 - 1 - first as i32;
+    let mut digits = all[first..].to_vec();
+    while digits.len() > 1 && digits.last() == Some(&b'0') {
+        digits.pop();
+    }
+    (digits, exponent)
+}
+
+/// Add one unit in the last place to a decimal digit vector, growing it on
+/// carry-out.
+fn increment_digits(digits: &mut Vec<u8>) {
+    for digit in digits.iter_mut().rev() {
+        if *digit == b'9' {
+            *digit = b'0';
+        } else {
+            *digit += 1;
+            return;
+        }
+    }
+    digits.insert(0, b'1');
+}
+
+/// Round the exact digits to `count` significant digits, ties to the larger
+/// value (the spec's "pick the larger n"). Returns the digits and exponent.
+fn round_significant(digits: &[u8], exponent: i32, count: usize) -> (Vec<u8>, i32) {
+    let mut out: Vec<u8> = digits.iter().take(count).copied().collect();
+    while out.len() < count {
+        out.push(b'0');
+    }
+    let round_up = digits.get(count).is_some_and(|digit| *digit >= b'5');
+    let mut exponent = exponent;
+    if round_up {
+        increment_digits(&mut out);
+        if out.len() > count {
+            out.truncate(count);
+            exponent += 1;
+        }
+    }
+    (out, exponent)
+}
+
+fn exponent_suffix(exponent: i32) -> String {
+    if exponent < 0 {
+        format!("e-{}", -exponent)
+    } else {
+        format!("e+{exponent}")
+    }
+}
+
+fn mantissa_text(digits: &[u8]) -> String {
+    let text = String::from_utf8_lossy(digits);
+    if digits.len() > 1 {
+        format!("{}.{}", &text[..1], &text[1..])
+    } else {
+        text.into_owned()
+    }
+}
+
+/// `Number.prototype.toFixed` with `fd` already converted to a number.
+pub fn js_to_fixed(x: f64, fd: f64) -> Result<String, String> {
+    let f = integer_or_infinity(fd);
+    if !f.is_finite() || !(0.0..=100.0).contains(&f) {
+        return Err("RangeError: toFixed() digits argument must be between 0 and 100".to_string());
+    }
+    if !x.is_finite() || x.abs() >= 1e21 {
+        return Ok(crate::format_float(x));
+    }
+    let f = f as usize;
+    let negative = x < 0.0;
+    let (digits, exponent) = exact_decimal(x);
+    let keep = exponent + 1 + f as i32;
+    let mut n: Vec<u8> = if x == 0.0 || keep < 0 {
+        vec![b'0']
+    } else {
+        let keep = keep as usize;
+        let mut kept: Vec<u8> = digits.iter().take(keep).copied().collect();
+        while kept.len() < keep {
+            kept.push(b'0');
+        }
+        if digits.get(keep).is_some_and(|digit| *digit >= b'5') {
+            if kept.is_empty() {
+                kept.push(b'1');
+            } else {
+                increment_digits(&mut kept);
+            }
+        }
+        if kept.is_empty() {
+            kept.push(b'0');
+        }
+        kept
+    };
+    while n.len() < f + 1 {
+        n.insert(0, b'0');
+    }
+    let split = n.len() - f;
+    let integer = String::from_utf8_lossy(&n[..split]).into_owned();
+    let fraction = String::from_utf8_lossy(&n[split..]).into_owned();
+    let body = if f > 0 { format!("{integer}.{fraction}") } else { integer };
+    Ok(if negative { format!("-{body}") } else { body })
+}
+
+/// `Number.prototype.toExponential`; `fd` is `None` when the argument was
+/// `undefined` (as many digits as necessary).
+pub fn js_to_exponential(x: f64, fd: Option<f64>) -> Result<String, String> {
+    let f = fd.map(integer_or_infinity);
+    if !x.is_finite() {
+        // The spec checks the range only after the non-finite early return.
+        return Ok(crate::format_float(x));
+    }
+    if let Some(f) = f {
+        if !f.is_finite() || !(0.0..=100.0).contains(&f) {
+            return Err(
+                "RangeError: toExponential() argument must be between 0 and 100".to_string()
+            );
+        }
+    }
+    let negative = x < 0.0;
+    let sign = if negative { "-" } else { "" };
+    let (digits, exponent) = match f {
+        Some(f) => {
+            let count = f as usize + 1;
+            if x == 0.0 {
+                (vec![b'0'; count], 0)
+            } else {
+                let (digits, exponent) = exact_decimal(x);
+                round_significant(&digits, exponent, count)
+            }
+        }
+        None => {
+            if x == 0.0 {
+                (vec![b'0'], 0)
+            } else {
+                // Shortest round-trip digits.
+                let text = format!("{:e}", x.abs());
+                let (mantissa, exp) = text.split_once('e').expect("exponent form");
+                let digits: Vec<u8> = mantissa.bytes().filter(|b| *b != b'.').collect();
+                (digits, exp.parse::<i32>().expect("integer exponent"))
+            }
+        }
+    };
+    Ok(format!("{sign}{}{}", mantissa_text(&digits), exponent_suffix(exponent)))
+}
+
+/// `Number.prototype.toPrecision`; `precision` is `None` for `undefined`.
+pub fn js_to_precision(x: f64, precision: Option<f64>) -> Result<String, String> {
+    let Some(precision) = precision else {
+        return Ok(crate::format_float(x));
+    };
+    let p = integer_or_infinity(precision);
+    if !x.is_finite() {
+        return Ok(crate::format_float(x));
+    }
+    if !p.is_finite() || !(1.0..=100.0).contains(&p) {
+        return Err("RangeError: toPrecision() argument must be between 1 and 100".to_string());
+    }
+    let p = p as usize;
+    let sign = if x < 0.0 { "-" } else { "" };
+    if x == 0.0 {
+        let zeros = if p > 1 { format!(".{}", "0".repeat(p - 1)) } else { String::new() };
+        return Ok(format!("0{zeros}"));
+    }
+    let (digits, exponent) = exact_decimal(x);
+    let (digits, exponent) = round_significant(&digits, exponent, p);
+    let text = String::from_utf8_lossy(&digits).into_owned();
+    let body = if exponent < -6 || exponent >= p as i32 {
+        format!("{}{}", mantissa_text(&digits), exponent_suffix(exponent))
+    } else if exponent == p as i32 - 1 {
+        text
+    } else if exponent >= 0 {
+        let split = exponent as usize + 1;
+        format!("{}.{}", &text[..split], &text[split..])
+    } else {
+        format!("0.{}{}", "0".repeat((-(exponent + 1)) as usize), text)
+    };
+    Ok(format!("{sign}{body}"))
+}
+
+/// `Number.prototype.toString(radix)`; `radix` is `None` for `undefined`.
+pub fn js_to_radix_string(x: f64, radix: Option<f64>) -> Result<String, String> {
+    let radix = match radix {
+        None => 10.0,
+        Some(radix) => integer_or_infinity(radix),
+    };
+    if !radix.is_finite() || !(2.0..=36.0).contains(&radix) {
+        return Err("RangeError: toString() radix must be between 2 and 36".to_string());
+    }
+    if !x.is_finite() || radix == 10.0 {
+        return Ok(crate::format_float(x));
+    }
+    Ok(format_radix(x, radix as u32))
+}
+
+fn managed_only(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Err(NativeError("managed number intrinsic requires the interpreter".to_string()))
+}
+
 pub const MODULE: crate::Module = crate::Module {
     name: "number",
     functions: &[
@@ -547,5 +768,11 @@ pub const MODULE: crate::Module = crate::Module {
             imp: number_to_locale_string,
         },
         NativeFn { name: "intlNumberFormat", params: &[Str, F64], ret: Str, imp: intl_number_format },
+        // JS-conformant formatters: the second argument is the raw (`any`)
+        // argument, coerced and range-checked on the interpreter floor.
+        NativeFn { name: "numberToFixedJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
+        NativeFn { name: "numberToExponentialJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
+        NativeFn { name: "numberToPrecisionJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
+        NativeFn { name: "numberToStringRadixJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
     ],
 };

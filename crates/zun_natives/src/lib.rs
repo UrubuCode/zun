@@ -28,6 +28,7 @@ mod io;
 mod math;
 mod net;
 mod number;
+pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_string};
 mod string;
 mod time;
 mod timers;
