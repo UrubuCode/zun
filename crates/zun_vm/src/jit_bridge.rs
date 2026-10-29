@@ -449,4 +449,23 @@ mod tests {
         let ok = crate::execute_with(&module_ok.write(), &mut output).expect("run");
         assert!(matches!(ok, Value::Int(7, _)), "non-throw path, got {ok:?}");
     }
+
+    /// First-class function: a transient function reference is called indirectly
+    /// (`LoadFunction` + `CallIndirect`), dispatched through the bridge to the
+    /// target method.
+    #[test]
+    fn a_transient_indirect_call_dispatches_through_the_bridge() {
+        let module = zun_compiler::compile(
+            "function target(n: int): int { return n + 10; } \
+             function invoke(n: int): int { return (target)(n); } \
+             function main(): int { return invoke(5); }",
+        )
+        .expect("compile");
+        let mut output = CaptureOutput::default();
+        let result = crate::execute_with(&module.write(), &mut output).expect("run");
+        assert!(
+            matches!(result, Value::Int(15, _)),
+            "indirect call should reach target(5)=15, got {result:?}"
+        );
+    }
 }
