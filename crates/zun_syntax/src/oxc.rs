@@ -355,7 +355,9 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 });
             }
             Statement::ForStatement(for_statement) => {
-                statements.push(convert_for_statement(source, for_statement)?);
+                let (pre, stmt) = convert_for_statement(source, for_statement)?;
+                statements.extend(pre);
+                statements.push(stmt);
             }
             Statement::ForOfStatement(for_of_statement) => {
                 statements.push(convert_for_of(source, for_of_statement)?);
@@ -371,10 +373,11 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 let span_all = span(labeled.span);
                 // The labelled body is a single statement; wrap a multi-statement
                 // body (rare) in a block-equivalent by taking the first.
+                let mut inner = inner;
                 let statement = inner
-                    .into_iter()
-                    .next()
+                    .pop()
                     .unwrap_or(Stmt::Expr(Expr::Null { span: span_all }));
+                statements.extend(inner);
                 statements.push(Stmt::Labeled {
                     label: Name { span: span(labeled.label.span) },
                     statement: Box::new(statement),
@@ -528,14 +531,32 @@ fn convert_if_branch(source: &str, statement: &Statement<'_>) -> Result<Block, S
 fn convert_for_statement(
     source: &str,
     for_statement: &oxc_ast::ast::ForStatement<'_>,
-) -> Result<Stmt, String> {
+) -> Result<(Vec<Stmt>, Stmt), String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let mut pre = Vec::new();
     let init = match &for_statement.init {
         None => None,
-        Some(ForStatementInit::VariableDeclaration(declaration)) => {
-            if declaration.declarations.len() != 1 {
-                return Err("OXC adapter supports one for-loop initializer binding".into());
+        Some(ForStatementInit::VariableDeclaration(declaration))
+            if declaration.declarations.len() != 1 =>
+        {
+            // Several declarators: hoist them as `let`s before the loop.
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                    return Err("OXC adapter supports identifier for-loop bindings".into());
+                };
+                let Some(initializer) = declarator.init.as_ref() else {
+                    return Err("OXC adapter requires an initializer for for-loop bindings".into());
+                };
+                pre.push(Stmt::Let {
+                    name: Name { span: span(identifier.span) },
+                    ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                    init: convert_expression(source, initializer)?,
+                    span: span(declarator.span),
+                });
             }
+            None
+        }
+        Some(ForStatementInit::VariableDeclaration(declaration)) => {
             let declarator = &declaration.declarations[0];
             let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
                 return Err("OXC adapter supports identifier for-loop bindings".into());
@@ -556,7 +577,7 @@ fn convert_for_statement(
                 .ok_or("OXC adapter does not support this for-loop initializer yet")?,
         )?))),
     };
-    Ok(Stmt::For {
+    Ok((pre, Stmt::For {
         init,
         cond: for_statement
             .test
@@ -570,7 +591,7 @@ fn convert_for_statement(
             .transpose()?,
         body: convert_if_branch(source, &for_statement.body)?,
         span: span(for_statement.span),
-    })
+    }))
 }
 
 /// Desugar a `switch` to an `if`/`else if` chain comparing the discriminant with
