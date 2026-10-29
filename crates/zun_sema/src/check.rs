@@ -5438,6 +5438,14 @@ impl Checker<'_> {
                 if name == "super" {
                     return self.check_super_call(cx, None, args, span);
                 }
+                // Global `parseInt`/`parseFloat` are the same as their `Number.*`
+                // statics; route to that implementation when no user binding
+                // shadows the name.
+                if matches!(name.as_str(), "parseInt" | "parseFloat")
+                    && !self.by_name.contains_key(&name)
+                {
+                    return self.check_number_static(cx, &name, callee.span, args, span);
+                }
                 // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
                 if name == "Function"
                     && !self.by_name.contains_key(&name)
