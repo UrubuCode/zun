@@ -115,28 +115,43 @@ allocation + dynamic stores, already ineligible opcodes) and have `MakeClosure`
 in the JIT assemble the two-word carrier from (token rid, bridged env address).
 Lowering `NewDynamic` natively is a separate, later optimization.
 
-## Slices (each independently verifiable in-process)
+## Slicing — and why the carrier is one atomic change
 
-1. **Carrier plumbing + GC, no new source reach.** Add `fn_abi.rs`; make
-   `abi_word_count(Function) = 2`; thread two words through `clif_ty` use sites,
-   `thread_edge`, `shim`, and the bridge pack/unpack; declare the environment
-   word as a stack-map root. Keep ilgen mapping unchanged (still only concrete
-   no-closure functions reach the JIT, now with `environment == 0`). Verify:
-   the existing stored-no-closure test still passes with the wider carrier, and a
-   handcrafted-IL equivalence test exercises a carrier with a non-zero env word
-   under GC stress. **No behavior change from source yet** — pure representation
-   widening. This is the risky GC slice; land it alone and reviewed.
-2. **`CallIndirect` with env dispatch.** Reconstruct the handle (both words) at
-   the indirect call site and bridge it. Verify a closure value *constructed in
-   the interpreter* and passed across the bridge is called correctly from JIT.
-3. **`MakeClosure` lowering (bridged env).** JIT assembles the carrier from a
-   bridged env construction. Verify a closure created *and* called inside a JIT
-   method reads its captures.
-4. **Eligibility relaxation + source end-to-end.** Drop the gate exclusions
-   (function param, call-returns-function, `MakeClosure`) now that the carrier is
-   sound; map dynamic function types to `Function` where safe. Verify a full
-   closure program (capture, return a closure, call it) runs JIT-native and
-   matches the interpreter.
+A first draft of this plan split off "carrier plumbing + GC, env == 0" as an
+independent slice 1. **That is not independently meaningful.** The current
+one-word rid representation already carries `environment == 0` correctly (that is
+exactly the no-closure case shipped in `36bc2b2e`). Widening to a two-word
+carrier whose second word is always zero adds ABI-ripple risk (every
+`JitKind::Function` site moves from one word to two) while producing *no*
+observable behavior and *nothing to GC-root* (a constant zero is not a live
+pointer). The GC rooting — the whole point — only becomes exercisable once
+`MakeClosure` can put a **non-zero** environment into the carrier.
+
+So the carrier is genuinely **one atomic change**: representation widening +
+environment production (`MakeClosure`) + environment dispatch (`CallIndirect`) +
+GC rooting must land together, because none of them is observable or testable
+without the others. It is testable only end-to-end, with a real closure that
+captures, survives a collection, and is called.
+
+Implementation order *within* that single change (not separate commits):
+
+1. Add `fn_abi.rs` (carrier constants + a `FunctionHandle` pack/unpack helper),
+   fully unit-tested in isolation — the one piece that *is* safely standalone.
+2. Follow the `Any` carrier model on the operand stack: a `Function` operand is a
+   one-word **pointer to a 16-byte stack slot** `{identity, environment}` (the
+   stack holds one `Value` per slot; `Any` already does this — see the
+   `stack_addr`/`TAG_OFFSET`/`PAYLOAD_OFFSET` code in `translate.rs`), *not* two
+   parallel stack entries. This confines the ABI-word-count ripple.
+3. `LoadFunction` writes `{rid, 0}`; `MakeClosure` writes `{rid, bridged-env-addr}`;
+   `CallIndirect` reads both words, reconstructs the handle, bridges it.
+4. Declare the environment stack-slot word as a GC root and relocate it on
+   compaction (mirror `relocate_environment`). **Dominant risk.**
+5. Relax the eligibility gate (function param, call-returns-function,
+   `MakeClosure`) and map the now-representable dynamic function types.
+
+Verify end-to-end with a GC-stress closure test: a closure captures a local,
+allocation in the callee forces a collection across the safepoint, and the
+closure still reads its captured value after the move.
 
 ## Risks / open questions
 
@@ -159,6 +174,10 @@ Lowering `NewDynamic` natively is a separate, later optimization.
 ## Guardrail
 
 This change touches value representation, the calling convention, and GC rooting
-at once. Per the project's corruption-risk discipline, land **slice 1 (carrier +
-GC) as one reviewed piece on its own**, GC-stress-verified, before building
-dispatch on top. Do not fold the four slices into a single marathon change.
+at once, and (per the slicing note above) cannot be meaningfully split — it is
+observable only end-to-end with a real closure. Per the project's
+corruption-risk discipline it must therefore land as **one focused, reviewed
+change in a dedicated session**, GC-stress-verified, *not* speed-run at the tail
+of an unrelated session. The only safely-standalone preparatory step is the
+unit-tested `fn_abi.rs` carrier module (step 1 above); everything after it is
+coupled and should be built and reviewed together.
