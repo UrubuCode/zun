@@ -930,6 +930,27 @@ fn bridge_marshalable(module: &Module, rid: u32) -> bool {
     params_ok && return_ok
 }
 
+/// Whether the method `rid` returns a function value. A call to such a method
+/// would push a function value that may be a closure or bound function, which
+/// the no-closure one-word JIT representation cannot carry. A bodyless (extern)
+/// target is treated as not returning a function (externs returning closures do
+/// not occur in practice).
+fn call_returns_function(module: &Module, rid: u32, function_byte: u8) -> bool {
+    if rid == 0 {
+        return false;
+    }
+    let Some(method) = module.tables.method_defs.get(rid as usize - 1) else {
+        return false;
+    };
+    if method.body_offset == u32::MAX {
+        return false;
+    }
+    match read_body(&module.code, method.body_offset) {
+        Ok(body) => body.returns_value && body.return_kind == function_byte,
+        Err(_) => false,
+    }
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
@@ -1055,21 +1076,43 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
         if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
             continue;
         }
-        // `LoadFunction`/`CallIndirect` lower through the bridge; without one they
-        // stay on Tier 0. (A stored function value is a Function-typed local,
-        // which maps to `Other` and is rejected above, so only a transient
-        // no-closure `LoadFunction` immediately invoked survives to here.) Each
-        // `CallIndirect`'s signature must be marshalable by the packed ABI.
-        let uses_function_value = instrs
-            .iter()
-            .any(|i| matches!(i.opcode, Opcode::LoadFunction | Opcode::CallIndirect));
+        // Function values in the typed JIT are carried as a one-word method rid
+        // (`LoadFunction` → rid, `CallIndirect` dispatches it through the bridge).
+        // That is sound only for a *concrete, closure-free* function value, so a
+        // method is refused if it could place a closure or bound function into a
+        // Function slot: a function-typed parameter (the caller could pass one),
+        // or a call that returns a function (the callee could). `MakeClosure` is
+        // already excluded by `opcode_supported`, and dynamic function types map
+        // to `Other` (so a Function-typed local/param here is always concrete).
+        // Each `CallIndirect` must target a concrete (rid != 0), marshalable
+        // signature — a dynamic rid-0 indirect call stays on Tier 0. All of this
+        // needs the bridge for dispatch.
+        let function_byte = JitKind::Function.to_byte();
+        let uses_function_value = body.local_kinds.iter().any(|&b| b == function_byte)
+            || instrs
+                .iter()
+                .any(|i| matches!(i.opcode, Opcode::LoadFunction | Opcode::CallIndirect));
         if uses_function_value && !bridge_available {
             continue;
         }
         if uses_function_value
-            && !instrs.iter().all(|i| {
-                i.opcode != Opcode::CallIndirect
-                    || matches!(i.operand, Operand::Token(t) if t.rid() != 0 && bridge_marshalable(module, t.rid()))
+            && body.local_kinds[..body.param_count as usize]
+                .iter()
+                .any(|&b| b == function_byte)
+        {
+            continue;
+        }
+        if uses_function_value
+            && !instrs.iter().all(|i| match (i.opcode, i.operand) {
+                (Opcode::CallIndirect, Operand::Token(t)) => {
+                    t.rid() != 0
+                        && bridge_marshalable(module, t.rid())
+                        && !call_returns_function(module, t.rid(), function_byte)
+                }
+                (Opcode::Call | Opcode::CallVirt, Operand::Token(t)) => {
+                    !call_returns_function(module, t.rid(), function_byte)
+                }
+                _ => true,
             })
         {
             continue;

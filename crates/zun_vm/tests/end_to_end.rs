@@ -2794,6 +2794,33 @@ fn static_regex_injects_jit_eligible_matcher_method() {
     assert!(eligible.contains(&match_rid), "synthesized matchAt must be JIT-eligible");
 }
 
+#[test]
+fn a_concrete_stored_function_value_is_jit_eligible_and_runs() {
+    // `let f = inc; return f(n);` — a concrete function stored in a local and
+    // called indirectly. The local is carried as a one-word `Function` rid, so
+    // the method is JIT-eligible under the bridge: it is provably closure-free
+    // (the value is a bare `LoadFunction`, there is no function-typed parameter,
+    // and no call returns a function). This is the stored-function slice built
+    // on top of slice 1's transient `(expr)(args)` form.
+    let user = "function inc(n: int): int { return n + 1; } \
+                function choose(n: int): int { let f = inc; return f(n); } \
+                function main(): void { print(choose(10)); }";
+    let module = compile_with_std(user);
+    let choose_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|m| module.strings.get(m.name) == "choose")
+        .map(|i| i as u32 + 1)
+        .expect("choose present");
+    let eligible = zun_codegen::eligible_methods_bridged(&module, true);
+    assert!(
+        eligible.contains(&choose_rid),
+        "a concrete stored-function method must be JIT-eligible under the bridge"
+    );
+    assert_eq!(run_with_std(user), ["11"]);
+}
+
 // ---------------------------------------------------------------------------
 // Operator tokens: `**`, bitwise `& | ^ ~`, shifts `<< >> >>>`, and `void`.
 // ---------------------------------------------------------------------------
