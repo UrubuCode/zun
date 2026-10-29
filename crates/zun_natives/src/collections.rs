@@ -554,6 +554,11 @@ pub const MODULE: crate::Module = crate::Module {
         // name is absent. Backs top-level `let`/`const` visibility inside
         // functions. Appended last so existing dispatch ids stay stable.
         NativeFn { name: "globalGet", params: &[Str], ret: Opaque, imp: unavailable },
+        // Dynamic member calls with three and four arguments (the 0/1/2 forms
+        // are defined earlier). Appended last so existing dispatch ids stay
+        // stable.
+        NativeFn { name: "dynamicCall3", params: &[Opaque, Str, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "dynamicCall4", params: &[Opaque, Str, Opaque, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
     ],
 };
 

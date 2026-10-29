@@ -2152,7 +2152,7 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
-            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" => {
+            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" => {
                 let member = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),

@@ -7265,11 +7265,17 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 2 {
+                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 4 {
                     // Dynamic member call on an `any`/dynamic receiver (e.g. a
                     // namespace from `import()`, or an object-literal method in
                     // the function slot): dispatched by name at run time.
-                    let native_name = ["dynamicCall0", "dynamicCall1", "dynamicCall2"][args.len()];
+                    let native_name = [
+                        "dynamicCall0",
+                        "dynamicCall1",
+                        "dynamicCall2",
+                        "dynamicCall3",
+                        "dynamicCall4",
+                    ][args.len()];
                     let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
