@@ -1424,10 +1424,8 @@ impl Checker<'_> {
                 for p in &m.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
-                        None => {
-                            self.error(p.name.span, "methods require a type on every parameter");
-                            Ty::Error
-                        }
+                        // An untyped parameter is dynamic (`any`), matching JS.
+                        None => Ty::Any,
                     });
                 }
                 let return_ty = match &m.return_type {
@@ -1478,10 +1476,8 @@ impl Checker<'_> {
                 for p in &sm.function.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
-                        None => {
-                            self.error(p.name.span, "methods require a type on every parameter");
-                            Ty::Error
-                        }
+                        // An untyped parameter is dynamic (`any`), matching JS.
+                        None => Ty::Any,
                     });
                 }
                 let return_ty = match &sm.function.return_type {
