@@ -95,5 +95,13 @@ pub const MODULE: crate::Module = crate::Module {
         // arrays (and objects whose `[Symbol.isConcatSpreadable]` is `true`)
         // are spread, anything else is appended as one element.
         NativeFn { name: "arrayConcat", params: &[Array, Array], ret: Array, imp: unavailable },
+        // `slice(start?, end?)` with ECMAScript relative-index clamping, and the
+        // strict-equality search family. Indices are `number`s (NaN means 0).
+        NativeFn { name: "arraySliceRange", params: &[Array, F64, F64], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayIndexOf", params: &[Array, Opaque, F64], ret: F64, imp: unavailable },
+        NativeFn { name: "arrayLastIndexOf", params: &[Array, Opaque, F64], ret: F64, imp: unavailable },
+        NativeFn { name: "arrayIncludes", params: &[Array, Opaque, F64], ret: Bool, imp: unavailable },
+        // In-place `reverse()`, returning the receiver.
+        NativeFn { name: "arrayReverse", params: &[Array], ret: Array, imp: unavailable },
     ],
 };

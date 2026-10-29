@@ -2077,6 +2077,7 @@ impl Checker<'_> {
                                 ),
                             );
                         }
+                        init = Self::unbox_to(init, declared);
                         declared
                     }
                     None => init.ty,
@@ -2289,7 +2290,7 @@ impl Checker<'_> {
                 let value = value.as_ref().map(|v| {
                     let mut e = self.check_expr(cx, v);
                     coerce_numeric_literal(&mut e, cx.return_ty);
-                    e
+                    Self::unbox_to(e, cx.return_ty)
                 });
                 match (&value, cx.return_ty) {
                     (None, Ty::Void) => {}
@@ -3807,6 +3808,20 @@ impl Checker<'_> {
         hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
     }
 
+    /// Coerce a value to an `f64` argument: integers widen, everything else
+    /// goes through JS ToNumber.
+    fn to_number_for_arg(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty.is_int() {
+            let span = value.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                ty: Ty::F64,
+                span,
+            };
+        }
+        self.to_number_expr(value)
+    }
+
     fn check_math_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -4678,6 +4693,20 @@ impl Checker<'_> {
     }
 
     /// Box a checked value to `Any` unless it already is (or is poisoned).
+    /// Unbox a dynamic value flowing into a typed primitive position so the
+    /// destination holds the primitive itself (not an `Any` carrier).
+    fn unbox_to(value: hir::Expr, target: Ty) -> hir::Expr {
+        if value.ty == Ty::Any && matches!(target, Ty::F64 | Ty::Boolean | Ty::String) {
+            let span = value.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                ty: target,
+                span,
+            };
+        }
+        value
+    }
+
     fn box_to_any(value: hir::Expr) -> hir::Expr {
         if value.ty == Ty::Any || value.ty.is_error() {
             value
@@ -5177,6 +5206,9 @@ impl Checker<'_> {
                                 format!("cannot assign {:?} to {slot_ty:?}", value.ty),
                             );
                         }
+                        // A dynamic value stored into a typed primitive slot is
+                        // unboxed so the slot holds the primitive itself.
+                        value = Self::unbox_to(value, slot_ty);
                         hir::Expr {
                             ty: slot_ty,
                             kind: if cx.boxed.contains(&slot) {
@@ -8430,6 +8462,76 @@ impl Checker<'_> {
                     Ty::Array => Some(("array", "Array")),
                     _ => None,
                 };
+                if receiver.ty == Ty::Array
+                    && matches!(
+                        mname.as_str(),
+                        "slice" | "indexOf" | "lastIndexOf" | "includes" | "reverse"
+                    )
+                    && !self.classes_by_name.contains_key("Array")
+                {
+                    if mname == "reverse" {
+                        let Some((id, _)) = zun_natives::resolve("array", "arrayReverse") else {
+                            self.error(span, "missing array intrinsic `arrayReverse`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                            ty: Ty::Array,
+                            span,
+                        };
+                    }
+                    let native_name = match mname.as_str() {
+                        "slice" => "arraySliceRange",
+                        "indexOf" => "arrayIndexOf",
+                        "lastIndexOf" => "arrayLastIndexOf",
+                        _ => "arrayIncludes",
+                    };
+                    let Some((id, native)) = zun_natives::resolve("array", native_name) else {
+                        self.error(span, format!("missing array intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let is_slice = mname == "slice";
+                    let max_args = if is_slice { 2 } else { 2 };
+                    let min_args = if is_slice { 0 } else { 1 };
+                    if args.len() < min_args || args.len() > max_args {
+                        self.error(span, format!("`{mname}` called with a wrong number of arguments"));
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver];
+                    let mut rest = args.iter();
+                    if !is_slice {
+                        let needle = self.check_expr(cx, rest.next().expect("needle"));
+                        call_args.push(Self::box_to_any(needle));
+                    }
+                    let defaults = if is_slice {
+                        [0.0, f64::INFINITY]
+                    } else if mname == "lastIndexOf" {
+                        [f64::INFINITY, 0.0]
+                    } else {
+                        [0.0, 0.0]
+                    };
+                    let wanted = native.params.len() - call_args.len();
+                    for position in 0..wanted {
+                        let value = match rest.next() {
+                            Some(arg) => {
+                                let mut value = self.check_expr(cx, arg);
+                                coerce_numeric_literal(&mut value, Ty::F64);
+                                self.to_number_for_arg(value)
+                            }
+                            None => hir::Expr {
+                                kind: hir::ExprKind::Number(defaults[position]),
+                                ty: Ty::F64,
+                                span,
+                            },
+                        };
+                        call_args.push(value);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
                 if let Some((group, class_name)) = primitive_group {
                     if !self.classes_by_name.contains_key(class_name) {
                         // `string`/`number` natives are bare (`toUpperCase`);

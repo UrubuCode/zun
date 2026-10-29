@@ -3351,6 +3351,117 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(result))
             }
+            "arraySliceRange" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = |value: Option<&Value>, default: f64, length: f64| -> f64 {
+                    let raw = match value {
+                        Some(Value::Float(number, _)) => *number,
+                        Some(Value::Int(number, _)) => *number as f64,
+                        _ => default,
+                    };
+                    let integer = if raw.is_nan() { 0.0 } else { raw.trunc() };
+                    if integer < 0.0 {
+                        (length + integer).max(0.0)
+                    } else {
+                        integer.min(length)
+                    }
+                };
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    let start = relative(args.get(1), 0.0, length as f64) as usize;
+                    let end = relative(args.get(2), length as f64, length as f64) as usize;
+                    let count = end.saturating_sub(start);
+                    let result = heap.alloc_array(count);
+                    for offset in 0..count {
+                        let element = heap
+                            .array_get(source, start + offset)
+                            .unwrap_or_else(zun_core::Any::void);
+                        heap.array_set(result, offset, element);
+                    }
+                    result
+                });
+                Ok(Value::Object(result))
+            }
+            "arrayReverse" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    for index in 0..length / 2 {
+                        let left = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        let right = heap
+                            .array_get(source, length - 1 - index)
+                            .unwrap_or_else(zun_core::Any::void);
+                        heap.array_set(source, index, right);
+                        heap.array_set(source, length - 1 - index, left);
+                    }
+                });
+                Ok(Value::Object(source))
+            }
+            "arrayIndexOf" | "arrayLastIndexOf" | "arrayIncludes" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let needle = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                let from = match args.get(2) {
+                    Some(Value::Float(number, _)) => Some(*number),
+                    Some(Value::Int(number, _)) => Some(*number as f64),
+                    _ => None,
+                };
+                let found = zun_gc::with_current_heap(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0) as f64;
+                    let resolve = |from: f64| {
+                        let integer = if from.is_nan() { 0.0 } else { from.trunc() };
+                        if integer < 0.0 { (length + integer).max(0.0) } else { integer }
+                    };
+                    let element = |index: usize| {
+                        let any = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        Value::unbox_any(any, heap).unwrap_or(Value::Void)
+                    };
+                    let zero_aware = name == "arrayIncludes";
+                    let equal = |left: &Value, right: &Value| strict_equals(left, right, zero_aware);
+                    if name == "arrayLastIndexOf" {
+                        // `lastIndexOf` searches backwards from `from` (default
+                        // length - 1); a negative `from` counts from the end.
+                        let start = match from {
+                            None => length - 1.0,
+                            Some(from) => {
+                                let integer = if from.is_nan() { 0.0 } else { from.trunc() };
+                                if integer < 0.0 { length + integer } else { integer.min(length - 1.0) }
+                            }
+                        };
+                        if start < 0.0 {
+                            return None;
+                        }
+                        let mut index = start as usize;
+                        loop {
+                            if equal(&element(index), &needle) {
+                                return Some(index);
+                            }
+                            if index == 0 {
+                                return None;
+                            }
+                            index -= 1;
+                        }
+                    }
+                    let start = resolve(from.unwrap_or(0.0));
+                    let mut index = start as usize;
+                    while (index as f64) < length {
+                        if equal(&element(index), &needle) {
+                            return Some(index);
+                        }
+                        index += 1;
+                    }
+                    None
+                });
+                Ok(match name {
+                    "arrayIncludes" => Value::Bool(found.is_some()),
+                    _ => Value::Float(
+                        found.map(|index| index as f64).unwrap_or(-1.0),
+                        zun_il::NumKind::F64,
+                    ),
+                })
+            }
             "coalesceUndefined" => {
                 // Destructuring default: `fallback` when `value` is undefined.
                 let value = args.first().ok_or(RunError::BadToken)?.clone();
@@ -6817,6 +6928,23 @@ fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {
         }
         _ => f64::NAN,
     }
+}
+
+/// ECMAScript strict equality (`===`); with `zero_aware` it is SameValueZero
+/// (`NaN` equals `NaN`, as `includes` requires).
+fn strict_equals(left: &Value, right: &Value, zero_aware: bool) -> bool {
+    let number = |value: &Value| match value {
+        Value::Int(value, _) => Some(*value as f64),
+        Value::Float(value, _) => Some(*value),
+        _ => None,
+    };
+    if let (Some(left), Some(right)) = (number(left), number(right)) {
+        if left.is_nan() && right.is_nan() {
+            return zero_aware;
+        }
+        return left == right;
+    }
+    same_value(left, right)
 }
 
 /// ECMAScript `SameValue`: like `===` but `NaN` equals `NaN` and `+0` differs

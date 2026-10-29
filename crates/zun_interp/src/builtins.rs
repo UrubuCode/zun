@@ -378,6 +378,11 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayGroup",
         "arrayGroupToMap",
         "arrayConcat",
+        "arraySliceRange",
+        "arrayIndexOf",
+        "arrayLastIndexOf",
+        "arrayIncludes",
+        "arrayReverse",
     ] {
         if zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
