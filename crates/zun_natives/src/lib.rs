@@ -28,6 +28,7 @@ mod io;
 mod math;
 mod net;
 mod number;
+pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_string};
 mod string;
 mod time;
 mod timers;
@@ -601,12 +602,42 @@ pub fn dispatch(
 }
 
 /// JS-style float formatting: integral values print without a trailing `.0`.
-pub(crate) fn format_float(n: f64) -> String {
-    if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
-        format!("{}", n as i64)
-    } else {
-        format!("{n}")
+/// ECMAScript Number::toString(10): shortest round-trip digits, exponent form
+/// at `>= 1e21` and `< 1e-6`, `-0` renders as `0`.
+pub fn format_float(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
     }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    if n.is_infinite() {
+        return if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string();
+    }
+    let sign = if n < 0.0 { "-" } else { "" };
+    // `{:e}` yields the shortest round-trip digits: `d.ddde<exp>`.
+    let sci = format!("{:e}", n.abs());
+    let (mantissa, exp) = sci.split_once('e').expect("scientific form has an exponent");
+    let exp: i32 = exp.parse().expect("integer exponent");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i32;
+    let point = exp + 1; // decimal point position relative to the digit string
+    let body = if k <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat((point - k) as usize))
+    } else if 0 < point && point <= 21 {
+        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else {
+        let e = point - 1;
+        let e_text = if e < 0 { format!("-{}", -e) } else { format!("+{e}") };
+        if k == 1 {
+            format!("{digits}e{e_text}")
+        } else {
+            format!("{}.{}e{e_text}", &digits[..1], &digits[1..])
+        }
+    };
+    format!("{sign}{body}")
 }
 
 #[cfg(test)]

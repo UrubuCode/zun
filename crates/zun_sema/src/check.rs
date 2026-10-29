@@ -2077,6 +2077,7 @@ impl Checker<'_> {
                                 ),
                             );
                         }
+                        init = Self::unbox_to(init, declared);
                         declared
                     }
                     None => init.ty,
@@ -2312,7 +2313,7 @@ impl Checker<'_> {
                 let value = value.as_ref().map(|v| {
                     let mut e = self.check_expr(cx, v);
                     coerce_numeric_literal(&mut e, cx.return_ty);
-                    e
+                    Self::unbox_to(e, cx.return_ty)
                 });
                 match (&value, cx.return_ty) {
                     (None, Ty::Void) => {}
@@ -3810,6 +3811,40 @@ impl Checker<'_> {
         self.poison(index.span)
     }
 
+    /// JS ToNumber of an arbitrary operand as an `f64` expression. `number`
+    /// operands pass through; everything else is boxed into `Any` and run
+    /// through the `numberCoerce` native (string parsing, object->primitive).
+    fn to_number_expr(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty == Ty::F64 || value.ty.is_error() {
+            return value;
+        }
+        let span = value.span;
+        let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") else {
+            self.error(span, "missing `numberCoerce` intrinsic");
+            return self.poison(span);
+        };
+        let arg = if value.ty == Ty::Any {
+            value
+        } else {
+            hir::Expr { span, kind: hir::ExprKind::BoxAny { value: Box::new(value) }, ty: Ty::Any }
+        };
+        hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
+    }
+
+    /// Coerce a value to an `f64` argument: integers widen, everything else
+    /// goes through JS ToNumber.
+    fn to_number_for_arg(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty.is_int() {
+            let span = value.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                ty: Ty::F64,
+                span,
+            };
+        }
+        self.to_number_expr(value)
+    }
+
     fn check_math_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -3842,6 +3877,9 @@ impl Checker<'_> {
             for arg in args {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, Ty::F64);
+                if !value.ty.is_int() && value.ty != Ty::F64 {
+                    value = self.to_number_expr(value);
+                }
                 acc = hir::Expr {
                     kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
                     ty: Ty::F64,
@@ -3877,6 +3915,8 @@ impl Checker<'_> {
             "pow" => "powNumber",
             "atan2" => "atan2Number",
             "hypot" => "hypotNumber",
+            "imul" => "imulNumber",
+            "clz32" => "clz32Number",
             "min" => "minNumber",
             "max" => "maxNumber",
             _ => {
@@ -3903,6 +3943,9 @@ impl Checker<'_> {
         for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
             let mut value = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut value, expected);
+            if expected == Ty::F64 && !value.ty.is_int() && value.ty != Ty::F64 {
+                value = self.to_number_expr(value);
+            }
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                 self.error(
                     value.span,
@@ -4746,6 +4789,20 @@ impl Checker<'_> {
     }
 
     /// Box a checked value to `Any` unless it already is (or is poisoned).
+    /// Unbox a dynamic value flowing into a typed primitive position so the
+    /// destination holds the primitive itself (not an `Any` carrier).
+    fn unbox_to(value: hir::Expr, target: Ty) -> hir::Expr {
+        if value.ty == Ty::Any && matches!(target, Ty::F64 | Ty::Boolean | Ty::String) {
+            let span = value.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                ty: target,
+                span,
+            };
+        }
+        value
+    }
+
     fn box_to_any(value: hir::Expr) -> hir::Expr {
         if value.ty == Ty::Any || value.ty.is_error() {
             value
@@ -4842,7 +4899,20 @@ impl Checker<'_> {
         };
         match property.kind {
             ast::PropertyKind::Init => {
-                let value = Self::box_to_any(self.check_expr(cx, &property.value));
+                let checked = self.check_expr(cx, &property.value);
+                // A function-valued data property (`{ f: () => 1 }`) lives in the
+                // object's function slot, exactly like method shorthand, so
+                // `obj.f()` and the `valueOf`/`toString` coercion hooks find it.
+                if let (Ty::Function(_), Some(name)) = (checked.ty, named_key.clone()) {
+                    if let Some(builtin) = self.resolve_collection(span, "dynamicSetFunction") {
+                        entries.push(hir::ObjectEntry::Install {
+                            builtin,
+                            args: vec![Self::string_literal(name, span), checked],
+                        });
+                        return;
+                    }
+                }
+                let value = Self::box_to_any(checked);
                 let key = match &property.key {
                     ast::PropertyKey::Computed(key) => {
                         hir::ObjectKey::Computed(self.check_expr(cx, key))
@@ -5120,7 +5190,7 @@ impl Checker<'_> {
                                     self.error(span, "number template conversion is unavailable");
                                     self.poison(span)
                                 }
-                            } else if matches!(value.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_))
+                            } else if !matches!(value.ty, Ty::String | Ty::Error | Ty::Void)
                                 && zun_natives::resolve("collections", "stringCoerce").is_some()
                             {
                                 let (id, _) = zun_natives::resolve("collections", "stringCoerce")
@@ -5245,6 +5315,9 @@ impl Checker<'_> {
                                 format!("cannot assign {:?} to {slot_ty:?}", value.ty),
                             );
                         }
+                        // A dynamic value stored into a typed primitive slot is
+                        // unboxed so the slot holds the primitive itself.
+                        value = Self::unbox_to(value, slot_ty);
                         hir::Expr {
                             ty: slot_ty,
                             kind: if cx.boxed.contains(&slot) {
@@ -5341,6 +5414,70 @@ impl Checker<'_> {
                         widen(&mut lhs);
                     }
                 }
+                // JS loose equality (`==` / `!=` from the OXC front end).
+                // Operands of one primitive type compare like `===`; anything
+                // else (mixed types, `any`, objects) goes through the runtime
+                // IsLooselyEqual algorithm.
+                let strict_op;
+                let op = if matches!(op, ast::BinaryOp::LooseEq | ast::BinaryOp::LooseNe) {
+                    let negate = matches!(op, ast::BinaryOp::LooseNe);
+                    let simple = lhs.ty == rhs.ty
+                        && (lhs.ty == Ty::F64
+                            || lhs.ty == Ty::String
+                            || lhs.ty == Ty::Boolean
+                            || lhs.ty == Ty::BigInt
+                            || lhs.ty.is_int()
+                            || lhs.ty.is_float());
+                    if lhs.ty.is_error() || rhs.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    if !simple {
+                        let Some((id, _)) = zun_natives::resolve("collections", "looseEquals")
+                        else {
+                            self.error(span, "missing `looseEquals` intrinsic");
+                            return self.poison(span);
+                        };
+                        let call = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::box_to_any(lhs), Self::box_to_any(rhs)],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                        return if negate {
+                            hir::Expr {
+                                kind: hir::ExprKind::Unary {
+                                    op: ast::UnaryOp::Not,
+                                    operand: Box::new(call),
+                                },
+                                ty: Ty::Boolean,
+                                span,
+                            }
+                        } else {
+                            call
+                        };
+                    }
+                    strict_op = if negate { ast::BinaryOp::Ne } else { ast::BinaryOp::Eq };
+                    &strict_op
+                } else {
+                    op
+                };
+                // Strict equality across different static types is simply
+                // `false` in JS (never an error): compare through `any`, where
+                // the runtime sees two unequal kinds.
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Ne)
+                    && lhs.ty != rhs.ty
+                    && !lhs.ty.is_error()
+                    && !rhs.ty.is_error()
+                    && lhs.ty != Ty::Any
+                    && rhs.ty != Ty::Any
+                    && !(matches!(lhs.ty, Ty::Function(_)) && matches!(rhs.ty, Ty::Function(_)))
+                    && !(matches!(lhs.ty, Ty::Instance(_)) && matches!(rhs.ty, Ty::Instance(_)))
+                {
+                    lhs = Self::box_to_any(lhs);
+                    rhs = Self::box_to_any(rhs);
+                }
                 if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
                     // `>>>` has no BigInt form in ECMAScript: it is a TypeError.
                     if let ast::BinaryOp::UShr = op {
@@ -5414,8 +5551,10 @@ impl Checker<'_> {
                             || t == Ty::F64
                             || t == Ty::Boolean
                             || t == Ty::BigInt
+                            || t == Ty::Array
                             || matches!(t, Ty::Int(_))
                     };
+                    let numeric_ty = |t: Ty| t.is_int() || t.is_float();
                     // Route through the runtime `addAny` (ECMAScript
                     // ToPrimitive + string concat / numeric add) whenever an
                     // operand is object/any, or a string meets a non-string
@@ -5426,7 +5565,12 @@ impl Checker<'_> {
                         && operable(rhs.ty)
                         && (objectish(lhs.ty)
                             || objectish(rhs.ty)
-                            || (involves_string && lhs.ty != rhs.ty))
+                            || (involves_string && lhs.ty != rhs.ty)
+                            || (lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean)
+                            || (lhs.ty != rhs.ty
+                                && !(numeric_ty(lhs.ty) && numeric_ty(rhs.ty))
+                                && lhs.ty != Ty::BigInt
+                                && rhs.ty != Ty::BigInt))
                     {
                         if let Some((id, _)) = zun_natives::resolve("collections", "addAny") {
                             let to_any = |e: hir::Expr| {
@@ -5456,7 +5600,19 @@ impl Checker<'_> {
                 // dynamic operand is involved (`"5" * 2`, `+x`, `any - 1`), then
                 // run the ordinary f64 op. Same-type numeric operands keep their
                 // direct lowering below.
-                if matches!(*op, ast::BinaryOp::Sub | ast::BinaryOp::Mul | ast::BinaryOp::Div | ast::BinaryOp::Rem) {
+                if matches!(
+                    *op,
+                    ast::BinaryOp::Sub
+                        | ast::BinaryOp::Mul
+                        | ast::BinaryOp::Div
+                        | ast::BinaryOp::Rem
+                        | ast::BinaryOp::BitAnd
+                        | ast::BinaryOp::BitOr
+                        | ast::BinaryOp::BitXor
+                        | ast::BinaryOp::Shl
+                        | ast::BinaryOp::Shr
+                        | ast::BinaryOp::UShr
+                ) {
                     let numericish = |t: Ty| {
                         matches!(t, Ty::Int(_)) || matches!(t, Ty::Float(_)) || t == Ty::F64
                     };
@@ -5593,6 +5749,35 @@ impl Checker<'_> {
                         };
                     }
                 }
+                // `!x` on a non-boolean operand: JS ToBoolean first.
+                let operand = if matches!(op, ast::UnaryOp::Not)
+                    && operand.ty != Ty::Boolean
+                    && !operand.ty.is_error()
+                {
+                    match zun_natives::resolve("boolean", "booleanCoerce") {
+                        Some((id, _)) => {
+                            let operand_span = operand.span;
+                            hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![operand] },
+                                ty: Ty::Boolean,
+                                span: operand_span,
+                            }
+                        }
+                        None => operand,
+                    }
+                } else {
+                    operand
+                };
+                // `-x` / `~x` on a non-numeric operand: JS ToNumber first.
+                let operand = if matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot)
+                    && !operand.ty.is_int()
+                    && !operand.ty.is_float()
+                    && operand.ty != Ty::BigInt
+                {
+                    self.to_number_expr(operand)
+                } else {
+                    operand
+                };
                 let ty = match op {
                     // Negation keeps the operand's numeric type; `!` needs bool.
                     ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => operand.ty,
@@ -5640,6 +5825,53 @@ impl Checker<'_> {
                     && !self.by_name.contains_key(&name)
                 {
                     return self.check_number_static(cx, &name, callee.span, args, span);
+                }
+                // `Object(x)`: primitives become their wrapper objects, anything
+                // already an object is returned unchanged.
+                if name == "Object"
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                    && args.len() == 1
+                {
+                    let arg = self.check_expr(cx, &args[0]);
+                    let wrapper_name = match arg.ty {
+                        Ty::F64 => Some("NumberObject"),
+                        Ty::Boolean => Some("BooleanObject"),
+                        _ => None,
+                    };
+                    if let Some(wrapper) =
+                        wrapper_name.and_then(|name| self.classes_by_name.get(name).copied())
+                    {
+                        return hir::Expr {
+                            kind: hir::ExprKind::New { class: wrapper, args: vec![arg] },
+                            ty: Ty::Instance(wrapper),
+                            span,
+                        };
+                    }
+                    return arg;
+                }
+                // Global `isNaN`/`isFinite` coerce with ToNumber first (unlike
+                // the strict `Number.*` predicates).
+                if matches!(name.as_str(), "isNaN" | "isFinite")
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                {
+                    if args.len() != 1 {
+                        self.error(span, format!("`{name}` expects 1 argument, found {}", args.len()));
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("number", &name) else {
+                        self.error(span, format!("missing Number intrinsic `{name}`"));
+                        return self.poison(span);
+                    };
+                    let mut arg = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut arg, Ty::F64);
+                    let arg = self.to_number_for_arg(arg);
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::Boolean,
+                        span,
+                    };
                 }
                 // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
                 if name == "Function"
@@ -7436,7 +7668,23 @@ impl Checker<'_> {
                     };
                     let mut acc = receiver;
                     for arg in args {
-                        let value = self.check_expr(cx, arg);
+                        let mut value = self.check_expr(cx, arg);
+                        // Non-string arguments are converted with ToString.
+                        if !value.ty.is_error() && value.ty != Ty::String {
+                            if let Some((coerce_id, _)) =
+                                zun_natives::resolve("collections", "stringCoerce")
+                            {
+                                let value_span = value.span;
+                                value = hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id: coerce_id,
+                                        args: vec![Self::box_to_any(value)],
+                                    },
+                                    ty: Ty::String,
+                                    span: value_span,
+                                };
+                            }
+                        }
                         if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::String) {
                             self.error(value.span, "`concat` expects string arguments");
                         }
@@ -8377,6 +8625,51 @@ impl Checker<'_> {
                         cx, receiver, &mname, func, args, span, method.span,
                     );
                 }
+                // JS-conformant `toFixed` / `toExponential` / `toPrecision` /
+                // `toString(radix)`: the raw argument is passed as `any` and
+                // coerced, range-checked (managed `RangeError`) and formatted
+                // exactly on the interpreter floor.
+                if receiver.ty == Ty::F64
+                    && matches!(
+                        mname.as_str(),
+                        "toFixed" | "toExponential" | "toPrecision" | "toString"
+                    )
+                    && args.len() <= 1
+                {
+                    let native_name = match mname.as_str() {
+                        "toFixed" => "numberToFixedJs",
+                        "toExponential" => "numberToExponentialJs",
+                        "toPrecision" => "numberToPrecisionJs",
+                        _ => "numberToStringRadixJs",
+                    };
+                    let Some((id, _)) = zun_natives::resolve("number", native_name) else {
+                        self.error(span, format!("missing Number intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let arg = match args.first() {
+                        Some(arg) => {
+                            let value = self.check_expr(cx, arg);
+                            Self::box_to_any(value)
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Number(0.0),
+                                    ty: Ty::F64,
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, arg] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 // `number.toString(radix?)` — base-`radix` (2..=36) rendering,
                 // default 10. Intercepted before class dispatch so it supersedes
                 // the no-arg extern `toString` for the radix form and the
@@ -8600,6 +8893,76 @@ impl Checker<'_> {
                     Ty::Array => Some(("array", "Array")),
                     _ => None,
                 };
+                if receiver.ty == Ty::Array
+                    && matches!(
+                        mname.as_str(),
+                        "slice" | "indexOf" | "lastIndexOf" | "includes" | "reverse"
+                    )
+                    && !self.classes_by_name.contains_key("Array")
+                {
+                    if mname == "reverse" {
+                        let Some((id, _)) = zun_natives::resolve("array", "arrayReverse") else {
+                            self.error(span, "missing array intrinsic `arrayReverse`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                            ty: Ty::Array,
+                            span,
+                        };
+                    }
+                    let native_name = match mname.as_str() {
+                        "slice" => "arraySliceRange",
+                        "indexOf" => "arrayIndexOf",
+                        "lastIndexOf" => "arrayLastIndexOf",
+                        _ => "arrayIncludes",
+                    };
+                    let Some((id, native)) = zun_natives::resolve("array", native_name) else {
+                        self.error(span, format!("missing array intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let is_slice = mname == "slice";
+                    let max_args = if is_slice { 2 } else { 2 };
+                    let min_args = if is_slice { 0 } else { 1 };
+                    if args.len() < min_args || args.len() > max_args {
+                        self.error(span, format!("`{mname}` called with a wrong number of arguments"));
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver];
+                    let mut rest = args.iter();
+                    if !is_slice {
+                        let needle = self.check_expr(cx, rest.next().expect("needle"));
+                        call_args.push(Self::box_to_any(needle));
+                    }
+                    let defaults = if is_slice {
+                        [0.0, f64::INFINITY]
+                    } else if mname == "lastIndexOf" {
+                        [f64::INFINITY, 0.0]
+                    } else {
+                        [0.0, 0.0]
+                    };
+                    let wanted = native.params.len() - call_args.len();
+                    for position in 0..wanted {
+                        let value = match rest.next() {
+                            Some(arg) => {
+                                let mut value = self.check_expr(cx, arg);
+                                coerce_numeric_literal(&mut value, Ty::F64);
+                                self.to_number_for_arg(value)
+                            }
+                            None => hir::Expr {
+                                kind: hir::ExprKind::Number(defaults[position]),
+                                ty: Ty::F64,
+                                span,
+                            },
+                        };
+                        call_args.push(value);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
                 if let Some((group, class_name)) = primitive_group {
                     if !self.classes_by_name.contains_key(class_name) {
                         // `string`/`number` natives are bare (`toUpperCase`);
@@ -9291,6 +9654,28 @@ impl Checker<'_> {
                             // (a buffer) falls through to the view path below.
                             if !matches!(kind, hir::BufferViewKind::DataView) && args.len() == 1 {
                                 let mut length = self.check_expr(cx, &args[0]);
+                                // `new Float64Array([1, 2, 3])` copies an array (or
+                                // another typed array) like `<Kind>Array.from`.
+                                if matches!(length.ty, Ty::Array | Ty::BufferView(_)) {
+                                    if let (Some(discriminant), Some((id, _))) = (
+                                        crate::typed_arrays::element_index(kind),
+                                        zun_natives::resolve("buffer", "typedArrayFrom"),
+                                    ) {
+                                        let kind_lit = hir::Expr {
+                                            kind: hir::ExprKind::Number(discriminant as f64),
+                                            ty: Ty::Int(IntKind::U32),
+                                            span,
+                                        };
+                                        return hir::Expr {
+                                            kind: hir::ExprKind::CallBuiltin {
+                                                id,
+                                                args: vec![length, kind_lit],
+                                            },
+                                            ty: Ty::BufferView(kind),
+                                            span,
+                                        };
+                                    }
+                                }
                                 if length.ty.is_int() || matches!(length.ty, Ty::Float(_)) {
                                     coerce_numeric_literal(&mut length, Ty::INT);
                                     let elem = crate::typed_arrays::element_size(kind).unwrap_or(1);
@@ -9699,6 +10084,35 @@ impl Checker<'_> {
                 // `new Boolean(x)`: the wrapper object. Lowered to
                 // `new BooleanObject(<truthiness of x>)` (the prelude class in
                 // `builtin/boolean.zun`); bare `Boolean(x)` stays a primitive.
+                // `new Number(x)`: the wrapper object, lowered to
+                // `new NumberObject(<ToNumber of x>)`.
+                if name == "Number" && !self.classes_by_name.contains_key(&name) {
+                    let Some(&wrapper) = self.classes_by_name.get("NumberObject") else {
+                        self.error(class.span, "missing `NumberObject` wrapper class");
+                        return self.poison(span);
+                    };
+                    if args.len() > 1 {
+                        self.error(span, "`Number` expects at most one argument");
+                        return self.poison(span);
+                    }
+                    let value = match args.first() {
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(0.0),
+                            ty: Ty::F64,
+                            span,
+                        },
+                        Some(arg) => {
+                            let mut arg = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut arg, Ty::F64);
+                            self.to_number_for_arg(arg)
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::New { class: wrapper, args: vec![value] },
+                        ty: Ty::Instance(wrapper),
+                        span,
+                    };
+                }
                 if name == "Boolean" && !self.classes_by_name.contains_key(&name) {
                     let Some(&wrapper) = self.classes_by_name.get("BooleanObject") else {
                         self.error(class.span, "missing `BooleanObject` wrapper class");
@@ -10362,6 +10776,16 @@ impl Checker<'_> {
                         let mut value = self.check_expr(cx, value);
                         let value_ty = value.ty;
                         coerce_numeric_literal(&mut value, elem_ty);
+                        // A JS `number` stored into an integer element is
+                        // converted (NaN -> 0, truncation) like a typed-array set.
+                        if elem_ty.is_int() && value.ty == Ty::F64 {
+                            let value_span = value.span;
+                            value = hir::Expr {
+                                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                                ty: elem_ty,
+                                span: value_span,
+                            };
+                        }
                         if !value.ty.is_error() && !self.is_assignable(value.ty, elem_ty) {
                             self.error(value.span, format!("buffer element must be {elem_ty:?}"));
                         }
@@ -11189,7 +11613,7 @@ impl Checker<'_> {
                     Ty::Error
                 }
             }
-            Eq | Ne => {
+            Eq | Ne | LooseEq | LooseNe => {
                 // Any two function values are comparable by reference identity,
                 // even with different signatures (distinct `Function(_)` types):
                 // different functions are simply unequal. A dynamic (`any`)

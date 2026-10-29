@@ -566,6 +566,8 @@ pub const MODULE: crate::Module = crate::Module {
         // `replaceFn(search, input, fn, all)` — replace-with-function for a RegExp
         // or string search.
         NativeFn { name: "replaceFn", params: &[Opaque, Str, Function, Bool], ret: Str, imp: unavailable },
+        // ECMAScript IsLooselyEqual (`==`) on two `any` operands.
+        NativeFn { name: "looseEquals", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
     ],
 };
 

@@ -615,6 +615,11 @@ pub enum BinaryOp {
     Eq,
     /// `!=`
     Ne,
+    /// JS loose equality `==` from the OXC front end (type-coercing; the
+    /// legacy parser's `==` stays [`BinaryOp::Eq`]).
+    LooseEq,
+    /// JS loose inequality `!=` from the OXC front end.
+    LooseNe,
     /// `<`
     Lt,
     /// `<=`
