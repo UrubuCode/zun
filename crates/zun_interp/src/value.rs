@@ -283,7 +283,10 @@ pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
                 Value::Object(unsafe { zun_gc::Obj::from_addr(slot as *mut u64) })
             }
             JitKind::String => Value::Str(heap.string(slot as u32).clone()),
-            JitKind::Other => Value::Void,
+            // Function-typed fields are not stored inline (the compiler keeps
+            // them off this path); the JIT uses `Function` only for transient
+            // operands. Treated as void here for exhaustiveness/safety.
+            JitKind::Function | JitKind::Other => Value::Void,
         },
     }
 }
@@ -308,7 +311,7 @@ pub fn encode_field(kind: u8, v: &Value, heap: &mut zun_gc::Heap) -> u64 {
                 Value::Str(s) => heap.intern_string(s.clone()) as u64,
                 _ => 0,
             },
-            JitKind::Other => 0,
+            JitKind::Function | JitKind::Other => 0,
         },
     }
 }

@@ -455,6 +455,14 @@ pub(crate) fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 
             _ => 0,
         },
         JitKind::Num(_) => v.as_int() as u64,
+        // A no-closure function value packs to its method rid; closures are not
+        // marshaled here (they stay on Tier 0).
+        JitKind::Function => match v {
+            Value::Function(handle) if handle.environment().is_none() => {
+                u64::from(handle.method_rid())
+            }
+            _ => 0,
+        },
         JitKind::Other => 0,
     }
 }
@@ -477,6 +485,10 @@ pub(crate) fn unpack_value(bits: u64, ret: Option<JitKind>, heap: &zun_gc::Heap)
             Value::Float(f32::from_bits(bits as u32) as f64, NumKind::F32)
         }
         Some(JitKind::Num(n)) => Value::Int(bits as i64, n),
+        // A no-closure function value: reconstruct the handle from the rid.
+        Some(JitKind::Function) => {
+            Value::Function(zun_core::FunctionHandle::new(bits as u32, None))
+        }
         Some(JitKind::Other) => Value::Void,
     }
 }

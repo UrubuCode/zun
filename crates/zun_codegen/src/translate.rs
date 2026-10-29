@@ -27,6 +27,8 @@ pub fn clif_ty(kind: JitKind) -> Type {
     match kind {
         JitKind::Bool => types::I32,
         JitKind::Object | JitKind::Array | JitKind::String => types::I64,
+        // A transient function value carries its method rid (no-closure case).
+        JitKind::Function => types::I64,
         JitKind::Other => types::I64,  // never used; eligibility excludes it
         JitKind::Num(n) => match n {
             NumKind::I8 | NumKind::U8 => types::I8,
@@ -42,7 +44,12 @@ pub fn clif_ty(kind: JitKind) -> Type {
 fn is_signed(kind: JitKind) -> bool {
     match kind {
         JitKind::Num(n) => n.int_parts().map(|(_, s)| s).unwrap_or(false),
-        JitKind::Bool | JitKind::Object | JitKind::Array | JitKind::String | JitKind::Other => false,
+        JitKind::Bool
+        | JitKind::Object
+        | JitKind::Array
+        | JitKind::String
+        | JitKind::Function
+        | JitKind::Other => false,
     }
 }
 
@@ -2406,6 +2413,48 @@ impl Translator<'_> {
                     let args = self.thread_edge(&mut block_sigs, target, &[(exc, exc_kind)]);
                     self.builder.ins().jump(target, &args);
                 }
+                Opcode::LoadFunction => {
+                    // A no-closure function value is carried as its method rid.
+                    let rid = match instr.operand {
+                        Operand::Token(token) => token.rid(),
+                        _ => return Err("ldftn operand".into()),
+                    };
+                    let value = self.builder.ins().iconst(types::I64, rid as i64);
+                    stack.push((value, JitKind::Function));
+                }
+                Opcode::CallIndirect => {
+                    // The signature method gives the call's arity and return kind.
+                    let token = match instr.operand {
+                        Operand::Token(token) => token,
+                        _ => return Err("callindirect operand".into()),
+                    };
+                    let signature = read_body(
+                        &self.zm.code,
+                        self.zm.tables.method_defs[token.rid() as usize - 1].body_offset,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let argc = signature.param_count as usize;
+                    if stack.len() < argc + 1 {
+                        return Err("stack underflow at callindirect".into());
+                    }
+                    let arg_values: Vec<Slot> = stack.split_off(stack.len() - argc);
+                    let (fn_value, fn_kind) = stack.pop().ok_or("callindirect function value")?;
+                    if fn_kind != JitKind::Function {
+                        return Err("callindirect expects a function value".into());
+                    }
+                    let return_kind = signature
+                        .returns_value
+                        .then(|| JitKind::from_byte(signature.return_kind));
+                    // The function value is the target method rid (no-closure);
+                    // dispatch through the same interpreter bridge as a direct call.
+                    self.emit_bridged_dispatch(fn_value, &arg_values, return_kind, &mut stack)?;
+                    self.after_call_pending_check(
+                        &mut block_sigs,
+                        &mut stack,
+                        offset_of_index[i],
+                        index_of_offset,
+                    )?;
+                }
                 other => return Err(format!("opcode {other:?} not supported by the typed JIT")),
             }
         }
@@ -2889,6 +2938,24 @@ impl Translator<'_> {
         callee: &MethodBody<'_>,
         stack: &mut Vec<Slot>,
     ) -> Result<(), String> {
+        let target = self.builder.ins().iconst(types::I64, rid as i64);
+        let return_kind = callee
+            .returns_value
+            .then(|| JitKind::from_byte(callee.return_kind));
+        self.emit_bridged_dispatch(target, arg_values, return_kind, stack)
+    }
+
+    /// Shared lowering for a bridged call to a method `target` (a Cranelift value
+    /// holding the method rid — a constant for a direct bridged call, or the
+    /// popped function value for `CallIndirect`): pack the args in the shim ABI,
+    /// call `zun_jit_call_interp`, and unpack the result by `return_kind`.
+    fn emit_bridged_dispatch(
+        &mut self,
+        target: Value,
+        arg_values: &[Slot],
+        return_kind: Option<JitKind>,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
         let argc = arg_values.len();
         let buf = if argc == 0 {
             self.builder.ins().iconst(types::I64, 0)
@@ -2913,12 +2980,10 @@ impl Translator<'_> {
                 .store(MemFlags::trusted(), packed, buf, (i * 8) as i32);
         }
         let fref = self.bridge_fref();
-        let rid_c = self.builder.ins().iconst(types::I64, rid as i64);
         let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
-        let call = self.builder.ins().call(fref, &[rid_c, buf, argc_c]);
+        let call = self.builder.ins().call(fref, &[target, buf, argc_c]);
         let result = self.builder.inst_results(call)[0];
-        if callee.returns_value {
-            let kind = JitKind::from_byte(callee.return_kind);
+        if let Some(kind) = return_kind {
             if kind == JitKind::Other {
                 return Err("bridge return must not be an Any carrier".into());
             }

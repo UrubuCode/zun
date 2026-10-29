@@ -104,6 +104,12 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             // handler. `exception_regions_jit_safe` gates the surrounding method
             // so the throw is always routed to an in-frame catch-all.
             | Opcode::Throw
+            // First-class function reference + indirect call. Only reachable
+            // transiently (a no-closure `LoadFunction` immediately invoked); both
+            // require a bridge (checked in `eligible_impl`), and `CallIndirect`
+            // dispatches through it to the target method.
+            | Opcode::LoadFunction
+            | Opcode::CallIndirect
     );
     supported
         || (op == Opcode::CallBuiltin
@@ -1047,6 +1053,25 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             continue;
         }
         if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
+            continue;
+        }
+        // `LoadFunction`/`CallIndirect` lower through the bridge; without one they
+        // stay on Tier 0. (A stored function value is a Function-typed local,
+        // which maps to `Other` and is rejected above, so only a transient
+        // no-closure `LoadFunction` immediately invoked survives to here.) Each
+        // `CallIndirect`'s signature must be marshalable by the packed ABI.
+        let uses_function_value = instrs
+            .iter()
+            .any(|i| matches!(i.opcode, Opcode::LoadFunction | Opcode::CallIndirect));
+        if uses_function_value && !bridge_available {
+            continue;
+        }
+        if uses_function_value
+            && !instrs.iter().all(|i| {
+                i.opcode != Opcode::CallIndirect
+                    || matches!(i.operand, Operand::Token(t) if t.rid() != 0 && bridge_marshalable(module, t.rid()))
+            })
+        {
             continue;
         }
         // Array access has stable f64 and narrow u64 scalar ABIs. Keep

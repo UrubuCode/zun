@@ -25,6 +25,7 @@ zun_il = { workspace = true }
 zun_verify = { workspace = true }
 zun_codegen = { workspace = true }
 zun_gc = { workspace = true }
+zun_core = { workspace = true }
 zun_natives = { workspace = true }
 zun_abi = { workspace = true }
 libloading = "0.8"

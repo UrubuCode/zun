@@ -101,6 +101,9 @@ pub enum JitKind {
     String,
     /// A managed Array pointer, kept distinct from arbitrary object pointers.
     Array,
+    /// A function value (`FunctionHandle`: method rid + optional closure
+    /// environment), carried as two words like the dynamic `Any` carrier.
+    Function,
     /// Anything the typed JIT does not handle (void).
     Other,
 }
@@ -114,6 +117,7 @@ impl JitKind {
             JitKind::Object => 11,
             JitKind::String => 12,
             JitKind::Array => 13,
+            JitKind::Function => 14,
             JitKind::Other => 255,
         }
     }
@@ -125,6 +129,7 @@ impl JitKind {
             11 => JitKind::Object,
             12 => JitKind::String,
             13 => JitKind::Array,
+            14 => JitKind::Function,
             255 => JitKind::Other,
             n => match NumKind::from_imm(n as i32) {
                 Some(k) => JitKind::Num(k),

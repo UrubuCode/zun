@@ -1500,7 +1500,7 @@ pub extern "C" fn zun_jit_static_get(owner: i64, field: i64, kind: i64) -> i64 {
             JitKind::Bool => any.and_then(|a| a.as_bool()).unwrap_or(false) as i64,
             JitKind::Object | JitKind::Array => any.and_then(|a| a.as_object()).unwrap_or(0) as i64,
             JitKind::String => any.and_then(|a| a.as_string()).unwrap_or(0) as i64,
-            JitKind::Other => 0,
+            JitKind::Function | JitKind::Other => 0,
         }
     })
 }
@@ -1520,7 +1520,7 @@ pub extern "C" fn zun_jit_static_set(owner: i64, field: i64, raw: i64, kind: i64
             JitKind::Bool => zun_core::Any::bool(raw != 0),
             JitKind::Object | JitKind::Array => zun_core::Any::object(raw as usize),
             JitKind::String => zun_core::Any::string(raw as u32),
-            JitKind::Other => zun_core::Any::null(),
+            JitKind::Function | JitKind::Other => zun_core::Any::null(),
         };
         heap.static_set(owner as u32, field as u32, any);
     });
@@ -2589,6 +2589,7 @@ impl Jit {
                 }
                 Some(JitKind::Other) => return Err(JitError::Ineligible(method_rid)),
                 Some(JitKind::Array) => return Err(JitError::Ineligible(method_rid)),
+                Some(JitKind::Function) => return Err(JitError::Ineligible(method_rid)),
             })
         }
     }
