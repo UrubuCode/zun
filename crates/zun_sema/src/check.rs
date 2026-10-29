@@ -7576,6 +7576,29 @@ impl Checker<'_> {
                     (Ty::String, "toUpperCase") => Some(("toUpperCase", Ty::String, vec![])),
                     (Ty::String, "toLowerCase") => Some(("toLowerCase", Ty::String, vec![])),
                     (Ty::String, "trim") => Some(("trim", Ty::String, vec![])),
+                    (Ty::String, "trimStart") => Some(("trimStart", Ty::String, vec![])),
+                    (Ty::String, "trimEnd") => Some(("trimEnd", Ty::String, vec![])),
+                    (Ty::String, "charCodeAt") => {
+                        Some(("charCodeAt", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64)]))
+                    }
+                    (Ty::String, "indexOf") => {
+                        Some(("indexOf", Ty::Int(IntKind::I32), vec![Ty::String]))
+                    }
+                    (Ty::String, "lastIndexOf") => {
+                        Some(("lastIndexOf", Ty::Int(IntKind::I32), vec![Ty::String]))
+                    }
+                    (Ty::String, "substring") => Some((
+                        "substring",
+                        Ty::String,
+                        vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
+                    )),
+                    (Ty::String, "repeat") => {
+                        Some(("repeat", Ty::String, vec![Ty::Int(IntKind::U64)]))
+                    }
+                    (Ty::String, "startsWith") => {
+                        Some(("startsWith", Ty::Boolean, vec![Ty::String]))
+                    }
+                    (Ty::String, "endsWith") => Some(("endsWith", Ty::Boolean, vec![Ty::String])),
                     // ECMA-402 locale surface (NUCLEUS #1), ICU4X-backed.
                     // `localeCompare` returns the ECMAScript -1/0/1; v1 uses
                     // root collation and the root (`und`) locale for casing.

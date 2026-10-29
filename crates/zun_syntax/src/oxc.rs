@@ -642,9 +642,6 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
         })),
-        Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
-            span: span(this_expression.span),
-        })),
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(source, &parenthesized.expression)
         }
