@@ -8,6 +8,8 @@
 
 mod builtins;
 mod collections;
+mod native_error;
+mod string_dyn;
 mod decorators;
 mod errors;
 mod eval;
@@ -527,8 +529,19 @@ impl Interp<'_> {
                     // a data property (or an absent key) reads the value slot.
                     let getter =
                         zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, &name));
+                    // A typed class instance read through `any` resolves a
+                    // registered getter (`get_<name>`, e.g. `Error.name`).
+                    let typed_getter = if getter.is_none() {
+                        self.class_named_methods
+                            .get(&(object.type_rid(), format!("get_{name}")))
+                            .copied()
+                    } else {
+                        None
+                    };
                     let value = if let Some(getter) = getter {
                         self.invoke_function_value(getter, Vec::new())?
+                    } else if let Some(getter) = typed_getter {
+                        self.invoke_function_value(getter, vec![Value::Object(object)])?
                     } else {
                         zun_gc::with_current_heap(|heap| {
                             if let Some(any) = heap.dynamic_get(object, &name) {
@@ -1428,7 +1441,23 @@ impl Interp<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
-                    builtins::call_builtin(self, id, &mut stack)?;
+                    match builtins::call_builtin(self, id, &mut stack) {
+                        Ok(()) => {}
+                        Err(RunError::Native(message)) => {
+                            // A native failure naming a prelude error class
+                            // becomes a catchable thrown error object.
+                            let exception = native_error::split_native_error(&message)
+                                .and_then(|(class, text)| self.make_error_value(class, text));
+                            let Some(exception) = exception else {
+                                return Err(RunError::Native(message));
+                            };
+                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Opcode::NewObj => {
                     // Safepoint: only the interpreter triggers GC, and only

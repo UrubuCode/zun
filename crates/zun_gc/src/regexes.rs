@@ -138,7 +138,22 @@ impl Heap {
     ) -> Option<Result<String, zun_core::RegexError>> {
         self.regexes
             .get(&(object.addr() as usize))
-            .map(|regex| regex.replace_first(input, replacement))
+            .map(|regex| regex.replace_template(input, replacement))
+    }
+
+    /// Match spans (byte offsets plus group texts) for a callback-driven
+    /// replace: all matches when the regex has the `g` flag, else the first.
+    #[allow(clippy::type_complexity)]
+    pub fn regex_replace_spans(
+        &self,
+        object: Obj,
+        input: &str,
+        force_global: bool,
+    ) -> Option<Result<Vec<(usize, usize, Vec<Option<String>>)>, zun_core::RegexError>> {
+        self.regexes.get(&(object.addr() as usize)).map(|regex| {
+            let global = force_global || regex.flags().contains('g');
+            regex.match_spans(input, global)
+        })
     }
 
     /// Run `exec`: `None` if `object` is not a regex, `Some(None)` when there is

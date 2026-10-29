@@ -165,6 +165,8 @@ impl RegexValue {
                     builder.dot_matches_new_line(true);
                 }
                 'g' => {}
+                // Unicode mode: the engines already match by code point.
+                'u' => {}
                 other => {
                     return Err(RegexError {
                         message: format!("unsupported regular expression flag `{other}`"),
@@ -366,6 +368,73 @@ impl RegexValue {
             }
         }
         Ok(matches)
+    }
+
+    /// Matches with UTF-8 byte offsets: every non-overlapping match when
+    /// `global`, otherwise only the first. Each entry is `(start, end, groups)`
+    /// where `groups[0]` is the whole match (`None` for a group that did not
+    /// participate).
+    #[allow(clippy::type_complexity)]
+    pub fn match_spans(
+        &self,
+        input: &str,
+        global: bool,
+    ) -> Result<Vec<(usize, usize, Vec<Option<String>>)>, RegexError> {
+        let mut spans = Vec::new();
+        match &self.engine {
+            Engine::Re2(re) => {
+                for captures in re.captures_iter(input) {
+                    let whole = captures.get(0).expect("group 0 always exists");
+                    spans.push((
+                        whole.start(),
+                        whole.end(),
+                        captures
+                            .iter()
+                            .map(|group| group.map(|m| m.as_str().to_owned()))
+                            .collect(),
+                    ));
+                    if !global {
+                        break;
+                    }
+                }
+            }
+            Engine::Backtrack(re) => {
+                let chars: Vec<char> = input.chars().collect();
+                let mut pos = 0;
+                while pos <= chars.len() {
+                    let Some(m) = re.find_chars(&chars, pos)? else { break };
+                    let (start, end) = m.span();
+                    spans.push((
+                        byte_offset(&chars, start),
+                        byte_offset(&chars, end),
+                        (0..m.len())
+                            .map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b)))
+                            .collect(),
+                    ));
+                    if !global {
+                        break;
+                    }
+                    pos = if end == start { end + 1 } else { end };
+                }
+            }
+        }
+        Ok(spans)
+    }
+
+    /// Replace the first match, or every match when the regex carries the `g`
+    /// flag, expanding `$&`, `$1`..`$9` and `$$` in `replacement`.
+    pub fn replace_template(&self, input: &str, replacement: &str) -> Result<String, RegexError> {
+        let global = self.flags.contains('g');
+        let mut out = String::new();
+        let mut last = 0;
+        for (start, end, groups) in self.match_spans(input, global)? {
+            out.push_str(&input[last..start]);
+            let refs: Vec<Option<&str>> = groups.iter().map(|g| g.as_deref()).collect();
+            expand_replacement(replacement, &refs, &mut out);
+            last = end;
+        }
+        out.push_str(&input[last..]);
+        Ok(out)
     }
 
     pub fn source(&self) -> &str {

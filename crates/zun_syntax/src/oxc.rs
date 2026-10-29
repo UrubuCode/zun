@@ -369,6 +369,26 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
     Ok(statements)
 }
 
+/// A parameter's default expression; an optional `x?: T` parameter without an
+/// initializer defaults to `undefined`.
+fn param_default(
+    source: &str,
+    parameter: &oxc_ast::ast::FormalParameter<'_>,
+) -> Result<Option<Box<Expr>>, String> {
+    if let Some(initializer) = parameter.initializer.as_ref() {
+        return Ok(Some(Box::new(convert_expression(source, initializer)?)));
+    }
+    if parameter.optional {
+        let at = Span::new(parameter.span.start, parameter.span.end);
+        return Ok(Some(Box::new(Expr::Unary {
+            op: crate::ast::UnaryOp::Void,
+            operand: Box::new(Expr::Number { value: 0.0, span: at }),
+            span: at,
+        })));
+    }
+    Ok(None)
+}
+
 /// Convert an OXC function (an object-method, getter, or setter value) into a
 /// Zun anonymous-function expression. Parameters must be plain identifiers;
 /// the body reuses the shared statement-list conversion.
@@ -387,12 +407,7 @@ fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr
                 span: span(identifier.span),
             },
             ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
-            default_value: parameter
-                .initializer
-                .as_ref()
-                .map(|initializer| convert_expression(source, initializer))
-                .transpose()?
-                .map(Box::new),
+            default_value: param_default(source, parameter)?,
             is_rest: false,
         });
     }
@@ -1397,12 +1412,7 @@ fn convert_arrow(
         params.push(crate::ast::Param {
             name: Name { span: span(identifier.span) },
             ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
-            default_value: parameter
-                .initializer
-                .as_ref()
-                .map(|initializer| convert_expression(source, initializer))
-                .transpose()?
-                .map(Box::new),
+            default_value: param_default(source, parameter)?,
             is_rest: false,
         });
     }
@@ -1727,13 +1737,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                     parameter.type_annotation.as_deref(),
                                 )
                                 .map_err(|error| vec![error])?,
-                                default_value: parameter
-                                    .initializer
-                                    .as_ref()
-                                    .map(|initializer| convert_expression(source, initializer))
-                                    .transpose()
-                                    .map_err(|error| vec![error])?
-                                    .map(Box::new),
+                                default_value: param_default(source, parameter).map_err(|error| vec![error])?,
                                 is_rest,
                             });
                         }
@@ -1878,13 +1882,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 },
                 ty: convert_type_annotation(source, parameter.type_annotation.as_deref())
                     .map_err(|error| vec![error])?,
-                default_value: parameter
-                    .initializer
-                    .as_ref()
-                    .map(|initializer| convert_expression(source, initializer))
-                    .transpose()
-                    .map_err(|error| vec![error])?
-                    .map(Box::new),
+                default_value: param_default(source, parameter).map_err(|error| vec![error])?,
                 is_rest,
             });
         }

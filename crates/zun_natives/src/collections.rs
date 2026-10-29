@@ -559,6 +559,13 @@ pub const MODULE: crate::Module = crate::Module {
         // stable.
         NativeFn { name: "dynamicCall3", params: &[Opaque, Str, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall4", params: &[Opaque, Str, Opaque, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `stringMethod(receiver, name, a0, a1)` — a `String.prototype` method with
+        // full JS argument coercion (optional / `undefined` / fractional /
+        // non-number arguments). Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "stringMethod", params: &[Str, Str, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `replaceFn(search, input, fn, all)` — replace-with-function for a RegExp
+        // or string search.
+        NativeFn { name: "replaceFn", params: &[Opaque, Str, Function, Bool], ret: Str, imp: unavailable },
     ],
 };
 

@@ -2152,7 +2152,106 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
+            "replaceFn" => {
+                // `str.replace(search, fn)` / `str.replaceAll(search, fn)`: the
+                // replacement of each match is `fn(match, ...groups, offset, str)`.
+                let search = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let input = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let callback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let all = matches!(args.get(3), Some(Value::Bool(true)));
+                let spans: Vec<(usize, usize, Vec<Option<String>>)> = match &search {
+                    Value::Object(regex) => zun_gc::with_current_heap(|heap| {
+                        heap.regex_replace_spans(*regex, &input, all)
+                    })
+                    .ok_or(RunError::BadToken)?
+                    .map_err(|error| RunError::Native(error.to_string()))?,
+                    other => {
+                        let needle = self.dyn_to_string(other)?;
+                        let mut found = Vec::new();
+                        if needle.is_empty() {
+                            let mut boundaries: Vec<usize> =
+                                input.char_indices().map(|(index, _)| index).collect();
+                            boundaries.push(input.len());
+                            for at in boundaries {
+                                found.push((at, at, vec![Some(String::new())]));
+                                if !all {
+                                    break;
+                                }
+                            }
+                        } else {
+                            let mut from = 0;
+                            while let Some(at) = input[from..].find(&needle) {
+                                let start = from + at;
+                                found.push((start, start + needle.len(), vec![Some(needle.clone())]));
+                                from = start + needle.len();
+                                if !all {
+                                    break;
+                                }
+                            }
+                        }
+                        found
+                    }
+                };
+                let to_any = |value: Value| {
+                    Value::Any(
+                        zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null),
+                    )
+                };
+                let mut out = String::new();
+                let mut last = 0;
+                for (start, end, groups) in spans {
+                    out.push_str(&input[last..start]);
+                    let mut call_args: Vec<Value> = groups
+                        .into_iter()
+                        .map(|group| match group {
+                            Some(text) => to_any(Value::Str(text.into())),
+                            None => to_any(Value::Void),
+                        })
+                        .collect();
+                    let offset = input[..start].encode_utf16().count();
+                    call_args.push(to_any(Value::Float(offset as f64, zun_il::NumKind::F64)));
+                    call_args.push(to_any(Value::Str(input.clone())));
+                    let produced = self.invoke_callback(callback, call_args)?;
+                    out.push_str(&self.dyn_to_string(&produced)?);
+                    last = end;
+                }
+                out.push_str(&input[last..]);
+                Ok(Value::Str(out.into()))
+            }
+            "stringMethod" => {
+                let receiver = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let result = self
+                    .string_method_dyn(&receiver, &name, &args[2..])?
+                    .ok_or(RunError::BadToken)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                Ok(Value::Any(boxed))
+            }
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" => {
+                // A string receiver (an `any`-typed string): JS String methods.
+                if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Value::Str(member) = args.get(1).ok_or(RunError::BadToken)? {
+                        if let Some(result) = self.string_method_dyn(&text, member, &args[2..])? {
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
                 let member = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
@@ -5962,7 +6061,7 @@ impl<'a> Interp<'a> {
     /// `toString` first). Returns the first primitive, or `None`.
     /// A typed instance's `valueOf`/`toString` come from `class_named_methods`
     /// (registered by `classSetMethod`) and receive the instance as `this`.
-    fn ordinary_to_primitive(
+    pub(super) fn ordinary_to_primitive(
         &mut self,
         obj: zun_gc::Obj,
         hint: &str,
@@ -6718,7 +6817,7 @@ fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<String> {
 }
 
 /// Unbox an argument to its concrete value (an `Any` carrier is unwrapped).
-fn unbox_arg(value: &Value) -> Result<Value, RunError> {
+pub(super) fn unbox_arg(value: &Value) -> Result<Value, RunError> {
     match value {
         Value::Any(any) => {
             zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).ok_or(RunError::BadToken)
@@ -6752,7 +6851,7 @@ pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
 /// an empty result is `0`, `0x`/`0o`/`0b` prefixes parse in their radix, and
 /// everything else (decimal, scientific, `Infinity`) goes through Rust's `f64`
 /// parser; a failed parse is `NaN`.
-fn js_string_to_number(text: &str) -> f64 {
+pub(super) fn js_string_to_number(text: &str) -> f64 {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return 0.0;
