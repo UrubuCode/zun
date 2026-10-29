@@ -572,6 +572,12 @@ pub const MODULE: crate::Module = crate::Module {
         // receiver. Appended last so existing dispatch ids stay stable.
         NativeFn { name: "mapSetChain", params: &[Map, Opaque, Opaque], ret: Map, imp: unavailable },
         NativeFn { name: "setAddChain", params: &[Set, Opaque], ret: Set, imp: unavailable },
+        // ToNumber that throws a TypeError for BigInt and Symbol (the `Math.*`
+        // argument coercion), unlike `numberCoerce` (`Number(x)`).
+        NativeFn { name: "numberCoerceStrict", params: &[Opaque], ret: F64, imp: unavailable },
+        // `Math.<name>.apply(null, array)` — `(name, array)`; ToNumber (strict) on
+        // each element, then the variadic/fixed-arity Math function.
+        NativeFn { name: "mathApply", params: &[Str, Opaque], ret: F64, imp: unavailable },
     ],
 };
 

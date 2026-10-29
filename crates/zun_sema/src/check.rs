@@ -2192,6 +2192,8 @@ impl Checker<'_> {
                 body,
                 ..
             } => {
+                // The init clause's `let` is scoped to the loop.
+                cx.scopes.push(Scope::new());
                 let init = init
                     .as_ref()
                     .map(|stmt| Box::new(self.check_stmt(cx, stmt)));
@@ -2207,6 +2209,7 @@ impl Checker<'_> {
                 cx.loop_depth += 1;
                 let body = self.check_block(cx, body);
                 cx.loop_depth -= 1;
+                cx.scopes.pop();
                 hir::Stmt::For {
                     init,
                     cond,
@@ -3866,11 +3869,20 @@ impl Checker<'_> {
     /// operands pass through; everything else is boxed into `Any` and run
     /// through the `numberCoerce` native (string parsing, object->primitive).
     fn to_number_expr(&mut self, value: hir::Expr) -> hir::Expr {
+        self.to_number_expr_with(value, "numberCoerce")
+    }
+
+    /// ToNumber that throws on BigInt/Symbol (`Math.*` argument coercion).
+    fn to_number_expr_strict(&mut self, value: hir::Expr) -> hir::Expr {
+        self.to_number_expr_with(value, "numberCoerceStrict")
+    }
+
+    fn to_number_expr_with(&mut self, value: hir::Expr, native: &str) -> hir::Expr {
         if value.ty == Ty::F64 || value.ty.is_error() {
             return value;
         }
         let span = value.span;
-        let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") else {
+        let Some((id, _)) = zun_natives::resolve("collections", native) else {
             self.error(span, "missing `numberCoerce` intrinsic");
             return self.poison(span);
         };
@@ -3896,6 +3908,29 @@ impl Checker<'_> {
         self.to_number_expr(value)
     }
 
+    /// `Math.<fn>.apply(null, array)` and `Math.<fn>(...array)`: evaluate the
+    /// array at run time through the `mathApply` intrinsic.
+    fn math_apply_expr(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        array: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("collections", "mathApply") else {
+            self.error(span, "missing `mathApply` intrinsic");
+            return self.poison(span);
+        };
+        let value = self.check_expr(cx, array);
+        let value = if value.ty == Ty::Any || value.ty.is_error() {
+            value
+        } else {
+            hir::Expr { span: value.span, kind: hir::ExprKind::BoxAny { value: Box::new(value) }, ty: Ty::Any }
+        };
+        let name = hir::Expr { kind: hir::ExprKind::String(method.to_string()), ty: Ty::String, span };
+        hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![name, value] }, ty: Ty::F64, span }
+    }
+
     fn check_math_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -3904,6 +3939,9 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        if let [ast::Expr::Spread { expr, .. }] = args {
+            return self.math_apply_expr(cx, method, expr, span);
+        }
         // `Math.min`/`max`/`hypot` are variadic: fold the 2-arg native left to
         // right (`f(a,b,c)` → `f(f(a,b),c)`). 0 args give the identity.
         if matches!(method, "min" | "max" | "hypot") {
@@ -3929,7 +3967,7 @@ impl Checker<'_> {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, Ty::F64);
                 if !value.ty.is_int() && value.ty != Ty::F64 {
-                    value = self.to_number_expr(value);
+                    value = self.to_number_expr_strict(value);
                 }
                 acc = hir::Expr {
                     kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
@@ -3968,6 +4006,10 @@ impl Checker<'_> {
             "hypot" => "hypotNumber",
             "imul" => "imulNumber",
             "clz32" => "clz32Number",
+            "asin" => "asinNumber",
+            "acos" => "acosNumber",
+            "atan" => "atanNumber",
+            "fround" => "froundNumber",
             "min" => "minNumber",
             "max" => "maxNumber",
             _ => {
@@ -3979,7 +4021,10 @@ impl Checker<'_> {
             self.error(span, format!("missing Math intrinsic `{native_name}`"));
             return self.poison(span);
         };
-        if native.params.len() != args.len() {
+        // JS semantics: missing arguments are `undefined` (-> NaN), extras ignored.
+        let missing = native.params.len().saturating_sub(args.len());
+        let args = &args[..args.len().min(native.params.len())];
+        if false {
             self.error(
                 span,
                 format!(
@@ -3995,7 +4040,7 @@ impl Checker<'_> {
             let mut value = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut value, expected);
             if expected == Ty::F64 && !value.ty.is_int() && value.ty != Ty::F64 {
-                value = self.to_number_expr(value);
+                value = self.to_number_expr_strict(value);
             }
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                 self.error(
@@ -4004,6 +4049,9 @@ impl Checker<'_> {
                 );
             }
             checked.push(value);
+        }
+        for _ in 0..missing {
+            checked.push(hir::Expr { kind: hir::ExprKind::Number(f64::NAN), ty: Ty::F64, span });
         }
         hir::Expr {
             kind: hir::ExprKind::CallBuiltin { id, args: checked },
@@ -5622,6 +5670,8 @@ impl Checker<'_> {
                     let numberish = |t: Ty| t == Ty::F64 || t == Ty::Any;
                     if numberish(lhs.ty) && numberish(rhs.ty) {
                         if let Some((id, native)) = zun_natives::resolve("math", "powNumber") {
+                            let lhs = self.to_number_expr_strict(lhs);
+                            let rhs = self.to_number_expr_strict(rhs);
                             return hir::Expr {
                                 kind: hir::ExprKind::CallBuiltin {
                                     id,
@@ -6909,6 +6959,28 @@ impl Checker<'_> {
                 args,
                 ..
             } => {
+                // `Math.<fn>.apply(thisArg, array)` / `.call(thisArg, ...args)`.
+                if let ast::Expr::Field { object: inner_obj, field: inner_field, .. } = receiver.as_ref() {
+                    if let ast::Expr::Ident(m) = inner_obj.as_ref() {
+                        let m_name = self.text(m);
+                        let verb = self.text(method).to_string();
+                        let fn_name = self.text(inner_field).to_string();
+                        if m_name == "Math"
+                            && !self.classes_by_name.contains_key("Math")
+                            && math_function_length(&fn_name).is_some()
+                            && (verb == "apply" || verb == "call")
+                        {
+                            if verb == "apply" {
+                                if let Some(array) = args.get(1) {
+                                    return self.math_apply_expr(cx, &fn_name, array, span);
+                                }
+                                return self.check_math_static(cx, &fn_name, method.span, &[], span);
+                            }
+                            let rest = if args.is_empty() { &args[..] } else { &args[1..] };
+                            return self.check_math_static(cx, &fn_name, method.span, rest, span);
+                        }
+                    }
+                }
                 if let ast::Expr::Ident(class) = receiver.as_ref() {
                     let class_name = self.text(class).to_string();
                     if class_name == "super" {
@@ -10370,7 +10442,41 @@ impl Checker<'_> {
             }
             ast::Expr::Field { object, field, .. } => {
                 let fname = self.text(field).to_string();
+                // `Math.<fn>.length` / `Math.<fn>.name` fold to literals.
+                if let ast::Expr::Field { object: inner_obj, field: inner_field, .. } = object.as_ref() {
+                    if let ast::Expr::Ident(m) = inner_obj.as_ref() {
+                        if self.text(m) == "Math"
+                            && !self.classes_by_name.contains_key("Math")
+                            && (fname == "length" || fname == "name")
+                        {
+                            let inner = self.text(inner_field).to_string();
+                            if let Some(arity) = math_function_length(&inner) {
+                                return if fname == "length" {
+                                    hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span }
+                                } else {
+                                    hir::Expr { kind: hir::ExprKind::String(inner), ty: Ty::String, span }
+                                };
+                            }
+                        }
+                    }
+                }
                 if let ast::Expr::Ident(class_name) = object.as_ref() {
+                    if self.text(class_name) == "Math" && !self.classes_by_name.contains_key("Math") {
+                        let constant = match fname.as_str() {
+                            "PI" => Some(std::f64::consts::PI),
+                            "E" => Some(std::f64::consts::E),
+                            "LN2" => Some(std::f64::consts::LN_2),
+                            "LN10" => Some(std::f64::consts::LN_10),
+                            "LOG2E" => Some(std::f64::consts::LOG2_E),
+                            "LOG10E" => Some(std::f64::consts::LOG10_E),
+                            "SQRT2" => Some(std::f64::consts::SQRT_2),
+                            "SQRT1_2" => Some(std::f64::consts::FRAC_1_SQRT_2),
+                            _ => None,
+                        };
+                        if let Some(value) = constant {
+                            return hir::Expr { kind: hir::ExprKind::Number(value), ty: Ty::F64, span };
+                        }
+                    }
                     // `Enum.Member` folds to the member's compile-time literal.
                     let enum_name = self.text(class_name).to_string();
                     if self.enums.contains_key(&enum_name) {
@@ -12054,4 +12160,17 @@ struct DecoratorTarget {
     replaces_method: bool,
     /// A returned function is the field's initializer transform.
     transforms_field: bool,
+}
+
+/// `Function.length` of the `Math` methods (spec arities).
+fn math_function_length(name: &str) -> Option<f64> {
+    Some(match name {
+        "max" | "min" | "hypot" | "pow" | "atan2" | "imul" => 2.0,
+        "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atanh" | "cbrt" | "ceil"
+        | "clz32" | "cos" | "cosh" | "exp" | "expm1" | "floor" | "fround" | "log" | "log10"
+        | "log1p" | "log2" | "round" | "sign" | "sin" | "sinh" | "sqrt" | "tan" | "tanh"
+        | "trunc" => 1.0,
+        "random" => 0.0,
+        _ => return None,
+    })
 }
