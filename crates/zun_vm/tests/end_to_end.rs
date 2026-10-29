@@ -2914,8 +2914,8 @@ fn bigint_exponent_bitwise_and_shift_operators_use_the_managed_floor() {
 
 #[test]
 fn bigint_unsigned_right_shift_is_rejected() {
-    // ECMAScript: `>>>` has no BigInt form, so this is a TypeError at check
-    // time, surfaced as a diagnostic.
+    // ECMAScript: `>>>` has no BigInt form, so `8n >>> 1n` throws a TypeError at
+    // run time (not a compile error), matching Node/Bun.
     let src = zun_prelude::with_prelude(
         r#"function main(): int {
             let a: BigInt = 8n;
@@ -2924,12 +2924,10 @@ fn bigint_unsigned_right_shift_is_rejected() {
             return 0;
         }"#,
     );
-    let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
-    let _ = zun_sema::check(&src, &ast, &mut diags);
+    let error = run_source_expect_error(&src);
     assert!(
-        diags.iter().any(|d| d.message.contains("unsigned right shift")),
-        "expected a BigInt `>>>` rejection, got: {diags:?}"
+        error.contains("TypeError") || error.to_lowercase().contains("exception"),
+        "expected a BigInt `>>>` runtime TypeError, got: {error}"
     );
 }
 
