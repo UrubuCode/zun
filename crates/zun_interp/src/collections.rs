@@ -2175,6 +2175,30 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A concrete array receiver dispatches its native methods
+                // (`join`, `map`, `slice`, …) the same as a typed array, so an
+                // array reached through `any` keeps its full method surface. The
+                // array natives live in this same dispatcher under an
+                // `array`-prefixed name (`arrayJoin`), matching the sema fallback.
+                let is_array =
+                    zun_gc::with_current_heap(|heap| heap.array_len(namespace).is_some());
+                if is_array {
+                    let mut chars = member.chars();
+                    let native_name = match chars.next() {
+                        Some(first) => {
+                            format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
+                        }
+                        None => member.to_string(),
+                    };
+                    let mut native_args = Vec::with_capacity(call_args.len() + 1);
+                    native_args.push(Value::Object(namespace));
+                    native_args.extend(call_args.iter().cloned());
+                    if let Ok(result) = self.call_managed_collection(&native_name, &native_args) {
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A dynamic object may carry a callable member in its function
                 // slot (e.g. the `resolve`/`reject` of `Promise.withResolvers`,
                 // or a `bind`-stored function). Invoke it directly; the result
