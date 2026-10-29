@@ -973,10 +973,13 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                         })
                     }
                 }
-                _ => Err(
-                    "OXC adapter currently supports identifier and static-member callees only"
-                        .into(),
-                ),
+                // Any other callee is an arbitrary function-valued expression
+                // (`a[b]()`, `f()()`, `(cond ? f : g)(…)`): call it indirectly.
+                other => Ok(Expr::ComputedCall {
+                    callee: Box::new(convert_expression(source, other)?),
+                    args,
+                    span: span(call.span),
+                }),
             }
         }
         Expression::ObjectExpression(object) => {
