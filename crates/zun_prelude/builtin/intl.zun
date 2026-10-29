@@ -5,20 +5,60 @@
 // small shim in sema (see `Checker::text`). An omitted locale defaults to the
 // empty string, which the natives treat as the root (`und`) locale. The ICU4X
 // object is built per call from the stored locale (correctness first).
+//
+// Constructor arguments map positionally onto fields: `(locale, options)`.
+// PluralRules, ListFormat, RelativeTimeFormat and Segmenter implement the
+// English (en / en-US) rules directly in Zun.
 
 import { date as intlDate, number as intlNumber, string as intlString } from "zun:core";
 
+function intlOpt(options: any, key: string): string {
+    if (options == null) {
+        return "";
+    }
+    const v = options[key];
+    if (v == null) {
+        return "";
+    }
+    return v as string;
+}
+
 class IntlCollator {
     locale: string = "";
+    options: any = null;
     compare(a: string, b: string): number {
+        const s = intlOpt(this.options, "sensitivity");
+        if (s == "base" || s == "accent") {
+            return intlString.intlCollatorCompare(this.locale, a.toLowerCase(), b.toLowerCase()) as number;
+        }
         return intlString.intlCollatorCompare(this.locale, a, b) as number;
+    }
+    resolvedOptions(): any {
+        return { locale: this.locale == "" ? "en-US" : this.locale };
     }
 }
 
 class IntlNumberFormat {
     locale: string = "";
+    options: any = null;
     format(n: number): string {
+        const style = intlOpt(this.options, "style");
+        if (style == "percent") {
+            const scaled = n * 100;
+            let r = Math.round(Math.abs(scaled));
+            if (scaled < 0) {
+                r = 0 - r;
+            }
+            return intlNumber.intlNumberFormat(this.locale, r) + "%";
+        }
         return intlNumber.intlNumberFormat(this.locale, n);
+    }
+    resolvedOptions(): any {
+        let style = intlOpt(this.options, "style");
+        if (style == "") {
+            style = "decimal";
+        }
+        return { locale: this.locale == "" ? "en-US" : this.locale, style: style };
     }
 }
 
@@ -27,4 +67,204 @@ class IntlDateTimeFormat {
     format(d: Date): string {
         return intlDate.intlDateTimeFormat(this.locale, d.millis);
     }
+}
+
+class IntlPluralRules {
+    locale: string = "";
+    options: any = null;
+    select(n: number): string {
+        if (intlOpt(this.options, "type") == "ordinal") {
+            const m10 = n % 10;
+            const m100 = n % 100;
+            if (m10 == 1 && m100 != 11) { return "one"; }
+            if (m10 == 2 && m100 != 12) { return "two"; }
+            if (m10 == 3 && m100 != 13) { return "few"; }
+            return "other";
+        }
+        if (n == 1) { return "one"; }
+        return "other";
+    }
+}
+
+class IntlListFormat {
+    locale: string = "";
+    options: any = null;
+    format(items: string[]): string {
+        const n = items.length;
+        if (n == 0) { return ""; }
+        if (n == 1) { return items[0]; }
+        const type = intlOpt(this.options, "type");
+        const style = intlOpt(this.options, "style");
+        let word = "and";
+        let sep = ", ";
+        let last = ", and ";
+        if (type == "disjunction") {
+            word = "or";
+        }
+        if (type == "unit") {
+            word = "";
+        }
+        if (type == "unit") {
+            if (style == "narrow") { sep = " "; }
+            if (n == 2) {
+                return items[0] + sep + items[1];
+            }
+            last = sep;
+        } else {
+            if (style == "short" && type != "disjunction") {
+                word = "&";
+            }
+            if (style == "narrow" && type != "disjunction") {
+                word = "";
+            }
+            if (word == "") {
+                last = ", ";
+            } else {
+                last = ", " + word + " ";
+            }
+            if (n == 2) {
+                if (word == "") { return items[0] + ", " + items[1]; }
+                return items[0] + " " + word + " " + items[1];
+            }
+        }
+        let out = "";
+        for (let i = 0; i < n; i = i + 1) {
+            if (i == 0) {
+                out = items[0];
+            }
+            if (i > 0 && i == n - 1) {
+                out = out + last + items[i];
+            }
+            if (i > 0 && i < n - 1) {
+                out = out + sep + items[i];
+            }
+        }
+        return out;
+    }
+}
+
+class IntlRelativeTimeFormat {
+    locale: string = "";
+    options: any = null;
+    format(value: number, unit: string): string {
+        let u = unit;
+        if (u.endsWith("s")) {
+            u = u.substring(0, u.length - 1);
+        }
+        if (intlOpt(this.options, "numeric") == "auto") {
+            if (u == "day") {
+                if (value == 0) { return "today"; }
+                if (value == 1) { return "tomorrow"; }
+                if (value == -1) { return "yesterday"; }
+            }
+            if (u == "second") {
+                if (value == 0) { return "now"; }
+            }
+            if (u == "minute" || u == "hour") {
+                if (value == 0) { return "this " + u; }
+            }
+            if (u == "week" || u == "month" || u == "quarter" || u == "year") {
+                if (value == 0) { return "this " + u; }
+                if (value == 1) { return "next " + u; }
+                if (value == -1) { return "last " + u; }
+            }
+        }
+        const abs = Math.abs(value);
+        let name = u;
+        if (abs != 1) {
+            name = u + "s";
+        }
+        const num = intlNumber.intlNumberFormat(this.locale, abs);
+        if (value < 0 || (value == 0 && 1 / value < 0)) {
+            return num + " " + name + " ago";
+        }
+        return "in " + num + " " + name;
+    }
+}
+
+function intlIsWordChar(c: number): boolean {
+    if (c >= 48 && c <= 57) { return true; }
+    if (c >= 65 && c <= 90) { return true; }
+    if (c >= 97 && c <= 122) { return true; }
+    if (c == 95) { return true; }
+    if (c > 127) { return true; }
+    return false;
+}
+
+class IntlSegmenter {
+    locale: string = "";
+    options: any = null;
+    segment(text: string): any {
+        const gran = intlOpt(this.options, "granularity");
+        const out: any[] = [];
+        let i = 0;
+        const n = text.length;
+        while (i < n) {
+            let j = i + 1;
+            let wordLike = false;
+            if (gran == "word") {
+                const c = text.charCodeAt(i);
+                if (intlIsWordChar(c)) {
+                    wordLike = true;
+                    while (j < n) {
+                        const d = text.charCodeAt(j);
+                        let cont = intlIsWordChar(d);
+                        if ((d == 39 || d == 46) && j + 1 < n && intlIsWordChar(text.charCodeAt(j + 1))) {
+                            cont = true;
+                        }
+                        if (!cont) {
+                            break;
+                        }
+                        j = j + 1;
+                    }
+                }
+                if (c == 32) {
+                    while (j < n && text.charCodeAt(j) == 32) {
+                        j = j + 1;
+                    }
+                }
+            }
+            out.push({ segment: text.substring(i, j), index: i, input: text, isWordLike: wordLike });
+            i = j;
+        }
+        return out;
+    }
+}
+
+function intlCanonLocale(tag: string): string {
+    const parts = tag.split("-");
+    let out = parts[0].toLowerCase();
+    for (let i = 1; i < parts.length; i = i + 1) {
+        const p = parts[i];
+        let piece = p.toLowerCase();
+        if (p.length == 2) {
+            piece = p.toUpperCase();
+        }
+        if (p.length == 4) {
+            piece = p.substring(0, 1).toUpperCase() + p.substring(1).toLowerCase();
+        }
+        out = out + "-" + piece;
+    }
+    return out;
+}
+
+function intlGetCanonicalLocales(input: any): any {
+    const out: string[] = [];
+    if (typeof input == "string") {
+        out.push(intlCanonLocale(input as string));
+        return out;
+    }
+    if (input == null) {
+        return out;
+    }
+    const list = input as string[];
+    for (let i = 0; i < list.length; i = i + 1) {
+        const c = intlCanonLocale(list[i]);
+        let seen = false;
+        for (let j = 0; j < out.length; j = j + 1) {
+            if (out[j] == c) { seen = true; }
+        }
+        if (!seen) { out.push(c); }
+    }
+    return out;
 }

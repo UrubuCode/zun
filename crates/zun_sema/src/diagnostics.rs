@@ -13,6 +13,11 @@ impl Checker<'_> {
             "Intl.Collator" => "IntlCollator",
             "Intl.NumberFormat" => "IntlNumberFormat",
             "Intl.DateTimeFormat" => "IntlDateTimeFormat",
+            "Intl.PluralRules" => "IntlPluralRules",
+            "Intl.ListFormat" => "IntlListFormat",
+            "Intl.RelativeTimeFormat" => "IntlRelativeTimeFormat",
+            "Intl.Segmenter" => "IntlSegmenter",
+            "Intl.getCanonicalLocales" => "intlGetCanonicalLocales",
             _ => raw,
         }
     }
