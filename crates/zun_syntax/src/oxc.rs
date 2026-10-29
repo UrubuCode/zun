@@ -1111,9 +1111,67 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             })
         }
         Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),
+        Expression::UpdateExpression(update) => convert_update(source, update),
         _ => {
             Err("OXC adapter currently supports literal, identifier, and binary expressions".into())
         }
+    }
+}
+
+/// Desugar `x++`/`++x`/`x--`/`--x` to `x = x ± 1` (the language has no update
+/// operator). Correct for prefix form and for statement/for-update position
+/// (the value is unused); a postfix result used as a value would see the new
+/// value instead of the old — a known v1 limitation.
+fn convert_update(
+    source: &str,
+    update: &oxc_ast::ast::UpdateExpression<'_>,
+) -> Result<Expr, String> {
+    use oxc_ast::ast::SimpleAssignmentTarget;
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let op = match update.operator {
+        oxc_ast::ast::UpdateOperator::Increment => BinaryOp::Add,
+        oxc_ast::ast::UpdateOperator::Decrement => BinaryOp::Sub,
+    };
+    let whole = span(update.span);
+    let one = || Expr::Number { value: 1.0, span: whole };
+    let step = |read: Expr| Expr::Binary { op, lhs: Box::new(read), rhs: Box::new(one()), span: whole };
+    match &update.argument {
+        SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            let target = Name { span: span(identifier.span) };
+            Ok(Expr::Assign {
+                target,
+                value: Box::new(step(Expr::Ident(Name { span: span(identifier.span) }))),
+                span: whole,
+            })
+        }
+        SimpleAssignmentTarget::StaticMemberExpression(member) => {
+            let object = convert_expression(source, &member.object)?;
+            let read = Expr::Field {
+                object: Box::new(convert_expression(source, &member.object)?),
+                field: Name { span: span(member.property.span) },
+                span: span(member.span),
+            };
+            Ok(Expr::FieldAssign {
+                object: Box::new(object),
+                field: Name { span: span(member.property.span) },
+                value: Box::new(step(read)),
+                span: whole,
+            })
+        }
+        SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+            let read = Expr::Index {
+                object: Box::new(convert_expression(source, &member.object)?),
+                index: Box::new(convert_expression(source, &member.expression)?),
+                span: span(member.span),
+            };
+            Ok(Expr::IndexAssign {
+                object: Box::new(convert_expression(source, &member.object)?),
+                index: Box::new(convert_expression(source, &member.expression)?),
+                value: Box::new(step(read)),
+                span: whole,
+            })
+        }
+        _ => Err("OXC adapter supports identifier, field, and index update targets only".into()),
     }
 }
 
