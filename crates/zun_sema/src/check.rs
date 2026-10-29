@@ -149,6 +149,7 @@ fn check_impl(
         classes_with_has_instance: HashSet::new(),
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
+        closure_takes_this: false,
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
         type_param_names: HashSet::new(),
@@ -351,6 +352,11 @@ struct Checker<'a> {
     /// so it never leaks to a nested or sibling closure. `None` keeps the
     /// `F64` default — numeric callbacks (`arr.map(x => x + 1)`) are unchanged.
     closure_param_hint: Option<Vec<Ty>>,
+    /// Set for the NEXT closure literal: an object-literal method that uses
+    /// `this`. Such a closure takes the receiver as a hidden first parameter
+    /// (named `this`) and is marked by an `@this` name suffix, which the
+    /// interpreter reads to pass the receiver on a dynamic member call.
+    closure_takes_this: bool,
     /// Instance methods whose runtime decorator returns a function (method
     /// replacement): calls dispatch through the `class_named_methods` side
     /// table instead of the static vtable slot. Value: the declaring class.
@@ -4955,7 +4961,16 @@ impl Checker<'_> {
                 entries.push(hir::ObjectEntry::Data { key, value });
             }
             ast::PropertyKind::Method => {
+                // A method that mentions `this` receives the object as a hidden
+                // first parameter (see `closure_takes_this`).
+                if !matches!(property.key, ast::PropertyKey::Computed(_)) {
+                    if let ast::Expr::Function(function) = &property.value {
+                        let body = &self.source[function.span.start as usize..function.span.end as usize];
+                        self.closure_takes_this = body.contains("this");
+                    }
+                }
                 let func = self.check_expr(cx, &property.value);
+                self.closure_takes_this = false;
                 match &property.key {
                     ast::PropertyKey::Computed(key) => {
                         let key = self.check_expr(cx, key);

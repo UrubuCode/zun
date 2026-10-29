@@ -2388,6 +2388,30 @@ impl<'a> Interp<'a> {
                 // `array`-prefixed name (`arrayJoin`), matching the sema fallback.
                 let is_array =
                     zun_gc::with_current_heap(|heap| heap.array_len(namespace).is_some());
+                if is_array && member.as_ref() == "push" {
+                    // `push` has no `array*` native (typed code lowers it to an
+                    // instruction); append directly and answer the new length.
+                    let length = zun_gc::with_current_heap_mut(|heap| {
+                        for value in &call_args {
+                            let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                            let end = heap.array_len(namespace).unwrap_or(0);
+                            heap.array_insert(namespace, end, boxed);
+                        }
+                        heap.array_len(namespace).unwrap_or(0)
+                    });
+                    return Ok(Value::Any(zun_core::Any::float(length as f64)));
+                }
+                if is_array && member.as_ref() == "pop" {
+                    let removed = zun_gc::with_current_heap_mut(|heap| {
+                        let length = heap.array_len(namespace).unwrap_or(0);
+                        if length == 0 {
+                            None
+                        } else {
+                            heap.array_remove(namespace, length - 1)
+                        }
+                    });
+                    return Ok(Value::Any(removed.unwrap_or_else(zun_core::Any::void)));
+                }
                 if is_array {
                     let mut chars = member.chars();
                     let native_name = match chars.next() {
@@ -2405,6 +2429,21 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
+                // A typed class instance reached through `any`: dispatch the
+                // named method (virtually) with the instance as receiver.
+                if !is_array
+                    && !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(namespace))
+                {
+                    if let Some(rid) = self.instance_method_rid(namespace, &member) {
+                        let mut method_args = Vec::with_capacity(call_args.len() + 1);
+                        method_args.push(Value::Object(namespace));
+                        method_args.extend(call_args.iter().cloned());
+                        let result = self.call(rid, method_args, None)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A dynamic object may carry a callable member in its function
                 // slot (e.g. the `resolve`/`reject` of `Promise.withResolvers`,
                 // or a `bind`-stored function). Invoke it directly; the result
@@ -2414,6 +2453,22 @@ impl<'a> Interp<'a> {
                 if let Some(handle) =
                     zun_gc::with_current_heap(|heap| heap.dynamic_get_function(namespace, &member))
                 {
+                    // An object-literal method that uses `this` takes the
+                    // receiver as a hidden first argument (marked by the
+                    // `@this` suffix on its closure name).
+                    let mut call_args = call_args;
+                    if !handle.is_bound() {
+                        let takes_this = self
+                            .module
+                            .tables
+                            .method_defs
+                            .get((handle.method_rid() as usize).wrapping_sub(1))
+                            .map(|method| self.module.strings.get(method.name).ends_with("@this>"))
+                            .unwrap_or(false);
+                        if takes_this {
+                            call_args.insert(0, Value::Object(namespace));
+                        }
+                    }
                     let result = self.invoke_function_value(handle, call_args)?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::null);
