@@ -19,7 +19,9 @@ use std::cell::RefCell;
 
 use zun_codegen::JitKind;
 use zun_interp::value::Value;
-use zun_interp::{run_method_on_current_heap_bare, Output, RunError};
+use zun_interp::{
+    run_function_on_current_heap_bare, run_method_on_current_heap_bare, Output, RunError,
+};
 use zun_loader::ModuleLoader;
 use zun_module::{read_body, Module};
 
@@ -105,6 +107,76 @@ pub(crate) fn bridge_call(
     }
 }
 
+/// Invoke a concrete function value (`handle`) through its `CallIndirect`
+/// dispatch on the current heap, with the call's explicit arguments supplied
+/// packed in the shim ABI (one `u64` per JIT value, in source order, WITHOUT the
+/// hidden closure-environment slot — [`run_function_on_current_heap_bare`]
+/// prepends that from the handle). Returns the packed result and a status.
+///
+/// This is the closure-aware counterpart of [`bridge_call`]: the handle may hold
+/// a captured environment (`environment() == Some(..)`), which the one-word rid
+/// dispatch of [`bridge_call`] cannot carry. Only the concrete function values a
+/// JIT `CallIndirect` can reach are handled (plain and closure); dynamic and
+/// bound function values stay on Tier 0 and never arrive here.
+pub(crate) fn bridge_call_indirect(
+    module: &Module,
+    loader: Option<&ModuleLoader>,
+    output: &mut dyn Output,
+    handle: zun_core::FunctionHandle,
+    packed_user_args: &[u64],
+) -> Result<BridgeOutcome, RunError> {
+    let rid = handle.method_rid();
+    let method = module
+        .tables
+        .method_defs
+        .get(rid as usize - 1)
+        .ok_or(RunError::BadToken)?;
+    let body = read_body(&module.code, method.body_offset)
+        .map_err(|e| RunError::Malformed(e.to_string()))?;
+    // The closure environment, when present, is the target method's hidden first
+    // parameter (local 0); the JIT passes only the explicit arguments after it.
+    let env_offset = usize::from(handle.environment().is_some());
+    let total_params = body.param_count as usize;
+    if total_params < env_offset || total_params - env_offset != packed_user_args.len() {
+        return Err(RunError::BadToken);
+    }
+    let user_param_kinds: Vec<JitKind> = body.local_kinds[env_offset..total_params]
+        .iter()
+        .map(|&byte| JitKind::from_byte(byte))
+        .collect();
+    let return_kind = body
+        .returns_value
+        .then(|| JitKind::from_byte(body.return_kind));
+
+    // Unpack arguments in a short heap borrow that never overlaps the
+    // interpreter call below (which borrows the heap itself).
+    let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
+    let args: Vec<Value> = packed_user_args
+        .iter()
+        .zip(&user_param_kinds)
+        .map(|(&bits, &kind)| unpack_value(bits, Some(kind), unsafe { &*heap }))
+        .collect();
+
+    match run_function_on_current_heap_bare(module, loader, handle, args, output) {
+        Ok(result) => {
+            let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
+            let packed = match return_kind {
+                Some(kind) => pack_value(&result, kind, unsafe { &mut *heap }),
+                None => 0,
+            };
+            Ok(BridgeOutcome { packed, status: STATUS_RETURNED })
+        }
+        Err(RunError::Thrown(value)) => {
+            let packed = match value {
+                Value::Object(object) => object.addr() as u64,
+                _ => 0,
+            };
+            Ok(BridgeOutcome { packed, status: STATUS_THREW })
+        }
+        Err(other) => Err(other),
+    }
+}
+
 /// Execution context the `extern "C"` bridge entry reads to reach the
 /// interpreter. The pointers are lifetime-erased; [`BridgeScope`] installs them
 /// for the duration of a JIT call and restores the previous value on drop, so
@@ -142,6 +214,7 @@ pub(crate) fn pending_slot_addr() -> u64 {
 pub(crate) fn bridge_config() -> zun_codegen::BridgeConfig {
     zun_codegen::BridgeConfig {
         call_interp: zun_jit_call_interp as *const u8,
+        call_indirect: zun_jit_call_indirect as *const u8,
         route_pending: zun_jit_route_pending as *const u8,
         pending_slot_addr: pending_slot_addr(),
     }
@@ -261,6 +334,44 @@ pub(crate) extern "C" fn zun_jit_call_interp(rid: i64, args_ptr: *const u64, arg
             if outcome.status == STATUS_THREW {
                 // Record the thrown object; the JIT frame's post-call check
                 // routes it (to a catch, or out of the frame).
+                set_pending_exception(outcome.packed);
+                0
+            } else {
+                outcome.packed
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+/// The `extern "C"` entry JIT code calls for a `CallIndirect` on a concrete
+/// function value. `identity`/`environment` are the two carrier words of a
+/// [`zun_core::FunctionHandle`] (see `FunctionHandle::to_carrier_words`): the
+/// JIT reconstructs the handle so a captured environment reaches the callee.
+/// Reads the installed context, dispatches via [`bridge_call_indirect`], and
+/// returns the packed result; a propagated throw is recorded like
+/// [`zun_jit_call_interp`].
+pub(crate) extern "C" fn zun_jit_call_indirect(
+    identity: i64,
+    environment: i64,
+    args_ptr: *const u64,
+    argc: i64,
+) -> u64 {
+    let handle = zun_core::FunctionHandle::from_carrier_words(identity as u64, environment as u64);
+    let context = BRIDGE_CONTEXT
+        .with(|cell| *cell.borrow())
+        .expect("bridge context must be installed before bridged code runs");
+    let module = unsafe { &*context.module };
+    let loader = context.loader.map(|loader| unsafe { &*loader });
+    let output = unsafe { &mut *context.output };
+    let args: &[u64] = if argc > 0 {
+        unsafe { std::slice::from_raw_parts(args_ptr, argc as usize) }
+    } else {
+        &[]
+    };
+    match bridge_call_indirect(module, loader, output, handle, args) {
+        Ok(outcome) => {
+            if outcome.status == STATUS_THREW {
                 set_pending_exception(outcome.packed);
                 0
             } else {
@@ -395,6 +506,53 @@ mod tests {
         assert_eq!(result as i64, 6);
     }
 
+    /// A JIT-compiled method that stores a concrete function value and calls it
+    /// indirectly dispatches natively through `zun_jit_call_indirect` (the
+    /// handle-reconstructing path), reaching the target on the interpreter with
+    /// the no-closure environment word 0. Exercises the compiled `CallIndirect`
+    /// lowering end to end, which the once-called e2e test leaves on Tier 0.
+    #[test]
+    fn jit_compiled_indirect_call_dispatches_a_stored_function_value() {
+        let module = zun_compiler::compile(
+            "function inc(n: int): int { return n + 1; } \
+             function choose(n: int): int { let f = inc; return f(n); } \
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let loader = {
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("app", &module.write()).unwrap();
+            loader
+        };
+        let scope = loader.get("app").unwrap();
+        let choose_rid = scope
+            .module()
+            .tables
+            .method_defs
+            .iter()
+            .position(|m| scope.module().strings.get(m.name) == "choose")
+            .expect("choose method") as u32
+            + 1;
+
+        let jit =
+            unsafe { zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config()) }
+                .expect("jit compiles with bridge");
+        assert!(
+            jit.is_compiled(choose_rid),
+            "a concrete stored-function method must be JIT-compiled under the bridge"
+        );
+
+        let mut heap = zun_gc::Heap::new();
+        let _hscope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let mut output = CaptureOutput::default();
+        let _bridge = BridgeScope::enter(scope.module(), Some(&loader), &mut output);
+        // choose(10) stores `inc` and calls it indirectly → inc(10) = 11.
+        let result = jit
+            .call_packed_with_heap(choose_rid, &[10], &mut heap)
+            .expect("native indirect call");
+        assert_eq!(result as i64, 11);
+    }
+
     /// Full exceptional-return channel: a JIT `caller` bridges an ineligible,
     /// throwing `helper`; the throw propagates out of the JIT frame (pending
     /// slot → exceptional exit) back to the interpreter, which routes it to the
@@ -487,5 +645,102 @@ mod tests {
         let dn = zun_compiler::compile(&src.replace("MAIN_UP", "false")).expect("compile");
         let r_dn = crate::execute_with(&dn.write(), &mut output).expect("run");
         assert!(matches!(r_dn, Value::Int(9, _)), "choose(false,10)=dec(10)=9, got {r_dn:?}");
+    }
+
+    /// The handle-reconstructing indirect bridge reproduces the plain rid bridge
+    /// for a no-closure function value (environment word 0) — the case a JIT
+    /// `CallIndirect` exercises today. Mirrors
+    /// `bridges_a_scalar_call_on_the_current_heap` through the new entry.
+    #[test]
+    fn indirect_bridge_matches_the_rid_bridge_for_a_no_closure_handle() {
+        let module = zun_compiler::compile(
+            "function add(a: int, b: int): int { return a + b; } function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let loader = {
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("app", &module.write()).unwrap();
+            loader
+        };
+        let scope = loader.get("app").unwrap();
+        let rid = scope
+            .module()
+            .tables
+            .method_defs
+            .iter()
+            .position(|m| scope.module().strings.get(m.name) == "add")
+            .expect("add method") as u32
+            + 1;
+
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let mut output = CaptureOutput::default();
+        let handle = zun_core::FunctionHandle::new(rid, None);
+        let outcome =
+            bridge_call_indirect(scope.module(), Some(&loader), &mut output, handle, &[19, 23])
+                .unwrap();
+        assert_eq!(outcome.status, STATUS_RETURNED);
+        assert_eq!(outcome.packed as i64, 42);
+    }
+
+    /// A closure produced by the interpreter (capturing a local) is invoked
+    /// through the indirect bridge with its captured environment intact: the
+    /// environment travels as the handle's second carrier word, so the callee
+    /// still reads its capture. This is the interpreter-side primitive the JIT
+    /// closure carrier dispatches through.
+    #[test]
+    fn indirect_bridge_invokes_a_closure_with_its_captured_environment() {
+        let module = zun_compiler::compile(
+            "function cap(n: number): (x: number) => number { return (x: number) => x + n; } \
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let loader = {
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("app", &module.write()).unwrap();
+            loader
+        };
+        let scope = loader.get("app").unwrap();
+        let cap_rid = scope
+            .module()
+            .tables
+            .method_defs
+            .iter()
+            .position(|m| scope.module().strings.get(m.name) == "cap")
+            .expect("cap method") as u32
+            + 1;
+
+        let mut heap = zun_gc::Heap::new();
+        let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let mut output = CaptureOutput::default();
+
+        // Produce a real closure (environment != 0) on the current heap.
+        let closure = run_method_on_current_heap_bare(
+            scope.module(),
+            Some(&loader),
+            cap_rid,
+            vec![Value::Float(5.0, zun_il::NumKind::F64)],
+            &mut output,
+        )
+        .expect("run cap to produce a closure");
+        let Value::Function(handle) = closure else {
+            panic!("cap must return a function value, got {closure:?}");
+        };
+        assert!(
+            handle.environment().is_some(),
+            "the returned closure must capture an environment"
+        );
+
+        // Invoke the closure via the indirect bridge with x = 10 → 10 + 5 = 15.
+        let outcome = bridge_call_indirect(
+            scope.module(),
+            Some(&loader),
+            &mut output,
+            handle,
+            &[10.0f64.to_bits()],
+        )
+        .unwrap();
+        assert_eq!(outcome.status, STATUS_RETURNED);
+        assert_eq!(f64::from_bits(outcome.packed), 15.0);
     }
 }

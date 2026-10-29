@@ -1651,6 +1651,11 @@ struct Sig {
 pub struct BridgeConfig {
     /// `extern "C" zun_jit_call_interp(rid, args_ptr, argc) -> u64`.
     pub call_interp: *const u8,
+    /// `extern "C" zun_jit_call_indirect(identity, environment, args_ptr, argc) -> u64`:
+    /// dispatch a `CallIndirect` on a concrete function value, reconstructing a
+    /// `FunctionHandle` from the two carrier words so a captured closure
+    /// environment reaches the callee.
+    pub call_indirect: *const u8,
     /// `extern "C" zun_jit_route_pending(catch_type_rid) -> u64` (0 = no/unmatched
     /// pending; else the caught object handle, slot cleared).
     pub route_pending: *const u8,
@@ -1945,6 +1950,7 @@ impl Jit {
         );
         if let Some(ref bridge) = bridge {
             builder.symbol("zun_jit_call_interp", bridge.call_interp);
+            builder.symbol("zun_jit_call_indirect", bridge.call_indirect);
             builder.symbol("zun_jit_route_pending", bridge.route_pending);
         }
         let module = JITModule::new(builder);

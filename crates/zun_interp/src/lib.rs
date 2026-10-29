@@ -167,6 +167,37 @@ pub fn run_function(
     run_method(module, handle.method_rid(), call_args, output)
 }
 
+/// Invoke a callable function handle with its captured environment on the
+/// **current** heap (no fresh heap, no module initializer), for the
+/// JIT→interpreter call bridge's `CallIndirect` dispatch.
+///
+/// Like [`run_function`], the closure environment (or bound record) is supplied
+/// as the hidden first argument, so a closure keeps reading its captures; unlike
+/// it, execution reuses the JIT frame's live heap (where the environment object
+/// and managed arguments already live). `user_args` are the call's explicit
+/// arguments, in source order, without the hidden environment slot.
+///
+/// This handles the concrete function values a JIT `CallIndirect` can hold:
+/// a plain function (`environment() == None`) and a closure of a specific
+/// function (`environment() == Some(address)`). A bound function is not
+/// reachable here — it is a dynamic function value, kept on Tier 0 — so its
+/// dedicated dispatch is intentionally not duplicated.
+pub fn run_function_on_current_heap_bare(
+    module: &Module,
+    loader: Option<&zun_loader::ModuleLoader>,
+    handle: zun_core::FunctionHandle,
+    user_args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let mut call_args = Vec::with_capacity(user_args.len() + 1);
+    if let Some(address) = handle.environment() {
+        let environment = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+        call_args.push(Value::Object(environment));
+    }
+    call_args.extend(user_args);
+    run_method_on_current_heap_bare(module, loader, handle.method_rid(), call_args, output)
+}
+
 /// Execute a method from a loaded module set, allowing top-level MemberRef calls.
 pub fn run_method_loaded(
     scope: &zun_loader::ModuleScope,
