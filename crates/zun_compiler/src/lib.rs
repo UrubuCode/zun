@@ -12,7 +12,7 @@ use zun_module::{read_body, Module};
 pub mod extensions;
 pub mod macros;
 
-pub use extensions::external_functions;
+pub use extensions::{external_functions, external_functions_all};
 
 /// Compute the conservative set of method RIDs reachable from a module entry.
 ///

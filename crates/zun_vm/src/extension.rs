@@ -55,6 +55,22 @@ impl ExtensionResolver {
             .expect("extension inserted or cached"))
     }
 
+    /// Load and register an extension from an explicit library path, caching it
+    /// by that path. Used by `zun run --ext <lib>`.
+    ///
+    /// # Safety
+    /// The path must identify trusted native code implementing the v1
+    /// registration contract; it runs during registration.
+    pub unsafe fn load_path(&mut self, path: impl AsRef<Path>) -> Result<&LoadedExtension, FfiError> {
+        let key = path.as_ref().to_string_lossy().into_owned();
+        if !self.extensions.contains_key(&key) {
+            // SAFETY: forwarded from the caller's trusted-extension contract.
+            let extension = unsafe { LoadedExtension::load_path(path.as_ref()) }?;
+            self.extensions.insert(key.clone(), extension);
+        }
+        Ok(self.extensions.get(&key).expect("extension inserted or cached"))
+    }
+
     /// Materialize and register a `.zmlib`'s embedded native extension for
     /// `triple` (the host triple in production). Returns `Ok(false)` when the
     /// package has no object for that triple. The library handle is stored in
@@ -96,6 +112,15 @@ impl ExtensionResolver {
         self.extensions
             .values()
             .find_map(|extension| extension.find_function(module, key))
+    }
+
+    /// Every registered function across all loaded extensions, for deriving a
+    /// compiler external-function surface.
+    pub fn functions(&self) -> Vec<&OwnedFunction> {
+        self.extensions
+            .values()
+            .flat_map(|extension| extension.functions())
+            .collect()
     }
 
     pub fn contains(&self, name: &str) -> bool {

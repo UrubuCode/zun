@@ -42,29 +42,41 @@ fn ty_of(repr: ZunTyRepr) -> Option<Ty> {
     })
 }
 
+/// Convert one registered descriptor to an [`ExternalFunction`], or `None` if it
+/// carries a type the source language cannot yet name.
+fn external_of(function: &OwnedFunction) -> Option<ExternalFunction> {
+    let params: Option<Vec<Ty>> = function.params.iter().copied().map(ty_of).collect();
+    Some(ExternalFunction {
+        module: function.module.clone(),
+        name: function.key.clone(),
+        params: params?,
+        return_ty: ty_of(function.ret)?,
+    })
+}
+
 /// Derive the [`ExternalFunction`] declarations for `module` from a loaded
-/// extension's registered descriptors (`functions`, e.g. an extension's
+/// extension's registered descriptors (e.g. an extension's
 /// `OwnedRegistry::functions` or a `LoadedExtension::functions()`). Functions
 /// belonging to other modules, or carrying a type the source language cannot
 /// name, are skipped.
-pub fn external_functions(functions: &[OwnedFunction], module: &str) -> Vec<ExternalFunction> {
-    let mut externals = Vec::new();
-    for function in functions {
-        if function.module != module {
-            continue;
-        }
-        let params: Option<Vec<Ty>> = function.params.iter().copied().map(ty_of).collect();
-        let (Some(params), Some(return_ty)) = (params, ty_of(function.ret)) else {
-            continue;
-        };
-        externals.push(ExternalFunction {
-            module: function.module.clone(),
-            name: function.key.clone(),
-            params,
-            return_ty,
-        });
-    }
-    externals
+pub fn external_functions<'a>(
+    functions: impl IntoIterator<Item = &'a OwnedFunction>,
+    module: &str,
+) -> Vec<ExternalFunction> {
+    functions
+        .into_iter()
+        .filter(|function| function.module == module)
+        .filter_map(external_of)
+        .collect()
+}
+
+/// Derive the [`ExternalFunction`] declarations for every module present in a
+/// loaded extension's registered descriptors. Functions carrying a type the
+/// source language cannot name are skipped.
+pub fn external_functions_all<'a>(
+    functions: impl IntoIterator<Item = &'a OwnedFunction>,
+) -> Vec<ExternalFunction> {
+    functions.into_iter().filter_map(external_of).collect()
 }
 
 #[cfg(test)]
