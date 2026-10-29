@@ -7910,6 +7910,37 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `number.toFixed(digits?)` — fixed-point formatting, digits
+                // default 0 (range 0..=100 enforced by the native). Hand-lowered
+                // before class dispatch like `toExponential`/`toPrecision`.
+                if receiver.ty == Ty::F64 && mname == "toFixed" && args.len() <= 1 {
+                    let Some((id, _)) = zun_natives::resolve("number", "toFixed") else {
+                        self.error(span, "missing Number intrinsic `toFixed`");
+                        return self.poison(span);
+                    };
+                    let digits = match args.first() {
+                        Some(arg) => {
+                            let mut digits = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut digits, Ty::Int(IntKind::I32));
+                            if !digits.ty.is_error()
+                                && !self.is_assignable(digits.ty, Ty::Int(IntKind::I32))
+                            {
+                                self.error(digits.span, "`toFixed` argument must be an integer");
+                            }
+                            digits
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(0.0),
+                            ty: Ty::Int(IntKind::I32),
+                            span,
+                        },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, digits] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 // Optional trailing BCP-47 `locale` (ECMA-402) for the root-locale
                 // `toLocale*` family. Hand-lowered because `managed_method` is
                 // fixed-arity: an omitted locale is the sentinel `""` (root).
@@ -9349,6 +9380,21 @@ impl Checker<'_> {
                         kind: hir::ExprKind::ArrayLength {
                             object: Box::new(object),
                         },
+                        ty: Ty::Int(IntKind::U64),
+                        span,
+                    };
+                }
+                // `str.length` as a PROPERTY (the spec form), lowering to the
+                // same `string.length` native the method form uses — intercepted
+                // on the primitive receiver ahead of class dispatch, like the
+                // `.length` cases for arrays and views above.
+                if object.ty == Ty::String && fname == "length" {
+                    let Some((id, _)) = zun_natives::resolve("string", "length") else {
+                        self.error(span, "missing String intrinsic `length`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
                         ty: Ty::Int(IntKind::U64),
                         span,
                     };
