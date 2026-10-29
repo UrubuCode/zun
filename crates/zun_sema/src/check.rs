@@ -5738,6 +5738,35 @@ impl Checker<'_> {
                         }
                     }
                 }
+                // Relational comparison of class instances (`dateA < dateB`)
+                // applies ToPrimitive (`valueOf`) then compares numerically.
+                if matches!(
+                    *op,
+                    ast::BinaryOp::Lt | ast::BinaryOp::Le | ast::BinaryOp::Gt | ast::BinaryOp::Ge
+                ) && (matches!(lhs.ty, Ty::Instance(_)) || matches!(rhs.ty, Ty::Instance(_)))
+                    && !lhs.ty.is_error()
+                    && !rhs.ty.is_error()
+                {
+                    if let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") {
+                        let coerce = |e: hir::Expr| hir::Expr {
+                            span: e.span,
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::box_to_any(e)],
+                            },
+                            ty: Ty::F64,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Binary {
+                                op: *op,
+                                lhs: Box::new(coerce(lhs)),
+                                rhs: Box::new(coerce(rhs)),
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                    }
+                }
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
                 // A logical/nullish operator whose result is dynamic keeps the
                 // deciding operand's value (value-preserving short-circuit), so

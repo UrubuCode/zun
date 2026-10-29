@@ -35,6 +35,28 @@ pub(super) fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
         };
         return;
     }
+    // JS `number` (f64) and the 64-bit timestamp type used by Date interchange
+    // implicitly: a non-literal i64 widens to a `number` parameter and a
+    // `number` narrows to an i64 slot (`new Date(ms)`).
+    if !is_number_literal(expr)
+        && matches!(
+            (expr.ty, expected),
+            (Ty::Int(IntKind { bits: 64, signed: true }), Ty::F64)
+                | (Ty::F64, Ty::Int(IntKind { bits: 64, signed: true }))
+        )
+    {
+        let span = expr.span;
+        let inner = std::mem::replace(
+            expr,
+            hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+        );
+        *expr = hir::Expr {
+            kind: hir::ExprKind::Convert { value: Box::new(inner) },
+            ty: expected,
+            span,
+        };
+        return;
+    }
     if !is_number_literal(expr) { return; }
     let v = match expr.kind { hir::ExprKind::Number(v) => v, _ => return };
     match expected {
