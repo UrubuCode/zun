@@ -2764,6 +2764,13 @@ impl<'a> Interp<'a> {
                     Value::Object(obj) if array_join_text(obj).is_some() => {
                         array_join_text(obj).unwrap_or_default()
                     }
+                    Value::Object(obj)
+                        if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) =>
+                    {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.bigint_value(obj).map(|v| v.to_string()).unwrap_or_default()
+                        })
+                    }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()

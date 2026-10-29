@@ -2444,54 +2444,27 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        let to_stderr = match method {
-            "log" | "info" | "debug" => false,
-            "error" | "warn" => true,
+        let target = match method {
+            "log" | "info" | "debug" => "log",
+            "error" | "warn" => "err",
+            "group" | "groupCollapsed" => "group",
+            "groupEnd" => "groupEnd",
+            "count" => "count",
+            "countReset" => "countReset",
+            "assert" => "assert",
             _ => return None,
         };
-        let fmt_class = *self.classes_by_name.get("ConsoleFormat")?;
-        let top = self.method_of(fmt_class, "top")?;
-        let print_name = if to_stderr { "eprintln" } else { "println" };
-        let (print_id, _) = zun_natives::resolve("io", print_name)?;
-        // Build the space-joined string of every formatted argument.
-        let mut joined: Option<hir::Expr> = None;
-        for arg in args {
-            let value = self.check_expr(cx, arg);
-            let formatted = hir::Expr {
-                kind: hir::ExprKind::StaticCall {
-                    func: top,
-                    args: vec![Self::box_to_any(value)],
-                },
-                ty: Ty::String,
-                span,
-            };
-            joined = Some(match joined {
-                None => formatted,
-                Some(acc) => {
-                    let with_space = hir::Expr {
-                        kind: hir::ExprKind::Binary {
-                            op: ast::BinaryOp::Add,
-                            lhs: Box::new(acc),
-                            rhs: Box::new(Self::string_literal(" ".to_string(), span)),
-                        },
-                        ty: Ty::String,
-                        span,
-                    };
-                    hir::Expr {
-                        kind: hir::ExprKind::Binary {
-                            op: ast::BinaryOp::Add,
-                            lhs: Box::new(with_space),
-                            rhs: Box::new(formatted),
-                        },
-                        ty: Ty::String,
-                        span,
-                    }
-                }
-            });
-        }
-        let text = joined.unwrap_or_else(|| Self::string_literal(String::new(), span));
+        let fmt_class = *self.classes_by_name.get("ConsoleFormat2")?;
+        let func = self.method_of(fmt_class, target)?;
+        let elements: Vec<Option<hir::Expr>> =
+            args.iter().map(|arg| Some(self.check_expr(cx, arg))).collect();
+        let array = hir::Expr {
+            kind: hir::ExprKind::ArrayLiteral { elements },
+            ty: Ty::Array,
+            span,
+        };
         Some(hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id: print_id, args: vec![text] },
+            kind: hir::ExprKind::StaticCall { func, args: vec![array] },
             ty: Ty::Void,
             span,
         })
@@ -10430,6 +10403,38 @@ impl Checker<'_> {
                                 ty,
                                 span,
                             };
+                        }
+                        // `console.<method>` read as a value: a reference to the
+                        // variadic prelude entry point.
+                        if self.text(class_name) == "console" {
+                            let target = match fname.as_str() {
+                                "log" | "info" | "debug" | "dir" => Some("v_log"),
+                                "error" | "warn" => Some("v_err"),
+                                "group" | "groupCollapsed" => Some("v_group"),
+                                "groupEnd" => Some("v_groupEnd"),
+                                "count" => Some("v_count"),
+                                "countReset" => Some("v_countReset"),
+                                "assert" => Some("v_assert"),
+                                "table" | "time" | "timeEnd" | "timeLog" | "trace" => {
+                                    Some("v_log")
+                                }
+                                _ => None,
+                            };
+                            if let (Some(target), Some(&fmt_class)) =
+                                (target, self.classes_by_name.get("ConsoleFormat2"))
+                            {
+                                if let Some(func) = self.method_of(fmt_class, target) {
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::FunctionRef { func },
+                                        ty: Ty::Function(func),
+                                        span,
+                                    };
+                                }
+                            }
+                        }
+                        // A static method read as a value (`const f = A.method`).
+                        if self.method_of(class_index, &fname).is_some() {
+                            return self.method_value_expr(class_index, &fname, span);
                         }
                     }
                     // `Number.*` numeric constants fold to compile-time `number`

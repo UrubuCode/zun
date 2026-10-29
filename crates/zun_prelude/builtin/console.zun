@@ -12,7 +12,7 @@
 // This file is self-contained over the `zun:core` native surface (it does not
 // call String/Number/Array methods nor `JSON`), so it compiles as a prelude class.
 
-import { eprintln, number as coreNumber, object as coreObject, array as coreArray } from "zun:core";
+import { string as coreString, eprintln,number as coreNumber, object as coreObject, array as coreArray } from "zun:core";
 
 class console {
     static log(v: any): void {
@@ -79,6 +79,9 @@ class ConsoleFormat {
         if (kind == "undefined") {
             return "undefined";
         }
+        if (kind == "bigint") {
+            return String(v) + "n";
+        }
         if (v == null) {
             return "null";
         }
@@ -125,5 +128,347 @@ class ConsoleFormat {
             i = i + 1;
         }
         return out + " }";
+    }
+}
+
+// Variadic console entry points: the checker packs every call's arguments into
+// one array and routes it here. `line` implements Node's printf-style
+// formatting (`%s %d %i %f %j %o %O %c %%`), `emit` applies group indentation.
+class ConsoleState {
+    static indent: string = "";
+    static countKeys: any = null;
+    static countVals: any = null;
+}
+
+class ConsoleFormat2 {
+    static emit(text: string, toErr: boolean): boolean {
+        let ind: string = ConsoleState.indent;
+        let body: string = text;
+        if (coreString.length(ind) > 0) {
+            let out: string = ind;
+            let n: u64 = coreString.length(text);
+            let i: u64 = 0;
+            while (i < n) {
+                let ch = coreString.substring(text, i, i + 1);
+                out = out + ch;
+                if (ch == "\n") {
+                    out = out + ind;
+                }
+                i = i + 1;
+            }
+            body = out;
+        }
+        if (toErr) {
+            eprintln(body);
+        } else {
+            print(body);
+        }
+        return true;
+    }
+
+    // Node `%s`: primitives by their string form, plain objects inspected.
+    static fmtS(v: any): string {
+        let kind = typeof v;
+        if (kind == "string") {
+            return v as string;
+        }
+        if (kind == "number") {
+            let n = v as number;
+            if (n == 0.0) {
+                if (1.0 / n < 0.0) {
+                    return "-0";
+                }
+            }
+            return ConsoleFormat.number(n);
+        }
+        if (kind == "object") {
+            if (v == null) {
+                return "null";
+            }
+            if (coreArray.arrayIsArray(v)) {
+                return ConsoleFormat.render(v, 1);
+            }
+            return String(v);
+        }
+        if (kind == "bigint") {
+            return String(v) + "n";
+        }
+        return String(v);
+    }
+
+    static line(args: Array): string {
+        let total: u64 = args.length;
+        if (total == 0) {
+            return "";
+        }
+        let first: any = args[0];
+        let plain: boolean = total == 1;
+        if (typeof first != "string") {
+            plain = true;
+        }
+        if (plain) {
+            let out: string = ConsoleFormat.top(first);
+            let k: u64 = 1;
+            while (k < total) {
+                let item: any = args[k];
+                out = out + " " + ConsoleFormat.top(item);
+                k = k + 1;
+            }
+            return out;
+        }
+        let fmt = first as string;
+        let n: u64 = coreString.length(fmt);
+        let out: string = "";
+        let last: u64 = 0;
+        let a: u64 = 1;
+        let i: u64 = 0;
+        while (i < n) {
+            let pctAt: boolean = false;
+            if (i + 1 < n) {
+                if (coreString.charCodeAt(fmt, i) == 37) {
+                    pctAt = true;
+                }
+            }
+            if (pctAt) {
+                let c: u32 = coreString.charCodeAt(fmt, i + 1);
+                if (c == 37) {
+                    out = out + coreString.substring(fmt, last, i + 1);
+                    last = i + 2;
+                    i = i + 2;
+                    continue;
+                }
+                if (a < total) {
+                    let arg: any = args[a];
+                    let rep: string = ConsoleFormat2.spec(c, arg);
+                    if (ConsoleFormat2.isSpec(c)) {
+                        out = out + coreString.substring(fmt, last, i) + rep;
+                        last = i + 2;
+                        a = a + 1;
+                        i = i + 2;
+                        continue;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        out = out + coreString.substring(fmt, last, n);
+        while (a < total) {
+            let item: any = args[a];
+            out = out + " " + ConsoleFormat.top(item);
+            a = a + 1;
+        }
+        return out;
+    }
+
+    static isSpec(c: u32): boolean {
+        if (c == 115) { return true; }
+        if (c == 100) { return true; }
+        if (c == 105) { return true; }
+        if (c == 102) { return true; }
+        if (c == 106) { return true; }
+        if (c == 111) { return true; }
+        if (c == 79) { return true; }
+        if (c == 99) { return true; }
+        return false;
+    }
+
+    static spec(c: u32, arg: any): string {
+        if (c == 115) {
+            return ConsoleFormat2.fmtS(arg);
+        }
+        if (c == 100) {
+            return ConsoleFormat.number(Number(arg));
+        }
+        if (c == 102) {
+            return ConsoleFormat.number(Number(arg));
+        }
+        if (c == 105) {
+            if (typeof arg == "object") {
+                if (arg != null) {
+                    return "NaN";
+                }
+            }
+            return ConsoleFormat2.intOf(Number(arg));
+        }
+        if (c == 106) {
+            return JSON.stringify(arg);
+        }
+        if (c == 111) {
+            return ConsoleFormat.render(arg, 0);
+        }
+        if (c == 79) {
+            return ConsoleFormat.render(arg, 0);
+        }
+        return "";
+    }
+
+    static intOf(n: number): string {
+        if (n != n) {
+            return "NaN";
+        }
+        if (n - n != 0.0) {
+            return ConsoleFormat.number(n);
+        }
+        let t: number = Math.trunc(n);
+        if (t == 0.0) {
+            return "0";
+        }
+        return ConsoleFormat.number(t);
+    }
+
+    static log(args: Array): void {
+        ConsoleFormat2.emit(ConsoleFormat2.line(args), false);
+    }
+
+    static err(args: Array): void {
+        ConsoleFormat2.emit(ConsoleFormat2.line(args), true);
+    }
+
+    // First-class `console.<method>` values (`const f = console.log`): fixed
+    // arity with a sentinel default marking absent trailing arguments.
+    static absent(): string {
+        return "\u0001__zun_absent__";
+    }
+
+    static isAbsent(v: any): boolean {
+        if (typeof v != "string") {
+            return false;
+        }
+        return (v as string) == ConsoleFormat2.absent();
+    }
+
+    static pack(a0: any, a1: any, a2: any, a3: any, a4: any, a5: any, a6: any, a7: any): Array {
+        let out: Array = [];
+        let none: string = ConsoleFormat2.absent();
+        if (ConsoleFormat2.isAbsent(a0)) { return out; }
+        out.push(a0);
+        if (ConsoleFormat2.isAbsent(a1)) { return out; }
+        out.push(a1);
+        if (ConsoleFormat2.isAbsent(a2)) { return out; }
+        out.push(a2);
+        if (ConsoleFormat2.isAbsent(a3)) { return out; }
+        out.push(a3);
+        if (ConsoleFormat2.isAbsent(a4)) { return out; }
+        out.push(a4);
+        if (ConsoleFormat2.isAbsent(a5)) { return out; }
+        out.push(a5);
+        if (ConsoleFormat2.isAbsent(a6)) { return out; }
+        out.push(a6);
+        if (ConsoleFormat2.isAbsent(a7)) { return out; }
+        out.push(a7);
+        return out;
+    }
+
+    static v_log(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.log(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+    static v_err(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.err(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+    static v_group(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.group(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+    static v_groupEnd(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.groupEnd(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+    static v_count(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.count(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+    static v_countReset(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.countReset(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+    static v_assert(a0: any = "\u0001__zun_absent__", a1: any = "\u0001__zun_absent__", a2: any = "\u0001__zun_absent__", a3: any = "\u0001__zun_absent__", a4: any = "\u0001__zun_absent__", a5: any = "\u0001__zun_absent__", a6: any = "\u0001__zun_absent__", a7: any = "\u0001__zun_absent__"): void {
+        ConsoleFormat2.assert(ConsoleFormat2.pack(a0, a1, a2, a3, a4, a5, a6, a7));
+    }
+
+    static group(args: Array): void {
+        if (args.length > 0) {
+            ConsoleFormat2.emit(ConsoleFormat2.line(args), false);
+        }
+        ConsoleState.indent = ConsoleState.indent + "  ";
+    }
+
+    static groupEnd(args: Array): void {
+        let l: u64 = coreString.length(ConsoleState.indent);
+        if (l >= 2) {
+            ConsoleState.indent = coreString.substring(ConsoleState.indent, 0, l - 2);
+        }
+    }
+
+    static label(args: Array): string {
+        if (args.length == 0) {
+            return "default";
+        }
+        let l: any = args[0];
+        if (typeof l == "undefined") {
+            return "default";
+        }
+        return String(l);
+    }
+
+    static init(): void {
+        if (ConsoleState.countKeys == null) {
+            let k: Array = [];
+            let v: Array = [];
+            ConsoleState.countKeys = k;
+            ConsoleState.countVals = v;
+        }
+    }
+
+    static count(args: Array): void {
+        let key: string = ConsoleFormat2.label(args);
+        ConsoleFormat2.init(); let keys = ConsoleState.countKeys as Array;
+        let n: u64 = keys.length;
+        let i: u64 = 0;
+        while (i < n) {
+            let k: any = keys[i];
+            if ((k as string) == key) {
+                let vals = ConsoleState.countVals as Array;
+                let cur: any = vals[i];
+                let next: number = (cur as number) + 1.0;
+                vals[i] = next;
+                ConsoleFormat2.emit(key + ": " + ConsoleFormat.number(next), false);
+                return;
+            }
+            i = i + 1;
+        }
+        keys.push(key);
+        let vv = ConsoleState.countVals as Array; vv.push(1.0);
+        ConsoleFormat2.emit(key + ": 1", false);
+    }
+
+    static countReset(args: Array): void {
+        let key: string = ConsoleFormat2.label(args);
+        ConsoleFormat2.init(); let keys = ConsoleState.countKeys as Array;
+        let n: u64 = keys.length;
+        let i: u64 = 0;
+        while (i < n) {
+            let k: any = keys[i];
+            if ((k as string) == key) {
+                let vals = ConsoleState.countVals as Array;
+                vals[i] = 0.0;
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    static assert(args: Array): void {
+        let c: any = args[0];
+        if (Boolean(c)) {
+            return;
+        }
+        let rest: Array = [];
+        let i: u64 = 1;
+        while (i < args.length) {
+            let item: any = args[i];
+            rest.push(item);
+            i = i + 1;
+        }
+        if (rest.length == 0) {
+            ConsoleFormat2.emit("Assertion failed", true);
+        } else {
+            ConsoleFormat2.emit("Assertion failed: " + ConsoleFormat2.line(rest), true);
+        }
     }
 }
