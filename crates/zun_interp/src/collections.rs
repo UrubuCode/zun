@@ -1769,6 +1769,9 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
+            "bigIntUshr" => Err(RunError::Native(
+                "TypeError: BigInts have no unsigned right shift, use >> instead".into(),
+            )),
             "bigIntPow" | "bigIntAnd" | "bigIntOr" | "bigIntXor" | "bigIntShl" | "bigIntShr" => {
                 let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -6625,6 +6628,12 @@ impl<'a> Interp<'a> {
         obj: zun_gc::Obj,
         hint: &str,
     ) -> Result<Option<Value>, RunError> {
+        // A BigInt is a primitive: its string form is its decimal digits (the
+        // number hint parses them back). Checked first so the heap object's
+        // reserved type id never reaches the class-method tables.
+        if let Some(text) = zun_gc::with_current_heap(|heap| heap.bigint_value(obj).map(|v| v.to_string())) {
+            return Ok(Some(Value::Str(text.into())));
+        }
         let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
         let handle = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(obj, tp))
             .or_else(|| self.class_symbol_methods.get(&(obj.type_rid(), tp.get())).copied());

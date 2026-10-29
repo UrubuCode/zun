@@ -5513,8 +5513,31 @@ impl Checker<'_> {
                 if let ast::BinaryOp::Instanceof = op {
                     return self.check_instanceof_operator(cx, lhs, rhs, span);
                 }
+                // The `x++`/`x--` desugar (`x = x ± 1`) carries a numeric literal
+                // whose span equals the whole expression's; on a BigInt operand
+                // that literal is `1n`.
+                let update_step = matches!(
+                    rhs.as_ref(),
+                    ast::Expr::Number { span: s, .. } if *s == span
+                ) && matches!(op, ast::BinaryOp::Add | ast::BinaryOp::Sub);
                 let mut lhs = self.check_expr(cx, lhs);
                 let mut rhs = self.check_expr(cx, rhs);
+                if update_step && lhs.ty == Ty::BigInt {
+                    if let Some((id, native)) = zun_natives::resolve("collections", "bigIntNew") {
+                        rhs = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![hir::Expr {
+                                    kind: hir::ExprKind::String("1".to_string()),
+                                    ty: Ty::String,
+                                    span,
+                                }],
+                            },
+                            ty: native_ty(native.ret),
+                            span,
+                        };
+                    }
+                }
                 // Let an integral number literal take on an Int sibling's type
                 // so `x + 1` type-checks when `x: int` (and vice versa).
                 unify_numeric_literal(&mut lhs, &mut rhs);
@@ -5622,6 +5645,13 @@ impl Checker<'_> {
                 if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
                     // `>>>` has no BigInt form in ECMAScript: it is a TypeError.
                     if let ast::BinaryOp::UShr = op {
+                        if let Some((id, native)) = zun_natives::resolve("collections", "bigIntUshr") {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![lhs, rhs] },
+                                ty: native_ty(native.ret),
+                                span,
+                            };
+                        }
                         self.error(span, "BigInts have no unsigned right shift (`>>>`)");
                         return self.poison(span);
                     }
@@ -7139,6 +7169,15 @@ impl Checker<'_> {
                         };
                         let mut bits = self.check_expr(cx, &args[0]);
                         coerce_numeric_literal(&mut bits, Ty::Int(IntKind::I64));
+                        if bits.ty == Ty::F64 {
+                            // A `number` width is truncated (ToIndex).
+                            let bits_span = bits.span;
+                            bits = hir::Expr {
+                                kind: hir::ExprKind::Convert { value: Box::new(bits) },
+                                ty: Ty::Int(IntKind::I64),
+                                span: bits_span,
+                            };
+                        }
                         if !bits.ty.is_error() && !bits.ty.is_int() {
                             self.error(bits.span, format!("`BigInt.{member}` bit width must be an integer"));
                         }

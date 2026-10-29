@@ -577,6 +577,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "numberCoerceStrict", params: &[Opaque], ret: F64, imp: unavailable },
         // `Math.<name>.apply(null, array)` — `(name, array)`; ToNumber (strict) on
         // each element, then the variadic/fixed-arity Math function.
+        NativeFn { name: "bigIntUshr", params: &[BigInt, BigInt], ret: BigInt, imp: unavailable },
         NativeFn { name: "mathApply", params: &[Str, Opaque], ret: F64, imp: unavailable },
     ],
 };
