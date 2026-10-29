@@ -330,11 +330,31 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span_all,
                 });
             }
-            _ => {
-                return Err(
-                    "OXC adapter currently supports return and expression statements in branches"
-                        .into(),
-                )
+            // A bare `{ … }` block: flatten its statements (block scoping is not
+            // modelled separately here).
+            Statement::BlockStatement(block) => {
+                statements.extend(convert_statement_list(source, &block.body)?);
+            }
+            // A nested function declaration binds a function value (hoisting to
+            // the top of the scope is approximated by its textual position).
+            Statement::FunctionDeclaration(function) => {
+                let Some(id) = function.id.as_ref() else {
+                    return Err("OXC adapter requires named function declarations".into());
+                };
+                statements.push(Stmt::Let {
+                    name: Name { span: span(id.span) },
+                    ty: None,
+                    init: convert_oxc_function(source, function)?,
+                    span: span(function.span),
+                });
+            }
+            other => {
+                let dbg = format!("{other:?}");
+                let kind = dbg
+                    .split(|c: char| !c.is_alphanumeric())
+                    .find(|s| !s.is_empty())
+                    .unwrap_or("?");
+                return Err(format!("OXC adapter: unsupported statement `{kind}`"));
             }
         }
     }
