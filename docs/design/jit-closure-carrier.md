@@ -1,6 +1,34 @@
 # JIT closure carrier — first-class function values with environments (design)
 
-Status: design, not yet implemented. This is the remaining piece of first-class
+> **Update 2026-10-29 — dispatch landed, carrier simplified to one word, producer
+> remains.** The indirect-dispatch half is implemented (commit `334cadd7`): a JIT
+> `CallIndirect` now reconstructs a `FunctionHandle` through a new
+> `zun_jit_call_indirect` bridge entry, backed by the interpreter primitive
+> `run_function_on_current_heap_bare` (invokes a handle with its environment on
+> the live heap). Two corrections to the plan below:
+>
+> 1. **The carrier is one word, not two.** A non-dynamic `CallIndirect` is
+>    monomorphic — the runtime pins `handle.method_rid() == token.rid()` — so the
+>    JIT takes the rid from the signature token and the function value needs to
+>    carry only the **environment** word (0 = no-closure), rooted exactly like an
+>    `Object` SSA value. The two-word identity (rid + bound discriminant) in
+>    §"Representation" is only needed for *dynamic* function values, which stay on
+>    Tier 0. `fn_abi.rs` and `FunctionHandle::to_carrier_words` remain correct and
+>    are reused by the bridge entry, but the operand-stack carrier does not need
+>    the identity word.
+> 2. **The remaining work is the *producer*, and it cannot be sliced smaller.**
+>    A concrete `Ty::Function(index)` closure (environment != 0) is only
+>    producible and consumable *inside* a method that runs `MakeClosure`: crossing
+>    a method boundary (a return value or a function-typed parameter) erases to
+>    `DYNAMIC_FUNCTION` (Tier 0). So there is no cheap "closure consumer" slice;
+>    lighting up env != 0 end-to-end requires JIT-lowering/bridging the producer
+>    (`MakeClosure` + its `NewDynamic` environment + `StoreDynamic` captures) and
+>    relaxing the eligibility gate. Today the `CallIndirect` path passes
+>    environment 0, so the landed change is behavior-preserving and verified by a
+>    JIT-compiled native stored-function indirect call plus a closure-invocation
+>    test that feeds a real captured environment through the bridge primitive.
+
+Status: dispatch implemented; producer (MakeClosure lowering) not yet implemented. This is the remaining piece of first-class
 functions in the JIT. Slice 1 (transient `(expr)(args)`) and the stored
 no-closure slice (`let f = inc; f(n)`, commit `36bc2b2e`) are done; both carry a
 function value as a **one-word method rid**. This document specifies the
