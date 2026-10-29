@@ -491,7 +491,38 @@ impl Interp<'_> {
                 }
                 Opcode::LoadDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
-                    let object = pop(&mut stack)?.as_object();
+                    let raw = pop(&mut stack)?;
+                    // A dynamic receiver that unboxes to a primitive string or an
+                    // array exposes `.length` the same as the typed forms, so a
+                    // value read through `any` (e.g. a module global) keeps it.
+                    let concrete = match &raw {
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .unwrap_or(Value::Void)
+                        }
+                        other => other.clone(),
+                    };
+                    if name == "length" {
+                        match &concrete {
+                            Value::Str(text) => {
+                                stack.push(Value::Float(
+                                    text.chars().count() as f64,
+                                    zun_il::NumKind::F64,
+                                ));
+                                continue;
+                            }
+                            Value::Object(obj) => {
+                                if let Some(len) =
+                                    zun_gc::with_current_heap(|heap| heap.array_len(*obj))
+                                {
+                                    stack.push(Value::Float(len as f64, zun_il::NumKind::F64));
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let object = concrete.as_object();
                     // An accessor property invokes its getter (NUCLEUS §6);
                     // a data property (or an absent key) reads the value slot.
                     let getter =
