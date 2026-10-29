@@ -3278,6 +3278,18 @@ mod method_tests {
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 
+    /// Extract the numeric result of a closure test, whether it comes back as a
+    /// typed `Float` or boxed in `Any` (untyped closure params are `any` now, so
+    /// `x + k` takes the dynamic add path and yields an `Any`-wrapped number).
+    fn closure_result_number(result: &Value) -> f64 {
+        match result {
+            Value::Float(n, _) => *n,
+            Value::Int(n, _) => *n as f64,
+            Value::Any(any) => any.as_float().expect("numeric closure result"),
+            other => panic!("expected a numeric closure result, found {other:?}"),
+        }
+    }
+
     #[test]
     fn invokes_an_arrow_closure_with_a_read_only_capture() {
         let module = zun_compiler::compile(
@@ -3286,7 +3298,7 @@ mod method_tests {
         .expect("compile captured arrow closure");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run captured arrow closure");
-        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(closure_result_number(&result), 42.0);
     }
 
     #[test]
@@ -3297,7 +3309,7 @@ mod method_tests {
         .expect("compile mutable captured arrow closure");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run mutable captured arrow closure");
-        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(closure_result_number(&result), 42.0);
     }
 
     #[test]
@@ -3308,7 +3320,7 @@ mod method_tests {
         .expect("compile nested arrow closures");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run nested arrow closures");
-        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(closure_result_number(&result), 42.0);
     }
 
     #[test]
