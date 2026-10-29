@@ -23,7 +23,6 @@ mod collections;
 pub use collections::USER_CLASS_FLAG;
 mod date;
 mod error;
-mod fs;
 mod host;
 mod io;
 mod math;
@@ -311,10 +310,6 @@ pub static MODULES: &[Module] = &[
     // Blocking HTTP (`httpFetch`). Appended last so every existing dispatch
     // id stays stable.
     net::MODULE,
-    // The Node `fs` synchronous filesystem group (the `zun-node` library's
-    // backing syscalls). Appended last so every existing dispatch id stays
-    // stable.
-    fs::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

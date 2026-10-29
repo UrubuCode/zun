@@ -26,6 +26,9 @@ members = [
     "crates/zun_runtime",
     "xtask",
 ]
+# The Node compatibility library is a separately-built native extension
+# (cdylib) loaded through `zun_abi` at runtime, not a workspace member.
+exclude = ["zun-node"]
 
 [workspace.dependencies]
 cranelift-codegen = { version = "0.131", features = ["arm64"] }
