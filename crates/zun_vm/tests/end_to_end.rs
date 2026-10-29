@@ -2821,6 +2821,39 @@ fn a_concrete_stored_function_value_is_jit_eligible_and_runs() {
     assert_eq!(run_with_std(user), ["11"]);
 }
 
+// A closure that captures a local, is returned, and is later called. This runs
+// on the interpreter today (the returning method uses `MakeClosure`, so it is
+// JIT-ineligible). It is the behavioral equivalence baseline the JIT closure
+// carrier must reproduce once it lands (see docs/design/jit-closure-carrier.md):
+// the same program must print the same lines whether `makeAdder` runs on Tier 0
+// or native. Kept as a regression guard for that work.
+#[test]
+fn closure_captures_a_local_is_returned_and_called() {
+    let user = "function makeAdder(n: number): (x: number) => number { return (x: number) => x + n; } \
+         function main(): void { let add5 = makeAdder(5.0); let add1 = makeAdder(1.0); \
+                                 print(add5(10.0)); print(add5(2.0)); print(add1(10.0)); }";
+    // Each call closes over a distinct captured `n`, so the two closures stay
+    // independent — a soundness property the carrier's GC-traced environment
+    // must preserve.
+    assert_eq!(run_with_std(user), ["15", "7", "11"]);
+
+    // Today `makeAdder` is JIT-ineligible (it builds a closure). When the
+    // carrier lands and relaxes eligibility, this assertion flips to
+    // `contains`; until then it documents the current Tier-0 boundary.
+    let module = compile_with_std(user);
+    let make_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|m| module.strings.get(m.name) == "makeAdder")
+        .map(|i| i as u32 + 1)
+        .expect("makeAdder present");
+    assert!(
+        !zun_codegen::eligible_methods_bridged(&module, true).contains(&make_rid),
+        "a closure-building method is on Tier 0 until the closure carrier lands"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Operator tokens: `**`, bitwise `& | ^ ~`, shifts `<< >> >>>`, and `void`.
 // ---------------------------------------------------------------------------
