@@ -610,6 +610,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     /// Values beyond the i64 range saturate rather than reduce modulo 2^32 — a
     /// documented edge, consistent with the saturating-convert policy.
     fn emit_to_int32(&mut self, unsigned: bool) {
+        // fmod by 2^32 first: the f64->i64 conversion saturates, so values at or
+        // beyond 2^63 would otherwise lose their low 32 bits. The fmod is exact
+        // and sends NaN/Infinity to NaN (which converts to 0).
+        self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(4294967296.0)));
+        self.emit(Instruction::simple(Opcode::RemF64));
         self.emit_conv_kind(NumKind::I64);
         self.emit_conv_kind(if unsigned { NumKind::U32 } else { NumKind::I32 });
     }

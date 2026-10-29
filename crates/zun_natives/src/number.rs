@@ -229,7 +229,7 @@ fn to_fixed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
 
 fn to_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Float(value)) => Ok(NativeValue::Str(value.to_string())),
+        Some(NativeArg::Float(value)) => Ok(NativeValue::Str(crate::format_float(*value))),
         Some(NativeArg::Int(value)) => Ok(NativeValue::Str(value.to_string())),
         _ => Err(NativeError("toString: expected a number".to_string())),
     }

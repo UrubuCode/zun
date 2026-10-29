@@ -2541,6 +2541,9 @@ impl<'a> Interp<'a> {
                 // `"[object <Tag>]"`, else `"[object Object]"`.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let text = match value {
+                    Value::Object(obj) if array_join_text(obj).is_some() => {
+                        array_join_text(obj).unwrap_or_default()
+                    }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()
@@ -2579,6 +2582,9 @@ impl<'a> Interp<'a> {
                     Value::Null => 0.0,
                     Value::Void => f64::NAN,
                     Value::Str(text) => js_string_to_number(&text),
+                    Value::Object(obj) if array_join_text(obj).is_some() => {
+                        js_string_to_number(&array_join_text(obj).unwrap_or_default())
+                    }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
                             match prim {
@@ -6778,6 +6784,20 @@ fn js_string_to_number(text: &str) -> f64 {
         "-Infinity" => f64::NEG_INFINITY,
         _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
     }
+}
+
+/// `Array.prototype.toString` (join with `,`) for an array object, or `None`
+/// when `obj` is not an array.
+fn array_join_text(obj: zun_gc::Obj) -> Option<String> {
+    zun_gc::with_current_heap(|heap| {
+        let length = heap.array_len(obj)?;
+        let mut parts = Vec::with_capacity(length);
+        for index in 0..length {
+            let element = heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void);
+            parts.push(stringify_any(element, heap).unwrap_or_default());
+        }
+        Some(parts.join(","))
+    })
 }
 
 fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {

@@ -3787,6 +3787,26 @@ impl Checker<'_> {
         self.poison(index.span)
     }
 
+    /// JS ToNumber of an arbitrary operand as an `f64` expression. `number`
+    /// operands pass through; everything else is boxed into `Any` and run
+    /// through the `numberCoerce` native (string parsing, object->primitive).
+    fn to_number_expr(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty == Ty::F64 || value.ty.is_error() {
+            return value;
+        }
+        let span = value.span;
+        let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") else {
+            self.error(span, "missing `numberCoerce` intrinsic");
+            return self.poison(span);
+        };
+        let arg = if value.ty == Ty::Any {
+            value
+        } else {
+            hir::Expr { span, kind: hir::ExprKind::BoxAny { value: Box::new(value) }, ty: Ty::Any }
+        };
+        hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
+    }
+
     fn check_math_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -3819,6 +3839,9 @@ impl Checker<'_> {
             for arg in args {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, Ty::F64);
+                if !value.ty.is_int() && value.ty != Ty::F64 {
+                    value = self.to_number_expr(value);
+                }
                 acc = hir::Expr {
                     kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
                     ty: Ty::F64,
@@ -3854,6 +3877,8 @@ impl Checker<'_> {
             "pow" => "powNumber",
             "atan2" => "atan2Number",
             "hypot" => "hypotNumber",
+            "imul" => "imulNumber",
+            "clz32" => "clz32Number",
             "min" => "minNumber",
             "max" => "maxNumber",
             _ => {
@@ -3880,6 +3905,9 @@ impl Checker<'_> {
         for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
             let mut value = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut value, expected);
+            if expected == Ty::F64 && !value.ty.is_int() && value.ty != Ty::F64 {
+                value = self.to_number_expr(value);
+            }
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                 self.error(
                     value.span,
@@ -5024,7 +5052,7 @@ impl Checker<'_> {
                                     self.error(span, "number template conversion is unavailable");
                                     self.poison(span)
                                 }
-                            } else if matches!(value.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_))
+                            } else if !matches!(value.ty, Ty::String | Ty::Error | Ty::Void)
                                 && zun_natives::resolve("collections", "stringCoerce").is_some()
                             {
                                 let (id, _) = zun_natives::resolve("collections", "stringCoerce")
@@ -5281,8 +5309,10 @@ impl Checker<'_> {
                             || t == Ty::F64
                             || t == Ty::Boolean
                             || t == Ty::BigInt
+                            || t == Ty::Array
                             || matches!(t, Ty::Int(_))
                     };
+                    let numeric_ty = |t: Ty| t.is_int() || t.is_float();
                     // Route through the runtime `addAny` (ECMAScript
                     // ToPrimitive + string concat / numeric add) whenever an
                     // operand is object/any, or a string meets a non-string
@@ -5293,7 +5323,12 @@ impl Checker<'_> {
                         && operable(rhs.ty)
                         && (objectish(lhs.ty)
                             || objectish(rhs.ty)
-                            || (involves_string && lhs.ty != rhs.ty))
+                            || (involves_string && lhs.ty != rhs.ty)
+                            || (lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean)
+                            || (lhs.ty != rhs.ty
+                                && !(numeric_ty(lhs.ty) && numeric_ty(rhs.ty))
+                                && lhs.ty != Ty::BigInt
+                                && rhs.ty != Ty::BigInt))
                     {
                         if let Some((id, _)) = zun_natives::resolve("collections", "addAny") {
                             let to_any = |e: hir::Expr| {
@@ -5323,7 +5358,19 @@ impl Checker<'_> {
                 // dynamic operand is involved (`"5" * 2`, `+x`, `any - 1`), then
                 // run the ordinary f64 op. Same-type numeric operands keep their
                 // direct lowering below.
-                if matches!(*op, ast::BinaryOp::Sub | ast::BinaryOp::Mul | ast::BinaryOp::Div | ast::BinaryOp::Rem) {
+                if matches!(
+                    *op,
+                    ast::BinaryOp::Sub
+                        | ast::BinaryOp::Mul
+                        | ast::BinaryOp::Div
+                        | ast::BinaryOp::Rem
+                        | ast::BinaryOp::BitAnd
+                        | ast::BinaryOp::BitOr
+                        | ast::BinaryOp::BitXor
+                        | ast::BinaryOp::Shl
+                        | ast::BinaryOp::Shr
+                        | ast::BinaryOp::UShr
+                ) {
                     let numericish = |t: Ty| {
                         matches!(t, Ty::Int(_)) || matches!(t, Ty::Float(_)) || t == Ty::F64
                     };
@@ -5460,6 +5507,16 @@ impl Checker<'_> {
                         };
                     }
                 }
+                // `-x` / `~x` on a non-numeric operand: JS ToNumber first.
+                let operand = if matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot)
+                    && !operand.ty.is_int()
+                    && !operand.ty.is_float()
+                    && operand.ty != Ty::BigInt
+                {
+                    self.to_number_expr(operand)
+                } else {
+                    operand
+                };
                 let ty = match op {
                     // Negation keeps the operand's numeric type; `!` needs bool.
                     ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => operand.ty,
