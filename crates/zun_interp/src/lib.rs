@@ -8,6 +8,8 @@
 
 mod builtins;
 mod collections;
+mod native_error;
+mod string_dyn;
 mod decorators;
 mod errors;
 mod eval;
@@ -491,13 +493,55 @@ impl Interp<'_> {
                 }
                 Opcode::LoadDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
-                    let object = pop(&mut stack)?.as_object();
+                    let raw = pop(&mut stack)?;
+                    // A dynamic receiver that unboxes to a primitive string or an
+                    // array exposes `.length` the same as the typed forms, so a
+                    // value read through `any` (e.g. a module global) keeps it.
+                    let concrete = match &raw {
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .unwrap_or(Value::Void)
+                        }
+                        other => other.clone(),
+                    };
+                    if name == "length" {
+                        match &concrete {
+                            Value::Str(text) => {
+                                stack.push(Value::Float(
+                                    text.chars().count() as f64,
+                                    zun_il::NumKind::F64,
+                                ));
+                                continue;
+                            }
+                            Value::Object(obj) => {
+                                if let Some(len) =
+                                    zun_gc::with_current_heap(|heap| heap.array_len(*obj))
+                                {
+                                    stack.push(Value::Float(len as f64, zun_il::NumKind::F64));
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let object = concrete.as_object();
                     // An accessor property invokes its getter (NUCLEUS §6);
                     // a data property (or an absent key) reads the value slot.
                     let getter =
                         zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, &name));
+                    // A typed class instance read through `any` resolves a
+                    // registered getter (`get_<name>`, e.g. `Error.name`).
+                    let typed_getter = if getter.is_none() {
+                        self.class_named_methods
+                            .get(&(object.type_rid(), format!("get_{name}")))
+                            .copied()
+                    } else {
+                        None
+                    };
                     let value = if let Some(getter) = getter {
                         self.invoke_function_value(getter, Vec::new())?
+                    } else if let Some(getter) = typed_getter {
+                        self.invoke_function_value(getter, vec![Value::Object(object)])?
                     } else {
                         zun_gc::with_current_heap(|heap| {
                             if let Some(any) = heap.dynamic_get(object, &name) {
@@ -821,7 +865,8 @@ impl Interp<'_> {
                     *pc = target;
                 }
                 Opcode::BranchTrue => {
-                    if pop(&mut stack)?.as_bool() {
+                    let condition = pop(&mut stack)?;
+                    if zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&condition, heap)) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
@@ -833,7 +878,8 @@ impl Interp<'_> {
                     }
                 }
                 Opcode::BranchFalse => {
-                    if !pop(&mut stack)?.as_bool() {
+                    let condition = pop(&mut stack)?;
+                    if !zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&condition, heap)) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
@@ -1395,7 +1441,23 @@ impl Interp<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
-                    builtins::call_builtin(self, id, &mut stack)?;
+                    match builtins::call_builtin(self, id, &mut stack) {
+                        Ok(()) => {}
+                        Err(RunError::Native(message)) => {
+                            // A native failure naming a prelude error class
+                            // becomes a catchable thrown error object.
+                            let exception = native_error::split_native_error(&message)
+                                .and_then(|(class, text)| self.make_error_value(class, text));
+                            let Some(exception) = exception else {
+                                return Err(RunError::Native(message));
+                            };
+                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Opcode::NewObj => {
                     // Safepoint: only the interpreter triggers GC, and only
@@ -3245,6 +3307,18 @@ mod method_tests {
         assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
     }
 
+    /// Extract the numeric result of a closure test, whether it comes back as a
+    /// typed `Float` or boxed in `Any` (untyped closure params are `any` now, so
+    /// `x + k` takes the dynamic add path and yields an `Any`-wrapped number).
+    fn closure_result_number(result: &Value) -> f64 {
+        match result {
+            Value::Float(n, _) => *n,
+            Value::Int(n, _) => *n as f64,
+            Value::Any(any) => any.as_float().expect("numeric closure result"),
+            other => panic!("expected a numeric closure result, found {other:?}"),
+        }
+    }
+
     #[test]
     fn invokes_an_arrow_closure_with_a_read_only_capture() {
         let module = zun_compiler::compile(
@@ -3253,7 +3327,7 @@ mod method_tests {
         .expect("compile captured arrow closure");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run captured arrow closure");
-        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(closure_result_number(&result), 42.0);
     }
 
     #[test]
@@ -3264,7 +3338,7 @@ mod method_tests {
         .expect("compile mutable captured arrow closure");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run mutable captured arrow closure");
-        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(closure_result_number(&result), 42.0);
     }
 
     #[test]
@@ -3275,7 +3349,7 @@ mod method_tests {
         .expect("compile nested arrow closures");
         let mut output = CaptureOutput::default();
         let result = run(&module, &mut output).expect("run nested arrow closures");
-        assert!(matches!(result, Value::Float(42.0, zun_il::NumKind::F64)));
+        assert_eq!(closure_result_number(&result), 42.0);
     }
 
     #[test]

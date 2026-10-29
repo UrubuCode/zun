@@ -87,6 +87,9 @@ impl<'a> Checker<'a> {
             (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_PREDICATE => true,
             (Ty::Function(_), Ty::Function(expected)) if expected == hir::DYNAMIC_REDUCER => true,
             (_, Ty::Any) => true,
+            // `any` is assignable to any target (TS): a dynamic value flows into
+            // a typed position and is coerced/unboxed at run time.
+            (Ty::Any, _) => true,
             (a, b) => a == b,
         }
     }

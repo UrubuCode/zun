@@ -65,6 +65,15 @@ class JSON {
         if (value == null) {
             return "null";
         }
+        // Primitive wrapper objects serialize as the primitive they wrap.
+        if (value instanceof NumberObject) {
+            let wrapped = value as NumberObject;
+            return JSON.write(wrapped.value, depth + 1);
+        }
+        if (value instanceof BooleanObject) {
+            let wrappedFlag = value as BooleanObject;
+            return JSON.write(wrappedFlag.value, depth + 1);
+        }
         if (coreArray.arrayIsArray(value)) {
             let items = value as Array;
             let n: u64 = items.length;

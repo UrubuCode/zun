@@ -100,7 +100,37 @@ fn pow(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("pow: expected two numbers".to_string())),
     };
+    // ECMAScript Number::exponentiate differs from IEEE `pow` at the edges:
+    // a NaN exponent is NaN even for base 1, and |base| == 1 with an infinite
+    // exponent is NaN.
+    if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
+        return Ok(NativeValue::Float(f64::NAN));
+    }
     Ok(NativeValue::Float(base.powf(exponent)))
+}
+
+/// ECMAScript ToInt32 of a double (wraps modulo 2^32; NaN/Infinity give 0).
+fn to_int32(value: f64) -> i32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    let wrapped = value.trunc().rem_euclid(4294967296.0);
+    (wrapped as u64 as u32) as i32
+}
+
+fn imul(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let a = float_arg(args, "imul")?;
+    let b = match args.get(1) {
+        Some(NativeArg::Float(value)) => *value,
+        Some(NativeArg::Int(value)) => *value as f64,
+        _ => return Err(NativeError("imul: expected two numbers".to_string())),
+    };
+    Ok(NativeValue::Float(to_int32(a).wrapping_mul(to_int32(b)) as f64))
+}
+
+fn clz32(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = float_arg(args, "clz32")?;
+    Ok(NativeValue::Float((to_int32(value) as u32).leading_zeros() as f64))
 }
 
 fn sin(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -396,6 +426,18 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[F64, F64],
             ret: F64,
             imp: hypot,
+        },
+        NativeFn {
+            name: "imulNumber",
+            params: &[F64, F64],
+            ret: F64,
+            imp: imul,
+        },
+        NativeFn {
+            name: "clz32Number",
+            params: &[F64],
+            ret: F64,
+            imp: clz32,
         },
     ],
 };

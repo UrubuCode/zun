@@ -6,3 +6,5 @@ Cargo.lock
 # resource limits that belong to one machine live here, not in the repo.
 /.cargo/
 .docs-dotnet/*.zip
+
+.claude/worktrees/

@@ -198,10 +198,15 @@ fn convert_declarator(
     declarator: &oxc_ast::ast::VariableDeclarator<'_>,
 ) -> Result<Stmt, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
-    let Some(initializer) = declarator.init.as_ref() else {
-        return Err("OXC adapter requires an initializer for local bindings".into());
+    // An uninitialized binding (`let x;`) defaults to `undefined` (`void 0`).
+    let init = match declarator.init.as_ref() {
+        Some(initializer) => convert_expression(source, initializer)?,
+        None => Expr::Unary {
+            op: crate::ast::UnaryOp::Void,
+            operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+            span: span(declarator.span),
+        },
     };
-    let init = convert_expression(source, initializer)?;
     match &declarator.id {
         BindingPattern::BindingIdentifier(identifier) => Ok(Stmt::Let {
             name: Name { span: span(identifier.span) },
@@ -231,6 +236,49 @@ fn convert_argument(source: &str, argument: &Argument<'_>) -> Result<Expr, Strin
     let expression = argument
         .as_expression()
         .ok_or("OXC adapter cannot represent this argument")?;
+    // A static `Number.f` / `Math.f` passed as a callback (`xs.filter(Number.isNaN)`)
+    // becomes `(f) => Number.f(f)`; the method-name span doubles as the
+    // parameter name, which is harmless because the body only reads it once.
+    if let Expression::StaticMemberExpression(member) = expression {
+        if let Expression::Identifier(object) = &member.object {
+            let object_name = source
+                .get(object.span.start as usize..object.span.end as usize)
+                .unwrap_or("");
+            let property = source
+                .get(member.property.span.start as usize..member.property.span.end as usize)
+                .unwrap_or("");
+            let callable = property.chars().next().is_some_and(|c| c.is_ascii_lowercase());
+            if matches!(object_name, "Number" | "Math") && callable && !member.optional {
+                let property_name = Name { span: span(member.property.span) };
+                let call = Expr::MethodCall {
+                    receiver: Box::new(Expr::Ident(Name { span: span(object.span) })),
+                    method: Name { span: span(member.property.span) },
+                    args: vec![Expr::Ident(Name { span: span(member.property.span) })],
+                    span: span(member.span),
+                };
+                return Ok(Expr::Function(FunctionExpr {
+                    params: vec![crate::ast::Param {
+                        name: property_name,
+                        ty: None,
+                        default_value: None,
+                        is_rest: false,
+                    }],
+                    return_type: None,
+                    body: Block {
+                        statements: vec![Stmt::Return {
+                            value: Some(call),
+                            span: span(member.span),
+                        }],
+                        span: span(member.span),
+                    },
+                    is_arrow: true,
+                    is_async: false,
+                    is_generator: false,
+                    span: span(member.span),
+                }));
+            }
+        }
+    }
     convert_expression(source, expression)
 }
 
@@ -312,6 +360,9 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
             Statement::ForOfStatement(for_of_statement) => {
                 statements.push(convert_for_of(source, for_of_statement)?);
             }
+            Statement::ForInStatement(for_in_statement) => {
+                statements.push(convert_for_in(source, for_in_statement)?);
+            }
             Statement::SwitchStatement(switch) => {
                 statements.push(convert_switch(source, switch)?);
             }
@@ -330,56 +381,105 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span_all,
                 });
             }
+            // A bare `{ … }` block: flatten its statements (block scoping is not
+            // modelled separately here).
             Statement::BlockStatement(block) => {
-                // A bare block is a scope: lower it to `if (true) { ... }`.
-                let block_span = Span::new(block.span.start, block.span.end);
-                statements.push(Stmt::If {
-                    cond: Expr::Bool { value: true, span: block_span },
-                    then_block: Block {
-                        statements: convert_statement_list(source, &block.body)?,
-                        span: block_span,
-                    },
-                    else_block: None,
-                    span: block_span,
+                statements.extend(convert_statement_list(source, &block.body)?);
+            }
+            // A nested function declaration binds a function value (hoisting to
+            // the top of the scope is approximated by its textual position).
+            Statement::FunctionDeclaration(function) => {
+                let Some(id) = function.id.as_ref() else {
+                    return Err("OXC adapter requires named function declarations".into());
+                };
+                statements.push(Stmt::Let {
+                    name: Name { span: span(id.span) },
+                    ty: None,
+                    init: convert_oxc_function(source, function)?,
+                    span: span(function.span),
                 });
             }
-            _ => {
-                return Err(
-                    "OXC adapter currently supports return and expression statements in branches"
-                        .into(),
-                )
+            other => {
+                let dbg = format!("{other:?}");
+                let kind = dbg
+                    .split(|c: char| !c.is_alphanumeric())
+                    .find(|s| !s.is_empty())
+                    .unwrap_or("?");
+                return Err(format!("OXC adapter: unsupported statement `{kind}`"));
             }
         }
     }
     Ok(statements)
 }
 
+/// A parameter's default expression; an optional `x?: T` parameter without an
+/// initializer defaults to `undefined`.
+fn param_default(
+    source: &str,
+    parameter: &oxc_ast::ast::FormalParameter<'_>,
+) -> Result<Option<Box<Expr>>, String> {
+    if let Some(initializer) = parameter.initializer.as_ref() {
+        return Ok(Some(Box::new(convert_expression(source, initializer)?)));
+    }
+    if parameter.optional {
+        let at = Span::new(parameter.span.start, parameter.span.end);
+        return Ok(Some(Box::new(Expr::Unary {
+            op: crate::ast::UnaryOp::Void,
+            operand: Box::new(Expr::Number { value: 0.0, span: at }),
+            span: at,
+        })));
+    }
+    Ok(None)
+}
+
 /// Convert an OXC function (an object-method, getter, or setter value) into a
 /// Zun anonymous-function expression. Parameters must be plain identifiers;
 /// the body reuses the shared statement-list conversion.
+/// Convert one formal parameter. An identifier binding becomes a plain `Param`.
+/// A destructuring pattern (`{a}`, `[x, y]`) becomes a fresh positional
+/// parameter (named by the parameter's source span, which is a unique token) plus
+/// a `Destructure` statement pushed onto `prologue`, binding the pattern's names
+/// from that parameter at the top of the body — the standard JS desugaring.
+fn convert_formal_param(
+    source: &str,
+    parameter: &oxc_ast::ast::FormalParameter<'_>,
+    prologue: &mut Vec<Stmt>,
+) -> Result<crate::ast::Param, String> {
+    let span = |s: oxc_span::Span| Span::new(s.start, s.end);
+    match &parameter.pattern {
+        BindingPattern::BindingIdentifier(identifier) => Ok(crate::ast::Param {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
+            default_value: param_default(source, parameter)?,
+            is_rest: false,
+        }),
+        other => {
+            let pattern = convert_binding_pattern(source, other)?;
+            let slot = span(parameter.span);
+            prologue.push(Stmt::Destructure {
+                pattern,
+                init: Expr::Ident(Name { span: slot }),
+                span: slot,
+            });
+            Ok(crate::ast::Param {
+                name: Name { span: slot },
+                ty: None,
+                default_value: param_default(source, parameter)?,
+                is_rest: false,
+            })
+        }
+    }
+}
+
 fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let Some(body) = function.body.as_ref() else {
         return Err("OXC adapter requires an object method body".into());
     };
     let mut params = Vec::with_capacity(function.params.items.len());
+    let mut prologue = Vec::new();
     for parameter in &function.params.items {
-        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
-            return Err("OXC adapter supports identifier object-method parameters only".into());
-        };
-        params.push(crate::ast::Param {
-            name: Name {
-                span: span(identifier.span),
-            },
-            ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
-            default_value: parameter
-                .initializer
-                .as_ref()
-                .map(|initializer| convert_expression(source, initializer))
-                .transpose()?
-                .map(Box::new),
-            is_rest: false,
-        });
+        params.push(convert_formal_param(source, parameter, &mut prologue)?);
     }
     if let Some(rest) = function.params.rest.as_ref() {
         let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
@@ -394,7 +494,8 @@ fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr
             is_rest: true,
         });
     }
-    let statements = convert_statement_list(source, &body.statements)?;
+    let mut statements = prologue;
+    statements.extend(convert_statement_list(source, &body.statements)?);
     Ok(Expr::Function(FunctionExpr {
         params,
         return_type: convert_type_annotation(source, function.return_type.as_deref())?,
@@ -512,6 +613,35 @@ fn convert_switch(
         .unwrap_or(Stmt::Expr(Expr::Null { span: whole })))
 }
 
+/// Convert a `for (… in …)` statement to the `ForIn` node (lowered to key
+/// iteration in sema). The binding is a declared identifier or pattern.
+fn convert_for_in(
+    source: &str,
+    for_in_statement: &oxc_ast::ast::ForInStatement<'_>,
+) -> Result<Stmt, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let ForStatementLeft::VariableDeclaration(declaration) = &for_in_statement.left else {
+        return Err("OXC adapter supports declared for-in bindings only".into());
+    };
+    if declaration.declarations.len() != 1 {
+        return Err("OXC adapter supports one for-in binding".into());
+    }
+    let declarator = &declaration.declarations[0];
+    let pattern = match &declarator.id {
+        BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+        },
+        other => convert_binding_pattern(source, other)?,
+    };
+    Ok(Stmt::ForIn {
+        pattern,
+        object: convert_expression(source, &for_in_statement.right)?,
+        body: convert_if_branch(source, &for_in_statement.body)?,
+        span: span(for_in_statement.span),
+    })
+}
+
 /// Convert a `for (… of …)` statement, with an identifier or destructuring
 /// pattern binding.
 fn convert_for_of(
@@ -579,16 +709,19 @@ fn convert_try_statement(
     }
 
     let catches = if let Some(handler) = try_statement.handler.as_ref() {
-        let Some(parameter) = handler.param.as_ref() else {
-            return Err("OXC adapter requires an identifier catch binding".into());
-        };
-        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
-            return Err("OXC adapter requires an identifier catch binding".into());
+        // `catch { … }` with no binding, or a binding pattern we cannot name
+        // directly, uses a zero-width binding span (an unnamed, unused local).
+        let binding_span = match handler.param.as_ref() {
+            Some(parameter) => match &parameter.pattern {
+                BindingPattern::BindingIdentifier(identifier) => {
+                    Span::new(identifier.span.start, identifier.span.end)
+                }
+                _ => Span::new(handler.body.span.start, handler.body.span.start),
+            },
+            None => Span::new(handler.body.span.start, handler.body.span.start),
         };
         vec![crate::ast::CatchClause {
-            binding: Name {
-                span: Span::new(identifier.span.start, identifier.span.end),
-            },
+            binding: Name { span: binding_span },
             ty: crate::ast::TypeAnnotation {
                 name: Name {
                     span: Span::new(0, 0),
@@ -717,8 +850,47 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
         })),
+        // `super` is modelled as an identifier whose text is `super`; sema
+        // recognises it in call/method-call receiver position and lowers the
+        // base-class dispatch. The span covers the `super` keyword in source.
+        Expression::Super(super_keyword) => Ok(Expr::Ident(Name {
+            span: span(super_keyword.span),
+        })),
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(source, &parenthesized.expression)
+        }
+        Expression::SequenceExpression(sequence) => {
+            // Desugar `(a, b, c)` into an immediately-invoked arrow
+            // `(() => { a; b; return c; })()` so evaluation order and side
+            // effects of the earlier expressions are preserved while the whole
+            // sequence still yields the last expression's value.
+            let whole = span(sequence.span);
+            let (last, leading) = sequence
+                .expressions
+                .split_last()
+                .ok_or("OXC adapter: empty sequence expression")?;
+            let mut statements = Vec::with_capacity(sequence.expressions.len());
+            for expression in leading {
+                statements.push(Stmt::Expr(convert_expression(source, expression)?));
+            }
+            statements.push(Stmt::Return {
+                value: Some(convert_expression(source, last)?),
+                span: span(last.span()),
+            });
+            let iife = Expr::Function(FunctionExpr {
+                params: Vec::new(),
+                return_type: convert_type_annotation(source, None)?,
+                body: Block { statements, span: whole },
+                is_arrow: true,
+                is_async: false,
+                is_generator: false,
+                span: whole,
+            });
+            Ok(Expr::ComputedCall {
+                callee: Box::new(iife),
+                args: Vec::new(),
+                span: whole,
+            })
         }
         Expression::TSAsExpression(assertion) => Ok(Expr::Cast {
             expr: Box::new(convert_expression(source, &assertion.expression)?),
@@ -843,8 +1015,10 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         },
         Expression::BinaryExpression(binary) => {
             let op = match binary.operator {
-                BinaryOperator::Equality | BinaryOperator::StrictEquality => BinaryOp::Eq,
-                BinaryOperator::Inequality | BinaryOperator::StrictInequality => BinaryOp::Ne,
+                BinaryOperator::Equality => BinaryOp::LooseEq,
+                BinaryOperator::StrictEquality => BinaryOp::Eq,
+                BinaryOperator::Inequality => BinaryOp::LooseNe,
+                BinaryOperator::StrictInequality => BinaryOp::Ne,
                 BinaryOperator::LessThan => BinaryOp::Lt,
                 BinaryOperator::LessEqualThan => BinaryOp::Le,
                 BinaryOperator::GreaterThan => BinaryOp::Gt,
@@ -892,6 +1066,28 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             span: span(conditional.span),
         }),
         Expression::UnaryExpression(unary) => {
+            // Unary plus (`+x`) is numeric coercion; the language has no such
+            // operator, so desugar to `x - 0`, which applies ToNumber to the
+            // operand with the same result for every primitive.
+            if matches!(unary.operator, UnaryOperator::UnaryPlus) {
+                // `x as any - 0` boxes the operand so the subtraction takes the
+                // dynamic arithmetic path, which applies ToNumber at run time.
+                let operand = convert_expression(source, &unary.argument)?;
+                let boxed = Expr::Cast {
+                    expr: Box::new(operand),
+                    ty: crate::ast::TypeAnnotation {
+                        name: Name { span: Span::new(unary.span.start, unary.span.start) },
+                        is_array: false,
+                    },
+                    span: span(unary.span),
+                };
+                return Ok(Expr::Binary {
+                    op: BinaryOp::Sub,
+                    lhs: Box::new(boxed),
+                    rhs: Box::new(Expr::Number { value: 0.0, span: span(unary.span) }),
+                    span: span(unary.span),
+                });
+            }
             let op = match unary.operator {
                 UnaryOperator::UnaryNegation => crate::ast::UnaryOp::Neg,
                 UnaryOperator::LogicalNot => crate::ast::UnaryOp::Not,
@@ -949,8 +1145,13 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 AssignmentOperator::ShiftLeft => Some(BinaryOp::Shl),
                 AssignmentOperator::ShiftRight => Some(BinaryOp::Shr),
                 AssignmentOperator::ShiftRightZeroFill => Some(BinaryOp::UShr),
+                // Logical assignments desugar to `a = a OP b`; the resulting
+                // value matches the short-circuit form for every operand.
+                AssignmentOperator::LogicalAnd => Some(BinaryOp::And),
+                AssignmentOperator::LogicalOr => Some(BinaryOp::Or),
+                AssignmentOperator::LogicalNullish => Some(BinaryOp::Nullish),
                 _ => {
-                    return Err("OXC adapter does not support logical assignments yet".into());
+                    return Err("OXC adapter does not support compound assignment yet".into());
                 }
             };
             let mut value = convert_expression(source, &assignment.right)?;
@@ -1190,20 +1391,27 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             })
         }
         Expression::NewExpression(new_expression) => {
-            let Expression::Identifier(identifier) = &new_expression.callee else {
-                return Err("OXC adapter supports identifier constructors only".into());
-            };
             let mut args = Vec::with_capacity(new_expression.arguments.len());
             for argument in &new_expression.arguments {
                 args.push(convert_argument(source, argument)?);
             }
-            Ok(Expr::New {
-                class: Name {
-                    span: span(identifier.span),
-                },
-                args,
-                span: span(new_expression.span),
-            })
+            // A bare identifier constructor resolves a named class; any other
+            // callee (`new ns.Ctor()`, `new (expr)()`) becomes a dynamic new on
+            // the evaluated callee expression.
+            match &new_expression.callee {
+                Expression::Identifier(identifier) => Ok(Expr::New {
+                    class: Name {
+                        span: span(identifier.span),
+                    },
+                    args,
+                    span: span(new_expression.span),
+                }),
+                callee => Ok(Expr::NewDynamic {
+                    callee: Box::new(convert_expression(source, callee)?),
+                    args,
+                    span: span(new_expression.span),
+                }),
+            }
         }
         Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),
         Expression::FunctionExpression(function) => convert_oxc_function(source, function),
@@ -1282,21 +1490,9 @@ fn convert_arrow(
 ) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut params = Vec::with_capacity(arrow.params.items.len());
+    let mut prologue = Vec::new();
     for parameter in &arrow.params.items {
-        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
-            return Err("OXC adapter supports identifier arrow parameters only".into());
-        };
-        params.push(crate::ast::Param {
-            name: Name { span: span(identifier.span) },
-            ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
-            default_value: parameter
-                .initializer
-                .as_ref()
-                .map(|initializer| convert_expression(source, initializer))
-                .transpose()?
-                .map(Box::new),
-            is_rest: false,
-        });
+        params.push(convert_formal_param(source, parameter, &mut prologue)?);
     }
     if let Some(rest) = arrow.params.rest.as_ref() {
         let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
@@ -1310,20 +1506,19 @@ fn convert_arrow(
         });
     }
     // A concise body (`=> expr`) returns its expression; a block body
-    // (`=> { … }`) converts its statement list.
+    // (`=> { … }`) converts its statement list. Any destructured-parameter
+    // prologue runs first.
     let body = if let Some(expression) = arrow.get_expression() {
-        Block {
-            statements: vec![Stmt::Return {
-                value: Some(convert_expression(source, expression)?),
-                span: span(expression.span()),
-            }],
-            span: span(arrow.span),
-        }
+        let mut statements = prologue;
+        statements.push(Stmt::Return {
+            value: Some(convert_expression(source, expression)?),
+            span: span(expression.span()),
+        });
+        Block { statements, span: span(arrow.span) }
     } else if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(function_body) = &arrow.body {
-        Block {
-            statements: convert_statement_list(source, &function_body.statements)?,
-            span: span(function_body.span),
-        }
+        let mut statements = prologue;
+        statements.extend(convert_statement_list(source, &function_body.statements)?);
+        Block { statements, span: span(function_body.span) }
     } else {
         return Err("OXC adapter: unexpected arrow body".into());
     };
@@ -1528,14 +1723,18 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                                 ])
                             }
                         };
-                        let Some(type_annotation) =
+                        // A field without an explicit (or nameable) type erases
+                        // to `any`, encoded as a zero-width type span that sema
+                        // resolves to `Ty::Any` (JS/TS erasure semantics).
+                        let type_annotation =
                             convert_type_annotation(source, property.type_annotation.as_deref())
                                 .map_err(|error| vec![error])?
-                        else {
-                            return Err(vec![
-                                "OXC adapter requires class fields to have named types".into(),
-                            ]);
-                        };
+                                .unwrap_or(crate::ast::TypeAnnotation {
+                                    name: Name {
+                                        span: Span::new(field_span.start, field_span.start),
+                                    },
+                                    is_array: false,
+                                });
                         fields.push(crate::ast::ClassField {
                             name: Name { span: field_span },
                             decorators: property
@@ -1547,13 +1746,23 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             ty: type_annotation,
                             is_static: property.r#static,
                             is_private,
-                            initializer: property
-                                .value
-                                .as_ref()
-                                .map(|expression| convert_expression(source, expression))
-                                .transpose()
-                                .map_err(|error| vec![error])?
-                                .map(Box::new),
+                            // A field without an initializer defaults to
+                            // `undefined` (`void 0`), so the implicit
+                            // constructor always has a value for every slot.
+                            initializer: Some(Box::new(
+                                match property.value.as_ref() {
+                                    Some(expression) => convert_expression(source, expression)
+                                        .map_err(|error| vec![error])?,
+                                    None => Expr::Unary {
+                                        op: crate::ast::UnaryOp::Void,
+                                        operand: Box::new(Expr::Number {
+                                            value: 0.0,
+                                            span: field_span,
+                                        }),
+                                        span: field_span,
+                                    },
+                                },
+                            )),
                         });
                     }
                     ClassElement::MethodDefinition(method) => {
@@ -1578,40 +1787,22 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                         let Some(body) = method.value.body.as_ref() else {
                             return Err(vec!["OXC adapter requires class method bodies".into()]);
                         };
-                        let method_statements = convert_statement_list(source, &body.statements)
-                            .map_err(|error| vec![error])?;
+                        // The method body uses the unified statement converter so
+                        // class methods support the same statement surface as any
+                        // other function body.
+                        let mut method_prologue = Vec::new();
                         let mut params = Vec::with_capacity(method.value.params.items.len());
                         for parameter in &method.value.params.items {
-                            let (identifier_span, is_rest) = match &parameter.pattern {
-                                BindingPattern::BindingIdentifier(identifier) => {
-                                    (identifier.span, false)
-                                }
-                                _ => {
-                                    return Err(vec![
-                                    "OXC adapter supports identifier class method parameters only"
-                                        .into(),
-                                ])
-                                }
-                            };
-                            params.push(crate::ast::Param {
-                                name: Name {
-                                    span: Span::new(identifier_span.start, identifier_span.end),
-                                },
-                                ty: convert_type_annotation(
-                                    source,
-                                    parameter.type_annotation.as_deref(),
-                                )
-                                .map_err(|error| vec![error])?,
-                                default_value: parameter
-                                    .initializer
-                                    .as_ref()
-                                    .map(|initializer| convert_expression(source, initializer))
-                                    .transpose()
-                                    .map_err(|error| vec![error])?
-                                    .map(Box::new),
-                                is_rest,
-                            });
+                            params.push(
+                                convert_formal_param(source, parameter, &mut method_prologue)
+                                    .map_err(|error| vec![error])?,
+                            );
                         }
+                        let mut method_statements = method_prologue;
+                        method_statements.extend(
+                            convert_statement_list(source, &body.statements)
+                                .map_err(|error| vec![error])?,
+                        );
                         if let Some(rest) = method.value.params.rest.as_ref() {
                             let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument
                             else {
@@ -1734,35 +1925,21 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         };
         let span = |span: oxc_span::Span| Span::new(span.start, span.end);
         let function_span = span(function.span);
-        // The function body converts through the single shared statement
-        // converter (switch, labelled statements, loops, etc.).
-        let statements = convert_statement_list(source, &body.statements).map_err(|error| vec![error])?;
         let mut params = Vec::with_capacity(function.params.items.len());
+        let mut prologue = Vec::new();
         for parameter in &function.params.items {
-            let (identifier_span, is_rest) = match &parameter.pattern {
-                BindingPattern::BindingIdentifier(identifier) => (identifier.span, false),
-                _ => {
-                    return Err(vec![
-                        "OXC adapter currently supports identifier parameters".into()
-                    ])
-                }
-            };
-            params.push(crate::ast::Param {
-                name: Name {
-                    span: span(identifier_span),
-                },
-                ty: convert_type_annotation(source, parameter.type_annotation.as_deref())
+            params.push(
+                convert_formal_param(source, parameter, &mut prologue)
                     .map_err(|error| vec![error])?,
-                default_value: parameter
-                    .initializer
-                    .as_ref()
-                    .map(|initializer| convert_expression(source, initializer))
-                    .transpose()
-                    .map_err(|error| vec![error])?
-                    .map(Box::new),
-                is_rest,
-            });
+            );
         }
+        // The function body converts through the single shared statement
+        // converter (switch, labelled statements, loops, etc.), after any
+        // destructured-parameter prologue.
+        let mut statements = prologue;
+        statements.extend(
+            convert_statement_list(source, &body.statements).map_err(|error| vec![error])?,
+        );
         if let Some(rest) = function.params.rest.as_ref() {
             let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
                 return Err(vec![

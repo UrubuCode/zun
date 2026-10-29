@@ -26,9 +26,8 @@ fn negating_zero_produces_negative_zero() {
     // the two divisions used to print the same thing. The sign of the result
     // is the only way to observe the sign of a zero.
     //
-    // The spelling is Rust's (`inf`), not JS's (`Infinity`) — a pre-existing
-    // gap in `format_number`, unrelated to this change and left to the Number
-    // surface work.
+    // Number-to-string now follows JS (`Infinity`/`-Infinity`), matching
+    // Node/Bun, via the JS `format_float` on the Number surface.
     let out = run_source(
         r#"function main() {
             let zero = 0.0;
@@ -36,7 +35,7 @@ fn negating_zero_produces_negative_zero() {
             print(1.0 / zero);
         }"#,
     );
-    assert_eq!(out, vec!["-inf", "inf"]);
+    assert_eq!(out, vec!["-Infinity", "Infinity"]);
 }
 
 #[test]

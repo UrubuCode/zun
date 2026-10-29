@@ -522,6 +522,18 @@ pub enum Stmt {
         /// Span of the whole statement.
         span: Span,
     },
+    /// `for (k in obj) …` — iterate the object's enumerable keys (lowered to a
+    /// for-of over the key array).
+    ForIn {
+        /// The loop binding receiving each key.
+        pattern: Pattern,
+        /// The object whose keys are iterated.
+        object: Expr,
+        /// The loop body.
+        body: Block,
+        /// Span of the whole statement.
+        span: Span,
+    },
     /// `label: statement`.
     Labeled {
         /// The label name.
@@ -603,6 +615,11 @@ pub enum BinaryOp {
     Eq,
     /// `!=`
     Ne,
+    /// JS loose equality `==` from the OXC front end (type-coercing; the
+    /// legacy parser's `==` stays [`BinaryOp::Eq`]).
+    LooseEq,
+    /// JS loose inequality `!=` from the OXC front end.
+    LooseNe,
     /// `<`
     Lt,
     /// `<=`

@@ -2152,13 +2152,219 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
-            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" => {
-                let namespace = object(args.first().ok_or(RunError::BadToken)?)
+            "replaceFn" => {
+                // `str.replace(search, fn)` / `str.replaceAll(search, fn)`: the
+                // replacement of each match is `fn(match, ...groups, offset, str)`.
+                let search = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let input = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let callback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let all = matches!(args.get(3), Some(Value::Bool(true)));
+                let spans: Vec<(usize, usize, Vec<Option<String>>)> = match &search {
+                    Value::Object(regex) => zun_gc::with_current_heap(|heap| {
+                        heap.regex_replace_spans(*regex, &input, all)
+                    })
+                    .ok_or(RunError::BadToken)?
+                    .map_err(|error| RunError::Native(error.to_string()))?,
+                    other => {
+                        let needle = self.dyn_to_string(other)?;
+                        let mut found = Vec::new();
+                        if needle.is_empty() {
+                            let mut boundaries: Vec<usize> =
+                                input.char_indices().map(|(index, _)| index).collect();
+                            boundaries.push(input.len());
+                            for at in boundaries {
+                                found.push((at, at, vec![Some(String::new())]));
+                                if !all {
+                                    break;
+                                }
+                            }
+                        } else {
+                            let mut from = 0;
+                            while let Some(at) = input[from..].find(&needle) {
+                                let start = from + at;
+                                found.push((start, start + needle.len(), vec![Some(needle.clone())]));
+                                from = start + needle.len();
+                                if !all {
+                                    break;
+                                }
+                            }
+                        }
+                        found
+                    }
+                };
+                let to_any = |value: Value| {
+                    Value::Any(
+                        zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null),
+                    )
+                };
+                let mut out = String::new();
+                let mut last = 0;
+                for (start, end, groups) in spans {
+                    out.push_str(&input[last..start]);
+                    let mut call_args: Vec<Value> = groups
+                        .into_iter()
+                        .map(|group| match group {
+                            Some(text) => to_any(Value::Str(text.into())),
+                            None => to_any(Value::Void),
+                        })
+                        .collect();
+                    let offset = input[..start].encode_utf16().count();
+                    call_args.push(to_any(Value::Float(offset as f64, zun_il::NumKind::F64)));
+                    call_args.push(to_any(Value::Str(input.clone())));
+                    let produced = self.invoke_callback(callback, call_args)?;
+                    out.push_str(&self.dyn_to_string(&produced)?);
+                    last = end;
+                }
+                out.push_str(&input[last..]);
+                Ok(Value::Str(out.into()))
+            }
+            "stringMethod" => {
+                let receiver = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let result = self
+                    .string_method_dyn(&receiver, &name, &args[2..])?
                     .ok_or(RunError::BadToken)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                Ok(Value::Any(boxed))
+            }
+            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" => {
+                // A string receiver (an `any`-typed string): JS String methods.
+                if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Value::Str(member) = args.get(1).ok_or(RunError::BadToken)? {
+                        if let Some(result) = self.string_method_dyn(&text, member, &args[2..])? {
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
                 let member = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
                 };
+                // A dynamic receiver that unboxes to a primitive string carries
+                // the full String method surface (`charCodeAt`, `slice`,
+                // `toUpperCase`, …). Those natives live in the `string` group
+                // under their bare name; dispatch directly so a string reached
+                // through `any` keeps its methods.
+                let receiver_concrete = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
+                    other => other.clone(),
+                };
+                if let Value::Str(_) = &receiver_concrete {
+                    if let Some((id, native)) = zun_natives::resolve("string", &member) {
+                        let mut native_values = Vec::with_capacity(args.len() - 1);
+                        native_values.push(receiver_concrete.clone());
+                        for arg in &args[2..] {
+                            native_values.push(match arg {
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .unwrap_or(Value::Void)
+                                }
+                                other => other.clone(),
+                            });
+                        }
+                        if native.params.len() == native_values.len() {
+                            // Coerce a float argument to the native's declared
+                            // integer index/width (the typed call path does this
+                            // for numeric literals; the dynamic path must too).
+                            for (value, param) in native_values.iter_mut().zip(native.params.iter()) {
+                                if let Value::Float(n, _) = value {
+                                    use zun_natives::NativeTy::*;
+                                    let kind = match param {
+                                        I8 => Some(zun_il::NumKind::I8),
+                                        I16 => Some(zun_il::NumKind::I16),
+                                        I32 => Some(zun_il::NumKind::I32),
+                                        I64 => Some(zun_il::NumKind::I64),
+                                        U8 => Some(zun_il::NumKind::U8),
+                                        U16 => Some(zun_il::NumKind::U16),
+                                        U32 => Some(zun_il::NumKind::U32),
+                                        U64 => Some(zun_il::NumKind::U64),
+                                        _ => None,
+                                    };
+                                    if let Some(kind) = kind {
+                                        *value = Value::Int(*n as i64, kind);
+                                    }
+                                }
+                            }
+                            let native_args: Vec<zun_natives::NativeArg> =
+                                native_values.iter().map(super::native::to_native_arg).collect();
+                            let result = zun_natives::dispatch(id, &native_args, self.output)
+                                .map_err(|e| RunError::Native(e.0))?;
+                            let value = super::native::from_native_value(result, id);
+                            let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
+                // A number reached through `any` carries the Number.prototype
+                // formatters (`x.toString(2)`, `x.toFixed(2)`, ...).
+                if let Value::Float(_, _) | Value::Int(_, _) = &receiver_concrete {
+                    let x = match &receiver_concrete {
+                        Value::Float(number, _) => *number,
+                        Value::Int(number, _) => *number as f64,
+                        _ => unreachable!(),
+                    };
+                    let formatter = match member.as_ref() {
+                        "toString" | "toFixed" | "toExponential" | "toPrecision" => true,
+                        "valueOf" => {
+                            return Ok(Value::Any(zun_core::Any::float(x)));
+                        }
+                        _ => false,
+                    };
+                    if formatter {
+                        let argument = match args.get(2) {
+                            Some(arg) => unbox_arg(arg)?,
+                            None => Value::Void,
+                        };
+                        let argument = match argument {
+                            Value::Void => None,
+                            other => Some(self.to_number_value(other)?),
+                        };
+                        let result = match member.as_ref() {
+                            "toFixed" => zun_natives::js_to_fixed(x, argument.unwrap_or(0.0)),
+                            "toExponential" => zun_natives::js_to_exponential(x, argument),
+                            "toPrecision" => zun_natives::js_to_precision(x, argument),
+                            _ => zun_natives::js_to_radix_string(x, argument),
+                        };
+                        return match result {
+                            Ok(text) => {
+                                let boxed = zun_gc::with_current_heap_mut(|heap| {
+                                    Value::Str(text.into()).box_any(heap)
+                                })
+                                .unwrap_or_else(zun_core::Any::null);
+                                Ok(Value::Any(boxed))
+                            }
+                            Err(message) => {
+                                let text = message.strip_prefix("RangeError: ").unwrap_or(&message);
+                                match self.new_error_object("RangeError", text) {
+                                    Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                                    None => Err(RunError::Native(message)),
+                                }
+                            }
+                        };
+                    }
+                }
+                let namespace = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
                 // A built-in iterator object (from `Array`/`Map`/`Set`
                 // `keys`/`values`/`entries`) answers `next()` with a fresh
                 // `{ value, done }` result object, per the iterator protocol.
@@ -2175,6 +2381,30 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A concrete array receiver dispatches its native methods
+                // (`join`, `map`, `slice`, …) the same as a typed array, so an
+                // array reached through `any` keeps its full method surface. The
+                // array natives live in this same dispatcher under an
+                // `array`-prefixed name (`arrayJoin`), matching the sema fallback.
+                let is_array =
+                    zun_gc::with_current_heap(|heap| heap.array_len(namespace).is_some());
+                if is_array {
+                    let mut chars = member.chars();
+                    let native_name = match chars.next() {
+                        Some(first) => {
+                            format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
+                        }
+                        None => member.to_string(),
+                    };
+                    let mut native_args = Vec::with_capacity(call_args.len() + 1);
+                    native_args.push(Value::Object(namespace));
+                    native_args.extend(call_args.iter().cloned());
+                    if let Ok(result) = self.call_managed_collection(&native_name, &native_args) {
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A dynamic object may carry a callable member in its function
                 // slot (e.g. the `resolve`/`reject` of `Promise.withResolvers`,
                 // or a `bind`-stored function). Invoke it directly; the result
@@ -2458,6 +2688,9 @@ impl<'a> Interp<'a> {
                 // `"[object <Tag>]"`, else `"[object Object]"`.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let text = match value {
+                    Value::Object(obj) if array_join_text(obj).is_some() => {
+                        array_join_text(obj).unwrap_or_default()
+                    }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()
@@ -2489,26 +2722,42 @@ impl<'a> Interp<'a> {
                 // "number": call `[Symbol.toPrimitive]("number")` if present and
                 // ToNumber its result, else ToNumber of its string coercion.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
-                let number = match value {
-                    Value::Int(number, _) => number as f64,
-                    Value::Float(number, _) => number,
-                    Value::Bool(flag) => if flag { 1.0 } else { 0.0 },
-                    Value::Null => 0.0,
-                    Value::Void => f64::NAN,
-                    Value::Str(text) => js_string_to_number(&text),
-                    Value::Object(obj) => {
-                        if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
-                            match prim {
-                                Value::Str(text) => js_string_to_number(&text),
-                                other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
-                            }
-                        } else {
-                            f64::NAN
+                let number = self.to_number_value(value)?;
+                Ok(Value::Float(number, zun_il::NumKind::F64))
+            }
+            "looseEquals" => {
+                let left = args.first().ok_or(RunError::BadToken)?.clone();
+                let right = args.get(1).ok_or(RunError::BadToken)?.clone();
+                Ok(Value::Bool(self.loose_equals(left, right)?))
+            }
+            "numberToFixedJs" | "numberToExponentialJs" | "numberToPrecisionJs"
+            | "numberToStringRadixJs" => {
+                let x = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Float(number, _) => *number,
+                    Value::Int(number, _) => *number as f64,
+                    _ => return Err(RunError::BadToken),
+                };
+                let arg = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                let arg_number = match arg {
+                    Value::Void => None,
+                    other => Some(self.to_number_value(other)?),
+                };
+                let result = match name {
+                    "numberToFixedJs" => zun_natives::js_to_fixed(x, arg_number.unwrap_or(0.0)),
+                    "numberToExponentialJs" => zun_natives::js_to_exponential(x, arg_number),
+                    "numberToPrecisionJs" => zun_natives::js_to_precision(x, arg_number),
+                    _ => zun_natives::js_to_radix_string(x, arg_number),
+                };
+                match result {
+                    Ok(text) => Ok(Value::Str(text.into())),
+                    Err(message) => {
+                        let text = message.strip_prefix("RangeError: ").unwrap_or(&message);
+                        match self.new_error_object("RangeError", text) {
+                            Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                            None => Err(RunError::Native(message)),
                         }
                     }
-                    _ => f64::NAN,
-                };
-                Ok(Value::Float(number, zun_il::NumKind::F64))
+                }
             }
             "stringSymbolDispatch" => {
                 // `str.match/replace/search/split(arg)` with a dynamic `arg`:
@@ -3262,6 +3511,117 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(result))
             }
+            "arraySliceRange" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let relative = |value: Option<&Value>, default: f64, length: f64| -> f64 {
+                    let raw = match value {
+                        Some(Value::Float(number, _)) => *number,
+                        Some(Value::Int(number, _)) => *number as f64,
+                        _ => default,
+                    };
+                    let integer = if raw.is_nan() { 0.0 } else { raw.trunc() };
+                    if integer < 0.0 {
+                        (length + integer).max(0.0)
+                    } else {
+                        integer.min(length)
+                    }
+                };
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    let start = relative(args.get(1), 0.0, length as f64) as usize;
+                    let end = relative(args.get(2), length as f64, length as f64) as usize;
+                    let count = end.saturating_sub(start);
+                    let result = heap.alloc_array(count);
+                    for offset in 0..count {
+                        let element = heap
+                            .array_get(source, start + offset)
+                            .unwrap_or_else(zun_core::Any::void);
+                        heap.array_set(result, offset, element);
+                    }
+                    result
+                });
+                Ok(Value::Object(result))
+            }
+            "arrayReverse" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0);
+                    for index in 0..length / 2 {
+                        let left = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        let right = heap
+                            .array_get(source, length - 1 - index)
+                            .unwrap_or_else(zun_core::Any::void);
+                        heap.array_set(source, index, right);
+                        heap.array_set(source, length - 1 - index, left);
+                    }
+                });
+                Ok(Value::Object(source))
+            }
+            "arrayIndexOf" | "arrayLastIndexOf" | "arrayIncludes" => {
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let needle = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                let from = match args.get(2) {
+                    Some(Value::Float(number, _)) => Some(*number),
+                    Some(Value::Int(number, _)) => Some(*number as f64),
+                    _ => None,
+                };
+                let found = zun_gc::with_current_heap(|heap| {
+                    let length = heap.array_len(source).unwrap_or(0) as f64;
+                    let resolve = |from: f64| {
+                        let integer = if from.is_nan() { 0.0 } else { from.trunc() };
+                        if integer < 0.0 { (length + integer).max(0.0) } else { integer }
+                    };
+                    let element = |index: usize| {
+                        let any = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        Value::unbox_any(any, heap).unwrap_or(Value::Void)
+                    };
+                    let zero_aware = name == "arrayIncludes";
+                    let equal = |left: &Value, right: &Value| strict_equals(left, right, zero_aware);
+                    if name == "arrayLastIndexOf" {
+                        // `lastIndexOf` searches backwards from `from` (default
+                        // length - 1); a negative `from` counts from the end.
+                        let start = match from {
+                            None => length - 1.0,
+                            Some(from) => {
+                                let integer = if from.is_nan() { 0.0 } else { from.trunc() };
+                                if integer < 0.0 { length + integer } else { integer.min(length - 1.0) }
+                            }
+                        };
+                        if start < 0.0 {
+                            return None;
+                        }
+                        let mut index = start as usize;
+                        loop {
+                            if equal(&element(index), &needle) {
+                                return Some(index);
+                            }
+                            if index == 0 {
+                                return None;
+                            }
+                            index -= 1;
+                        }
+                    }
+                    let start = resolve(from.unwrap_or(0.0));
+                    let mut index = start as usize;
+                    while (index as f64) < length {
+                        if equal(&element(index), &needle) {
+                            return Some(index);
+                        }
+                        index += 1;
+                    }
+                    None
+                });
+                Ok(match name {
+                    "arrayIncludes" => Value::Bool(found.is_some()),
+                    _ => Value::Float(
+                        found.map(|index| index as f64).unwrap_or(-1.0),
+                        zun_il::NumKind::F64,
+                    ),
+                })
+            }
             "coalesceUndefined" => {
                 // Destructuring default: `fallback` when `value` is undefined.
                 let value = args.first().ok_or(RunError::BadToken)?.clone();
@@ -3626,9 +3986,25 @@ impl<'a> Interp<'a> {
                         };
                         let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
                         else {
-                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                                "Array.from: value is not array-like",
-                            ))));
+                            // Any other iterable (Set, Map, iterator, user
+                            // iterable) is drained through the iteration protocol.
+                            let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                            let drained = self.drive_iterable(source, target, |heap, array, value| {
+                                heap.array_push(array, value);
+                            });
+                            let array = drained.map_err(|_| {
+                                RunError::Thrown(Value::Str(std::rc::Rc::from(
+                                    "Array.from: value is not array-like",
+                                )))
+                            })?;
+                            if name == "arrayFrom" {
+                                return Ok(Value::Object(array));
+                            }
+                            // Mapped form below re-reads `base`; hand the drained
+                            // array to the shared tail by recursing on it.
+                            let mut forwarded = args.to_vec();
+                            forwarded[0] = Value::Object(array);
+                            return self.call_managed_collection(name, &forwarded);
                         };
                         zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(length);
@@ -4017,6 +4393,18 @@ impl<'a> Interp<'a> {
                     heap.dynamic_define(global, name, value, !readonly);
                 });
                 Ok(Value::Void)
+            }
+            "globalGet" => {
+                // Read a module-level binding from the realm global singleton.
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    heap.dynamic_get(global, &name)
+                });
+                Ok(value.map(Value::Any).unwrap_or(Value::Void))
             }
             "realmDescriptor" => {
                 // Box a base-type metadata token into an opaque class-descriptor
@@ -5867,7 +6255,103 @@ impl<'a> Interp<'a> {
     /// `toString` first). Returns the first primitive, or `None`.
     /// A typed instance's `valueOf`/`toString` come from `class_named_methods`
     /// (registered by `classSetMethod`) and receive the instance as `this`.
-    fn ordinary_to_primitive(
+    /// ECMAScript IsLooselyEqual (`==`).
+    pub(crate) fn loose_equals(&mut self, left: Value, right: Value) -> Result<bool, RunError> {
+        let left = unbox_arg(&left)?;
+        let right = unbox_arg(&right)?;
+        let nullish = |value: &Value| matches!(value, Value::Void | Value::Null);
+        let number = |value: &Value| match value {
+            Value::Int(n, _) => Some(*n as f64),
+            Value::Float(n, _) => Some(*n),
+            _ => None,
+        };
+        if nullish(&left) || nullish(&right) {
+            return Ok(nullish(&left) && nullish(&right));
+        }
+        if let (Some(a), Some(b)) = (number(&left), number(&right)) {
+            return Ok(a == b);
+        }
+        match (&left, &right) {
+            (Value::Str(a), Value::Str(b)) => return Ok(a == b),
+            (Value::Bool(a), Value::Bool(b)) => return Ok(a == b),
+            (Value::Object(a), Value::Object(b)) => return Ok(a.addr() == b.addr()),
+            (Value::Function(a), Value::Function(b)) => return Ok(a == b),
+            _ => {}
+        }
+        // Booleans become numbers first.
+        if let Value::Bool(flag) = &left {
+            let as_number = Value::Float(if *flag { 1.0 } else { 0.0 }, zun_il::NumKind::F64);
+            return self.loose_equals(as_number, right);
+        }
+        if let Value::Bool(flag) = &right {
+            let as_number = Value::Float(if *flag { 1.0 } else { 0.0 }, zun_il::NumKind::F64);
+            return self.loose_equals(left, as_number);
+        }
+        // Number against string: the string is converted.
+        if let (Some(a), Value::Str(text)) = (number(&left), &right) {
+            return Ok(a == js_string_to_number(text));
+        }
+        if let (Value::Str(text), Some(b)) = (&left, number(&right)) {
+            return Ok(js_string_to_number(text) == b);
+        }
+        // An object against a primitive: ToPrimitive(object), then compare again.
+        if let Value::Object(obj) = &left {
+            let primitive = self.to_primitive_default(*obj)?;
+            return self.loose_equals(primitive, right);
+        }
+        if let Value::Object(obj) = &right {
+            let primitive = self.to_primitive_default(*obj)?;
+            return self.loose_equals(left, primitive);
+        }
+        Ok(false)
+    }
+
+    /// ToPrimitive with the default hint: arrays join, objects run their
+    /// `valueOf`/`toString` hooks, a bare object is `"[object Object]"`.
+    fn to_primitive_default(&mut self, obj: zun_gc::Obj) -> Result<Value, RunError> {
+        if let Some(text) = array_join_text(obj) {
+            return Ok(Value::Str(text.into()));
+        }
+        Ok(match self.ordinary_to_primitive(obj, "number")? {
+            Some(primitive) => primitive,
+            None => Value::Str("[object Object]".into()),
+        })
+    }
+
+    /// ECMAScript ToNumber of an (already unboxed) value, running object
+    /// coercion hooks (`valueOf` / `toString` / `[Symbol.toPrimitive]`).
+    pub(crate) fn to_number_value(&mut self, value: Value) -> Result<f64, RunError> {
+        Ok(match value {
+            Value::Int(number, _) => number as f64,
+            Value::Float(number, _) => number,
+            Value::Bool(flag) => {
+                if flag {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Value::Null => 0.0,
+            Value::Void => f64::NAN,
+            Value::Str(text) => js_string_to_number(&text),
+            Value::Object(obj) if array_join_text(obj).is_some() => {
+                js_string_to_number(&array_join_text(obj).unwrap_or_default())
+            }
+            Value::Object(obj) => {
+                if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
+                    match prim {
+                        Value::Str(text) => js_string_to_number(&text),
+                        other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
+                    }
+                } else {
+                    f64::NAN
+                }
+            }
+            _ => f64::NAN,
+        })
+    }
+
+    pub(super) fn ordinary_to_primitive(
         &mut self,
         obj: zun_gc::Obj,
         hint: &str,
@@ -6610,20 +7094,25 @@ fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<String> {
     match Value::unbox_any(any, heap)? {
         Value::Str(text) => Some(text.to_string()),
         Value::Int(value, _) => Some(value.to_string()),
-        Value::Float(value, _) => Some(
-            if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e15 {
-                format!("{}", value as i64)
-            } else {
-                format!("{value}")
-            },
-        ),
+        Value::Float(value, _) => Some(zun_natives::format_float(value)),
         Value::Bool(value) => Some(value.to_string()),
+        // A nested array joins recursively (`[[1, 2], 3].join()` is "1,2,3").
+        Value::Object(obj) => {
+            let length = heap.array_len(obj)?;
+            let parts: Vec<String> = (0..length)
+                .map(|index| {
+                    let element = heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void);
+                    stringify_any(element, heap).unwrap_or_default()
+                })
+                .collect();
+            Some(parts.join(","))
+        }
         _ => None,
     }
 }
 
 /// Unbox an argument to its concrete value (an `Any` carrier is unwrapped).
-fn unbox_arg(value: &Value) -> Result<Value, RunError> {
+pub(super) fn unbox_arg(value: &Value) -> Result<Value, RunError> {
     match value {
         Value::Any(any) => {
             zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).ok_or(RunError::BadToken)
@@ -6635,7 +7124,7 @@ fn unbox_arg(value: &Value) -> Result<Value, RunError> {
 /// ECMAScript truthiness for a callback result (unboxing an `Any` carrier
 /// first): `false`, `0`/`NaN`, `""`, `null` and `undefined` are falsy; every
 /// object, function and non-empty string is truthy.
-fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
+pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
     let concrete = match value {
         Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),
         other => other.clone(),
@@ -6657,7 +7146,7 @@ fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
 /// an empty result is `0`, `0x`/`0o`/`0b` prefixes parse in their radix, and
 /// everything else (decimal, scientific, `Infinity`) goes through Rust's `f64`
 /// parser; a failed parse is `NaN`.
-fn js_string_to_number(text: &str) -> f64 {
+pub(super) fn js_string_to_number(text: &str) -> f64 {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return 0.0;
@@ -6685,6 +7174,20 @@ fn js_string_to_number(text: &str) -> f64 {
     }
 }
 
+/// `Array.prototype.toString` (join with `,`) for an array object, or `None`
+/// when `obj` is not an array.
+fn array_join_text(obj: zun_gc::Obj) -> Option<String> {
+    zun_gc::with_current_heap(|heap| {
+        let length = heap.array_len(obj)?;
+        let mut parts = Vec::with_capacity(length);
+        for index in 0..length {
+            let element = heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void);
+            parts.push(stringify_any(element, heap).unwrap_or_default());
+        }
+        Some(parts.join(","))
+    })
+}
+
 fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {
     let concrete = match value {
         Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),
@@ -6702,6 +7205,23 @@ fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {
         }
         _ => f64::NAN,
     }
+}
+
+/// ECMAScript strict equality (`===`); with `zero_aware` it is SameValueZero
+/// (`NaN` equals `NaN`, as `includes` requires).
+fn strict_equals(left: &Value, right: &Value, zero_aware: bool) -> bool {
+    let number = |value: &Value| match value {
+        Value::Int(value, _) => Some(*value as f64),
+        Value::Float(value, _) => Some(*value),
+        _ => None,
+    };
+    if let (Some(left), Some(right)) = (number(left), number(right)) {
+        if left.is_nan() && right.is_nan() {
+            return zero_aware;
+        }
+        return left == right;
+    }
+    same_value(left, right)
 }
 
 /// ECMAScript `SameValue`: like `===` but `NaN` equals `NaN` and `+0` differs

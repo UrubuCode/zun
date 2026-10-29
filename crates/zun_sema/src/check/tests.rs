@@ -235,8 +235,10 @@
     }
 
     #[test]
-    fn condition_must_be_boolean() {
-        assert!(first_error("function f() { if (1) {} }").contains("must be boolean"));
+    fn condition_accepts_any_truthy_value() {
+        // JS evaluates any value for truthiness; a numeric condition is valid
+        // and coerced by the branch opcodes at run time.
+        check_ok("function f() { if (1) {} }");
     }
 
     #[test]
@@ -502,9 +504,10 @@
     }
 
     #[test]
-    fn any_does_not_implicitly_enable_arithmetic() {
-        let msg = first_error("function f(value: any) { let result = value - 1; }");
-        assert!(msg.contains("arithmetic requires"), "{msg}");
+    fn any_arithmetic_is_allowed_and_coerces_at_runtime() {
+        // JS/TS: a dynamic (`any`) operand participates in arithmetic (coerced
+        // at run time), yielding `any`. It is no longer a static error.
+        check_ok("function f(value: any) { let result = value - 1; }");
     }
 
     #[test]

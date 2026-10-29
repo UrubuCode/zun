@@ -1,6 +1,5 @@
 use super::{Checker, FunctionCx};
 use crate::hir;
-use crate::hir::Ty;
 use zun_syntax::ast;
 
 impl<'a> Checker<'a> {
@@ -9,13 +8,8 @@ impl<'a> Checker<'a> {
         cx: &mut FunctionCx,
         cond: &ast::Expr,
     ) -> hir::Expr {
-        let cond = self.check_expr(cx, cond);
-        if !cond.ty.is_error() && cond.ty != Ty::Boolean {
-            self.error(
-                cond.span,
-                format!("condition must be boolean, found {:?}", cond.ty),
-            );
-        }
-        cond
+        // JS evaluates any value for truthiness in a condition position; the
+        // branch opcodes coerce at run time, so no type is rejected here.
+        self.check_expr(cx, cond)
     }
 }

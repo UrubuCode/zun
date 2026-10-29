@@ -1,0 +1,15 @@
+// `new Number(x)` wrapper object. The bare call `Number(x)` stays a `number`
+// primitive (sema plain-Call path); `new Number(x)` and `Object(<number>)` are
+// lowered by the checker to `new NumberObject(<ToNumber of x>)`. The class is
+// named `NumberObject` because `Number` is the primitive's annotation and
+// coercion name and must not resolve to a user-visible class.
+
+import { number as numberObjectCore } from "zun:core";
+
+class NumberObject {
+    value: number;
+
+    valueOf(): number { return this.value; }
+
+    toString(): string { return numberObjectCore.toString(this.value); }
+}

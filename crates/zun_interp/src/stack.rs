@@ -50,16 +50,27 @@ fn unbox_for_compare(value: Value) -> Value {
 }
 
 pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunError> {
-    let b = unbox_for_compare(pop(stack)?);
-    let a = unbox_for_compare(pop(stack)?);
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    // A dynamic (`any`) operand compares by its underlying value.
+    let unbox = |value: Value| match value {
+        Value::Any(any) => {
+            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Any(any))
+        }
+        other => other,
+    };
+    let (a, b) = if matches!(a, Value::Any(_)) || matches!(b, Value::Any(_)) {
+        (unbox(a), unbox(b))
+    } else {
+        (a, b)
+    };
     let equal = match (&a, &b) {
         (Value::Float(x, _), Value::Float(y, _)) => x == y,
-        (Value::Int(x, _), Value::Int(y, _)) => x == y,
         (Value::Int(x, _), Value::Float(y, _)) | (Value::Float(y, _), Value::Int(x, _)) => {
             (*x as f64) == *y
         }
+        (Value::Int(x, _), Value::Int(y, _)) => x == y,
         (Value::Void, Value::Void) => true,
-        (Value::Void, Value::Null) | (Value::Null, Value::Void) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),

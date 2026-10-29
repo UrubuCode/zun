@@ -5,7 +5,19 @@ impl Heap {
     pub(super) fn any_hash(&self, value: zun_core::Any) -> u64 {
         match value.tag() {
             zun_core::AnyTag::Int => value.as_int().unwrap() as u64 ^ 0x11,
-            zun_core::AnyTag::Float => value.as_float().unwrap().to_bits() ^ 0x22,
+            zun_core::AnyTag::Float => {
+                // SameValueZero: every NaN is one key and -0 equals +0, so the
+                // hash must not depend on the NaN payload or the zero's sign.
+                let number = value.as_float().unwrap();
+                let canonical = if number.is_nan() {
+                    f64::NAN
+                } else if number == 0.0 {
+                    0.0
+                } else {
+                    number
+                };
+                canonical.to_bits() ^ 0x22
+            }
             zun_core::AnyTag::Bool => value.as_bool().unwrap() as u64 ^ 0x33,
             zun_core::AnyTag::Object => {
                 unsafe { Obj::from_addr(value.as_object().unwrap() as *mut u64) }.identity_hash() ^ 0x44

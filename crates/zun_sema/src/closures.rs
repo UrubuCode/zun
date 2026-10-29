@@ -62,6 +62,7 @@ impl Checker<'_> {
                 .collect(),
             this_class: outer.this_class,
             is_constructor: false,
+            is_module_scope: false,
         };
         // The hidden environment is always local zero. User parameters and
         // ordinary locals follow it, matching the indirect-call ABI.
@@ -69,7 +70,8 @@ impl Checker<'_> {
         for (index, parameter) in function.params.iter().enumerate() {
             // Explicit annotation wins; otherwise a contextual hint types the
             // parameter (e.g. a Promise executor's `res`/`rej` become
-            // `Function`); otherwise the `F64` default is kept.
+            // `Function`); otherwise an untyped parameter is dynamic (`any`),
+            // matching JS (member/arithmetic access resolves at run time).
             let ty = parameter
                 .ty
                 .as_ref()
@@ -310,6 +312,12 @@ impl Checker<'_> {
             }
             ast::Stmt::ForOf { iterable, body, .. } => {
                 self.collect_capture_expr(cx, parameters, iterable, uses);
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+            }
+            ast::Stmt::ForIn { object, body, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
                 for statement in &body.statements {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
                 }

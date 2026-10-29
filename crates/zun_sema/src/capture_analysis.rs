@@ -33,6 +33,10 @@ pub(super) fn collect_mutated_names(
                 collect_mutated_expr(checker, iterable, names);
                 collect_mutated_names(checker, &body.statements, names);
             }
+            ast::Stmt::ForIn { object, body, .. } => {
+                collect_mutated_expr(checker, object, names);
+                collect_mutated_names(checker, &body.statements, names);
+            }
             ast::Stmt::Return { value, .. } => {
                 if let Some(value) = value { collect_mutated_expr(checker, value, names); }
             }

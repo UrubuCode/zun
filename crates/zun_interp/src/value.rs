@@ -342,11 +342,7 @@ pub fn round_float(v: f64, kind: zun_il::NumKind) -> f64 {
 
 /// Format a number using JS-like rules: integers print without a trailing `.0`.
 fn format_number(n: f64) -> String {
-    if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
-        format!("{}", n as i64)
-    } else {
-        format!("{n}")
-    }
+    zun_natives::format_float(n)
 }
 
 #[cfg(test)]

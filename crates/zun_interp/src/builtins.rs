@@ -18,15 +18,66 @@ pub(super) fn call_builtin(
         .or_else(|| managed_error_builtin(id))
         .or_else(|| managed_timers_builtin(id))
         .or_else(|| managed_array_ext_builtin(id))
+        .or_else(|| managed_number_builtin(id))
     {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
     }
     let native_args: Vec<zun_natives::NativeArg> = args.iter().map(to_native_arg).collect();
     let result = zun_natives::dispatch(id, &native_args, interp.output)
-        .map_err(|e| RunError::Native(e.0))?;
+        .map_err(|e| native_error_to_run_error(interp, e.0))?;
     stack.push(from_native_value(result, id));
     Ok(())
+}
+
+/// A native failure whose message starts with `RangeError: ` or `TypeError: `
+/// is thrown as a managed `Error` subclass instance (so `catch (e)` sees the
+/// right `name` and `message`); any other message stays an interpreter error.
+fn native_error_to_run_error(interp: &mut Interp<'_>, message: String) -> RunError {
+    for class in ["RangeError", "TypeError"] {
+        let Some(text) = message.strip_prefix(class).and_then(|rest| rest.strip_prefix(": ")) else {
+            continue;
+        };
+        if let Some(object) = interp.new_error_object(class, text) {
+            return RunError::Thrown(Value::Object(object));
+        }
+    }
+    RunError::Native(message)
+}
+
+impl Interp<'_> {
+    /// Allocate an instance of the Error-family class `class` (`message`,
+    /// `stackFrames`, `cause` layout) without running its constructor.
+    pub(crate) fn new_error_object(&mut self, class: &str, message: &str) -> Option<zun_gc::Obj> {
+        let rid = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .position(|ty| self.module.strings.get(ty.name) == class)?
+            + 1;
+        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid as u32);
+        let (field_start, field_count) = self.type_field_range(token).ok()?;
+        let kinds: Vec<u8> = (0..field_count as u32)
+            .map(|i| self.field_kind_at(field_start + i))
+            .collect::<Result<_, _>>()
+            .ok()?;
+        let values = [
+            Value::Str(message.into()),
+            Value::Str("".into()),
+            Value::Void,
+        ];
+        if field_count != values.len() {
+            return None;
+        }
+        Some(zun_gc::with_current_heap_mut(|heap| {
+            let obj = heap.alloc(rid as u32, field_count);
+            for (index, value) in values.iter().enumerate() {
+                super::value::store_field(kinds[index], obj, index, value, heap);
+            }
+            obj
+        }))
+    }
 }
 
 pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
@@ -138,6 +189,10 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "dynamicCall0",
         "dynamicCall1",
         "dynamicCall2",
+        "dynamicCall3",
+        "dynamicCall4",
+        "stringMethod",
+        "replaceFn",
         "dynamicConstruct",
         "promiseNew",
         "promiseWithResolvers",
@@ -187,6 +242,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "arrayUnshift",
         "arraySplice",
         "globalSet",
+        "globalGet",
         "realmDescriptor",
         "classDescriptorToken",
         "symbolNew",
@@ -236,6 +292,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "decoratorAddInstanceInitializer",
         "decoratorAccessGet",
         "decoratorAccessSet",
+        "looseEquals",
     ] {
         if zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
@@ -344,6 +401,23 @@ pub(crate) fn managed_timers_builtin(id: u32) -> Option<&'static str> {
     None
 }
 
+/// Recognize the `Number.prototype` formatters whose argument needs ToNumber
+/// coercion (which can run user `valueOf` hooks) and whose range errors must
+/// be thrown as managed `RangeError` instances.
+pub(crate) fn managed_number_builtin(id: u32) -> Option<&'static str> {
+    for name in [
+        "numberToFixedJs",
+        "numberToExponentialJs",
+        "numberToPrecisionJs",
+        "numberToStringRadixJs",
+    ] {
+        if zun_natives::resolve("number", name).map(|(candidate, _)| candidate) == Some(id) {
+            return Some(name);
+        }
+    }
+    None
+}
+
 /// Recognize the extended Array surface (NUCLEUS #7), serviced on the
 /// interpreter floor because each re-enters the interpreter or touches the
 /// managed heap.
@@ -375,6 +449,11 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayGroup",
         "arrayGroupToMap",
         "arrayConcat",
+        "arraySliceRange",
+        "arrayIndexOf",
+        "arrayLastIndexOf",
+        "arrayIncludes",
+        "arrayReverse",
     ] {
         if zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);

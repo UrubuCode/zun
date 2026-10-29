@@ -153,6 +153,7 @@ fn check_impl(
         hooked_classes: HashSet::new(),
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
+        module_globals: HashSet::new(),
     };
     checker.collect_type_param_names(program);
     checker.resolve_imports(program, allow_external_modules, allow_core);
@@ -165,6 +166,14 @@ fn check_impl(
     let mut classes = checker.check_classes(program);
     checker.collect_signatures(program);
     checker.collect_decorator_routing(program);
+    // Top-level `let`/`const` bindings are module globals, visible inside every
+    // function (JS module scope). Register their names before any function body
+    // is checked so a forward reference resolves through `globalGet`.
+    for statement in &program.top_level {
+        if let ast::Stmt::Let { name, .. } = statement {
+            checker.module_globals.insert(checker.text(name).to_string());
+        }
+    }
 
     let mut functions: Vec<hir::Function> = Vec::new();
     // Top-level functions occupy the first func indices (see collect_signatures).
@@ -353,6 +362,11 @@ struct Checker<'a> {
     /// `Enum.Member` field access folds to the member's number/string literal;
     /// the enum name resolves as a type through `type_aliases`.
     enums: HashMap<String, HashMap<String, types::EnumConst>>,
+    /// Names of top-level `let`/`const` bindings (module globals). They are
+    /// stored on the realm global singleton (`globalSet`/`globalGet`) so a
+    /// function body can read them, matching JS module scope. All are dynamic
+    /// (`any`).
+    module_globals: HashSet<String>,
     /// Every generic type-parameter name declared anywhere in the program
     /// (`function f<T>`, `class C<U>`, `method m<K>`). Zun erases generics, so a
     /// type parameter has no distinct type: `resolve_annotation` treats a name
@@ -380,6 +394,10 @@ struct FunctionCx {
     this_class: Option<u32>,
     /// True while checking a class `constructor` body (where `super(...)` is legal).
     is_constructor: bool,
+    /// True while checking the synthetic top-level `<main>` body, where a
+    /// `let`/`const` declaration binds a module global (stored via `globalSet`)
+    /// rather than a frame local.
+    is_module_scope: bool,
 }
 
 #[derive(Default)]
@@ -479,6 +497,7 @@ impl Checker<'_> {
             captures: HashMap::new(),
             this_class: None,
             is_constructor: false,
+            is_module_scope: true,
         };
         self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
         let mut body = self.check_block(&mut cx, &block);
@@ -760,7 +779,7 @@ impl Checker<'_> {
         };
         if let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") {
             for class_idx in 0..self.classes.len() {
-                for name in ["valueOf", "toString"] {
+                for name in ["valueOf", "toString", "get_name"] {
                     let Some(func) = self.method_of(class_idx as u32, name) else { continue };
                     let sig = &self.signatures[func as usize];
                     if sig.is_static || sig.params.len() != 1 {
@@ -1457,15 +1476,19 @@ impl Checker<'_> {
                 for p in &m.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
-                        None => {
-                            self.error(p.name.span, "methods require a type on every parameter");
-                            Ty::Error
-                        }
+                        // An untyped parameter is dynamic (`any`), matching JS.
+                        None => Ty::Any,
                     });
                 }
                 let return_ty = match &m.return_type {
                     Some(t) => self.resolve_annotation(t),
-                    None => Ty::Void,
+                    None => {
+                        if block_returns_value(&m.body) {
+                            Ty::Any
+                        } else {
+                            Ty::Void
+                        }
+                    }
                 };
                 let func_index = self.signatures.len() as u32;
                 if self.methods_by_class[class_idx]
@@ -1505,15 +1528,19 @@ impl Checker<'_> {
                 for p in &sm.function.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
-                        None => {
-                            self.error(p.name.span, "methods require a type on every parameter");
-                            Ty::Error
-                        }
+                        // An untyped parameter is dynamic (`any`), matching JS.
+                        None => Ty::Any,
                     });
                 }
                 let return_ty = match &sm.function.return_type {
                     Some(t) => self.resolve_annotation(t),
-                    None => Ty::Void,
+                    None => {
+                        if block_returns_value(&sm.function.body) {
+                            Ty::Any
+                        } else {
+                            Ty::Void
+                        }
+                    }
                 };
                 let func_index = self.signatures.len() as u32;
                 self.signatures.push(Signature {
@@ -1628,6 +1655,7 @@ impl Checker<'_> {
             captures: HashMap::new(),
             this_class,
             is_constructor: this_class.is_some() && self.text(&f.name) == "constructor",
+            is_module_scope: false,
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -2082,6 +2110,7 @@ impl Checker<'_> {
                                 ),
                             );
                         }
+                        init = Self::unbox_to(init, declared);
                         declared
                     }
                     None => init.ty,
@@ -2101,8 +2130,31 @@ impl Checker<'_> {
                 else_block,
                 ..
             } => {
+                let narrowing = self.type_guard_narrowing(cx, cond);
                 let cond = self.check_condition(cx, cond);
-                let then_body = self.check_block(cx, then_block);
+                let then_body = match narrowing {
+                    // Inside the guarded branch the untyped local is shadowed by
+                    // a typed copy (`typeof x === "string"`, `Array.isArray(x)`).
+                    Some((name, slot, narrowed)) => {
+                        cx.scopes.push(Scope::new());
+                        let read = hir::Expr {
+                            kind: hir::ExprKind::Local(slot),
+                            ty: Ty::Any,
+                            span: then_block.span,
+                        };
+                        let init = hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(read) },
+                            ty: narrowed,
+                            span: then_block.span,
+                        };
+                        let shadow = cx.declare(&name, narrowed);
+                        let mut body = vec![hir::Stmt::Let { slot: shadow, init }];
+                        body.extend(self.check_block(cx, then_block));
+                        cx.scopes.pop();
+                        body
+                    }
+                    None => self.check_block(cx, then_block),
+                };
                 let else_body = else_block
                     .as_ref()
                     .map(|b| self.check_block(cx, b))
@@ -2204,90 +2256,48 @@ impl Checker<'_> {
                         ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext")
                     }
                 };
-                let span = iterable_expr.span;
-                let Some((new_id, _)) = zun_natives::resolve("buffer", new_name) else {
-                    self.error(span, "missing iterator constructor intrinsic");
-                    return hir::Stmt::Expr(self.poison(span));
-                };
-                let Some((done_id, _)) = zun_natives::resolve("buffer", done_name) else {
-                    self.error(span, "missing iterator completion intrinsic");
-                    return hir::Stmt::Expr(self.poison(span));
-                };
-                let Some((next_id, _)) = zun_natives::resolve("buffer", next_name) else {
-                    self.error(span, "missing iterator next intrinsic");
-                    return hir::Stmt::Expr(self.poison(span));
-                };
-                let iterator = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: new_id,
-                        args: vec![iterable_expr],
-                    },
-                    ty: Ty::Any,
-                    span,
-                };
-                let iterator_slot = cx.declare("__for_of_iterator", Ty::Any);
-                let done = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: done_id,
-                        args: vec![hir::Expr {
-                            kind: hir::ExprKind::Local(iterator_slot),
-                            ty: Ty::Any,
-                            span,
-                        }],
-                    },
-                    ty: Ty::Boolean,
-                    span,
-                };
-                let next = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: next_id,
-                        args: vec![hir::Expr {
-                            kind: hir::ExprKind::Local(iterator_slot),
-                            ty: Ty::Any,
-                            span,
-                        }],
-                    },
-                    ty: Ty::Any,
-                    span,
-                };
-                cx.scopes.push(Scope::new());
-                // The loop binding is a pattern. For a bare identifier the
-                // iteration value stores directly into its slot; for a
-                // destructuring pattern it stores into a hidden element temp
-                // that the prelude statements then destructure each iteration.
-                let (binding, prelude) = match pattern {
-                    ast::Pattern::Ident { name, ty } => {
-                        let declared =
-                            ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
-                        (cx.declare(self.text(name), declared), Vec::new())
-                    }
-                    _ => {
-                        let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
-                        let mut prelude = Vec::new();
-                        let element_expr = hir::Expr {
-                            kind: hir::ExprKind::Local(element),
-                            ty: Ty::Any,
-                            span,
-                        };
-                        self.bind_pattern(cx, pattern, element_expr, &mut prelude);
-                        (element, prelude)
-                    }
-                };
-                let mut body = self.check_block(cx, body);
-                if !prelude.is_empty() {
-                    let mut combined = prelude;
-                    combined.append(&mut body);
-                    body = combined;
-                }
-                cx.scopes.pop();
-                hir::Stmt::ForOf {
-                    iterator,
-                    iterator_slot,
-                    done,
-                    next,
-                    binding,
+                self.lower_for_iteration(
+                    cx,
+                    iterable_expr,
+                    new_name,
+                    done_name,
+                    next_name,
+                    pattern,
                     body,
-                }
+                )
+            }
+            ast::Stmt::ForIn { pattern, object, body, .. } => {
+                // `for (k in obj)` iterates the object's enumerable keys: build
+                // `objectKeys(obj)` (an Array) and run the array-iterator loop.
+                let object_expr = self.check_expr(cx, object);
+                let span = object_expr.span;
+                let keys_arg = if object_expr.ty == Ty::Any {
+                    object_expr
+                } else {
+                    hir::Expr {
+                        span,
+                        kind: hir::ExprKind::BoxAny { value: Box::new(object_expr) },
+                        ty: Ty::Any,
+                    }
+                };
+                let Some((keys_id, _)) = zun_natives::resolve("collections", "objectKeys") else {
+                    self.error(span, "missing `objectKeys` intrinsic");
+                    return hir::Stmt::Expr(self.poison(span));
+                };
+                let keys = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id: keys_id, args: vec![keys_arg] },
+                    ty: Ty::Array,
+                    span,
+                };
+                self.lower_for_iteration(
+                    cx,
+                    keys,
+                    "arrayIteratorNew",
+                    "arrayIteratorDone",
+                    "arrayIteratorNext",
+                    pattern,
+                    body,
+                )
             }
             ast::Stmt::Labeled { label, statement, .. } => {
                 let label_text = self.text(label).to_string();
@@ -2336,7 +2346,7 @@ impl Checker<'_> {
                 let value = value.as_ref().map(|v| {
                     let mut e = self.check_expr(cx, v);
                     coerce_numeric_literal(&mut e, cx.return_ty);
-                    e
+                    Self::unbox_to(e, cx.return_ty)
                 });
                 match (&value, cx.return_ty) {
                     (None, Ty::Void) => {}
@@ -2406,6 +2416,70 @@ impl Checker<'_> {
     /// objects (insertion-ordered dynamic keys); the heavy lifting lives in the
     /// interpreter floor. Descriptor-based statics are intentionally absent —
     /// Zun has no property-descriptor model yet (see NUCLEUS.md).
+    /// Variadic `console.log/info/debug/error/warn`: format every argument with
+    /// the prelude `ConsoleFormat.top`, join with single spaces (Node), and
+    /// print once to stdout (or stderr for `error`/`warn`). Returns `None` for
+    /// any other `console` member so it falls through to normal dispatch.
+    fn check_console_variadic(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let to_stderr = match method {
+            "log" | "info" | "debug" => false,
+            "error" | "warn" => true,
+            _ => return None,
+        };
+        let fmt_class = *self.classes_by_name.get("ConsoleFormat")?;
+        let top = self.method_of(fmt_class, "top")?;
+        let print_name = if to_stderr { "eprintln" } else { "println" };
+        let (print_id, _) = zun_natives::resolve("io", print_name)?;
+        // Build the space-joined string of every formatted argument.
+        let mut joined: Option<hir::Expr> = None;
+        for arg in args {
+            let value = self.check_expr(cx, arg);
+            let formatted = hir::Expr {
+                kind: hir::ExprKind::StaticCall {
+                    func: top,
+                    args: vec![Self::box_to_any(value)],
+                },
+                ty: Ty::String,
+                span,
+            };
+            joined = Some(match joined {
+                None => formatted,
+                Some(acc) => {
+                    let with_space = hir::Expr {
+                        kind: hir::ExprKind::Binary {
+                            op: ast::BinaryOp::Add,
+                            lhs: Box::new(acc),
+                            rhs: Box::new(Self::string_literal(" ".to_string(), span)),
+                        },
+                        ty: Ty::String,
+                        span,
+                    };
+                    hir::Expr {
+                        kind: hir::ExprKind::Binary {
+                            op: ast::BinaryOp::Add,
+                            lhs: Box::new(with_space),
+                            rhs: Box::new(formatted),
+                        },
+                        ty: Ty::String,
+                        span,
+                    }
+                }
+            });
+        }
+        let text = joined.unwrap_or_else(|| Self::string_literal(String::new(), span));
+        Some(hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id: print_id, args: vec![text] },
+            ty: Ty::Void,
+            span,
+        })
+    }
+
     fn check_object_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -3679,6 +3753,131 @@ impl Checker<'_> {
     /// f64 helper of the matching name (`floor` → `floorNumber`, `pow` →
     /// `powNumber`, …). Arity and argument coercion follow the native's declared
     /// signature; the result type is the native's return type.
+    /// Shared lowering for `for-of`/`for-in`: given the iterable (or key array)
+    /// and the iterator-protocol intrinsic names, drive the iterator and bind
+    /// each value to the loop pattern.
+    fn lower_for_iteration(
+        &mut self,
+        cx: &mut FunctionCx,
+        iterable_expr: hir::Expr,
+        new_name: &str,
+        done_name: &str,
+        next_name: &str,
+        pattern: &ast::Pattern,
+        body: &ast::Block,
+    ) -> hir::Stmt {
+        let span = iterable_expr.span;
+        let Some((new_id, _)) = zun_natives::resolve("buffer", new_name) else {
+            self.error(span, "missing iterator constructor intrinsic");
+            return hir::Stmt::Expr(self.poison(span));
+        };
+        let Some((done_id, _)) = zun_natives::resolve("buffer", done_name) else {
+            self.error(span, "missing iterator completion intrinsic");
+            return hir::Stmt::Expr(self.poison(span));
+        };
+        let Some((next_id, _)) = zun_natives::resolve("buffer", next_name) else {
+            self.error(span, "missing iterator next intrinsic");
+            return hir::Stmt::Expr(self.poison(span));
+        };
+        let iterator = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id: new_id, args: vec![iterable_expr] },
+            ty: Ty::Any,
+            span,
+        };
+        let iterator_slot = cx.declare("__for_of_iterator", Ty::Any);
+        let done = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id: done_id,
+                args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }],
+            },
+            ty: Ty::Boolean,
+            span,
+        };
+        let next = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id: next_id,
+                args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }],
+            },
+            ty: Ty::Any,
+            span,
+        };
+        cx.scopes.push(Scope::new());
+        let (binding, prelude) = match pattern {
+            ast::Pattern::Ident { name, ty } => {
+                let declared = ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
+                (cx.declare(self.text(name), declared), Vec::new())
+            }
+            _ => {
+                let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+                let mut prelude = Vec::new();
+                let element_expr = hir::Expr { kind: hir::ExprKind::Local(element), ty: Ty::Any, span };
+                self.bind_pattern(cx, pattern, element_expr, &mut prelude);
+                (element, prelude)
+            }
+        };
+        let mut body = self.check_block(cx, body);
+        if !prelude.is_empty() {
+            let mut combined = prelude;
+            combined.append(&mut body);
+            body = combined;
+        }
+        cx.scopes.pop();
+        hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
+    }
+
+    /// Coerce a computed array index to an integer. An integer passes through;
+    /// a `number`/`any` index is converted (JS `ToInteger` on the index) rather
+    /// than rejected, so `arr[someNumber]` works.
+    fn coerce_array_index(&mut self, index: hir::Expr) -> hir::Expr {
+        if index.ty.is_int() || index.ty.is_error() {
+            return index;
+        }
+        if index.ty == Ty::F64 || index.ty == Ty::Any {
+            let span = index.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(index) },
+                ty: Ty::Int(IntKind::U64),
+                span,
+            };
+        }
+        self.error(index.span, "array index must be an integer");
+        self.poison(index.span)
+    }
+
+    /// JS ToNumber of an arbitrary operand as an `f64` expression. `number`
+    /// operands pass through; everything else is boxed into `Any` and run
+    /// through the `numberCoerce` native (string parsing, object->primitive).
+    fn to_number_expr(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty == Ty::F64 || value.ty.is_error() {
+            return value;
+        }
+        let span = value.span;
+        let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") else {
+            self.error(span, "missing `numberCoerce` intrinsic");
+            return self.poison(span);
+        };
+        let arg = if value.ty == Ty::Any {
+            value
+        } else {
+            hir::Expr { span, kind: hir::ExprKind::BoxAny { value: Box::new(value) }, ty: Ty::Any }
+        };
+        hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
+    }
+
+    /// Coerce a value to an `f64` argument: integers widen, everything else
+    /// goes through JS ToNumber.
+    fn to_number_for_arg(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty.is_int() {
+            let span = value.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                ty: Ty::F64,
+                span,
+            };
+        }
+        self.to_number_expr(value)
+    }
+
     fn check_math_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -3687,6 +3886,41 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        // `Math.min`/`max`/`hypot` are variadic: fold the 2-arg native left to
+        // right (`f(a,b,c)` → `f(f(a,b),c)`). 0 args give the identity.
+        if matches!(method, "min" | "max" | "hypot") {
+            let native_name = match method {
+                "min" => "minNumber",
+                "max" => "maxNumber",
+                _ => "hypotNumber",
+            };
+            let Some((id, _)) = zun_natives::resolve("math", native_name) else {
+                self.error(span, format!("missing Math intrinsic `{native_name}`"));
+                return self.poison(span);
+            };
+            let identity = match method {
+                "min" => f64::INFINITY,
+                "max" => f64::NEG_INFINITY,
+                _ => 0.0,
+            };
+            // Start from the identity and fold every argument through the 2-arg
+            // native: `f(identity, a) = a` for min/max, `hypot(0, a) = |a|`, so
+            // 0/1/N arguments all get the correct value.
+            let mut acc = hir::Expr { kind: hir::ExprKind::Number(identity), ty: Ty::F64, span };
+            for arg in args {
+                let mut value = self.check_expr(cx, arg);
+                coerce_numeric_literal(&mut value, Ty::F64);
+                if !value.ty.is_int() && value.ty != Ty::F64 {
+                    value = self.to_number_expr(value);
+                }
+                acc = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
+                    ty: Ty::F64,
+                    span,
+                };
+            }
+            return acc;
+        }
         let native_name = match method {
             "floor" => "floorNumber",
             "ceil" => "ceilNumber",
@@ -3714,6 +3948,8 @@ impl Checker<'_> {
             "pow" => "powNumber",
             "atan2" => "atan2Number",
             "hypot" => "hypotNumber",
+            "imul" => "imulNumber",
+            "clz32" => "clz32Number",
             "min" => "minNumber",
             "max" => "maxNumber",
             _ => {
@@ -3740,6 +3976,9 @@ impl Checker<'_> {
         for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
             let mut value = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut value, expected);
+            if expected == Ty::F64 && !value.ty.is_int() && value.ty != Ty::F64 {
+                value = self.to_number_expr(value);
+            }
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                 self.error(
                     value.span,
@@ -4509,7 +4748,94 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower `str.replace(search, fn)` / `str.replaceAll(search, fn)`.
+    fn replace_with_function(
+        &mut self,
+        span: Span,
+        search: hir::Expr,
+        receiver: hir::Expr,
+        callback: hir::Expr,
+        all: bool,
+    ) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("collections", "replaceFn") else {
+            self.error(span, "missing collection intrinsic `replaceFn`");
+            return self.poison(span);
+        };
+        let flag = hir::Expr { kind: hir::ExprKind::Boolean(all), ty: Ty::Boolean, span };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![search, receiver, callback, flag] },
+            ty: Ty::String,
+            span,
+        }
+    }
+
+    /// Recognise a simple type guard over an untyped (`any`) local and return
+    /// the local's name, slot and narrowed type: `typeof x === "string" |
+    /// "number" | "boolean"` and `Array.isArray(x)`.
+    fn type_guard_narrowing(
+        &self,
+        cx: &FunctionCx,
+        cond: &ast::Expr,
+    ) -> Option<(String, hir::LocalSlot, Ty)> {
+        let (ident, narrowed) = match cond {
+            ast::Expr::Binary { op: ast::BinaryOp::Eq, lhs, rhs, .. } => {
+                let (typeof_side, literal_side) = match (&**lhs, &**rhs) {
+                    (ast::Expr::Unary { .. }, ast::Expr::String { .. }) => (&**lhs, &**rhs),
+                    (ast::Expr::String { .. }, ast::Expr::Unary { .. }) => (&**rhs, &**lhs),
+                    _ => return None,
+                };
+                let ast::Expr::Unary { op: ast::UnaryOp::Typeof, operand, .. } = typeof_side else {
+                    return None;
+                };
+                let ast::Expr::Ident(name) = &**operand else { return None };
+                let ast::Expr::String { value, .. } = literal_side else { return None };
+                let narrowed = match value.as_str() {
+                    "string" => Ty::String,
+                    "number" => Ty::F64,
+                    "boolean" => Ty::Boolean,
+                    _ => return None,
+                };
+                (*name, narrowed)
+            }
+            ast::Expr::StaticMethodCall { class, method, args, .. }
+                if self.text(class) == "Array" && self.text(method) == "isArray" && args.len() == 1 =>
+            {
+                let ast::Expr::Ident(name) = &args[0] else { return None };
+                (*name, Ty::Array)
+            }
+            ast::Expr::MethodCall { receiver, method, args, .. }
+                if matches!(&**receiver, ast::Expr::Ident(class) if self.text(class) == "Array")
+                    && self.text(method) == "isArray"
+                    && args.len() == 1 =>
+            {
+                let ast::Expr::Ident(name) = &args[0] else { return None };
+                (*name, Ty::Array)
+            }
+            _ => return None,
+        };
+        let name = self.text(&ident).to_string();
+        let slot = cx.lookup(&name)?;
+        if cx.locals[slot as usize] != Ty::Any || cx.boxed.contains(&slot) {
+            return None;
+        }
+        Some((name, slot, narrowed))
+    }
+
     /// Box a checked value to `Any` unless it already is (or is poisoned).
+    /// Unbox a dynamic value flowing into a typed primitive position so the
+    /// destination holds the primitive itself (not an `Any` carrier).
+    fn unbox_to(value: hir::Expr, target: Ty) -> hir::Expr {
+        if value.ty == Ty::Any && matches!(target, Ty::F64 | Ty::Boolean | Ty::String) {
+            let span = value.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                ty: target,
+                span,
+            };
+        }
+        value
+    }
+
     fn box_to_any(value: hir::Expr) -> hir::Expr {
         if value.ty == Ty::Any || value.ty.is_error() {
             value
@@ -4526,6 +4852,38 @@ impl Checker<'_> {
     /// A `Ty::String` HIR literal.
     fn string_literal(text: String, span: Span) -> hir::Expr {
         hir::Expr { kind: hir::ExprKind::String(text), ty: Ty::String, span }
+    }
+
+    /// `globalSet(name, box(value), false)` — store a module global.
+    fn global_set_expr(&self, name: &str, value: hir::Expr, span: Span) -> hir::Expr {
+        let (id, _) = zun_natives::resolve("collections", "globalSet")
+            .expect("globalSet intrinsic must exist");
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![
+                    Self::string_literal(name.to_string(), span),
+                    Self::box_to_any(value),
+                    hir::Expr { kind: hir::ExprKind::Boolean(false), ty: Ty::Boolean, span },
+                ],
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
+    /// `globalGet(name)` — read a module global (dynamic).
+    fn global_get_expr(&self, name: &str, span: Span) -> hir::Expr {
+        let (id, _) = zun_natives::resolve("collections", "globalGet")
+            .expect("globalGet intrinsic must exist");
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![Self::string_literal(name.to_string(), span)],
+            },
+            ty: Ty::Any,
+            span,
+        }
     }
 
     /// Lower an object literal's members (data properties, method shorthand,
@@ -4574,7 +4932,20 @@ impl Checker<'_> {
         };
         match property.kind {
             ast::PropertyKind::Init => {
-                let value = Self::box_to_any(self.check_expr(cx, &property.value));
+                let checked = self.check_expr(cx, &property.value);
+                // A function-valued data property (`{ f: () => 1 }`) lives in the
+                // object's function slot, exactly like method shorthand, so
+                // `obj.f()` and the `valueOf`/`toString` coercion hooks find it.
+                if let (Ty::Function(_), Some(name)) = (checked.ty, named_key.clone()) {
+                    if let Some(builtin) = self.resolve_collection(span, "dynamicSetFunction") {
+                        entries.push(hir::ObjectEntry::Install {
+                            builtin,
+                            args: vec![Self::string_literal(name, span), checked],
+                        });
+                        return;
+                    }
+                }
+                let value = Self::box_to_any(checked);
                 let key = match &property.key {
                     ast::PropertyKey::Computed(key) => {
                         hir::ObjectKey::Computed(self.check_expr(cx, key))
@@ -4852,7 +5223,7 @@ impl Checker<'_> {
                                     self.error(span, "number template conversion is unavailable");
                                     self.poison(span)
                                 }
-                            } else if matches!(value.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_))
+                            } else if !matches!(value.ty, Ty::String | Ty::Error | Ty::Void)
                                 && zun_natives::resolve("collections", "stringCoerce").is_some()
                             {
                                 let (id, _) = zun_natives::resolve("collections", "stringCoerce")
@@ -4950,6 +5321,11 @@ impl Checker<'_> {
                             let token = zun_natives::USER_CLASS_FLAG | (class_idx + 1);
                             return self.realm_descriptor_expr(token, span);
                         }
+                        // A module global (top-level `let`/`const`) read from any
+                        // scope resolves through `globalGet` (dynamic).
+                        if self.module_globals.contains(&text) {
+                            return self.global_get_expr(&text, span);
+                        }
                         self.error(span, format!("unknown variable `{text}`"));
                         self.poison(span)
                     }
@@ -4972,6 +5348,9 @@ impl Checker<'_> {
                                 format!("cannot assign {:?} to {slot_ty:?}", value.ty),
                             );
                         }
+                        // A dynamic value stored into a typed primitive slot is
+                        // unboxed so the slot holds the primitive itself.
+                        value = Self::unbox_to(value, slot_ty);
                         hir::Expr {
                             ty: slot_ty,
                             kind: if cx.boxed.contains(&slot) {
@@ -5009,6 +5388,11 @@ impl Checker<'_> {
                                 span,
                             };
                         }
+                        // Assignment to a module global (top-level `let`/`const`)
+                        // stores through `globalSet`.
+                        if self.module_globals.contains(&text) {
+                            return self.global_set_expr(&text, value, span);
+                        }
                         self.error(target.span, format!("unknown variable `{text}`"));
                         self.poison(span)
                     }
@@ -5026,6 +5410,107 @@ impl Checker<'_> {
                 // Let an integral number literal take on an Int sibling's type
                 // so `x + 1` type-checks when `x: int` (and vice versa).
                 unify_numeric_literal(&mut lhs, &mut rhs);
+                // A JS `number` (f64) meeting a fixed-width integer (e.g. a
+                // string `.length`) widens the integer to `number`.
+                if matches!(
+                    *op,
+                    ast::BinaryOp::Add
+                        | ast::BinaryOp::Sub
+                        | ast::BinaryOp::Mul
+                        | ast::BinaryOp::Div
+                        | ast::BinaryOp::Rem
+                        | ast::BinaryOp::Lt
+                        | ast::BinaryOp::Le
+                        | ast::BinaryOp::Gt
+                        | ast::BinaryOp::Ge
+                        | ast::BinaryOp::Eq
+                        | ast::BinaryOp::Ne
+                ) {
+                    let widen = |e: &mut hir::Expr| {
+                        let span = e.span;
+                        let inner = std::mem::replace(
+                            e,
+                            hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+                        );
+                        *e = hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(inner) },
+                            ty: Ty::F64,
+                            span,
+                        };
+                    };
+                    // Only the `u64` of `.length` widens implicitly; other
+                    // fixed-width integers still require an explicit conversion.
+                    let length_ty = Ty::Int(IntKind::U64);
+                    if lhs.ty == Ty::F64 && rhs.ty == length_ty {
+                        widen(&mut rhs);
+                    } else if rhs.ty == Ty::F64 && lhs.ty == length_ty {
+                        widen(&mut lhs);
+                    }
+                }
+                // JS loose equality (`==` / `!=` from the OXC front end).
+                // Operands of one primitive type compare like `===`; anything
+                // else (mixed types, `any`, objects) goes through the runtime
+                // IsLooselyEqual algorithm.
+                let strict_op;
+                let op = if matches!(op, ast::BinaryOp::LooseEq | ast::BinaryOp::LooseNe) {
+                    let negate = matches!(op, ast::BinaryOp::LooseNe);
+                    let simple = lhs.ty == rhs.ty
+                        && (lhs.ty == Ty::F64
+                            || lhs.ty == Ty::String
+                            || lhs.ty == Ty::Boolean
+                            || lhs.ty == Ty::BigInt
+                            || lhs.ty.is_int()
+                            || lhs.ty.is_float());
+                    if lhs.ty.is_error() || rhs.ty.is_error() {
+                        return self.poison(span);
+                    }
+                    if !simple {
+                        let Some((id, _)) = zun_natives::resolve("collections", "looseEquals")
+                        else {
+                            self.error(span, "missing `looseEquals` intrinsic");
+                            return self.poison(span);
+                        };
+                        let call = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::box_to_any(lhs), Self::box_to_any(rhs)],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                        return if negate {
+                            hir::Expr {
+                                kind: hir::ExprKind::Unary {
+                                    op: ast::UnaryOp::Not,
+                                    operand: Box::new(call),
+                                },
+                                ty: Ty::Boolean,
+                                span,
+                            }
+                        } else {
+                            call
+                        };
+                    }
+                    strict_op = if negate { ast::BinaryOp::Ne } else { ast::BinaryOp::Eq };
+                    &strict_op
+                } else {
+                    op
+                };
+                // Strict equality across different static types is simply
+                // `false` in JS (never an error): compare through `any`, where
+                // the runtime sees two unequal kinds.
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Ne)
+                    && lhs.ty != rhs.ty
+                    && !lhs.ty.is_error()
+                    && !rhs.ty.is_error()
+                    && lhs.ty != Ty::Any
+                    && rhs.ty != Ty::Any
+                    && !(matches!(lhs.ty, Ty::Function(_)) && matches!(rhs.ty, Ty::Function(_)))
+                    && !(matches!(lhs.ty, Ty::Instance(_)) && matches!(rhs.ty, Ty::Instance(_)))
+                {
+                    lhs = Self::box_to_any(lhs);
+                    rhs = Self::box_to_any(rhs);
+                }
                 if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
                     // `>>>` has no BigInt form in ECMAScript: it is a TypeError.
                     if let ast::BinaryOp::UShr = op {
@@ -5071,7 +5556,11 @@ impl Checker<'_> {
                 // exponent semantics, NaN/Infinity edges included). Integer `**`
                 // stays an IL opcode (`pow.i32`), lowered below via binary_result.
                 if let ast::BinaryOp::Pow = op {
-                    if lhs.ty == Ty::F64 && rhs.ty == Ty::F64 {
+                    // `number ** number`, and any `**` with a dynamic operand,
+                    // route to `Math.pow` (the dynamic side coerces to f64 at
+                    // run time). Pure-int `**` stays the `pow.i32` opcode below.
+                    let numberish = |t: Ty| t == Ty::F64 || t == Ty::Any;
+                    if numberish(lhs.ty) && numberish(rhs.ty) {
                         if let Some((id, native)) = zun_natives::resolve("math", "powNumber") {
                             return hir::Expr {
                                 kind: hir::ExprKind::CallBuiltin {
@@ -5095,8 +5584,10 @@ impl Checker<'_> {
                             || t == Ty::F64
                             || t == Ty::Boolean
                             || t == Ty::BigInt
+                            || t == Ty::Array
                             || matches!(t, Ty::Int(_))
                     };
+                    let numeric_ty = |t: Ty| t.is_int() || t.is_float();
                     // Route through the runtime `addAny` (ECMAScript
                     // ToPrimitive + string concat / numeric add) whenever an
                     // operand is object/any, or a string meets a non-string
@@ -5107,7 +5598,12 @@ impl Checker<'_> {
                         && operable(rhs.ty)
                         && (objectish(lhs.ty)
                             || objectish(rhs.ty)
-                            || (involves_string && lhs.ty != rhs.ty))
+                            || (involves_string && lhs.ty != rhs.ty)
+                            || (lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean)
+                            || (lhs.ty != rhs.ty
+                                && !(numeric_ty(lhs.ty) && numeric_ty(rhs.ty))
+                                && lhs.ty != Ty::BigInt
+                                && rhs.ty != Ty::BigInt))
                     {
                         if let Some((id, _)) = zun_natives::resolve("collections", "addAny") {
                             let to_any = |e: hir::Expr| {
@@ -5132,7 +5628,67 @@ impl Checker<'_> {
                         }
                     }
                 }
+                // Dynamic numeric operators (`-`, `*`, `/`, `%`) apply
+                // ECMAScript ToNumber to both operands when a non-numeric or
+                // dynamic operand is involved (`"5" * 2`, `+x`, `any - 1`), then
+                // run the ordinary f64 op. Same-type numeric operands keep their
+                // direct lowering below.
+                if matches!(
+                    *op,
+                    ast::BinaryOp::Sub
+                        | ast::BinaryOp::Mul
+                        | ast::BinaryOp::Div
+                        | ast::BinaryOp::Rem
+                        | ast::BinaryOp::BitAnd
+                        | ast::BinaryOp::BitOr
+                        | ast::BinaryOp::BitXor
+                        | ast::BinaryOp::Shl
+                        | ast::BinaryOp::Shr
+                        | ast::BinaryOp::UShr
+                ) {
+                    let numericish = |t: Ty| {
+                        matches!(t, Ty::Int(_)) || matches!(t, Ty::Float(_)) || t == Ty::F64
+                    };
+                    let needs_coerce = !lhs.ty.is_error()
+                        && !rhs.ty.is_error()
+                        && !(numericish(lhs.ty) && numericish(rhs.ty))
+                        && lhs.ty != Ty::BigInt
+                        && rhs.ty != Ty::BigInt;
+                    if needs_coerce {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") {
+                            let coerce = |e: hir::Expr| hir::Expr {
+                                span: e.span,
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![Self::box_to_any(e)],
+                                },
+                                ty: Ty::F64,
+                            };
+                            let lhs = coerce(lhs);
+                            let rhs = coerce(rhs);
+                            return hir::Expr {
+                                kind: hir::ExprKind::Binary {
+                                    op: *op,
+                                    lhs: Box::new(lhs),
+                                    rhs: Box::new(rhs),
+                                },
+                                ty: Ty::F64,
+                                span,
+                            };
+                        }
+                    }
+                }
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
+                // A logical/nullish operator whose result is dynamic keeps the
+                // deciding operand's value (value-preserving short-circuit), so
+                // both operands must be boxed to a uniform `any` carrier.
+                let (lhs, rhs) = if ty == Ty::Any
+                    && matches!(*op, ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
+                {
+                    (Self::box_to_any(lhs), Self::box_to_any(rhs))
+                } else {
+                    (lhs, rhs)
+                };
                 hir::Expr {
                     kind: hir::ExprKind::Binary {
                         op: *op,
@@ -5150,8 +5706,8 @@ impl Checker<'_> {
                 ..
             } => {
                 let condition = self.check_condition(cx, condition);
-                let when_true = self.check_expr(cx, when_true);
-                let when_false = self.check_expr(cx, when_false);
+                let mut when_true = self.check_expr(cx, when_true);
+                let mut when_false = self.check_expr(cx, when_false);
                 let ty = if when_true.ty == when_false.ty {
                     when_true.ty
                 } else if matches!(when_true.ty, Ty::Function(_))
@@ -5169,8 +5725,12 @@ impl Checker<'_> {
                     // the runtime value (token rid 0) and yields `any`.
                     Ty::Function(hir::DYNAMIC_FUNCTION)
                 } else {
-                    self.error(span, "conditional branches must have matching types");
-                    Ty::Error
+                    // Branches of differing types form a union, erased to a
+                    // dynamic value. Box both sides so the stack value is a
+                    // proper `any` carrier regardless of which branch runs.
+                    when_true = Self::box_to_any(when_true);
+                    when_false = Self::box_to_any(when_false);
+                    Ty::Any
                 };
                 hir::Expr {
                     kind: hir::ExprKind::Conditional {
@@ -5222,6 +5782,35 @@ impl Checker<'_> {
                         };
                     }
                 }
+                // `!x` on a non-boolean operand: JS ToBoolean first.
+                let operand = if matches!(op, ast::UnaryOp::Not)
+                    && operand.ty != Ty::Boolean
+                    && !operand.ty.is_error()
+                {
+                    match zun_natives::resolve("boolean", "booleanCoerce") {
+                        Some((id, _)) => {
+                            let operand_span = operand.span;
+                            hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![operand] },
+                                ty: Ty::Boolean,
+                                span: operand_span,
+                            }
+                        }
+                        None => operand,
+                    }
+                } else {
+                    operand
+                };
+                // `-x` / `~x` on a non-numeric operand: JS ToNumber first.
+                let operand = if matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot)
+                    && !operand.ty.is_int()
+                    && !operand.ty.is_float()
+                    && operand.ty != Ty::BigInt
+                {
+                    self.to_number_expr(operand)
+                } else {
+                    operand
+                };
                 let ty = match op {
                     // Negation keeps the operand's numeric type; `!` needs bool.
                     ast::UnaryOp::Neg if operand.ty.is_int() || operand.ty.is_float() => operand.ty,
@@ -5261,6 +5850,61 @@ impl Checker<'_> {
                 let name = self.text(callee).to_string();
                 if name == "super" {
                     return self.check_super_call(cx, None, args, span);
+                }
+                // Global `parseInt`/`parseFloat` are the same as their `Number.*`
+                // statics; route to that implementation when no user binding
+                // shadows the name.
+                if matches!(name.as_str(), "parseInt" | "parseFloat")
+                    && !self.by_name.contains_key(&name)
+                {
+                    return self.check_number_static(cx, &name, callee.span, args, span);
+                }
+                // `Object(x)`: primitives become their wrapper objects, anything
+                // already an object is returned unchanged.
+                if name == "Object"
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                    && args.len() == 1
+                {
+                    let arg = self.check_expr(cx, &args[0]);
+                    let wrapper_name = match arg.ty {
+                        Ty::F64 => Some("NumberObject"),
+                        Ty::Boolean => Some("BooleanObject"),
+                        _ => None,
+                    };
+                    if let Some(wrapper) =
+                        wrapper_name.and_then(|name| self.classes_by_name.get(name).copied())
+                    {
+                        return hir::Expr {
+                            kind: hir::ExprKind::New { class: wrapper, args: vec![arg] },
+                            ty: Ty::Instance(wrapper),
+                            span,
+                        };
+                    }
+                    return arg;
+                }
+                // Global `isNaN`/`isFinite` coerce with ToNumber first (unlike
+                // the strict `Number.*` predicates).
+                if matches!(name.as_str(), "isNaN" | "isFinite")
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                {
+                    if args.len() != 1 {
+                        self.error(span, format!("`{name}` expects 1 argument, found {}", args.len()));
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("number", &name) else {
+                        self.error(span, format!("missing Number intrinsic `{name}`"));
+                        return self.poison(span);
+                    };
+                    let mut arg = self.check_expr(cx, &args[0]);
+                    coerce_numeric_literal(&mut arg, Ty::F64);
+                    let arg = self.to_number_for_arg(arg);
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::Boolean,
+                        span,
+                    };
                 }
                 // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
                 if name == "Function"
@@ -5509,15 +6153,8 @@ impl Checker<'_> {
                     // `const { resolve } = Promise.withResolvers()` produces).
                     // Lowered like a generic `Function` callback (single arg).
                     if function_ty == Ty::Any {
-                        if args.len() != 1 {
-                            self.error(
-                                span,
-                                format!(
-                                    "a dynamic (`any`) callee expects exactly one argument, found {}",
-                                    args.len()
-                                ),
-                            );
-                        }
+                        // A dynamic callee may be invoked with any argument count
+                        // (JS); the counted indirect-call form carries the arity.
                         let callee_expr = hir::Expr {
                             kind: callee_kind(),
                             ty: function_ty,
@@ -6225,6 +6862,18 @@ impl Checker<'_> {
                             args,
                             span,
                         );
+                    }
+                    // `console.log/info/debug/error/warn(...)` are variadic in JS
+                    // (space-separated, each argument Node-formatted). The
+                    // prelude `console` method takes a single value, so intercept
+                    // here to format every argument through `ConsoleFormat.top`,
+                    // join with spaces, and print once.
+                    if class_name == "console" {
+                        if let Some(result) =
+                            self.check_console_variadic(cx, &self.text(method).to_string(), args, span)
+                        {
+                            return result;
+                        }
                     }
                     // `Reflect.*` reflection statics (`get set has deleteProperty
                     // ownKeys`). Surface-only namespace, recognized by receiver
@@ -7014,11 +7663,17 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 2 {
+                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 4 {
                     // Dynamic member call on an `any`/dynamic receiver (e.g. a
                     // namespace from `import()`, or an object-literal method in
                     // the function slot): dispatched by name at run time.
-                    let native_name = ["dynamicCall0", "dynamicCall1", "dynamicCall2"][args.len()];
+                    let native_name = [
+                        "dynamicCall0",
+                        "dynamicCall1",
+                        "dynamicCall2",
+                        "dynamicCall3",
+                        "dynamicCall4",
+                    ][args.len()];
                     let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
                         return self.poison(span);
@@ -7046,7 +7701,23 @@ impl Checker<'_> {
                     };
                     let mut acc = receiver;
                     for arg in args {
-                        let value = self.check_expr(cx, arg);
+                        let mut value = self.check_expr(cx, arg);
+                        // Non-string arguments are converted with ToString.
+                        if !value.ty.is_error() && value.ty != Ty::String {
+                            if let Some((coerce_id, _)) =
+                                zun_natives::resolve("collections", "stringCoerce")
+                            {
+                                let value_span = value.span;
+                                value = hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id: coerce_id,
+                                        args: vec![Self::box_to_any(value)],
+                                    },
+                                    ty: Ty::String,
+                                    span: value_span,
+                                };
+                            }
+                        }
                         if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::String) {
                             self.error(value.span, "`concat` expects string arguments");
                         }
@@ -7057,6 +7728,86 @@ impl Checker<'_> {
                         };
                     }
                     return acc;
+                }
+                // String methods called with JS-style arguments (optional,
+                // `undefined`, fractional/negative, untyped): the statically
+                // typed natives only accept exact integer/string arguments, so
+                // anything else goes through the dynamic `stringMethod` native,
+                // which applies full ToIntegerOrInfinity / ToString coercion.
+                if receiver.ty == Ty::String
+                    && matches!(
+                        mname.as_str(),
+                        "substring" | "substr" | "slice" | "indexOf" | "lastIndexOf" | "includes"
+                            | "startsWith" | "endsWith" | "padStart" | "padEnd" | "charAt" | "repeat"
+                            | "charCodeAt" | "codePointAt" | "at"
+                    )
+                    && args.len() <= 2
+                {
+                    let checked: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+                    let natural_literal = |e: &hir::Expr| {
+                        matches!(e.kind, hir::ExprKind::Number(v) if e.ty == Ty::F64 && v.fract() == 0.0 && v >= 0.0)
+                    };
+                    let static_ok = checked.iter().all(|e| !e.ty.is_error())
+                        && match mname.as_str() {
+                            "substring" => {
+                                checked.len() == 2
+                                    && checked.iter().all(|e| e.ty.is_int() || natural_literal(e))
+                            }
+                            "slice" => checked.iter().all(|e| e.ty == Ty::F64),
+                            "repeat" | "charCodeAt" | "codePointAt" => {
+                                checked.len() == 1 && (checked[0].ty.is_int() || natural_literal(&checked[0]))
+                            }
+                            "at" => checked.len() == 1 && checked[0].ty == Ty::F64,
+                            "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" => {
+                                checked.len() == 1 && checked[0].ty == Ty::String
+                            }
+                            _ => false,
+                        };
+                    if !static_ok && checked.iter().all(|e| !e.ty.is_error()) {
+                        let Some((id, _)) = zun_natives::resolve("collections", "stringMethod") else {
+                            self.error(span, "missing collection intrinsic `stringMethod`");
+                            return self.poison(span);
+                        };
+                        let undefined = |span| hir::Expr {
+                            kind: hir::ExprKind::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Number(0.0),
+                                    ty: Ty::F64,
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        let mut call_args = vec![
+                            receiver,
+                            hir::Expr {
+                                kind: hir::ExprKind::String(mname.clone()),
+                                ty: Ty::String,
+                                span: method.span,
+                            },
+                        ];
+                        let mut it = checked.into_iter();
+                        for _ in 0..2 {
+                            call_args.push(it.next().unwrap_or_else(|| undefined(span)));
+                        }
+                        let result_ty = match mname.as_str() {
+                            "indexOf" | "lastIndexOf" | "charCodeAt" | "codePointAt" => Ty::F64,
+                            "includes" | "startsWith" | "endsWith" => Ty::Boolean,
+                            _ => Ty::String,
+                        };
+                        let call = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(call) },
+                            ty: result_ty,
+                            span,
+                        };
+                    }
                 }
                 // `String.prototype.slice(start?, end?)` — negative indices
                 // count from the end (distinct from `substring`). An absent
@@ -7162,10 +7913,15 @@ impl Checker<'_> {
                     if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
                         return self.string_symbol_dispatch(span, 1.0, receiver, first, Some(replacement));
                     }
+                    if matches!(replacement.ty, Ty::Function(_))
+                        && matches!(first.ty, Ty::RegExp | Ty::String)
+                    {
+                        return self.replace_with_function(span, first, receiver, replacement, false);
+                    }
                     if replacement.ty != Ty::String && !replacement.ty.is_error() {
                         self.error(
                             replacement.span,
-                            "`replace` replacement must be a string (replace-with-function is not supported)",
+                            "`replace` replacement must be a string",
                         );
                         return self.poison(span);
                     }
@@ -7817,8 +8573,17 @@ impl Checker<'_> {
                     }
                     let receiver_is_string = receiver.ty == Ty::String;
                     let mut call_args = vec![receiver];
+                    let callback_receiver = call_args[0].ty == Ty::Array;
                     for (arg, expected_ty) in args.into_iter().zip(expected) {
+                        // Array callbacks receive boxed `(value, index, array)`
+                        // values, so unannotated callback parameters are untyped.
+                        if callback_receiver
+                            && expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION)
+                        {
+                            self.closure_param_hint = Some(vec![Ty::Any, Ty::Any, Ty::Any]);
+                        }
                         let mut value = self.check_expr(cx, arg);
+                        self.closure_param_hint = None;
                         coerce_numeric_literal(&mut value, expected_ty);
                         if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
                             self.error(
@@ -7892,6 +8657,51 @@ impl Checker<'_> {
                     return self.lower_function_reflective_call(
                         cx, receiver, &mname, func, args, span, method.span,
                     );
+                }
+                // JS-conformant `toFixed` / `toExponential` / `toPrecision` /
+                // `toString(radix)`: the raw argument is passed as `any` and
+                // coerced, range-checked (managed `RangeError`) and formatted
+                // exactly on the interpreter floor.
+                if receiver.ty == Ty::F64
+                    && matches!(
+                        mname.as_str(),
+                        "toFixed" | "toExponential" | "toPrecision" | "toString"
+                    )
+                    && args.len() <= 1
+                {
+                    let native_name = match mname.as_str() {
+                        "toFixed" => "numberToFixedJs",
+                        "toExponential" => "numberToExponentialJs",
+                        "toPrecision" => "numberToPrecisionJs",
+                        _ => "numberToStringRadixJs",
+                    };
+                    let Some((id, _)) = zun_natives::resolve("number", native_name) else {
+                        self.error(span, format!("missing Number intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let arg = match args.first() {
+                        Some(arg) => {
+                            let value = self.check_expr(cx, arg);
+                            Self::box_to_any(value)
+                        }
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Number(0.0),
+                                    ty: Ty::F64,
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        },
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, arg] },
+                        ty: Ty::String,
+                        span,
+                    };
                 }
                 // `number.toString(radix?)` — base-`radix` (2..=36) rendering,
                 // default 10. Intercepted before class dispatch so it supersedes
@@ -8106,37 +8916,128 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // String/Number/Array are primitives with no concatenated class
+                // (see PRELUDE_CLASSES): resolve a method not already handled by
+                // the tables above directly against its native group by name —
+                // covering every native method without re-listing each.
+                let primitive_group = match receiver.ty {
+                    Ty::String => Some(("string", "String")),
+                    Ty::F64 => Some(("number", "Number")),
+                    Ty::Array => Some(("array", "Array")),
+                    _ => None,
+                };
+                if receiver.ty == Ty::Array
+                    && matches!(
+                        mname.as_str(),
+                        "slice" | "indexOf" | "lastIndexOf" | "includes" | "reverse"
+                    )
+                    && !self.classes_by_name.contains_key("Array")
+                {
+                    if mname == "reverse" {
+                        let Some((id, _)) = zun_natives::resolve("array", "arrayReverse") else {
+                            self.error(span, "missing array intrinsic `arrayReverse`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                            ty: Ty::Array,
+                            span,
+                        };
+                    }
+                    let native_name = match mname.as_str() {
+                        "slice" => "arraySliceRange",
+                        "indexOf" => "arrayIndexOf",
+                        "lastIndexOf" => "arrayLastIndexOf",
+                        _ => "arrayIncludes",
+                    };
+                    let Some((id, native)) = zun_natives::resolve("array", native_name) else {
+                        self.error(span, format!("missing array intrinsic `{native_name}`"));
+                        return self.poison(span);
+                    };
+                    let is_slice = mname == "slice";
+                    let max_args = if is_slice { 2 } else { 2 };
+                    let min_args = if is_slice { 0 } else { 1 };
+                    if args.len() < min_args || args.len() > max_args {
+                        self.error(span, format!("`{mname}` called with a wrong number of arguments"));
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver];
+                    let mut rest = args.iter();
+                    if !is_slice {
+                        let needle = self.check_expr(cx, rest.next().expect("needle"));
+                        call_args.push(Self::box_to_any(needle));
+                    }
+                    let defaults = if is_slice {
+                        [0.0, f64::INFINITY]
+                    } else if mname == "lastIndexOf" {
+                        [f64::INFINITY, 0.0]
+                    } else {
+                        [0.0, 0.0]
+                    };
+                    let wanted = native.params.len() - call_args.len();
+                    for position in 0..wanted {
+                        let value = match rest.next() {
+                            Some(arg) => {
+                                let mut value = self.check_expr(cx, arg);
+                                coerce_numeric_literal(&mut value, Ty::F64);
+                                self.to_number_for_arg(value)
+                            }
+                            None => hir::Expr {
+                                kind: hir::ExprKind::Number(defaults[position]),
+                                ty: Ty::F64,
+                                span,
+                            },
+                        };
+                        call_args.push(value);
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        ty: native_ty(native.ret),
+                        span,
+                    };
+                }
+                if let Some((group, class_name)) = primitive_group {
+                    if !self.classes_by_name.contains_key(class_name) {
+                        // `string`/`number` natives are bare (`toUpperCase`);
+                        // `array` natives carry an `array` prefix (`arraySlice`).
+                        let native_name = if group == "array" {
+                            let mut chars = mname.chars();
+                            match chars.next() {
+                                Some(first) => format!("array{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                                None => mname.clone(),
+                            }
+                        } else {
+                            mname.clone()
+                        };
+                        if let Some((id, native)) = zun_natives::resolve(group, &native_name) {
+                            if native.params.len() == args.len() + 1 {
+                                let mut call_args = vec![receiver];
+                                for (arg, expected) in args
+                                    .iter()
+                                    .zip(native.params[1..].iter().map(|t| native_ty(*t)))
+                                {
+                                    let mut value = self.check_expr(cx, arg);
+                                    coerce_numeric_literal(&mut value, expected);
+                                    call_args.push(value);
+                                }
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                    ty: native_ty(native.ret),
+                                    span,
+                                };
+                            }
+                        }
+                        self.error(
+                            method.span,
+                            format!("no method `{mname}` on {class_name}"),
+                        );
+                        return self.poison(span);
+                    }
+                }
                 let class = match receiver.ty {
-                    Ty::String => match self.classes_by_name.get("String") {
-                        Some(&class) => class,
-                        None => {
-                            self.error(
-                                receiver.span,
-                                "String methods are not available without class String",
-                            );
-                            return self.poison(span);
-                        }
-                    },
-                    Ty::F64 => match self.classes_by_name.get("Number") {
-                        Some(&class) => class,
-                        None => {
-                            self.error(
-                                receiver.span,
-                                "Number methods are not available without class Number",
-                            );
-                            return self.poison(span);
-                        }
-                    },
-                    Ty::Array => match self.classes_by_name.get("Array") {
-                        Some(&class) => class,
-                        None => {
-                            self.error(
-                                receiver.span,
-                                "Array methods are not available without class Array",
-                            );
-                            return self.poison(span);
-                        }
-                    },
+                    Ty::String => self.classes_by_name["String"],
+                    Ty::F64 => self.classes_by_name["Number"],
+                    Ty::Array => self.classes_by_name["Array"],
                     Ty::Instance(c) => c,
                     Ty::Error => return self.poison(span),
                     other => {
@@ -8438,9 +9339,23 @@ impl Checker<'_> {
             ast::Expr::Cast { expr, ty, .. } => {
                 let value = self.check_expr(cx, expr);
                 let target = self.resolve_annotation(ty);
+                // `x as any` is a widening assertion: box a concrete value into
+                // the dynamic carrier (a value already `any` passes through).
+                if target == Ty::Any {
+                    return if value.ty == Ty::Any || value.ty.is_error() {
+                        value
+                    } else {
+                        hir::Expr {
+                            span,
+                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            ty: Ty::Any,
+                        }
+                    };
+                }
                 // Numeric conversions may also explicitly unbox an `any` value.
                 let numeric = |t: Ty| t.is_int() || t.is_float();
                 if !value.ty.is_error()
+                    && value.ty != target
                     && !((numeric(value.ty) && numeric(target))
                         || (value.ty == Ty::Any
                             && (numeric(target)
@@ -8800,6 +9715,28 @@ impl Checker<'_> {
                             // (a buffer) falls through to the view path below.
                             if !matches!(kind, hir::BufferViewKind::DataView) && args.len() == 1 {
                                 let mut length = self.check_expr(cx, &args[0]);
+                                // `new Float64Array([1, 2, 3])` copies an array (or
+                                // another typed array) like `<Kind>Array.from`.
+                                if matches!(length.ty, Ty::Array | Ty::BufferView(_)) {
+                                    if let (Some(discriminant), Some((id, _))) = (
+                                        crate::typed_arrays::element_index(kind),
+                                        zun_natives::resolve("buffer", "typedArrayFrom"),
+                                    ) {
+                                        let kind_lit = hir::Expr {
+                                            kind: hir::ExprKind::Number(discriminant as f64),
+                                            ty: Ty::Int(IntKind::U32),
+                                            span,
+                                        };
+                                        return hir::Expr {
+                                            kind: hir::ExprKind::CallBuiltin {
+                                                id,
+                                                args: vec![length, kind_lit],
+                                            },
+                                            ty: Ty::BufferView(kind),
+                                            span,
+                                        };
+                                    }
+                                }
                                 if length.ty.is_int() || matches!(length.ty, Ty::Float(_)) {
                                     coerce_numeric_literal(&mut length, Ty::INT);
                                     let elem = crate::typed_arrays::element_size(kind).unwrap_or(1);
@@ -9208,6 +10145,35 @@ impl Checker<'_> {
                 // `new Boolean(x)`: the wrapper object. Lowered to
                 // `new BooleanObject(<truthiness of x>)` (the prelude class in
                 // `builtin/boolean.zun`); bare `Boolean(x)` stays a primitive.
+                // `new Number(x)`: the wrapper object, lowered to
+                // `new NumberObject(<ToNumber of x>)`.
+                if name == "Number" && !self.classes_by_name.contains_key(&name) {
+                    let Some(&wrapper) = self.classes_by_name.get("NumberObject") else {
+                        self.error(class.span, "missing `NumberObject` wrapper class");
+                        return self.poison(span);
+                    };
+                    if args.len() > 1 {
+                        self.error(span, "`Number` expects at most one argument");
+                        return self.poison(span);
+                    }
+                    let value = match args.first() {
+                        None => hir::Expr {
+                            kind: hir::ExprKind::Number(0.0),
+                            ty: Ty::F64,
+                            span,
+                        },
+                        Some(arg) => {
+                            let mut arg = self.check_expr(cx, arg);
+                            coerce_numeric_literal(&mut arg, Ty::F64);
+                            self.to_number_for_arg(arg)
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::New { class: wrapper, args: vec![value] },
+                        ty: Ty::Instance(wrapper),
+                        span,
+                    };
+                }
                 if name == "Boolean" && !self.classes_by_name.contains_key(&name) {
                     let Some(&wrapper) = self.classes_by_name.get("BooleanObject") else {
                         self.error(class.span, "missing `BooleanObject` wrapper class");
@@ -9810,9 +10776,7 @@ impl Checker<'_> {
                 if object.ty != Ty::Array && !object.ty.is_error() {
                     self.error(object.span, "indexing requires an Array");
                 }
-                if !index.ty.is_int() && !index.ty.is_error() {
-                    self.error(index.span, "array index must be an integer");
-                }
+                let index = self.coerce_array_index(index);
                 hir::Expr {
                     kind: hir::ExprKind::ArrayGet {
                         object: Box::new(object),
@@ -9873,6 +10837,16 @@ impl Checker<'_> {
                         let mut value = self.check_expr(cx, value);
                         let value_ty = value.ty;
                         coerce_numeric_literal(&mut value, elem_ty);
+                        // A JS `number` stored into an integer element is
+                        // converted (NaN -> 0, truncation) like a typed-array set.
+                        if elem_ty.is_int() && value.ty == Ty::F64 {
+                            let value_span = value.span;
+                            value = hir::Expr {
+                                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                                ty: elem_ty,
+                                span: value_span,
+                            };
+                        }
                         if !value.ty.is_error() && !self.is_assignable(value.ty, elem_ty) {
                             self.error(value.span, format!("buffer element must be {elem_ty:?}"));
                         }
@@ -9899,9 +10873,7 @@ impl Checker<'_> {
                 if object.ty != Ty::Array && !object.ty.is_error() {
                     self.error(object.span, "indexing requires an Array");
                 }
-                if !index.ty.is_int() && !index.ty.is_error() {
-                    self.error(index.span, "array index must be an integer");
-                }
+                let index = self.coerce_array_index(index);
                 hir::Expr {
                     kind: hir::ExprKind::ArraySet {
                         object: Box::new(object),
@@ -10139,7 +11111,10 @@ impl Checker<'_> {
                             hir::DYNAMIC_PREDICATE => (1, Ty::Boolean),
                             _ => (1, Ty::Any),
                         };
-                        if args.len() != expected {
+                        // A plain dynamic function value accepts any argument
+                        // count (JS); only the fixed-shape predicate/reducer
+                        // callbacks enforce their arity.
+                        if func != hir::DYNAMIC_FUNCTION && args.len() != expected {
                             self.error(
                                 span,
                                 format!("dynamic function value expects {expected} argument(s), found {}", args.len()),
@@ -10620,19 +11595,22 @@ impl Checker<'_> {
         };
         match op {
             Nullish => {
+                // `a ?? b` yields `b`'s type when `a` is dynamic; any other
+                // operand pairing coerces through the dynamic path (JS).
                 if lhs.ty == Ty::Any {
                     rhs.ty
                 } else {
-                    self.error(span, "left operand of `??` must be nullable");
-                    Ty::Error
+                    Ty::Any
                 }
             }
             And | Or => {
+                // Boolean operands keep a boolean result; otherwise the
+                // operator follows JS truthiness over arbitrary values and the
+                // result is dynamic.
                 if lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean {
                     Ty::Boolean
                 } else {
-                    self.error(span, "logical operators require boolean operands");
-                    Ty::Error
+                    Ty::Any
                 }
             }
             Add => {
@@ -10649,6 +11627,9 @@ impl Checker<'_> {
             Sub | Mul | Div | Rem => {
                 if same_numeric(lhs.ty, rhs.ty) {
                     lhs.ty
+                } else if lhs.ty == Ty::Any || rhs.ty == Ty::Any {
+                    // A dynamic operand arithmetically coerces at run time (JS).
+                    Ty::Any
                 } else {
                     self.error(
                         span,
@@ -10688,6 +11669,9 @@ impl Checker<'_> {
                 let both_number = lhs.ty == Ty::F64 && rhs.ty == Ty::F64;
                 if both_int || both_number {
                     lhs.ty
+                } else if lhs.ty == Ty::Any || rhs.ty == Ty::Any {
+                    // A dynamic operand is coerced to int32/uint32 at run time (JS).
+                    Ty::Any
                 } else {
                     self.error(
                         span,
@@ -10719,7 +11703,7 @@ impl Checker<'_> {
                     Ty::Error
                 }
             }
-            Eq | Ne => {
+            Eq | Ne | LooseEq | LooseNe => {
                 // Any two function values are comparable by reference identity,
                 // even with different signatures (distinct `Function(_)` types):
                 // different functions are simply unequal. A dynamic (`any`)
@@ -10803,7 +11787,8 @@ fn stmt_returns_value(stmt: &ast::Stmt) -> bool {
         ast::Stmt::While { body, .. }
         | ast::Stmt::DoWhile { body, .. }
         | ast::Stmt::For { body, .. }
-        | ast::Stmt::ForOf { body, .. } => block_returns_value(body),
+        | ast::Stmt::ForOf { body, .. }
+        | ast::Stmt::ForIn { body, .. } => block_returns_value(body),
         ast::Stmt::Labeled { statement, .. } => stmt_returns_value(statement),
         ast::Stmt::Try { body, catches, finally, .. } => {
             block_returns_value(body)
@@ -10832,6 +11817,7 @@ fn count_yields_in_stmt(stmt: &ast::Stmt) -> usize {
         DoWhile { body, cond, .. } => count_yields_in_block(body) + count_yields_in_expr(cond),
         For { init, cond, update, body, .. } => init.as_deref().map_or(0, count_yields_in_stmt) + cond.as_ref().map_or(0, count_yields_in_expr) + update.as_ref().map_or(0, count_yields_in_expr) + count_yields_in_block(body),
         ForOf { iterable, body, .. } => count_yields_in_expr(iterable) + count_yields_in_block(body),
+        ForIn { object, body, .. } => count_yields_in_expr(object) + count_yields_in_block(body),
         Labeled { statement, .. } => count_yields_in_stmt(statement),
         Break { .. } | Continue { .. } => 0,
         Return { value, .. } => value.as_ref().map_or(0, count_yields_in_expr),
@@ -10906,6 +11892,7 @@ fn count_awaits_in_stmt(stmt: &ast::Stmt) -> usize {
                 + count_awaits_in_block(body)
         }
         ForOf { iterable, body, .. } => count_awaits_in_expr(iterable) + count_awaits_in_block(body),
+        ForIn { object, body, .. } => count_awaits_in_expr(object) + count_awaits_in_block(body),
         Labeled { statement, .. } => count_awaits_in_stmt(statement),
         Break { .. } | Continue { .. } => 0,
         Return { value, .. } => value.as_ref().map_or(0, count_awaits_in_expr),
