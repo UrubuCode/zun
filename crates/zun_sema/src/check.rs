@@ -8269,7 +8269,7 @@ impl Checker<'_> {
                     (Ty::Array, "keys") => Some(("arrayKeys", Ty::Any, vec![])),
                     (Ty::Array, "values") => Some(("arrayValues", Ty::Any, vec![])),
                     (Ty::Array, "entries") => Some(("arrayEntries", Ty::Any, vec![])),
-                    (Ty::Map, "set") => Some(("mapSet", Ty::Void, vec![Ty::Any, Ty::Any])),
+                    (Ty::Map, "set") => Some(("mapSetChain", Ty::Map, vec![Ty::Any, Ty::Any])),
                     (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Map, "size") => Some(("mapSize", Ty::Int(IntKind::U64), vec![])),
@@ -8283,7 +8283,7 @@ impl Checker<'_> {
                         Ty::Void,
                         vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
                     )),
-                    (Ty::Set, "add") => Some(("setAdd", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::Set, "add") => Some(("setAddChain", Ty::Set, vec![Ty::Any])),
                     (Ty::Set, "has") => Some(("setHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),
                     (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
@@ -8542,11 +8542,11 @@ impl Checker<'_> {
                     let mut call_args = vec![receiver];
                     let callback_receiver = call_args[0].ty == Ty::Array;
                     for (arg, expected_ty) in args.into_iter().zip(expected) {
-                        // Array callbacks receive boxed `(value, index, array)`
-                        // values, so unannotated callback parameters are untyped.
-                        if callback_receiver
-                            && expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION)
-                        {
+                        // A JS callback `(value, index, collection)` has dynamic
+                        // parameters, so hint unannotated callback params to
+                        // `any` (whether the receiver is an Array, Map, or Set).
+                        let _ = callback_receiver;
+                        if expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION) {
                             self.closure_param_hint = Some(vec![Ty::Any, Ty::Any, Ty::Any]);
                         }
                         let mut value = self.check_expr(cx, arg);
@@ -10584,13 +10584,13 @@ impl Checker<'_> {
                 let object = self.check_expr(cx, object);
                 let name = self.text(method).to_string();
                 let (native_name, return_ty, expected) = match (object.ty, name.as_str()) {
-                    (Ty::Map, "set") => ("mapSet", Ty::Void, vec![Ty::Any, Ty::Any]),
+                    (Ty::Map, "set") => ("mapSetChain", Ty::Map, vec![Ty::Any, Ty::Any]),
                     (Ty::Map, "get") => ("mapGet", Ty::Any, vec![Ty::Any]),
                     (Ty::Map, "has") => ("mapHas", Ty::Boolean, vec![Ty::Any]),
                     (Ty::Map, "size") => ("mapSize", Ty::Int(IntKind::U64), vec![]),
                     (Ty::Map, "delete") => ("mapDelete", Ty::Boolean, vec![Ty::Any]),
                     (Ty::Map, "clear") => ("mapClear", Ty::Void, vec![]),
-                    (Ty::Set, "add") => ("setAdd", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::Set, "add") => ("setAddChain", Ty::Set, vec![Ty::Any]),
                     (Ty::Set, "has") => ("setHas", Ty::Boolean, vec![Ty::Any]),
                     (Ty::Set, "size") => ("setSize", Ty::Int(IntKind::U64), vec![]),
                     (Ty::Set, "delete") => ("setDelete", Ty::Boolean, vec![Ty::Any]),

@@ -568,6 +568,10 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "replaceFn", params: &[Opaque, Str, Function, Bool], ret: Str, imp: unavailable },
         // ECMAScript IsLooselyEqual (`==`) on two `any` operands.
         NativeFn { name: "looseEquals", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        // JS-chaining forms: `Map.prototype.set` / `Set.prototype.add` return the
+        // receiver. Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "mapSetChain", params: &[Map, Opaque, Opaque], ret: Map, imp: unavailable },
+        NativeFn { name: "setAddChain", params: &[Set, Opaque], ret: Set, imp: unavailable },
     ],
 };
 
