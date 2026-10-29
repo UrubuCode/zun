@@ -33,6 +33,12 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
                     | Ty::WeakRef
             ) => JitKind::Object,
         None if ty == Ty::Array => JitKind::Array,
+        // NOTE: `Ty::Function` stays `Other` here. The language does not express
+        // calling a stored function value (`f(n)` on a local is rejected by sema
+        // as "unknown function"), so a `Function`-typed local never reaches the
+        // JIT; only the transient `(expr)(args)` form does, and that carries the
+        // function value on the operand stack, not in a local. Stored/closure
+        // function values need sema support first.
         None => JitKind::Other,
     };
     kind.to_byte()

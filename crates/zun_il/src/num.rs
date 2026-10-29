@@ -117,7 +117,8 @@ impl JitKind {
             JitKind::Object => 11,
             JitKind::String => 12,
             JitKind::Array => 13,
-            JitKind::Function => 14,
+            // 14 is reserved for the interpreter's `FIELD_ANY` side-table code.
+            JitKind::Function => 15,
             JitKind::Other => 255,
         }
     }
@@ -129,7 +130,7 @@ impl JitKind {
             11 => JitKind::Object,
             12 => JitKind::String,
             13 => JitKind::Array,
-            14 => JitKind::Function,
+            15 => JitKind::Function,
             255 => JitKind::Other,
             n => match NumKind::from_imm(n as i32) {
                 Some(k) => JitKind::Num(k),
