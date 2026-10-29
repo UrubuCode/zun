@@ -1769,6 +1769,9 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
+            "bigIntUshr" => Err(RunError::Native(
+                "TypeError: BigInts have no unsigned right shift, use >> instead".into(),
+            )),
             "bigIntPow" | "bigIntAnd" | "bigIntOr" | "bigIntXor" | "bigIntShl" | "bigIntShr" => {
                 let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -2809,6 +2812,70 @@ impl<'a> Interp<'a> {
                 // "number": call `[Symbol.toPrimitive]("number")` if present and
                 // ToNumber its result, else ToNumber of its string coercion.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let number = self.to_number_value(value)?;
+                Ok(Value::Float(number, zun_il::NumKind::F64))
+            }
+            "mathApply" => {
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(text) => text.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let array = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Object(obj) => Some(obj),
+                    _ => None,
+                };
+                let elements: Vec<zun_core::Any> = match array {
+                    Some(obj) => zun_gc::with_current_heap(|heap| {
+                        let length = heap.array_len(obj).unwrap_or(0);
+                        (0..length)
+                            .map(|i| heap.array_get(obj, i).unwrap_or_else(zun_core::Any::void))
+                            .collect()
+                    }),
+                    None => Vec::new(),
+                };
+                let mut numbers = Vec::with_capacity(elements.len());
+                for any in elements {
+                    if any.tag() == zun_core::AnyTag::Symbol {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert a Symbol value to a number".into(),
+                        ));
+                    }
+                    let value = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .ok_or(RunError::BadToken)?;
+                    if let Value::Object(obj) = &value {
+                        if zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_some()) {
+                            return Err(RunError::Native(
+                                "TypeError: Cannot convert a BigInt value to a number".into(),
+                            ));
+                        }
+                    }
+                    numbers.push(self.to_number_value(value)?);
+                }
+                let result = zun_natives::apply_math(&name, &numbers).unwrap_or(f64::NAN);
+                Ok(Value::Float(result, zun_il::NumKind::F64))
+            }
+            "numberCoerceStrict" => {
+                let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let is_bigint = match &value {
+                    Value::Object(obj) => {
+                        zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_some())
+                    }
+                    _ => false,
+                };
+                let is_symbol = matches!(
+                    args.first(),
+                    Some(Value::Any(any)) if any.tag() == zun_core::AnyTag::Symbol
+                );
+                if is_bigint {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot convert a BigInt value to a number".into(),
+                    ));
+                }
+                if is_symbol {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot convert a Symbol value to a number".into(),
+                    ));
+                }
                 let number = self.to_number_value(value)?;
                 Ok(Value::Float(number, zun_il::NumKind::F64))
             }
@@ -6568,6 +6635,12 @@ impl<'a> Interp<'a> {
         obj: zun_gc::Obj,
         hint: &str,
     ) -> Result<Option<Value>, RunError> {
+        // A BigInt is a primitive: its string form is its decimal digits (the
+        // number hint parses them back). Checked first so the heap object's
+        // reserved type id never reaches the class-method tables.
+        if let Some(text) = zun_gc::with_current_heap(|heap| heap.bigint_value(obj).map(|v| v.to_string())) {
+            return Ok(Some(Value::Str(text.into())));
+        }
         let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
         let handle = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(obj, tp))
             .or_else(|| self.class_symbol_methods.get(&(obj.type_rid(), tp.get())).copied());

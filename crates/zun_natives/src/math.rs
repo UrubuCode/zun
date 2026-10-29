@@ -34,6 +34,80 @@ fn sign(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
     Ok(NativeValue::Float(result))
 }
 
+/// `Math.min` of two numbers: NaN propagates, `-0` is smaller than `+0`.
+pub fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == 0.0 && b == 0.0 {
+        if a.is_sign_negative() { a } else { b }
+    } else if a < b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `Math.max` of two numbers: NaN propagates, `+0` is larger than `-0`.
+pub fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a == 0.0 && b == 0.0 {
+        if a.is_sign_positive() { a } else { b }
+    } else if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `Math.<name>.apply(null, values)`: variadic `min`/`max`/`hypot` fold over
+/// all values; fixed-arity functions use the leading values (missing = NaN).
+/// Returns `None` for an unknown function name.
+pub fn apply_math(name: &str, values: &[f64]) -> Option<f64> {
+    match name {
+        "min" => return Some(values.iter().fold(f64::INFINITY, |acc, &v| js_min(acc, v))),
+        "max" => return Some(values.iter().fold(f64::NEG_INFINITY, |acc, &v| js_max(acc, v))),
+        "hypot" => {
+            if values.iter().any(|v| v.is_infinite()) {
+                return Some(f64::INFINITY);
+            }
+            if values.iter().any(|v| v.is_nan()) {
+                return Some(f64::NAN);
+            }
+            let max = values.iter().fold(0.0f64, |acc, v| acc.max(v.abs()));
+            if max == 0.0 {
+                return Some(0.0);
+            }
+            // Scaled Kahan summation, as in V8's MathHypot.
+            let mut sum = 0.0f64;
+            let mut compensation = 0.0f64;
+            for v in values {
+                let n = v.abs() / max;
+                let summand = n * n - compensation;
+                let preliminary = sum + summand;
+                compensation = (preliminary - sum) - summand;
+                sum = preliminary;
+            }
+            return Some(sum.sqrt() * max);
+        }
+        _ => {}
+    }
+    let native_name = if name == "abs" { "abs".to_string() } else { format!("{name}Number") };
+    let (_, native) = crate::resolve("math", &native_name)?;
+    let mut args: Vec<NativeArg> = Vec::new();
+    for i in 0..native.params.len() {
+        args.push(NativeArg::Float(values.get(i).copied().unwrap_or(f64::NAN)));
+    }
+    struct NullSink;
+    impl Sink for NullSink {
+        fn println(&mut self, _line: &str) {}
+    }
+    match (native.imp)(&args, &mut NullSink) {
+        Ok(NativeValue::Float(v)) => Some(v),
+        _ => None,
+    }
+}
+
 fn min(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let left = float_arg(args, "min")?;
     let right = match args.get(1) {
@@ -41,7 +115,7 @@ fn min(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("min: expected two numbers".to_string())),
     };
-    Ok(NativeValue::Float(left.min(right)))
+    Ok(NativeValue::Float(js_min(left, right)))
 }
 
 fn max(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -51,7 +125,7 @@ fn max(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("max: expected two numbers".to_string())),
     };
-    Ok(NativeValue::Float(left.max(right)))
+    Ok(NativeValue::Float(js_max(left, right)))
 }
 
 fn receiver_value(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -186,7 +260,42 @@ fn acosh(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
 }
 
 fn atanh(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    unary_float(args, "atanh", f64::atanh)
+    unary_float(args, "atanh", fdlibm_atanh)
+}
+
+/// fdlibm `atanh`: computed on `|x|` and sign-restored, so it is exactly odd
+/// (Rust's `f64::atanh` is not symmetric for negative inputs).
+fn fdlibm_atanh(x: f64) -> f64 {
+    let a = x.abs();
+    let value = if a < 0.5 {
+        let t = a + a;
+        0.5 * (t + t * a / (1.0 - a)).ln_1p()
+    } else {
+        0.5 * ((a + a) / (1.0 - a)).ln_1p()
+    };
+    if a > 1.0 || x.is_nan() {
+        return f64::NAN;
+    }
+    if a == 1.0 {
+        return f64::INFINITY.copysign(x);
+    }
+    value.copysign(x)
+}
+
+fn asin(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "asin", f64::asin)
+}
+
+fn acos(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "acos", f64::acos)
+}
+
+fn atan(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "atan", f64::atan)
+}
+
+fn fround(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    unary_float(args, "fround", |x| x as f32 as f64)
 }
 
 fn tan(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -210,7 +319,7 @@ fn hypot(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("hypot: expected two numbers".to_string())),
     };
-    Ok(NativeValue::Float(left.hypot(right)))
+    Ok(NativeValue::Float(apply_math("hypot", &[left, right]).unwrap_or(f64::NAN)))
 }
 
 /// The runtime-backed numeric portion of the standard library.
@@ -439,5 +548,9 @@ pub const MODULE: crate::Module = crate::Module {
             ret: F64,
             imp: clz32,
         },
+        NativeFn { name: "asinNumber", params: &[F64], ret: F64, imp: asin },
+        NativeFn { name: "acosNumber", params: &[F64], ret: F64, imp: acos },
+        NativeFn { name: "atanNumber", params: &[F64], ret: F64, imp: atan },
+        NativeFn { name: "froundNumber", params: &[F64], ret: F64, imp: fround },
     ],
 };

@@ -1232,7 +1232,19 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             for argument in &call.arguments {
                 args.push(convert_argument(source, argument)?);
             }
-            match &call.callee {
+            // Strip parentheses and `as` casts around the callee so
+            // `(Math.sqrt as any)(x)` is the plain call `Math.sqrt(x)`.
+            let mut callee_expression = &call.callee;
+            loop {
+                match callee_expression {
+                    Expression::ParenthesizedExpression(inner) => {
+                        callee_expression = &inner.expression
+                    }
+                    Expression::TSAsExpression(inner) => callee_expression = &inner.expression,
+                    _ => break,
+                }
+            }
+            match callee_expression {
                 // `super(args)`: the callee name is the source text `super`.
                 Expression::Super(super_expression) => Ok(Expr::Call {
                     callee: Name {
