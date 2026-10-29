@@ -195,7 +195,9 @@ fn prevent_default_makes_dispatch_return_false() {
         console.log(t.dispatchEvent(ev));
         console.log(ev.defaultPrevented);
     }"#);
-    assert_eq!(out.lines, ["false", "false", "true"]);
+    // `new Event("x")` is non-cancelable, so `preventDefault()` is a no-op and
+    // `dispatchEvent` returns `true` (matches Node/Bun).
+    assert_eq!(out.lines, ["false", "true", "false"]);
 }
 
 #[test]
