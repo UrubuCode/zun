@@ -198,10 +198,15 @@ fn convert_declarator(
     declarator: &oxc_ast::ast::VariableDeclarator<'_>,
 ) -> Result<Stmt, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
-    let Some(initializer) = declarator.init.as_ref() else {
-        return Err("OXC adapter requires an initializer for local bindings".into());
+    // An uninitialized binding (`let x;`) defaults to `undefined` (`void 0`).
+    let init = match declarator.init.as_ref() {
+        Some(initializer) => convert_expression(source, initializer)?,
+        None => Expr::Unary {
+            op: crate::ast::UnaryOp::Void,
+            operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+            span: span(declarator.span),
+        },
     };
-    let init = convert_expression(source, initializer)?;
     match &declarator.id {
         BindingPattern::BindingIdentifier(identifier) => Ok(Stmt::Let {
             name: Name { span: span(identifier.span) },
