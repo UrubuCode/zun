@@ -1359,19 +1359,24 @@ impl Checker<'_> {
                 .params
                 .iter()
                 .map(|p| match &p.ty {
+                    // An unannotated parameter is untyped (`any`), as in JS/TS
+                    // without `--noImplicitAny`; types are erased anyway.
                     Some(t) => self.resolve_annotation(t),
-                    None => {
-                        self.error(
-                            p.name.span,
-                            "phase 1 requires a type annotation on every parameter",
-                        );
-                        Ty::Error
-                    }
+                    None => Ty::Any,
                 })
                 .collect();
             let return_ty = match &f.return_type {
                 Some(t) => self.resolve_annotation(t),
-                None => Ty::Void,
+                // An unannotated return type is `any` when the body returns a
+                // value, else `void` — so a value-returning JS function is not
+                // forced to `void` (which would reject every `return x`).
+                None => {
+                    if block_returns_value(&f.body) {
+                        Ty::Any
+                    } else {
+                        Ty::Void
+                    }
+                }
             };
             self.signatures.push(Signature {
                 name,
@@ -10605,7 +10610,13 @@ impl Checker<'_> {
                 }
             }
             Lt | Le | Gt | Ge => {
-                if same_numeric(lhs.ty, rhs.ty) {
+                // A dynamic (`any`) operand compares at run time (JS relational
+                // coercion); otherwise both sides must be the same number type.
+                if same_numeric(lhs.ty, rhs.ty)
+                    || lhs.ty == Ty::Any
+                    || rhs.ty == Ty::Any
+                    || (lhs.ty == Ty::String && rhs.ty == Ty::String)
+                {
                     Ty::Boolean
                 } else {
                     self.error(
@@ -10621,10 +10632,16 @@ impl Checker<'_> {
             Eq | Ne => {
                 // Any two function values are comparable by reference identity,
                 // even with different signatures (distinct `Function(_)` types):
-                // different functions are simply unequal.
+                // different functions are simply unequal. A dynamic (`any`)
+                // operand makes the comparison run-time (JS allows comparing any
+                // two values), so it is accepted against anything.
                 let both_functions =
                     matches!(lhs.ty, Ty::Function(_)) && matches!(rhs.ty, Ty::Function(_));
-                if lhs.ty == rhs.ty || both_functions {
+                if lhs.ty == rhs.ty
+                    || both_functions
+                    || lhs.ty == Ty::Any
+                    || rhs.ty == Ty::Any
+                {
                     Ty::Boolean
                 } else {
                     self.error(
@@ -10677,6 +10694,34 @@ fn buffer_accessor_native(method: &str) -> String {
     let mut chars = method.chars();
     let first = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or_default();
     format!("nodeBuffer{first}{}", chars.as_str())
+}
+
+/// Whether a function body has a `return <value>` (so an unannotated return
+/// type infers to `any` rather than `void`). Recurses into control-flow blocks
+/// but not into expressions, so a nested closure's returns are excluded.
+fn block_returns_value(block: &ast::Block) -> bool {
+    block.statements.iter().any(stmt_returns_value)
+}
+
+fn stmt_returns_value(stmt: &ast::Stmt) -> bool {
+    match stmt {
+        ast::Stmt::Return { value: Some(_), .. } => true,
+        ast::Stmt::If { then_block, else_block, .. } => {
+            block_returns_value(then_block)
+                || else_block.as_ref().is_some_and(block_returns_value)
+        }
+        ast::Stmt::While { body, .. }
+        | ast::Stmt::DoWhile { body, .. }
+        | ast::Stmt::For { body, .. }
+        | ast::Stmt::ForOf { body, .. } => block_returns_value(body),
+        ast::Stmt::Labeled { statement, .. } => stmt_returns_value(statement),
+        ast::Stmt::Try { body, catches, finally, .. } => {
+            block_returns_value(body)
+                || catches.iter().any(|clause| block_returns_value(&clause.body))
+                || finally.as_ref().is_some_and(block_returns_value)
+        }
+        _ => false,
+    }
 }
 
 fn count_awaits_in_block(block: &ast::Block) -> usize {
