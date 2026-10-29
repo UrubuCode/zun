@@ -19,9 +19,9 @@ use std::cell::RefCell;
 
 use zun_codegen::JitKind;
 use zun_interp::value::Value;
-use zun_interp::{run_method_on_current_heap, Output, RunError};
-use zun_loader::{ModuleLoader, ModuleScope};
-use zun_module::read_body;
+use zun_interp::{run_method_on_current_heap_bare, Output, RunError};
+use zun_loader::ModuleLoader;
+use zun_module::{read_body, Module};
 
 use crate::jit_hook::{pack_value, unpack_value};
 
@@ -47,13 +47,12 @@ pub(crate) const STATUS_THREW: u32 = 1;
 /// unpacked and the result packed in short heap borrows that never overlap the
 /// interpreter call, which manages the heap itself.
 pub(crate) fn bridge_call(
-    scope: &ModuleScope,
-    loader: &ModuleLoader,
+    module: &Module,
+    loader: Option<&ModuleLoader>,
     output: &mut dyn Output,
     rid: u32,
     packed_args: &[u64],
 ) -> Result<BridgeOutcome, RunError> {
-    let module = scope.module();
     let method = module
         .tables
         .method_defs
@@ -84,7 +83,7 @@ pub(crate) fn bridge_call(
         .map(|(&bits, &kind)| unpack_value(bits, Some(kind), unsafe { &*heap }))
         .collect();
 
-    match run_method_on_current_heap(scope, loader, rid, args, output) {
+    match run_method_on_current_heap_bare(module, loader, rid, args, output) {
         Ok(result) => {
             let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
             let packed = match return_kind {
@@ -112,8 +111,8 @@ pub(crate) fn bridge_call(
 /// they are valid whenever bridged code can run.
 #[derive(Clone, Copy)]
 struct BridgeContext {
-    scope: *const ModuleScope,
-    loader: *const ModuleLoader,
+    module: *const Module,
+    loader: Option<*const ModuleLoader>,
     output: *mut (dyn Output + 'static),
 }
 
@@ -123,19 +122,15 @@ thread_local! {
 
 /// Install the bridge execution context for the current thread, restoring the
 /// previous one when dropped. Must wrap any JIT execution that can reach a
-/// bridged call; the borrowed `scope`/`loader`/`output` must outlive the guard.
-// Consumed by `JitHook` (the tiering bridge) in the next step; until then only
-// the bridge's own tests reach it.
-#[allow(dead_code)]
+/// bridged call; the borrowed `module`/`loader`/`output` must outlive the guard.
 pub(crate) struct BridgeScope {
     previous: Option<BridgeContext>,
 }
 
-#[allow(dead_code)]
 impl BridgeScope {
     pub(crate) fn enter(
-        scope: &ModuleScope,
-        loader: &ModuleLoader,
+        module: &Module,
+        loader: Option<&ModuleLoader>,
         output: &mut dyn Output,
     ) -> Self {
         // Erase the output's lifetime; the guard's Drop clears the context before
@@ -143,8 +138,8 @@ impl BridgeScope {
         let output: *mut (dyn Output + 'static) =
             unsafe { std::mem::transmute::<*mut dyn Output, *mut (dyn Output + 'static)>(output) };
         let context = BridgeContext {
-            scope,
-            loader,
+            module,
+            loader: loader.map(|loader| loader as *const ModuleLoader),
             output,
         };
         let previous = BRIDGE_CONTEXT.with(|cell| cell.borrow_mut().replace(context));
@@ -163,24 +158,21 @@ impl Drop for BridgeScope {
 /// packed result. Only non-throwing callees are bridged (eligibility guarantees
 /// it), so a throw cannot occur here; a VM fault returns 0 (the callee cannot
 /// fault on valid input, and faults are abort-level in both tiers).
-// Passed as a symbol into the JIT by `JitHook` in the next step; until then only
-// the bridge's own tests take its address.
-#[allow(dead_code)]
 pub(crate) extern "C" fn zun_jit_call_interp(rid: i64, args_ptr: *const u64, argc: i64) -> u64 {
     // Copy the context out and drop the borrow before re-entering the
     // interpreter (which could, in principle, reach another bridged call).
     let context = BRIDGE_CONTEXT
         .with(|cell| *cell.borrow())
         .expect("bridge context must be installed before bridged code runs");
-    let scope = unsafe { &*context.scope };
-    let loader = unsafe { &*context.loader };
+    let module = unsafe { &*context.module };
+    let loader = context.loader.map(|loader| unsafe { &*loader });
     let output = unsafe { &mut *context.output };
     let args: &[u64] = if argc > 0 {
         unsafe { std::slice::from_raw_parts(args_ptr, argc as usize) }
     } else {
         &[]
     };
-    match bridge_call(scope, loader, output, rid as u32, args) {
+    match bridge_call(module, loader, output, rid as u32, args) {
         Ok(outcome) => outcome.packed,
         Err(_) => 0,
     }
@@ -217,7 +209,7 @@ mod tests {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
         let mut output = CaptureOutput::default();
         // pack(19), pack(23) as i32 values.
-        let outcome = bridge_call(scope, &loader, &mut output, rid, &[19, 23]).unwrap();
+        let outcome = bridge_call(scope.module(), Some(&loader), &mut output, rid, &[19, 23]).unwrap();
         assert_eq!(outcome.status, STATUS_RETURNED);
         assert_eq!(outcome.packed as i64, 42);
     }
@@ -250,10 +242,10 @@ mod tests {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
         let mut output = CaptureOutput::default();
 
-        let ok = bridge_call(scope, &loader, &mut output, rid, &[7]).unwrap();
+        let ok = bridge_call(scope.module(), Some(&loader), &mut output, rid, &[7]).unwrap();
         assert_eq!((ok.status, ok.packed as i64), (STATUS_RETURNED, 7));
 
-        let thrown = bridge_call(scope, &loader, &mut output, rid, &[(-1i64) as u64]).unwrap();
+        let thrown = bridge_call(scope.module(), Some(&loader), &mut output, rid, &[(-1i64) as u64]).unwrap();
         assert_eq!(thrown.status, STATUS_THREW);
     }
 
@@ -305,7 +297,7 @@ mod tests {
         let mut heap = zun_gc::Heap::new();
         let _hscope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
         let mut output = CaptureOutput::default();
-        let _bridge = BridgeScope::enter(scope, &loader, &mut output);
+        let _bridge = BridgeScope::enter(scope.module(), Some(&loader), &mut output);
         // caller(5) = helper(5) + 1 = 5 + 1 = 6.
         let result = jit
             .call_packed_with_heap(caller_rid, &[5], &mut heap)

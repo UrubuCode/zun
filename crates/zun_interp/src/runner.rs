@@ -673,13 +673,26 @@ pub(crate) fn run_method_loaded_on_current_heap(
     args: Vec<Value>,
     output: &mut dyn Output,
 ) -> Result<Value, RunError> {
-    let module = scope.module();
+    run_method_loaded_on_current_heap_bare(scope.module(), Some(loader), method_rid, args, output)
+}
+
+/// As [`run_method_loaded_on_current_heap`], but taking the module directly and
+/// an optional loader. The JIT→interpreter bridge uses this: it holds the
+/// running module but, for a single-module program, no loader (a bridged callee
+/// that attempts a cross-module call then fails cleanly with `BadToken`).
+pub(crate) fn run_method_loaded_on_current_heap_bare(
+    module: &Module,
+    loader: Option<&zun_loader::ModuleLoader>,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
     let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
     let mut interp = Interp {
         module,
         output,
         hook: None,
-        loader: Some(loader),
+        loader,
         eval_host: None,
         eval_cache: std::collections::HashMap::new(),
         allocs: 0,

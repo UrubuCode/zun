@@ -205,9 +205,17 @@ pub fn execute_with_eval_host(
     eval_host: Option<&dyn EvalHost>,
 ) -> Result<Value, VmError> {
     let module = load(bytes)?;
-    match zun_codegen::Jit::new(&module) {
+    // Wire the JIT→interpreter call bridge: eligible methods may now call
+    // ineligible non-throwing methods (routed to the interpreter). The bridge
+    // execution context is installed for the whole run so JIT code can reach it.
+    // SAFETY: `zun_jit_call_interp` has the bridge signature and lives for the
+    // program; the `BridgeScope` guard drops before `module`/`output` do.
+    match unsafe {
+        zun_codegen::Jit::new_bridged(&module, jit_bridge::zun_jit_call_interp as *const u8)
+    } {
         Ok(jit) => {
             let hook = JitHook::new(jit, &module);
+            let _bridge = jit_bridge::BridgeScope::enter(&module, None, output);
             zun_interp::run_with_eval_host(&module, output, Some(&hook), eval_host)
                 .map_err(VmError::Run)
         }

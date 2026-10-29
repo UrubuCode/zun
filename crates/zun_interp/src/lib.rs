@@ -193,6 +193,18 @@ pub fn run_method_on_current_heap(
     runner::run_method_loaded_on_current_heap(scope, loader, method_rid, args, output)
 }
 
+/// As [`run_method_on_current_heap`], but taking the module directly and an
+/// optional loader (for the JIT→interpreter bridge in a single-module run).
+pub fn run_method_on_current_heap_bare(
+    module: &Module,
+    loader: Option<&zun_loader::ModuleLoader>,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    runner::run_method_loaded_on_current_heap_bare(module, loader, method_rid, args, output)
+}
+
 impl Interp<'_> {
     /// Create the managed identity of a generator invocation. The execution
     /// body is deliberately not entered here; `generatorIteratorNext` owns
