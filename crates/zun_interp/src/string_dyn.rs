@@ -6,7 +6,7 @@
 //! `ToIntegerOrInfinity` / `ToString` exactly as the specification describes.
 //! Indices are UTF-16 code units.
 
-use super::collections::{js_string_to_number, unbox_arg};
+use super::collections::{is_truthy, js_string_to_number, unbox_arg};
 use super::value::Value;
 use super::{Interp, RunError};
 
@@ -91,16 +91,35 @@ impl<'a> Interp<'a> {
     /// ECMAScript ToString over any value (objects run OrdinaryToPrimitive).
     pub(super) fn dyn_to_string(&mut self, value: &Value) -> Result<String, RunError> {
         Ok(match unbox_arg(value)? {
-            Value::Object(obj) => match self.ordinary_to_primitive(obj, "string")? {
-                Some(primitive) => primitive.display(),
-                None => "[object Object]".to_string(),
-            },
+            Value::Object(obj) => {
+                if let Some(text) = zun_gc::with_current_heap(|heap| {
+                    heap.regex_source(obj)
+                        .map(|source| format!("/{source}/{}", heap.regex_flags(obj).unwrap_or("")))
+                }) {
+                    return Ok(text);
+                }
+                match self.ordinary_to_primitive(obj, "string")? {
+                    Some(primitive) => primitive.display(),
+                    None => "[object Object]".to_string(),
+                }
+            }
             other => other.display(),
         })
     }
 
     fn dyn_integer(&mut self, value: &Value) -> Result<f64, RunError> {
         Ok(integer_or_infinity(self.dyn_to_number(value)?))
+    }
+
+    /// ECMAScript IsRegExp: a truthy `Symbol.match` property, else a real regexp.
+    fn is_regexp(value: &Value) -> bool {
+        let Ok(Value::Object(obj)) = unbox_arg(value) else { return false };
+        zun_gc::with_current_heap(|heap| {
+            match heap.dynamic_get_symbol(obj, zun_core::WellKnownSymbol::Match.id()) {
+                Some(any) => is_truthy(&Value::Any(any), heap),
+                None => heap.regex_source(obj).is_some(),
+            }
+        })
     }
 
     /// Whether an argument is `undefined` (an absent argument arrives as one).
@@ -188,6 +207,21 @@ impl<'a> Interp<'a> {
                     }
                 }
             }
+            "includes" | "startsWith" | "endsWith" if Self::is_regexp(&a0) => {
+                return Err(RunError::Native(format!(
+                    "TypeError: First argument to String.prototype.{name} must not be a regular expression"
+                )));
+            }
+            "repeat" => {
+                let count = self.dyn_integer(&a0)?;
+                if count < 0.0 || count.is_infinite() {
+                    return Err(RunError::Native(format!(
+                        "RangeError: Invalid count value: {}",
+                        self.dyn_to_string(&a0)?
+                    )));
+                }
+                Value::Str(recv.repeat(count as usize).into())
+            }
             "includes" => {
                 let needle = units(&self.dyn_to_string(&a0)?);
                 let from = clamp_index(self.dyn_integer(&a1)?, len);
@@ -244,6 +278,24 @@ impl<'a> Interp<'a> {
                     number(f64::from(s[index as usize]))
                 } else {
                     number(f64::NAN)
+                }
+            }
+            "codePointAt" => {
+                let index = self.dyn_integer(&a0)?;
+                if index >= 0.0 && index < len as f64 {
+                    let i = index as usize;
+                    let first = u32::from(s[i]);
+                    if (0xD800..0xDC00).contains(&first) && i + 1 < len {
+                        let second = u32::from(s[i + 1]);
+                        if (0xDC00..0xE000).contains(&second) {
+                            return Ok(Some(number(f64::from(
+                                0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00),
+                            ))));
+                        }
+                    }
+                    number(f64::from(first))
+                } else {
+                    Value::Void
                 }
             }
             "at" => {

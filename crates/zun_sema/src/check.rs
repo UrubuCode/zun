@@ -779,7 +779,7 @@ impl Checker<'_> {
         };
         if let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") {
             for class_idx in 0..self.classes.len() {
-                for name in ["valueOf", "toString"] {
+                for name in ["valueOf", "toString", "get_name"] {
                     let Some(func) = self.method_of(class_idx as u32, name) else { continue };
                     let sig = &self.signatures[func as usize];
                     if sig.is_static || sig.params.len() != 1 {
@@ -5304,6 +5304,43 @@ impl Checker<'_> {
                 // Let an integral number literal take on an Int sibling's type
                 // so `x + 1` type-checks when `x: int` (and vice versa).
                 unify_numeric_literal(&mut lhs, &mut rhs);
+                // A JS `number` (f64) meeting a fixed-width integer (e.g. a
+                // string `.length`) widens the integer to `number`.
+                if matches!(
+                    *op,
+                    ast::BinaryOp::Add
+                        | ast::BinaryOp::Sub
+                        | ast::BinaryOp::Mul
+                        | ast::BinaryOp::Div
+                        | ast::BinaryOp::Rem
+                        | ast::BinaryOp::Lt
+                        | ast::BinaryOp::Le
+                        | ast::BinaryOp::Gt
+                        | ast::BinaryOp::Ge
+                        | ast::BinaryOp::Eq
+                        | ast::BinaryOp::Ne
+                ) {
+                    let widen = |e: &mut hir::Expr| {
+                        let span = e.span;
+                        let inner = std::mem::replace(
+                            e,
+                            hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+                        );
+                        *e = hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(inner) },
+                            ty: Ty::F64,
+                            span,
+                        };
+                    };
+                    // Only the `u64` of `.length` widens implicitly; other
+                    // fixed-width integers still require an explicit conversion.
+                    let length_ty = Ty::Int(IntKind::U64);
+                    if lhs.ty == Ty::F64 && rhs.ty == length_ty {
+                        widen(&mut rhs);
+                    } else if rhs.ty == Ty::F64 && lhs.ty == length_ty {
+                        widen(&mut lhs);
+                    }
+                }
                 if lhs.ty == Ty::BigInt && rhs.ty == Ty::BigInt {
                     // `>>>` has no BigInt form in ECMAScript: it is a TypeError.
                     if let ast::BinaryOp::UShr = op {
@@ -7420,7 +7457,8 @@ impl Checker<'_> {
                     && matches!(
                         mname.as_str(),
                         "substring" | "substr" | "slice" | "indexOf" | "lastIndexOf" | "includes"
-                            | "startsWith" | "endsWith" | "padStart" | "padEnd" | "charAt"
+                            | "startsWith" | "endsWith" | "padStart" | "padEnd" | "charAt" | "repeat"
+                            | "charCodeAt" | "codePointAt" | "at"
                     )
                     && args.len() <= 2
                 {
@@ -7435,6 +7473,10 @@ impl Checker<'_> {
                                     && checked.iter().all(|e| e.ty.is_int() || natural_literal(e))
                             }
                             "slice" => checked.iter().all(|e| e.ty == Ty::F64),
+                            "repeat" | "charCodeAt" | "codePointAt" => {
+                                checked.len() == 1 && (checked[0].ty.is_int() || natural_literal(&checked[0]))
+                            }
+                            "at" => checked.len() == 1 && checked[0].ty == Ty::F64,
                             "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" => {
                                 checked.len() == 1 && checked[0].ty == Ty::String
                             }
@@ -7470,7 +7512,7 @@ impl Checker<'_> {
                             call_args.push(it.next().unwrap_or_else(|| undefined(span)));
                         }
                         let result_ty = match mname.as_str() {
-                            "indexOf" | "lastIndexOf" => Ty::F64,
+                            "indexOf" | "lastIndexOf" | "charCodeAt" | "codePointAt" => Ty::F64,
                             "includes" | "startsWith" | "endsWith" => Ty::Boolean,
                             _ => Ty::String,
                         };
