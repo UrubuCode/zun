@@ -2153,12 +2153,71 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(boxed))
             }
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" => {
-                let namespace = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
                 let member = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
                 };
+                // A dynamic receiver that unboxes to a primitive string carries
+                // the full String method surface (`charCodeAt`, `slice`,
+                // `toUpperCase`, …). Those natives live in the `string` group
+                // under their bare name; dispatch directly so a string reached
+                // through `any` keeps its methods.
+                let receiver_concrete = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
+                    other => other.clone(),
+                };
+                if let Value::Str(_) = &receiver_concrete {
+                    if let Some((id, native)) = zun_natives::resolve("string", &member) {
+                        let mut native_values = Vec::with_capacity(args.len() - 1);
+                        native_values.push(receiver_concrete.clone());
+                        for arg in &args[2..] {
+                            native_values.push(match arg {
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .unwrap_or(Value::Void)
+                                }
+                                other => other.clone(),
+                            });
+                        }
+                        if native.params.len() == native_values.len() {
+                            // Coerce a float argument to the native's declared
+                            // integer index/width (the typed call path does this
+                            // for numeric literals; the dynamic path must too).
+                            for (value, param) in native_values.iter_mut().zip(native.params.iter()) {
+                                if let Value::Float(n, _) = value {
+                                    use zun_natives::NativeTy::*;
+                                    let kind = match param {
+                                        I8 => Some(zun_il::NumKind::I8),
+                                        I16 => Some(zun_il::NumKind::I16),
+                                        I32 => Some(zun_il::NumKind::I32),
+                                        I64 => Some(zun_il::NumKind::I64),
+                                        U8 => Some(zun_il::NumKind::U8),
+                                        U16 => Some(zun_il::NumKind::U16),
+                                        U32 => Some(zun_il::NumKind::U32),
+                                        U64 => Some(zun_il::NumKind::U64),
+                                        _ => None,
+                                    };
+                                    if let Some(kind) = kind {
+                                        *value = Value::Int(*n as i64, kind);
+                                    }
+                                }
+                            }
+                            let native_args: Vec<zun_natives::NativeArg> =
+                                native_values.iter().map(super::native::to_native_arg).collect();
+                            let result = zun_natives::dispatch(id, &native_args, self.output)
+                                .map_err(|e| RunError::Native(e.0))?;
+                            let value = super::native::from_native_value(result, id);
+                            let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
+                let namespace = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
                 // A built-in iterator object (from `Array`/`Map`/`Set`
                 // `keys`/`values`/`entries`) answers `next()` with a fresh
                 // `{ value, done }` result object, per the iterator protocol.
