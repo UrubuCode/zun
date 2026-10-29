@@ -3637,6 +3637,86 @@ impl Checker<'_> {
     /// Lower a `Number.<method>(...)` static call. The strict predicates accept
     /// any argument type (JS does not coerce — a non-number is simply `false`);
     /// `parseFloat`/`parseInt` take a string and an optional radix.
+    /// `Math.<fn>(...)` — route a JS Math call to the `math` native group's
+    /// f64 helper of the matching name (`floor` → `floorNumber`, `pow` →
+    /// `powNumber`, …). Arity and argument coercion follow the native's declared
+    /// signature; the result type is the native's return type.
+    fn check_math_static(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        method_span: Span,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let native_name = match method {
+            "floor" => "floorNumber",
+            "ceil" => "ceilNumber",
+            "round" => "roundNumber",
+            "trunc" => "truncNumber",
+            "sign" => "signNumber",
+            "abs" => "abs",
+            "sqrt" => "sqrtNumber",
+            "cbrt" => "cbrtNumber",
+            "sin" => "sinNumber",
+            "cos" => "cosNumber",
+            "tan" => "tanNumber",
+            "exp" => "expNumber",
+            "log" => "logNumber",
+            "log2" => "log2Number",
+            "log10" => "log10Number",
+            "expm1" => "expm1Number",
+            "log1p" => "log1pNumber",
+            "sinh" => "sinhNumber",
+            "cosh" => "coshNumber",
+            "tanh" => "tanhNumber",
+            "asinh" => "asinhNumber",
+            "acosh" => "acoshNumber",
+            "atanh" => "atanhNumber",
+            "pow" => "powNumber",
+            "atan2" => "atan2Number",
+            "hypot" => "hypotNumber",
+            "min" => "minNumber",
+            "max" => "maxNumber",
+            _ => {
+                self.error(method_span, format!("`Math.{method}` is not supported yet"));
+                return self.poison(span);
+            }
+        };
+        let Some((id, native)) = zun_natives::resolve("math", native_name) else {
+            self.error(span, format!("missing Math intrinsic `{native_name}`"));
+            return self.poison(span);
+        };
+        if native.params.len() != args.len() {
+            self.error(
+                span,
+                format!(
+                    "`Math.{method}` expects {} argument(s), found {}",
+                    native.params.len(),
+                    args.len()
+                ),
+            );
+            return self.poison(span);
+        }
+        let mut checked = Vec::with_capacity(args.len());
+        for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+            let mut value = self.check_expr(cx, arg);
+            coerce_numeric_literal(&mut value, expected);
+            if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
+                self.error(
+                    value.span,
+                    format!("`Math.{method}` argument type {:?} does not match {expected:?}", value.ty),
+                );
+            }
+            checked.push(value);
+        }
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: checked },
+            ty: native_ty(native.ret),
+            span,
+        }
+    }
+
     fn check_number_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -6128,6 +6208,18 @@ impl Checker<'_> {
                     // receiver name alone — a value never names `Number`.
                     if class_name == "Number" {
                         return self.check_number_static(
+                            cx,
+                            &self.text(method).to_string(),
+                            method.span,
+                            args,
+                            span,
+                        );
+                    }
+                    // `Math.<fn>(...)` static math, routed to the `math` native
+                    // group's f64 helpers. Recognized by receiver name (a value
+                    // never names `Math`); a program may still declare its own.
+                    if class_name == "Math" && !self.classes_by_name.contains_key("Math") {
+                        return self.check_math_static(
                             cx,
                             &self.text(method).to_string(),
                             method.span,
