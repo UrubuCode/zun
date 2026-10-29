@@ -1260,6 +1260,20 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     args,
                     span: span(call.span),
                 }),
+                // `Intl.fn(args)`: a dotted callee name the checker maps onto a
+                // prelude function (see `Checker::text`).
+                Expression::StaticMemberExpression(member)
+                    if !member.optional
+                        && matches!(&member.object, Expression::Identifier(id) if id.name == "Intl") =>
+                {
+                    Ok(Expr::Call {
+                        callee: Name {
+                            span: span(member.span),
+                        },
+                        args,
+                        span: span(call.span),
+                    })
+                }
                 Expression::StaticMemberExpression(member) => {
                     let receiver = Box::new(convert_expression(source, &member.object)?);
                     let method = Name {
@@ -1418,6 +1432,19 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     args,
                     span: span(new_expression.span),
                 }),
+                // `new Intl.X(...)`: a dotted class name the checker maps onto
+                // the prelude `IntlX` classes (see `Checker::text`).
+                Expression::StaticMemberExpression(member)
+                    if matches!(&member.object, Expression::Identifier(id) if id.name == "Intl") =>
+                {
+                    Ok(Expr::New {
+                        class: Name {
+                            span: span(member.span),
+                        },
+                        args,
+                        span: span(new_expression.span),
+                    })
+                }
                 callee => Ok(Expr::NewDynamic {
                     callee: Box::new(convert_expression(source, callee)?),
                     args,
