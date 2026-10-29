@@ -17,3 +17,4 @@ zun_ilgen = { workspace = true }
 zun_loader = { workspace = true }
 zun_natives = { workspace = true }
 zun_verify = { workspace = true }
+zun_abi = { workspace = true }

@@ -9,7 +9,10 @@ use zun_common::{Diagnostic, Severity};
 use zun_il::{decode_all, decode_all_with_offsets, Opcode, Operand};
 use zun_module::{read_body, Module};
 
+pub mod extensions;
 pub mod macros;
+
+pub use extensions::external_functions;
 
 /// Compute the conservative set of method RIDs reachable from a module entry.
 ///
