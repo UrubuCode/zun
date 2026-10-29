@@ -2152,7 +2152,33 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
+            "stringMethod" => {
+                let receiver = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let result = self
+                    .string_method_dyn(&receiver, &name, &args[2..])?
+                    .ok_or(RunError::BadToken)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                Ok(Value::Any(boxed))
+            }
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" => {
+                // A string receiver (an `any`-typed string): JS String methods.
+                if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Value::Str(member) = args.get(1).ok_or(RunError::BadToken)? {
+                        if let Some(result) = self.string_method_dyn(&text, member, &args[2..])? {
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
                 let member = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
@@ -5962,7 +5988,7 @@ impl<'a> Interp<'a> {
     /// `toString` first). Returns the first primitive, or `None`.
     /// A typed instance's `valueOf`/`toString` come from `class_named_methods`
     /// (registered by `classSetMethod`) and receive the instance as `this`.
-    fn ordinary_to_primitive(
+    pub(super) fn ordinary_to_primitive(
         &mut self,
         obj: zun_gc::Obj,
         hint: &str,
@@ -6718,7 +6744,7 @@ fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<String> {
 }
 
 /// Unbox an argument to its concrete value (an `Any` carrier is unwrapped).
-fn unbox_arg(value: &Value) -> Result<Value, RunError> {
+pub(super) fn unbox_arg(value: &Value) -> Result<Value, RunError> {
     match value {
         Value::Any(any) => {
             zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).ok_or(RunError::BadToken)
@@ -6752,7 +6778,7 @@ pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
 /// an empty result is `0`, `0x`/`0o`/`0b` prefixes parse in their radix, and
 /// everything else (decimal, scientific, `Infinity`) goes through Rust's `f64`
 /// parser; a failed parse is `NaN`.
-fn js_string_to_number(text: &str) -> f64 {
+pub(super) fn js_string_to_number(text: &str) -> f64 {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return 0.0;

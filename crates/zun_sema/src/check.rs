@@ -2096,8 +2096,31 @@ impl Checker<'_> {
                 else_block,
                 ..
             } => {
+                let narrowing = self.type_guard_narrowing(cx, cond);
                 let cond = self.check_condition(cx, cond);
-                let then_body = self.check_block(cx, then_block);
+                let then_body = match narrowing {
+                    // Inside the guarded branch the untyped local is shadowed by
+                    // a typed copy (`typeof x === "string"`, `Array.isArray(x)`).
+                    Some((name, slot, narrowed)) => {
+                        cx.scopes.push(Scope::new());
+                        let read = hir::Expr {
+                            kind: hir::ExprKind::Local(slot),
+                            ty: Ty::Any,
+                            span: then_block.span,
+                        };
+                        let init = hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(read) },
+                            ty: narrowed,
+                            span: then_block.span,
+                        };
+                        let shadow = cx.declare(&name, narrowed);
+                        let mut body = vec![hir::Stmt::Let { slot: shadow, init }];
+                        body.extend(self.check_block(cx, then_block));
+                        cx.scopes.pop();
+                        body
+                    }
+                    None => self.check_block(cx, then_block),
+                };
                 let else_body = else_block
                     .as_ref()
                     .map(|b| self.check_block(cx, b))
@@ -4647,6 +4670,58 @@ impl Checker<'_> {
                 None
             }
         }
+    }
+
+    /// Recognise a simple type guard over an untyped (`any`) local and return
+    /// the local's name, slot and narrowed type: `typeof x === "string" |
+    /// "number" | "boolean"` and `Array.isArray(x)`.
+    fn type_guard_narrowing(
+        &self,
+        cx: &FunctionCx,
+        cond: &ast::Expr,
+    ) -> Option<(String, hir::LocalSlot, Ty)> {
+        let (ident, narrowed) = match cond {
+            ast::Expr::Binary { op: ast::BinaryOp::Eq, lhs, rhs, .. } => {
+                let (typeof_side, literal_side) = match (&**lhs, &**rhs) {
+                    (ast::Expr::Unary { .. }, ast::Expr::String { .. }) => (&**lhs, &**rhs),
+                    (ast::Expr::String { .. }, ast::Expr::Unary { .. }) => (&**rhs, &**lhs),
+                    _ => return None,
+                };
+                let ast::Expr::Unary { op: ast::UnaryOp::Typeof, operand, .. } = typeof_side else {
+                    return None;
+                };
+                let ast::Expr::Ident(name) = &**operand else { return None };
+                let ast::Expr::String { value, .. } = literal_side else { return None };
+                let narrowed = match value.as_str() {
+                    "string" => Ty::String,
+                    "number" => Ty::F64,
+                    "boolean" => Ty::Boolean,
+                    _ => return None,
+                };
+                (*name, narrowed)
+            }
+            ast::Expr::StaticMethodCall { class, method, args, .. }
+                if self.text(class) == "Array" && self.text(method) == "isArray" && args.len() == 1 =>
+            {
+                let ast::Expr::Ident(name) = &args[0] else { return None };
+                (*name, Ty::Array)
+            }
+            ast::Expr::MethodCall { receiver, method, args, .. }
+                if matches!(&**receiver, ast::Expr::Ident(class) if self.text(class) == "Array")
+                    && self.text(method) == "isArray"
+                    && args.len() == 1 =>
+            {
+                let ast::Expr::Ident(name) = &args[0] else { return None };
+                (*name, Ty::Array)
+            }
+            _ => return None,
+        };
+        let name = self.text(&ident).to_string();
+        let slot = cx.lookup(&name)?;
+        if cx.locals[slot as usize] != Ty::Any || cx.boxed.contains(&slot) {
+            return None;
+        }
+        Some((name, slot, narrowed))
     }
 
     /// Box a checked value to `Any` unless it already is (or is poisoned).
@@ -7315,6 +7390,81 @@ impl Checker<'_> {
                     }
                     return acc;
                 }
+                // String methods called with JS-style arguments (optional,
+                // `undefined`, fractional/negative, untyped): the statically
+                // typed natives only accept exact integer/string arguments, so
+                // anything else goes through the dynamic `stringMethod` native,
+                // which applies full ToIntegerOrInfinity / ToString coercion.
+                if receiver.ty == Ty::String
+                    && matches!(
+                        mname.as_str(),
+                        "substring" | "substr" | "slice" | "indexOf" | "lastIndexOf" | "includes"
+                            | "startsWith" | "endsWith" | "padStart" | "padEnd" | "charAt"
+                    )
+                    && args.len() <= 2
+                {
+                    let checked: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+                    let natural_literal = |e: &hir::Expr| {
+                        matches!(e.kind, hir::ExprKind::Number(v) if e.ty == Ty::F64 && v.fract() == 0.0 && v >= 0.0)
+                    };
+                    let static_ok = checked.iter().all(|e| !e.ty.is_error())
+                        && match mname.as_str() {
+                            "substring" => {
+                                checked.len() == 2
+                                    && checked.iter().all(|e| e.ty.is_int() || natural_literal(e))
+                            }
+                            "slice" => checked.iter().all(|e| e.ty == Ty::F64),
+                            "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" => {
+                                checked.len() == 1 && checked[0].ty == Ty::String
+                            }
+                            _ => false,
+                        };
+                    if !static_ok && checked.iter().all(|e| !e.ty.is_error()) {
+                        let Some((id, _)) = zun_natives::resolve("collections", "stringMethod") else {
+                            self.error(span, "missing collection intrinsic `stringMethod`");
+                            return self.poison(span);
+                        };
+                        let undefined = |span| hir::Expr {
+                            kind: hir::ExprKind::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Number(0.0),
+                                    ty: Ty::F64,
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        let mut call_args = vec![
+                            receiver,
+                            hir::Expr {
+                                kind: hir::ExprKind::String(mname.clone()),
+                                ty: Ty::String,
+                                span: method.span,
+                            },
+                        ];
+                        let mut it = checked.into_iter();
+                        for _ in 0..2 {
+                            call_args.push(it.next().unwrap_or_else(|| undefined(span)));
+                        }
+                        let result_ty = match mname.as_str() {
+                            "indexOf" | "lastIndexOf" => Ty::F64,
+                            "includes" | "startsWith" | "endsWith" => Ty::Boolean,
+                            _ => Ty::String,
+                        };
+                        let call = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Convert { value: Box::new(call) },
+                            ty: result_ty,
+                            span,
+                        };
+                    }
+                }
                 // `String.prototype.slice(start?, end?)` — negative indices
                 // count from the end (distinct from `substring`). An absent
                 // argument defaults to the whole range; `end` is passed as a
@@ -8074,8 +8224,17 @@ impl Checker<'_> {
                     }
                     let receiver_is_string = receiver.ty == Ty::String;
                     let mut call_args = vec![receiver];
+                    let callback_receiver = call_args[0].ty == Ty::Array;
                     for (arg, expected_ty) in args.into_iter().zip(expected) {
+                        // Array callbacks receive boxed `(value, index, array)`
+                        // values, so unannotated callback parameters are untyped.
+                        if callback_receiver
+                            && expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION)
+                        {
+                            self.closure_param_hint = Some(vec![Ty::Any, Ty::Any, Ty::Any]);
+                        }
                         let mut value = self.check_expr(cx, arg);
+                        self.closure_param_hint = None;
                         coerce_numeric_literal(&mut value, expected_ty);
                         if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
                             self.error(
@@ -8704,6 +8863,7 @@ impl Checker<'_> {
                 // Numeric conversions may also explicitly unbox an `any` value.
                 let numeric = |t: Ty| t.is_int() || t.is_float();
                 if !value.ty.is_error()
+                    && value.ty != target
                     && !((numeric(value.ty) && numeric(target))
                         || (value.ty == Ty::Any
                             && (numeric(target)

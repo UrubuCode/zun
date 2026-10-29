@@ -8,6 +8,7 @@
 
 mod builtins;
 mod collections;
+mod string_dyn;
 mod decorators;
 mod errors;
 mod eval;

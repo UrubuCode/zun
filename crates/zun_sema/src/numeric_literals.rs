@@ -20,6 +20,21 @@ fn int_range(k: IntKind) -> (f64, f64) {
 }
 
 pub(super) fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
+    // Untyped (JS) values flowing into a declared `string`/`boolean` slot are
+    // unboxed implicitly, as TypeScript treats `any` as assignable to anything.
+    if expr.ty == Ty::Any && matches!(expected, Ty::String | Ty::Boolean) {
+        let span = expr.span;
+        let inner = std::mem::replace(
+            expr,
+            hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+        );
+        *expr = hir::Expr {
+            kind: hir::ExprKind::Convert { value: Box::new(inner) },
+            ty: expected,
+            span,
+        };
+        return;
+    }
     if !is_number_literal(expr) { return; }
     let v = match expr.kind { hir::ExprKind::Number(v) => v, _ => return };
     match expected {
