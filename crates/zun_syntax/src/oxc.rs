@@ -624,8 +624,23 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 span: span(tagged.span),
             })
         }
-        Expression::Identifier(identifier) => Ok(Expr::Ident(Name {
-            span: span(identifier.span),
+        Expression::Identifier(identifier) => {
+            // The global literal identifiers have no variable binding: map them
+            // to their values so they resolve like JS (`undefined` ≡ `void 0`,
+            // `NaN`/`Infinity` are float literals).
+            match identifier.name.as_str() {
+                "undefined" => Ok(Expr::Unary {
+                    op: crate::ast::UnaryOp::Void,
+                    operand: Box::new(Expr::Number { value: 0.0, span: span(identifier.span) }),
+                    span: span(identifier.span),
+                }),
+                "NaN" => Ok(Expr::Number { value: f64::NAN, span: span(identifier.span) }),
+                "Infinity" => Ok(Expr::Number { value: f64::INFINITY, span: span(identifier.span) }),
+                _ => Ok(Expr::Ident(Name { span: span(identifier.span) })),
+            }
+        }
+        Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
+            span: span(this_expression.span),
         })),
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
