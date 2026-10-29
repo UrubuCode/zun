@@ -141,6 +141,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "dynamicCall3",
         "dynamicCall4",
         "stringMethod",
+        "replaceFn",
         "dynamicConstruct",
         "promiseNew",
         "promiseWithResolvers",

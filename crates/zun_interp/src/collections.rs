@@ -2152,6 +2152,79 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
+            "replaceFn" => {
+                // `str.replace(search, fn)` / `str.replaceAll(search, fn)`: the
+                // replacement of each match is `fn(match, ...groups, offset, str)`.
+                let search = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let input = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text,
+                    _ => return Err(RunError::BadToken),
+                };
+                let callback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let all = matches!(args.get(3), Some(Value::Bool(true)));
+                let spans: Vec<(usize, usize, Vec<Option<String>>)> = match &search {
+                    Value::Object(regex) => zun_gc::with_current_heap(|heap| {
+                        heap.regex_replace_spans(*regex, &input, all)
+                    })
+                    .ok_or(RunError::BadToken)?
+                    .map_err(|error| RunError::Native(error.to_string()))?,
+                    other => {
+                        let needle = self.dyn_to_string(other)?;
+                        let mut found = Vec::new();
+                        if needle.is_empty() {
+                            let mut boundaries: Vec<usize> =
+                                input.char_indices().map(|(index, _)| index).collect();
+                            boundaries.push(input.len());
+                            for at in boundaries {
+                                found.push((at, at, vec![Some(String::new())]));
+                                if !all {
+                                    break;
+                                }
+                            }
+                        } else {
+                            let mut from = 0;
+                            while let Some(at) = input[from..].find(&needle) {
+                                let start = from + at;
+                                found.push((start, start + needle.len(), vec![Some(needle.clone())]));
+                                from = start + needle.len();
+                                if !all {
+                                    break;
+                                }
+                            }
+                        }
+                        found
+                    }
+                };
+                let to_any = |value: Value| {
+                    Value::Any(
+                        zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::null),
+                    )
+                };
+                let mut out = String::new();
+                let mut last = 0;
+                for (start, end, groups) in spans {
+                    out.push_str(&input[last..start]);
+                    let mut call_args: Vec<Value> = groups
+                        .into_iter()
+                        .map(|group| match group {
+                            Some(text) => to_any(Value::Str(text.into())),
+                            None => to_any(Value::Void),
+                        })
+                        .collect();
+                    let offset = input[..start].encode_utf16().count();
+                    call_args.push(to_any(Value::Float(offset as f64, zun_il::NumKind::F64)));
+                    call_args.push(to_any(Value::Str(input.clone())));
+                    let produced = self.invoke_callback(callback, call_args)?;
+                    out.push_str(&self.dyn_to_string(&produced)?);
+                    last = end;
+                }
+                out.push_str(&input[last..]);
+                Ok(Value::Str(out.into()))
+            }
             "stringMethod" => {
                 let receiver = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
                     Value::Str(text) => text,

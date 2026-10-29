@@ -4672,6 +4672,27 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower `str.replace(search, fn)` / `str.replaceAll(search, fn)`.
+    fn replace_with_function(
+        &mut self,
+        span: Span,
+        search: hir::Expr,
+        receiver: hir::Expr,
+        callback: hir::Expr,
+        all: bool,
+    ) -> hir::Expr {
+        let Some((id, _)) = zun_natives::resolve("collections", "replaceFn") else {
+            self.error(span, "missing collection intrinsic `replaceFn`");
+            return self.poison(span);
+        };
+        let flag = hir::Expr { kind: hir::ExprKind::Boolean(all), ty: Ty::Boolean, span };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![search, receiver, callback, flag] },
+            ty: Ty::String,
+            span,
+        }
+    }
+
     /// Recognise a simple type guard over an untyped (`any`) local and return
     /// the local's name, slot and narrowed type: `typeof x === "string" |
     /// "number" | "boolean"` and `Array.isArray(x)`.
@@ -7569,10 +7590,15 @@ impl Checker<'_> {
                     if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
                         return self.string_symbol_dispatch(span, 1.0, receiver, first, Some(replacement));
                     }
+                    if matches!(replacement.ty, Ty::Function(_))
+                        && matches!(first.ty, Ty::RegExp | Ty::String)
+                    {
+                        return self.replace_with_function(span, first, receiver, replacement, false);
+                    }
                     if replacement.ty != Ty::String && !replacement.ty.is_error() {
                         self.error(
                             replacement.span,
-                            "`replace` replacement must be a string (replace-with-function is not supported)",
+                            "`replace` replacement must be a string",
                         );
                         return self.poison(span);
                     }
