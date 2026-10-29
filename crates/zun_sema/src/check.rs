@@ -3646,6 +3646,25 @@ impl Checker<'_> {
     /// f64 helper of the matching name (`floor` → `floorNumber`, `pow` →
     /// `powNumber`, …). Arity and argument coercion follow the native's declared
     /// signature; the result type is the native's return type.
+    /// Coerce a computed array index to an integer. An integer passes through;
+    /// a `number`/`any` index is converted (JS `ToInteger` on the index) rather
+    /// than rejected, so `arr[someNumber]` works.
+    fn coerce_array_index(&mut self, index: hir::Expr) -> hir::Expr {
+        if index.ty.is_int() || index.ty.is_error() {
+            return index;
+        }
+        if index.ty == Ty::F64 || index.ty == Ty::Any {
+            let span = index.span;
+            return hir::Expr {
+                kind: hir::ExprKind::Convert { value: Box::new(index) },
+                ty: Ty::Int(IntKind::U64),
+                span,
+            };
+        }
+        self.error(index.span, "array index must be an integer");
+        self.poison(index.span)
+    }
+
     fn check_math_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -8114,7 +8133,18 @@ impl Checker<'_> {
                 };
                 if let Some((group, class_name)) = primitive_group {
                     if !self.classes_by_name.contains_key(class_name) {
-                        if let Some((id, native)) = zun_natives::resolve(group, &mname) {
+                        // `string`/`number` natives are bare (`toUpperCase`);
+                        // `array` natives carry an `array` prefix (`arraySlice`).
+                        let native_name = if group == "array" {
+                            let mut chars = mname.chars();
+                            match chars.next() {
+                                Some(first) => format!("array{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                                None => mname.clone(),
+                            }
+                        } else {
+                            mname.clone()
+                        };
+                        if let Some((id, native)) = zun_natives::resolve(group, &native_name) {
                             if native.params.len() == args.len() + 1 {
                                 let mut call_args = vec![receiver];
                                 for (arg, expected) in args
@@ -9801,9 +9831,7 @@ impl Checker<'_> {
                 if object.ty != Ty::Array && !object.ty.is_error() {
                     self.error(object.span, "indexing requires an Array");
                 }
-                if !index.ty.is_int() && !index.ty.is_error() {
-                    self.error(index.span, "array index must be an integer");
-                }
+                let index = self.coerce_array_index(index);
                 hir::Expr {
                     kind: hir::ExprKind::ArrayGet {
                         object: Box::new(object),
@@ -9890,9 +9918,7 @@ impl Checker<'_> {
                 if object.ty != Ty::Array && !object.ty.is_error() {
                     self.error(object.span, "indexing requires an Array");
                 }
-                if !index.ty.is_int() && !index.ty.is_error() {
-                    self.error(index.span, "array index must be an integer");
-                }
+                let index = self.coerce_array_index(index);
                 hir::Expr {
                     kind: hir::ExprKind::ArraySet {
                         object: Box::new(object),
