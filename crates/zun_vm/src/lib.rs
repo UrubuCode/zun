@@ -210,9 +210,7 @@ pub fn execute_with_eval_host(
     // execution context is installed for the whole run so JIT code can reach it.
     // SAFETY: `zun_jit_call_interp` has the bridge signature and lives for the
     // program; the `BridgeScope` guard drops before `module`/`output` do.
-    match unsafe {
-        zun_codegen::Jit::new_bridged(&module, jit_bridge::zun_jit_call_interp as *const u8)
-    } {
+    match unsafe { zun_codegen::Jit::new_bridged(&module, jit_bridge::bridge_config()) } {
         Ok(jit) => {
             let hook = JitHook::new(jit, &module);
             let _bridge = jit_bridge::BridgeScope::enter(&module, None, output);

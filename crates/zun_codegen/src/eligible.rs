@@ -224,6 +224,7 @@ fn exception_regions_jit_safe(
     module: &Module,
     body: &zun_module::MethodBody<'_>,
     instrs: &[zun_il::Instruction],
+    bridge_available: bool,
 ) -> bool {
     if body.handlers.len() != 1 {
         return false;
@@ -236,23 +237,33 @@ fn exception_regions_jit_safe(
         return false;
     };
     let mut throw_count = 0usize;
+    let mut call_in_try = false;
     let mut offset = 0usize;
     let mut prev_newobj_type: Option<u32> = None;
     for instr in instrs {
         let in_try = (handler.try_start as usize) <= offset && offset < handler.try_end as usize;
         if instr.opcode == Opcode::Throw {
             throw_count += 1;
-            // Must be inside the region and throw a freshly constructed object
-            // caught by this frame's handler (the catch type or a subclass), so
-            // it never escapes to an outer/cross-frame handler.
+            // An explicit throw must be inside the region and throw a freshly
+            // constructed object caught by this frame's handler (so it never
+            // escapes to an outer/cross-frame handler).
             match prev_newobj_type {
                 Some(throw_rid)
                     if in_try && jit_type_caught_by(module, throw_rid, catch_type.rid()) => {}
                 _ => return false,
             }
         }
-        if in_try && !try_region_op_allowed(instr.opcode) {
-            return false;
+        if in_try {
+            // With a bridge, a call inside the region is allowed: a throw from it
+            // is routed at run time to this catch (or propagated). `CallBuiltin`
+            // stays out — a JIT builtin can't signal a throw through the slot.
+            let call_in_region =
+                bridge_available && matches!(instr.opcode, Opcode::Call | Opcode::CallVirt);
+            if call_in_region {
+                call_in_try = true;
+            } else if !try_region_op_allowed(instr.opcode) {
+                return false;
+            }
         }
         prev_newobj_type = match (instr.opcode, instr.operand) {
             (Opcode::NewObj, Operand::Token(token)) => Some(token.rid()),
@@ -260,9 +271,10 @@ fn exception_regions_jit_safe(
         };
         offset += instr.encoded_len();
     }
-    // At least one throw (a handler with no throw to route is pointless to JIT
-    // and would leave the catch block an unreachable, parameterless stub).
-    throw_count >= 1
+    // The handler must be able to receive a throw: an explicit one, or (with a
+    // bridge) a call in the region whose throw is routed at run time. Otherwise
+    // the catch block is an unreachable, parameterless stub.
+    throw_count >= 1 || call_in_try
 }
 
 
@@ -969,7 +981,9 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
         // frame, with no call-type op in the protected region). A cross-frame
         // throw — one unwound out of a callee — still needs the deferred Cranelift
         // unwinding bridge, so such methods stay on Tier 0.
-        if !body.handlers.is_empty() && !exception_regions_jit_safe(module, &body, &instrs) {
+        if !body.handlers.is_empty()
+            && !exception_regions_jit_safe(module, &body, &instrs, bridge_available)
+        {
             continue;
         }
         if !body.local_kinds.iter().all(|&k| kind_supported(k))

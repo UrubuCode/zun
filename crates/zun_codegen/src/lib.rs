@@ -1644,6 +1644,19 @@ struct Sig {
     returns: Option<JitKind>,
 }
 
+/// Host entry points and state for the JIT→interpreter bridge, supplied by the
+/// VM (which owns the interpreter). All pointers must outlive any compiled code.
+#[derive(Debug, Clone, Copy)]
+pub struct BridgeConfig {
+    /// `extern "C" zun_jit_call_interp(rid, args_ptr, argc) -> u64`.
+    pub call_interp: *const u8,
+    /// `extern "C" zun_jit_route_pending(catch_type_rid) -> u64` (0 = no/unmatched
+    /// pending; else the caught object handle, slot cleared).
+    pub route_pending: *const u8,
+    /// Address of the per-thread pending-exception slot the JIT loads after calls.
+    pub pending_slot_addr: u64,
+}
+
 pub struct Jit {
     module: JITModule,
     func_ids: HashMap<u32, FuncId>,
@@ -1708,12 +1721,8 @@ impl Jit {
     /// # Safety
     /// `bridge_fn` must be a valid `extern "C"` function pointer with the bridge
     /// signature, valid for as long as compiled code can run.
-    pub unsafe fn new_bridged(
-        zm: &Module,
-        bridge_fn: *const u8,
-        pending_slot_addr: u64,
-    ) -> Result<Self, JitError> {
-        Self::new_impl(zm, Some((bridge_fn, pending_slot_addr)))
+    pub unsafe fn new_bridged(zm: &Module, bridge: BridgeConfig) -> Result<Self, JitError> {
+        Self::new_impl(zm, Some(bridge))
     }
 
     /// Compile every eligible method eagerly with a bridge wired (see
@@ -1721,12 +1730,8 @@ impl Jit {
     ///
     /// # Safety
     /// See [`Jit::new_bridged`].
-    pub unsafe fn compile_with_bridge(
-        zm: &Module,
-        bridge_fn: *const u8,
-        pending_slot_addr: u64,
-    ) -> Result<Self, JitError> {
-        let mut jit = unsafe { Self::new_bridged(zm, bridge_fn, pending_slot_addr)? };
+    pub unsafe fn compile_with_bridge(zm: &Module, bridge: BridgeConfig) -> Result<Self, JitError> {
+        let mut jit = unsafe { Self::new_bridged(zm, bridge)? };
         let all: Vec<u32> = jit.eligible.iter().copied().collect();
         for rid in all {
             jit.ensure_compiled(zm, rid)?;
@@ -1734,9 +1739,9 @@ impl Jit {
         Ok(jit)
     }
 
-    fn new_impl(zm: &Module, bridge: Option<(*const u8, u64)>) -> Result<Self, JitError> {
-        let bridge_fn = bridge.map(|(fn_ptr, _)| fn_ptr);
-        let bridge_pending_addr = bridge.map(|(_, addr)| addr).unwrap_or(0);
+    fn new_impl(zm: &Module, bridge: Option<BridgeConfig>) -> Result<Self, JitError> {
+        let bridge_fn = bridge.as_ref().map(|b| b.call_interp);
+        let bridge_pending_addr = bridge.as_ref().map(|b| b.pending_slot_addr).unwrap_or(0);
         let mut flags = settings::builder();
         // Optimize for speed; the e-graph optimizer is on by default in this
         // Cranelift version, so there is no flag to set for it.
@@ -1937,8 +1942,9 @@ impl Jit {
             "zun_jit_number_is_safe_integer",
             zun_jit_number_is_safe_integer as *const u8,
         );
-        if let Some(bridge_fn) = bridge_fn {
-            builder.symbol("zun_jit_call_interp", bridge_fn);
+        if let Some(ref bridge) = bridge {
+            builder.symbol("zun_jit_call_interp", bridge.call_interp);
+            builder.symbol("zun_jit_route_pending", bridge.route_pending);
         }
         let module = JITModule::new(builder);
 

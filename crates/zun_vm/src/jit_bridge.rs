@@ -137,6 +137,60 @@ pub(crate) fn pending_slot_addr() -> u64 {
     PENDING_EXCEPTION.with(|slot| slot.as_ptr() as u64)
 }
 
+/// The bridge wiring handed to [`zun_codegen::Jit`]: the two `extern "C"` entry
+/// points and this thread's pending-exception slot address.
+pub(crate) fn bridge_config() -> zun_codegen::BridgeConfig {
+    zun_codegen::BridgeConfig {
+        call_interp: zun_jit_call_interp as *const u8,
+        route_pending: zun_jit_route_pending as *const u8,
+        pending_slot_addr: pending_slot_addr(),
+    }
+}
+
+/// Whether a thrown object of `throw_rid` is caught by `catch_rid` (same type or
+/// a subclass), walking the module's `TypeDef` base chain. Bounded against a
+/// malformed cyclic hierarchy.
+fn type_is_caught(module: &Module, throw_rid: u32, catch_rid: u32) -> bool {
+    let mut current = throw_rid;
+    for _ in 0..64 {
+        if current == catch_rid {
+            return true;
+        }
+        let Some(ty) = module.tables.type_defs.get(current as usize - 1) else {
+            return false;
+        };
+        if ty.base.table() != Some(zun_metadata::TableKind::TypeDef) || ty.base.rid() == 0 {
+            return false;
+        }
+        current = ty.base.rid();
+    }
+    false
+}
+
+/// Route a pending exception against a same-frame catch of type `catch_type_rid`.
+/// Returns the thrown object handle and CLEARS the pending slot when the throw is
+/// caught by that type (the JIT then branches to the catch with the object);
+/// returns 0 (leaving any pending throw set to propagate) when there is no
+/// pending throw or it does not match. The exception type is read from the
+/// object header; the hierarchy comes from the installed bridge context's module.
+pub(crate) extern "C" fn zun_jit_route_pending(catch_type_rid: i64) -> i64 {
+    let handle = PENDING_EXCEPTION.with(|slot| slot.get());
+    if handle == 0 {
+        return 0;
+    }
+    let type_rid = unsafe { zun_gc::Obj::from_addr(handle as *mut u64) }.type_rid();
+    let Some(context) = BRIDGE_CONTEXT.with(|cell| *cell.borrow()) else {
+        return 0;
+    };
+    let module = unsafe { &*context.module };
+    if type_is_caught(module, type_rid, catch_type_rid as u32) {
+        PENDING_EXCEPTION.with(|slot| slot.set(0));
+        handle as i64
+    } else {
+        0
+    }
+}
+
 /// Take and clear the pending exception handle, if any.
 pub(crate) fn take_pending_exception() -> Option<u64> {
     PENDING_EXCEPTION.with(|slot| {
@@ -318,11 +372,7 @@ mod tests {
         let (helper_rid, caller_rid) = (find("helper"), find("caller"));
 
         let jit = unsafe {
-            zun_codegen::Jit::compile_with_bridge(
-                scope.module(),
-                zun_jit_call_interp as *const u8,
-                pending_slot_addr(),
-            )
+            zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config())
         }
         .expect("jit compiles with bridge");
         assert!(
@@ -366,5 +416,37 @@ mod tests {
             matches!(result, Value::Int(42, _)),
             "the bridged throw should reach main's catch, got {result:?}"
         );
+    }
+
+    /// A bridged throw is routed to a catch in the SAME JIT frame: `run` (JIT)
+    /// wraps a call to the throwing dynamic `helper` in a `try`/`catch`, and the
+    /// throw is caught in-frame via the runtime type match (no propagation out).
+    #[test]
+    fn a_bridged_throw_is_caught_in_the_same_jit_frame() {
+        let module = zun_compiler::compile(
+            "class Boom {} \
+             function helper(n: int): int { let o: any = {}; o.v = n; if (n < 0) { throw new Boom(); } return (o.v) as int; } \
+             function run(n: int): int { try { return helper(n); } catch (e: Boom) { return 99; } } \
+             function main(): int { return run(-1); }",
+        )
+        .expect("compile");
+        let bytes = module.write();
+        let mut output = CaptureOutput::default();
+        let caught = crate::execute_with(&bytes, &mut output).expect("run");
+        assert!(
+            matches!(caught, Value::Int(99, _)),
+            "the bridged throw should be caught in run's own catch, got {caught:?}"
+        );
+
+        // The non-throwing path returns the value through the bridge normally.
+        let module_ok = zun_compiler::compile(
+            "class Boom {} \
+             function helper(n: int): int { let o: any = {}; o.v = n; if (n < 0) { throw new Boom(); } return (o.v) as int; } \
+             function run(n: int): int { try { return helper(n); } catch (e: Boom) { return 99; } } \
+             function main(): int { return run(7); }",
+        )
+        .expect("compile");
+        let ok = crate::execute_with(&module_ok.write(), &mut output).expect("run");
+        assert!(matches!(ok, Value::Int(7, _)), "non-throw path, got {ok:?}");
     }
 }
