@@ -224,8 +224,8 @@
     #[test]
     fn string_plus_number_is_concatenation_not_an_error() {
         // JS/TS `+` concatenates when either operand is a string: `1 + "a"`
-        // coerces the number and yields a string, so it is not an error.
-        assert!(!first_error("function f() { let x = 1 + \"a\"; }").contains("cannot add"));
+        // coerces the number and yields a string, so it compiles cleanly.
+        check_ok("function f() { let x = 1 + \"a\"; }");
     }
 
     #[test]
