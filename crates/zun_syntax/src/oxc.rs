@@ -312,6 +312,9 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
             Statement::ForOfStatement(for_of_statement) => {
                 statements.push(convert_for_of(source, for_of_statement)?);
             }
+            Statement::ForInStatement(for_in_statement) => {
+                statements.push(convert_for_in(source, for_in_statement)?);
+            }
             Statement::SwitchStatement(switch) => {
                 statements.push(convert_switch(source, switch)?);
             }
@@ -517,6 +520,35 @@ fn convert_switch(
     Ok(chain
         .and_then(|block| block.statements.into_iter().next())
         .unwrap_or(Stmt::Expr(Expr::Null { span: whole })))
+}
+
+/// Convert a `for (… in …)` statement to the `ForIn` node (lowered to key
+/// iteration in sema). The binding is a declared identifier or pattern.
+fn convert_for_in(
+    source: &str,
+    for_in_statement: &oxc_ast::ast::ForInStatement<'_>,
+) -> Result<Stmt, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let ForStatementLeft::VariableDeclaration(declaration) = &for_in_statement.left else {
+        return Err("OXC adapter supports declared for-in bindings only".into());
+    };
+    if declaration.declarations.len() != 1 {
+        return Err("OXC adapter supports one for-in binding".into());
+    }
+    let declarator = &declaration.declarations[0];
+    let pattern = match &declarator.id {
+        BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+        },
+        other => convert_binding_pattern(source, other)?,
+    };
+    Ok(Stmt::ForIn {
+        pattern,
+        object: convert_expression(source, &for_in_statement.right)?,
+        body: convert_if_branch(source, &for_in_statement.body)?,
+        span: span(for_in_statement.span),
+    })
 }
 
 /// Convert a `for (… of …)` statement, with an identifier or destructuring

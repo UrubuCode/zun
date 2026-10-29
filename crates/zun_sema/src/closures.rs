@@ -300,6 +300,12 @@ impl Checker<'_> {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
                 }
             }
+            ast::Stmt::ForIn { object, body, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
+                for statement in &body.statements {
+                    self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+            }
             ast::Stmt::Return { value, .. } => {
                 if let Some(value) = value {
                     self.collect_capture_expr(cx, parameters, value, uses);

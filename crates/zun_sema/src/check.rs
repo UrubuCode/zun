@@ -2171,90 +2171,48 @@ impl Checker<'_> {
                         ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext")
                     }
                 };
-                let span = iterable_expr.span;
-                let Some((new_id, _)) = zun_natives::resolve("buffer", new_name) else {
-                    self.error(span, "missing iterator constructor intrinsic");
-                    return hir::Stmt::Expr(self.poison(span));
-                };
-                let Some((done_id, _)) = zun_natives::resolve("buffer", done_name) else {
-                    self.error(span, "missing iterator completion intrinsic");
-                    return hir::Stmt::Expr(self.poison(span));
-                };
-                let Some((next_id, _)) = zun_natives::resolve("buffer", next_name) else {
-                    self.error(span, "missing iterator next intrinsic");
-                    return hir::Stmt::Expr(self.poison(span));
-                };
-                let iterator = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: new_id,
-                        args: vec![iterable_expr],
-                    },
-                    ty: Ty::Any,
-                    span,
-                };
-                let iterator_slot = cx.declare("__for_of_iterator", Ty::Any);
-                let done = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: done_id,
-                        args: vec![hir::Expr {
-                            kind: hir::ExprKind::Local(iterator_slot),
-                            ty: Ty::Any,
-                            span,
-                        }],
-                    },
-                    ty: Ty::Boolean,
-                    span,
-                };
-                let next = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: next_id,
-                        args: vec![hir::Expr {
-                            kind: hir::ExprKind::Local(iterator_slot),
-                            ty: Ty::Any,
-                            span,
-                        }],
-                    },
-                    ty: Ty::Any,
-                    span,
-                };
-                cx.scopes.push(Scope::new());
-                // The loop binding is a pattern. For a bare identifier the
-                // iteration value stores directly into its slot; for a
-                // destructuring pattern it stores into a hidden element temp
-                // that the prelude statements then destructure each iteration.
-                let (binding, prelude) = match pattern {
-                    ast::Pattern::Ident { name, ty } => {
-                        let declared =
-                            ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
-                        (cx.declare(self.text(name), declared), Vec::new())
-                    }
-                    _ => {
-                        let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
-                        let mut prelude = Vec::new();
-                        let element_expr = hir::Expr {
-                            kind: hir::ExprKind::Local(element),
-                            ty: Ty::Any,
-                            span,
-                        };
-                        self.bind_pattern(cx, pattern, element_expr, &mut prelude);
-                        (element, prelude)
-                    }
-                };
-                let mut body = self.check_block(cx, body);
-                if !prelude.is_empty() {
-                    let mut combined = prelude;
-                    combined.append(&mut body);
-                    body = combined;
-                }
-                cx.scopes.pop();
-                hir::Stmt::ForOf {
-                    iterator,
-                    iterator_slot,
-                    done,
-                    next,
-                    binding,
+                self.lower_for_iteration(
+                    cx,
+                    iterable_expr,
+                    new_name,
+                    done_name,
+                    next_name,
+                    pattern,
                     body,
-                }
+                )
+            }
+            ast::Stmt::ForIn { pattern, object, body, .. } => {
+                // `for (k in obj)` iterates the object's enumerable keys: build
+                // `objectKeys(obj)` (an Array) and run the array-iterator loop.
+                let object_expr = self.check_expr(cx, object);
+                let span = object_expr.span;
+                let keys_arg = if object_expr.ty == Ty::Any {
+                    object_expr
+                } else {
+                    hir::Expr {
+                        span,
+                        kind: hir::ExprKind::BoxAny { value: Box::new(object_expr) },
+                        ty: Ty::Any,
+                    }
+                };
+                let Some((keys_id, _)) = zun_natives::resolve("collections", "objectKeys") else {
+                    self.error(span, "missing `objectKeys` intrinsic");
+                    return hir::Stmt::Expr(self.poison(span));
+                };
+                let keys = hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id: keys_id, args: vec![keys_arg] },
+                    ty: Ty::Array,
+                    span,
+                };
+                self.lower_for_iteration(
+                    cx,
+                    keys,
+                    "arrayIteratorNew",
+                    "arrayIteratorDone",
+                    "arrayIteratorNext",
+                    pattern,
+                    body,
+                )
             }
             ast::Stmt::Labeled { label, statement, .. } => {
                 let label_text = self.text(label).to_string();
@@ -3646,6 +3604,78 @@ impl Checker<'_> {
     /// f64 helper of the matching name (`floor` → `floorNumber`, `pow` →
     /// `powNumber`, …). Arity and argument coercion follow the native's declared
     /// signature; the result type is the native's return type.
+    /// Shared lowering for `for-of`/`for-in`: given the iterable (or key array)
+    /// and the iterator-protocol intrinsic names, drive the iterator and bind
+    /// each value to the loop pattern.
+    fn lower_for_iteration(
+        &mut self,
+        cx: &mut FunctionCx,
+        iterable_expr: hir::Expr,
+        new_name: &str,
+        done_name: &str,
+        next_name: &str,
+        pattern: &ast::Pattern,
+        body: &ast::Block,
+    ) -> hir::Stmt {
+        let span = iterable_expr.span;
+        let Some((new_id, _)) = zun_natives::resolve("buffer", new_name) else {
+            self.error(span, "missing iterator constructor intrinsic");
+            return hir::Stmt::Expr(self.poison(span));
+        };
+        let Some((done_id, _)) = zun_natives::resolve("buffer", done_name) else {
+            self.error(span, "missing iterator completion intrinsic");
+            return hir::Stmt::Expr(self.poison(span));
+        };
+        let Some((next_id, _)) = zun_natives::resolve("buffer", next_name) else {
+            self.error(span, "missing iterator next intrinsic");
+            return hir::Stmt::Expr(self.poison(span));
+        };
+        let iterator = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id: new_id, args: vec![iterable_expr] },
+            ty: Ty::Any,
+            span,
+        };
+        let iterator_slot = cx.declare("__for_of_iterator", Ty::Any);
+        let done = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id: done_id,
+                args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }],
+            },
+            ty: Ty::Boolean,
+            span,
+        };
+        let next = hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id: next_id,
+                args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }],
+            },
+            ty: Ty::Any,
+            span,
+        };
+        cx.scopes.push(Scope::new());
+        let (binding, prelude) = match pattern {
+            ast::Pattern::Ident { name, ty } => {
+                let declared = ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
+                (cx.declare(self.text(name), declared), Vec::new())
+            }
+            _ => {
+                let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+                let mut prelude = Vec::new();
+                let element_expr = hir::Expr { kind: hir::ExprKind::Local(element), ty: Ty::Any, span };
+                self.bind_pattern(cx, pattern, element_expr, &mut prelude);
+                (element, prelude)
+            }
+        };
+        let mut body = self.check_block(cx, body);
+        if !prelude.is_empty() {
+            let mut combined = prelude;
+            combined.append(&mut body);
+            body = combined;
+        }
+        cx.scopes.pop();
+        hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
+    }
+
     /// Coerce a computed array index to an integer. An integer passes through;
     /// a `number`/`any` index is converted (JS `ToInteger` on the index) rather
     /// than rejected, so `arr[someNumber]` works.
@@ -10800,7 +10830,8 @@ fn stmt_returns_value(stmt: &ast::Stmt) -> bool {
         ast::Stmt::While { body, .. }
         | ast::Stmt::DoWhile { body, .. }
         | ast::Stmt::For { body, .. }
-        | ast::Stmt::ForOf { body, .. } => block_returns_value(body),
+        | ast::Stmt::ForOf { body, .. }
+        | ast::Stmt::ForIn { body, .. } => block_returns_value(body),
         ast::Stmt::Labeled { statement, .. } => stmt_returns_value(statement),
         ast::Stmt::Try { body, catches, finally, .. } => {
             block_returns_value(body)
@@ -10829,6 +10860,7 @@ fn count_yields_in_stmt(stmt: &ast::Stmt) -> usize {
         DoWhile { body, cond, .. } => count_yields_in_block(body) + count_yields_in_expr(cond),
         For { init, cond, update, body, .. } => init.as_deref().map_or(0, count_yields_in_stmt) + cond.as_ref().map_or(0, count_yields_in_expr) + update.as_ref().map_or(0, count_yields_in_expr) + count_yields_in_block(body),
         ForOf { iterable, body, .. } => count_yields_in_expr(iterable) + count_yields_in_block(body),
+        ForIn { object, body, .. } => count_yields_in_expr(object) + count_yields_in_block(body),
         Labeled { statement, .. } => count_yields_in_stmt(statement),
         Break { .. } | Continue { .. } => 0,
         Return { value, .. } => value.as_ref().map_or(0, count_yields_in_expr),
@@ -10903,6 +10935,7 @@ fn count_awaits_in_stmt(stmt: &ast::Stmt) -> usize {
                 + count_awaits_in_block(body)
         }
         ForOf { iterable, body, .. } => count_awaits_in_expr(iterable) + count_awaits_in_block(body),
+        ForIn { object, body, .. } => count_awaits_in_expr(object) + count_awaits_in_block(body),
         Labeled { statement, .. } => count_awaits_in_stmt(statement),
         Break { .. } | Continue { .. } => 0,
         Return { value, .. } => value.as_ref().map_or(0, count_awaits_in_expr),
