@@ -66,6 +66,7 @@ pub fn translate_body(
     literal_ptrs: *const u64,
     literal_data_ids: *const u32,
     body: &MethodBody<'_>,
+    bridge_enabled: bool,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
 
@@ -178,6 +179,7 @@ pub fn translate_body(
         osr_counter,
         method_return_kind: JitKind::from_byte(body.return_kind),
         handlers: body.handlers.clone(),
+        bridge_enabled,
     };
     t.run(&instrs, &offset_of_index, &index_of_offset)?;
     t.builder.finalize();
@@ -246,6 +248,9 @@ struct Translator<'a> {
     method_return_kind: JitKind,
     /// Exception regions of the method body (same-frame catch-all slice only).
     handlers: Vec<zun_module::ExceptionHandler>,
+    /// Whether a call to an ineligible (non-`func_ids`) method is lowered to a
+    /// bridged call to the interpreter instead of an error.
+    bridge_enabled: bool,
 }
 
 impl Translator<'_> {
@@ -845,6 +850,16 @@ impl Translator<'_> {
                             (v, kind)
                         })
                         .collect();
+                    // A direct call to an ineligible (non-compiled) callee is
+                    // routed to the interpreter through the bridge. Eligibility
+                    // only admits this for a non-throwing, marshalable callee.
+                    if instr.opcode == Opcode::Call
+                        && self.bridge_enabled
+                        && !self.func_ids.contains_key(&rid)
+                    {
+                        self.emit_bridge_call(rid, &arg_values, &callee, &mut stack)?;
+                        continue;
+                    }
                     let direct_string_call = instr.opcode == Opcode::CallVirt
                         && arg_values
                             .first()
@@ -2809,6 +2824,73 @@ impl Translator<'_> {
             .declare_function("zun_jit_math_fmod", Linkage::Import, &sig)
             .expect("declare zun_jit_math_fmod");
         self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    fn bridge_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64)); // method rid
+        sig.params.push(AbiParam::new(types::I64)); // packed args pointer
+        sig.params.push(AbiParam::new(types::I64)); // argument count
+        sig.returns.push(AbiParam::new(types::I64)); // packed result
+        let id = self
+            .module
+            .declare_function("zun_jit_call_interp", Linkage::Import, &sig)
+            .expect("declare zun_jit_call_interp");
+        self.module.declare_func_in_func(id, self.builder.func)
+    }
+
+    /// Lower a direct call to an ineligible, non-throwing callee as a bridged
+    /// call: pack the arguments into a stack buffer in the shim ABI, call the
+    /// host `zun_jit_call_interp`, and unpack the result. Object arguments and
+    /// the result are kept in the call's stack map (the bridge runs the
+    /// interpreter, a GC safepoint).
+    fn emit_bridge_call(
+        &mut self,
+        rid: u32,
+        arg_values: &[Slot],
+        callee: &MethodBody<'_>,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
+        let argc = arg_values.len();
+        let buf = if argc == 0 {
+            self.builder.ins().iconst(types::I64, 0)
+        } else {
+            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (argc * 8) as u32,
+                3,
+            ));
+            self.builder.ins().stack_addr(types::I64, slot, 0)
+        };
+        for (i, &(value, kind)) in arg_values.iter().enumerate() {
+            if kind == JitKind::Other {
+                return Err("bridge argument must not be an Any carrier".into());
+            }
+            if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
+                self.builder.declare_value_needs_stack_map(value);
+            }
+            let packed = crate::shim::pack_result(&mut self.builder, value, kind);
+            self.builder
+                .ins()
+                .store(MemFlags::trusted(), packed, buf, (i * 8) as i32);
+        }
+        let fref = self.bridge_fref();
+        let rid_c = self.builder.ins().iconst(types::I64, rid as i64);
+        let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
+        let call = self.builder.ins().call(fref, &[rid_c, buf, argc_c]);
+        let result = self.builder.inst_results(call)[0];
+        if callee.returns_value {
+            let kind = JitKind::from_byte(callee.return_kind);
+            if kind == JitKind::Other {
+                return Err("bridge return must not be an Any carrier".into());
+            }
+            let v = crate::shim::unpack_arg(&mut self.builder, result, kind);
+            if matches!(kind, JitKind::Object | JitKind::Array) {
+                self.builder.declare_value_needs_stack_map(v);
+            }
+            stack.push((v, kind));
+        }
+        Ok(())
     }
 
     fn array_length_fref(&mut self) -> cranelift_codegen::ir::FuncRef {

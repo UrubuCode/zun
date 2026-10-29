@@ -892,6 +892,26 @@ pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
     may_throw
 }
 
+/// Whether a method's signature can cross the bridge's packed-value ABI: every
+/// parameter and the return must be a single-word JIT kind (not `Any`/`Other`,
+/// which needs the two-word carrier the bridge does not yet marshal).
+fn bridge_marshalable(module: &Module, rid: u32) -> bool {
+    let Some(method) = module.tables.method_defs.get(rid as usize - 1) else {
+        return false;
+    };
+    if method.body_offset == u32::MAX {
+        return false;
+    }
+    let Ok(body) = read_body(&module.code, method.body_offset) else {
+        return false;
+    };
+    let params_ok = body.local_kinds[..body.param_count as usize]
+        .iter()
+        .all(|&byte| JitKind::from_byte(byte) != JitKind::Other);
+    let return_ok = !body.returns_value || JitKind::from_byte(body.return_kind) != JitKind::Other;
+    params_ok && return_ok
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
@@ -1115,9 +1135,12 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
         // A callee must be eligible, OR (with a bridge) ineligible but provably
         // non-throwing — then the call is routed to the interpreter.
         eligible.retain(|rid| {
-            candidate[rid]
-                .iter()
-                .all(|c| prev.contains(c) || (bridge_available && !may_throw.contains(c)))
+            candidate[rid].iter().all(|c| {
+                prev.contains(c)
+                    || (bridge_available
+                        && !may_throw.contains(c)
+                        && bridge_marshalable(module, *c))
+            })
         });
         if eligible.len() == prev.len() {
             break;

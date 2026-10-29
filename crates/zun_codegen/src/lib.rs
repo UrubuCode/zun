@@ -1663,6 +1663,10 @@ pub struct Jit {
     literal_ptrs: Box<[u64]>,
     stack_maps: HashMap<u32, Vec<StackMapInfo>>,
     stack_map_registry: zun_gc::StackMapRegistry,
+    /// Whether a JIT→interpreter call bridge is wired (its `zun_jit_call_interp`
+    /// symbol registered and eligibility relaxed). When set, a call to an
+    /// ineligible, non-throwing callee is lowered to a bridged call.
+    bridge_enabled: bool,
 }
 
 impl core::fmt::Debug for Jit {
@@ -1688,6 +1692,38 @@ impl Jit {
     /// defined on demand by [`Jit::ensure_compiled`] (lazy tiering) or all at
     /// once by [`Jit::compile`].
     pub fn new(zm: &Module) -> Result<Self, JitError> {
+        Self::new_impl(zm, None)
+    }
+
+    /// Like [`Jit::new`], but wires a JIT→interpreter call bridge: `bridge_fn` is
+    /// the address of the host `zun_jit_call_interp(rid, args_ptr, argc) -> u64`
+    /// (provided by the VM, which owns the interpreter). Eligibility is relaxed
+    /// so a method calling an ineligible, non-throwing method stays compiled and
+    /// that call is bridged. The caller must install the VM-side execution
+    /// context before running bridged code.
+    ///
+    /// # Safety
+    /// `bridge_fn` must be a valid `extern "C"` function pointer with the bridge
+    /// signature, valid for as long as compiled code can run.
+    pub unsafe fn new_bridged(zm: &Module, bridge_fn: *const u8) -> Result<Self, JitError> {
+        Self::new_impl(zm, Some(bridge_fn))
+    }
+
+    /// Compile every eligible method eagerly with a bridge wired (see
+    /// [`Jit::new_bridged`] and [`Jit::compile`]).
+    ///
+    /// # Safety
+    /// See [`Jit::new_bridged`].
+    pub unsafe fn compile_with_bridge(zm: &Module, bridge_fn: *const u8) -> Result<Self, JitError> {
+        let mut jit = unsafe { Self::new_bridged(zm, bridge_fn)? };
+        let all: Vec<u32> = jit.eligible.iter().copied().collect();
+        for rid in all {
+            jit.ensure_compiled(zm, rid)?;
+        }
+        Ok(jit)
+    }
+
+    fn new_impl(zm: &Module, bridge_fn: Option<*const u8>) -> Result<Self, JitError> {
         let mut flags = settings::builder();
         // Optimize for speed; the e-graph optimizer is on by default in this
         // Cranelift version, so there is no flag to set for it.
@@ -1888,6 +1924,9 @@ impl Jit {
             "zun_jit_number_is_safe_integer",
             zun_jit_number_is_safe_integer as *const u8,
         );
+        if let Some(bridge_fn) = bridge_fn {
+            builder.symbol("zun_jit_call_interp", bridge_fn);
+        }
         let module = JITModule::new(builder);
 
         let mut literal_storage = Vec::new();
@@ -1911,7 +1950,11 @@ impl Jit {
             storage_index += 1;
         }
         let literal_ptrs = literal_ptrs.into_boxed_slice();
-        let eligible = eligible_methods_with_literals(zm, true);
+        let eligible = if bridge_fn.is_some() {
+            eligible_methods_bridged(zm, true)
+        } else {
+            eligible_methods_with_literals(zm, true)
+        };
         let types =
             zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
         let virtual_tables: Vec<Box<[u64]>> = (1..=types.len() as u32)
@@ -1947,6 +1990,7 @@ impl Jit {
             literal_ptrs,
             stack_maps: HashMap::new(),
             stack_map_registry: zun_gc::StackMapRegistry::new(),
+            bridge_enabled: bridge_fn.is_some(),
         };
 
         let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
@@ -2085,6 +2129,7 @@ impl Jit {
             self.literal_ptrs.as_ptr(),
             core::ptr::null(),
             &body,
+            self.bridge_enabled,
         ) {
             // Translation failed partway, so `FunctionBuilder::finalize` never
             // ran: the builder context is left dirty and `ctx.func` holds a
@@ -2662,6 +2707,7 @@ pub fn compile_object_for_target(
             core::ptr::null(),
             literal_data_ids.as_ptr(),
             &body,
+            false,
         )
         .map_err(|detail| JitError::Compile {
             method_rid: rid,
