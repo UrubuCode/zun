@@ -69,6 +69,9 @@ fn run() -> ExitCode {
             }
         },
         [cmd, file] if cmd == "run" && file.ends_with(".zm") => run_zm(file),
+        [cmd, flag, ext, file] if cmd == "run" && flag == "--ext" => {
+            run_with_extensions(file, &[ext.as_str()])
+        }
         [cmd, file] if cmd == "run" => dispatch(file, Action::Run),
         [cmd, file] if cmd == "build" => dispatch(
             file,
@@ -198,6 +201,77 @@ enum Action {
         preserve_roots: Option<PathBuf>,
     },
     Disasm,
+}
+
+/// `zun run --ext <lib> <file>`: run a program with a loaded `zun_abi` native
+/// extension (e.g. the `zun-node` library) answering its external module
+/// imports. The extension's registered surface is turned into compiler external
+/// declarations, so the program can import from the modules it provides
+/// (`node:fs`, `fs`, …) with no hardcoded knowledge in the toolchain.
+///
+/// # Safety
+/// Loading an extension runs trusted native code during registration; `--ext`
+/// must name a trusted library.
+fn run_with_extensions(file: &str, ext_paths: &[&str]) -> ExitCode {
+    let path = Path::new(file);
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) => {
+            eprintln!("zun: cannot read {file}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Load every requested extension into one resolver.
+    let mut resolver = zun_vm::ExtensionResolver::new();
+    for ext in ext_paths {
+        let absolute = match std::path::absolute(ext) {
+            Ok(absolute) => absolute,
+            Err(error) => {
+                eprintln!("zun: cannot resolve extension path {ext}: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        // SAFETY: `--ext` names a trusted extension library per the contract above.
+        if let Err(error) = unsafe { resolver.load_path(&absolute) } {
+            eprintln!("zun: cannot load extension {ext}: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // Derive the compiler's external surface from what the extensions registered.
+    let externals = zun_compiler::external_functions_all(resolver.functions());
+
+    let oxc_typescript = matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("mts") | Some("tsx")
+    );
+    let use_oxc = oxc_typescript
+        || matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("js") | Some("mjs") | Some("cjs") | Some("jsx")
+        );
+    let module_result = if use_oxc {
+        zun_compiler::compile_with_oxc_and_externals(&source, oxc_typescript, &externals)
+    } else {
+        zun_compiler::compile_with_externals(&source, &externals)
+    };
+    let module = match module_result {
+        Ok(module) => module,
+        Err(diags) => {
+            report(file, &source, &diags);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let hook = zun_vm::ExtensionCallHook::new(resolver);
+    match zun_vm::execute_with_extensions_to_stdout(&module.write(), &hook) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("zun: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn dispatch(file: &str, action: Action) -> ExitCode {
@@ -809,6 +883,7 @@ fn link_aot_executable(
         zun_il::JitKind::Object
         | zun_il::JitKind::Array
         | zun_il::JitKind::String
+        | zun_il::JitKind::Function
         | zun_il::JitKind::Other => {
             return Err("AOT launcher supports only scalar numeric returns".to_string())
         }

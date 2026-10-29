@@ -253,6 +253,16 @@ pub fn execute_with_extensions<L: ExtensionLookup>(
     run_with(&module, output, Some(&hook)).map_err(VmError::Run)
 }
 
+/// As [`execute_with_extensions`], writing program output to stdout — the CLI's
+/// `zun run --ext …` entry.
+pub fn execute_with_extensions_to_stdout<L: ExtensionLookup>(
+    bytes: &[u8],
+    extensions: &ExtensionCallHook<L>,
+) -> Result<Value, VmError> {
+    let mut out = StdoutOutput;
+    execute_with_extensions(bytes, &mut out, extensions)
+}
+
 struct CombinedCallHook<'a, E: CallHook + ?Sized> {
     jit: Option<JitHook<'a>>,
     external: &'a E,
