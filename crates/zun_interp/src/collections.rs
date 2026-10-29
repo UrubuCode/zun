@@ -1036,6 +1036,24 @@ impl<'a> Interp<'a> {
                 zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, key, value));
                 Ok(Value::Void)
             }
+            "mapSetChain" => {
+                let recv = args.first().ok_or(RunError::BadToken)?.clone();
+                let object = object(&recv).ok_or(RunError::BadToken)?;
+                let key = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value =
+                    any(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, key, value));
+                Ok(recv)
+            }
+            "setAddChain" => {
+                let recv = args.first().ok_or(RunError::BadToken)?.clone();
+                let object = object(&recv).ok_or(RunError::BadToken)?;
+                let value =
+                    any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.set_add(object, value))
+                    .ok_or(RunError::BadToken)?;
+                Ok(recv)
+            }
             "mapSetI32" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };

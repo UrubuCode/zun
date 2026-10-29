@@ -51,6 +51,12 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
         // environment), so `f == f` is true. Two distinct closures / bound
         // functions differ, matching JS reference equality.
         (Value::Function(x), Value::Function(y)) => x == y,
+        // A Map/Set/etc. receiver may be carried as a boxed object `Any`;
+        // reference identity compares the heap addresses.
+        (Value::Any(x), Value::Any(y)) if x.as_object().is_some() => x.as_object() == y.as_object(),
+        (Value::Any(x), Value::Object(y)) | (Value::Object(y), Value::Any(x)) => {
+            x.as_object() == Some(y.addr() as usize)
+        }
         (Value::Null, Value::Null) => true,
         (Value::Any(x), Value::Null) | (Value::Null, Value::Any(x)) => {
             x.tag() == zun_core::AnyTag::Null
