@@ -7,6 +7,7 @@
 
 mod ffi;
 mod extension;
+mod extension_hook;
 mod jit_bridge;
 mod jit_hook;
 mod native_hook;
@@ -126,6 +127,7 @@ pub use ffi::{
     NativeLibraryResolver,
 };
 pub use extension::{host_triple, ExtensionResolver, LoadedExtension};
+pub use extension_hook::{ExtensionCallHook, ExtensionLookup};
 pub use jit_hook::{JitHook, OsrRequest, OsrSnapshot};
 pub use native_hook::NativeCallHook;
 pub use promise::{
@@ -232,16 +234,31 @@ pub fn execute_with_native(
 ) -> Result<Value, VmError> {
     let module = load(bytes)?;
     let jit = zun_codegen::Jit::new(&module).ok().map(|jit| JitHook::new(jit, &module));
-    let hook = CombinedCallHook { jit, native };
+    let hook = CombinedCallHook { jit, external: native };
     run_with(&module, output, Some(&hook)).map_err(VmError::Run)
 }
 
-struct CombinedCallHook<'a> {
-    jit: Option<JitHook<'a>>,
-    native: &'a NativeCallHook,
+/// Load and run a module with a loaded `zun_abi` native extension surface
+/// (e.g. the `zun-node` library) answering external module calls, alongside the
+/// normal JIT tiering hook. A call to a `(module, name)` the extension does not
+/// register falls through to the ordinary loader path.
+pub fn execute_with_extensions<L: ExtensionLookup>(
+    bytes: &[u8],
+    output: &mut dyn Output,
+    extensions: &ExtensionCallHook<L>,
+) -> Result<Value, VmError> {
+    let module = load(bytes)?;
+    let jit = zun_codegen::Jit::new(&module).ok().map(|jit| JitHook::new(jit, &module));
+    let hook = CombinedCallHook { jit, external: extensions };
+    run_with(&module, output, Some(&hook)).map_err(VmError::Run)
 }
 
-impl CallHook for CombinedCallHook<'_> {
+struct CombinedCallHook<'a, E: CallHook + ?Sized> {
+    jit: Option<JitHook<'a>>,
+    external: &'a E,
+}
+
+impl<E: CallHook + ?Sized> CallHook for CombinedCallHook<'_, E> {
     fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value> {
         self.jit.as_ref()?.try_call(method_rid, args)
     }
@@ -252,7 +269,17 @@ impl CallHook for CombinedCallHook<'_> {
         name: &str,
         args: &[Value],
     ) -> Option<Result<Value, RunError>> {
-        self.native.try_call_external(module, name, args)
+        self.external.try_call_external(module, name, args)
+    }
+
+    fn try_call_external_typed(
+        &self,
+        module: &str,
+        name: &str,
+        signature: &[u8],
+        args: &[Value],
+    ) -> Option<Result<Value, RunError>> {
+        self.external.try_call_external_typed(module, name, signature, args)
     }
 
     fn append_roots(&self, roots: &mut Vec<zun_gc::Obj>) {
