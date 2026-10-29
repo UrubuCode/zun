@@ -1,0 +1,165 @@
+name: tests
+
+# Cross-runtime conformance. Builds the zun binary, runs every fixture under
+# tests/ through Bun + Node + Zun, and compares stdout byte-for-byte
+# (scripts/tests_check.sh).
+#
+#   - On pull requests: posts/updates a summary comment. Never blocks the merge.
+#   - On push to main / schedule / manual dispatch: refreshes the report block
+#     in README.md, saves a dated history snapshot, and maintains ONE tracking
+#     issue per category (scripts/tests_issues.mjs) — not one issue per fixture.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "tests/**"
+      - "scripts/tests_*"
+      - "crates/**"
+      - "std/**"
+      - ".github/workflows/tests.yml"
+  schedule:
+    - cron: "17 4 * * *" # daily, 04:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # refresh README + commit history snapshot
+  issues: write # maintain per-category tracking issues
+  pull-requests: write # post the PR summary comment
+
+env:
+  CARGO_TERM_COLOR: always
+  REPORT_FILE: .github/tests_report.json
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: tests-conformance
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Builds zun_runtime (release) -> zstd -> rebuilds zun_cli with the
+      # embedded payload. Produces target/release/zun.
+      - name: Build zun (xtask package)
+        run: cargo run -p xtask -- package
+
+      - name: Sanity-check the binary
+        run: |
+          echo 'console.log(1 + 2);' > /tmp/sanity.ts
+          out="$(target/release/zun run /tmp/sanity.ts)"
+          test "$out" = "3" || { echo "zun sanity failed: got '$out'"; exit 1; }
+
+      - name: Run cross-runtime conformance
+        id: run
+        continue-on-error: true # divergences are reported, never block
+        run: scripts/tests_check.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tests-report
+          path: ${{ env.REPORT_FILE }}
+          if-no-files-found: error
+
+      # ---- Pull request: summary comment (find-and-update, single comment) ----
+      - name: PR summary comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const r = JSON.parse(fs.readFileSync(process.env.REPORT_FILE, 'utf8'));
+            const s = r.summary;
+            const bad = r.results
+              .filter(x => x.status === 'zun_diverge' || x.status === 'zun_error')
+              .slice(0, 20);
+            const rows = bad.map(x =>
+              `| \`${x.category}/${x.name}.ts\` | ${x.status} | ${x.zun_exit} |`).join('\n');
+            const MARKER = '<!-- zun-tests-pr-summary -->';
+            const body = [
+              MARKER,
+              `### Cross-runtime conformance: **${s.share === 'n/a' ? 'n/a' : s.share + '%'}** `
+                + `(${s.pass} / ${s.reachable} reachable)`,
+              '',
+              `pass ${s.pass} · diverge ${s.zun_diverge} · error ${s.errors} · `
+                + `skipped ${s.bun_node_diverge + s.upstream_defect + s.rejected} · total ${s.total}`,
+              bad.length
+                ? ['', '| Fixture | Status | Zun exit |', '| --- | --- | ---: |', rows,
+                   bad.length === 20 ? '\n_(first 20 shown)_' : ''].join('\n')
+                : '\n✅ No Zun divergences or errors.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments,
+              { owner, repo, issue_number });
+            const mine = comments.find(c => (c.body || '').includes(MARKER));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      # ---- main / schedule / dispatch: README, history, tracking issues ----
+      - name: Refresh README report block
+        if: github.event_name != 'pull_request'
+        run: node scripts/tests_readme.mjs "$REPORT_FILE" README.md
+
+      - name: Save history snapshot
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p .github/tests_history
+          date="$(date -u +%Y-%m-%d)"
+          cp "$REPORT_FILE" ".github/tests_history/${date}.json"
+          node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.env.REPORT_FILE, "utf8")).summary;
+            const p = ".github/tests_history/index.json";
+            const idx = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : [];
+            const date = new Date().toISOString().slice(0, 10);
+            const row = { date, share: r.share, pass: r.pass, reachable: r.reachable,
+                          diverge: r.zun_diverge, errors: r.errors, total: r.total };
+            const keep = idx.filter(e => e.date !== date);
+            keep.push(row);
+            keep.sort((a, b) => a.date.localeCompare(b.date));
+            fs.writeFileSync(p, JSON.stringify(keep, null, 2) + "\n");
+          '
+
+      - name: Commit refreshed report
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md "$REPORT_FILE" .github/tests_history
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "chore(tests): refresh cross-runtime conformance report"
+            git push
+          fi
+
+      - name: Maintain per-category tracking issues
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/tests_issues.mjs "$REPORT_FILE"
