@@ -4184,6 +4184,14 @@ impl Checker<'_> {
         for arg in args {
             let mut code = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut code, Ty::Int(IntKind::U32));
+            if code.ty.is_float() || (code.ty.is_int() && !self.is_assignable(code.ty, Ty::Int(IntKind::U32))) {
+                let cspan = code.span;
+                code = hir::Expr {
+                    kind: hir::ExprKind::Convert { value: Box::new(code) },
+                    ty: Ty::Int(IntKind::U32),
+                    span: cspan,
+                };
+            }
             if !code.ty.is_error() && !self.is_assignable(code.ty, Ty::Int(IntKind::U32)) {
                 self.error(
                     code.span,

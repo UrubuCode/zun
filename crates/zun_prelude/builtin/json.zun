@@ -174,8 +174,8 @@ class JSON {
 
     // --- parse -------------------------------------------------------------
 
-    static parse(text: string): any {
-        let parser = new JsonParser(text);
+    static parse(text: any): any {
+        let parser = new JsonParser(String(text));
         return parser.parseDocument();
     }
 }
