@@ -939,7 +939,14 @@ impl Parser<'_> {
     fn for_statement(&mut self) -> Stmt {
         let start = self.bump().span;
         self.expect(TokenKind::LParen, "`(` after for");
-        if self.eat(TokenKind::KwLet) {
+        // A for binding may be introduced by `let` or by `const` (the latter is
+        // a contextual identifier, not a lexer keyword).
+        let for_binding = self.eat(TokenKind::KwLet)
+            || (self.at(TokenKind::Ident) && self.text(self.peek()) == "const" && {
+                self.bump();
+                true
+            });
+        if for_binding {
             // A `[`/`{` head is always a destructuring for-of binding; a bare
             // identifier head may be either a for-of or a C-style for.
             if self.at(TokenKind::LBracket) || self.at(TokenKind::LBrace) {

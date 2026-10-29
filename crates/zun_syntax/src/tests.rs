@@ -102,6 +102,22 @@
         assert!(!third.is_arrow);
     }
     #[test]
+    fn parses_const_declaration_like_let() {
+        // `const` is not a lexer keyword; a const declaration (with an optional
+        // type annotation) parses to the same `Stmt::Let` as `let`, and `const`
+        // is accepted in a for-of header.
+        let src = "function main() { const n: int = 3; const xs = [1, 2]; for (const x of xs) { print(x); } }";
+        let p = parse_ok(src);
+        let body = &p.functions[0].body.statements;
+        assert!(
+            matches!(&body[0], Stmt::Let { ty: Some(_), .. }),
+            "expected a typed const binding as Stmt::Let, got {:?}",
+            body[0]
+        );
+        assert!(matches!(&body[1], Stmt::Let { ty: None, .. }), "const without annotation");
+        assert!(matches!(&body[2], Stmt::ForOf { .. }), "const in a for-of header");
+    }
+    #[test]
     fn parses_template_literal_segments() {
         let src = "function main() { let name: string = \"Zun\"; return `hello ${name}!`; }";
         let p = parse_ok(src);

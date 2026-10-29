@@ -1058,6 +1058,15 @@ impl Parser<'_> {
                 span: label.span,
             };
         }
+        // `const` is not a lexer keyword; a `const` declaration parses like
+        // `let` (same binding, annotation, and initializer). A `const enum` is a
+        // type-level declaration handled elsewhere, so it is excluded here.
+        if self.at(TokenKind::Ident)
+            && self.text(self.peek()) == "const"
+            && self.text(self.peek_n(1)) != "enum"
+        {
+            return self.let_statement();
+        }
         match self.peek().kind {
             TokenKind::KwLet => self.let_statement(),
             TokenKind::KwIf => self.if_statement(),
