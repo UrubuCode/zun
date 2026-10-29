@@ -623,16 +623,19 @@ fn convert_try_statement(
     }
 
     let catches = if let Some(handler) = try_statement.handler.as_ref() {
-        let Some(parameter) = handler.param.as_ref() else {
-            return Err("OXC adapter requires an identifier catch binding".into());
-        };
-        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
-            return Err("OXC adapter requires an identifier catch binding".into());
+        // `catch { … }` with no binding, or a binding pattern we cannot name
+        // directly, uses a zero-width binding span (an unnamed, unused local).
+        let binding_span = match handler.param.as_ref() {
+            Some(parameter) => match &parameter.pattern {
+                BindingPattern::BindingIdentifier(identifier) => {
+                    Span::new(identifier.span.start, identifier.span.end)
+                }
+                _ => Span::new(handler.body.span.start, handler.body.span.start),
+            },
+            None => Span::new(handler.body.span.start, handler.body.span.start),
         };
         vec![crate::ast::CatchClause {
-            binding: Name {
-                span: Span::new(identifier.span.start, identifier.span.end),
-            },
+            binding: Name { span: binding_span },
             ty: crate::ast::TypeAnnotation {
                 name: Name {
                     span: Span::new(0, 0),
@@ -756,6 +759,12 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         }
         Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
             span: span(this_expression.span),
+        })),
+        // `super` is modelled as an identifier whose text is `super`; sema
+        // recognises it in call/method-call receiver position and lowers the
+        // base-class dispatch. The span covers the `super` keyword in source.
+        Expression::Super(super_keyword) => Ok(Expr::Ident(Name {
+            span: span(super_keyword.span),
         })),
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(source, &parenthesized.expression)

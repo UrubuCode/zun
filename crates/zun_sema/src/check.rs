@@ -2343,6 +2343,70 @@ impl Checker<'_> {
     /// objects (insertion-ordered dynamic keys); the heavy lifting lives in the
     /// interpreter floor. Descriptor-based statics are intentionally absent —
     /// Zun has no property-descriptor model yet (see NUCLEUS.md).
+    /// Variadic `console.log/info/debug/error/warn`: format every argument with
+    /// the prelude `ConsoleFormat.top`, join with single spaces (Node), and
+    /// print once to stdout (or stderr for `error`/`warn`). Returns `None` for
+    /// any other `console` member so it falls through to normal dispatch.
+    fn check_console_variadic(
+        &mut self,
+        cx: &mut FunctionCx,
+        method: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let to_stderr = match method {
+            "log" | "info" | "debug" => false,
+            "error" | "warn" => true,
+            _ => return None,
+        };
+        let fmt_class = *self.classes_by_name.get("ConsoleFormat")?;
+        let top = self.method_of(fmt_class, "top")?;
+        let print_name = if to_stderr { "eprintln" } else { "println" };
+        let (print_id, _) = zun_natives::resolve("io", print_name)?;
+        // Build the space-joined string of every formatted argument.
+        let mut joined: Option<hir::Expr> = None;
+        for arg in args {
+            let value = self.check_expr(cx, arg);
+            let formatted = hir::Expr {
+                kind: hir::ExprKind::StaticCall {
+                    func: top,
+                    args: vec![Self::box_to_any(value)],
+                },
+                ty: Ty::String,
+                span,
+            };
+            joined = Some(match joined {
+                None => formatted,
+                Some(acc) => {
+                    let with_space = hir::Expr {
+                        kind: hir::ExprKind::Binary {
+                            op: ast::BinaryOp::Add,
+                            lhs: Box::new(acc),
+                            rhs: Box::new(Self::string_literal(" ".to_string(), span)),
+                        },
+                        ty: Ty::String,
+                        span,
+                    };
+                    hir::Expr {
+                        kind: hir::ExprKind::Binary {
+                            op: ast::BinaryOp::Add,
+                            lhs: Box::new(with_space),
+                            rhs: Box::new(formatted),
+                        },
+                        ty: Ty::String,
+                        span,
+                    }
+                }
+            });
+        }
+        let text = joined.unwrap_or_else(|| Self::string_literal(String::new(), span));
+        Some(hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id: print_id, args: vec![text] },
+            ty: Ty::Void,
+            span,
+        })
+    }
+
     fn check_object_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -6334,6 +6398,18 @@ impl Checker<'_> {
                             args,
                             span,
                         );
+                    }
+                    // `console.log/info/debug/error/warn(...)` are variadic in JS
+                    // (space-separated, each argument Node-formatted). The
+                    // prelude `console` method takes a single value, so intercept
+                    // here to format every argument through `ConsoleFormat.top`,
+                    // join with spaces, and print once.
+                    if class_name == "console" {
+                        if let Some(result) =
+                            self.check_console_variadic(cx, &self.text(method).to_string(), args, span)
+                        {
+                            return result;
+                        }
                     }
                     // `Reflect.*` reflection statics (`get set has deleteProperty
                     // ownKeys`). Surface-only namespace, recognized by receiver

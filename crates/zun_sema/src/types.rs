@@ -178,8 +178,12 @@ impl<'a> Checker<'a> {
                 if self.type_param_names.contains(other) {
                     return Ty::Any;
                 }
-                self.error(annotation.name.span, format!("unknown type `{other}`"));
-                Ty::Error
+                // A name that matches no class, builtin, alias, or type
+                // parameter is an erased type (a generic parameter, a lib type
+                // like `Generator`/`ReadableStream`, or an interface): Zun
+                // erases all of these to the dynamic type rather than rejecting
+                // the program (PLAN: typed-TS pragmatism, type erasure in v1).
+                Ty::Any
             }
         }
     }
