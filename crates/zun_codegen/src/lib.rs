@@ -16,7 +16,7 @@ mod any_abi;
 mod shim;
 mod translate;
 
-pub use eligible::{eligible_methods, eligible_methods_with_literals};
+pub use eligible::{eligible_methods, eligible_methods_bridged, eligible_methods_with_literals};
 pub use any_abi::JitAnyAbi;
 pub use zun_il::{JitKind, NumKind};
 

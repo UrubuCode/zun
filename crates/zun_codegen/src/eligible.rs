@@ -818,15 +818,109 @@ fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBod
         })
 }
 
+/// Methods that may raise a *catchable* exception (`RunError::Thrown`), computed
+/// as a call-graph fixpoint. A method throws directly if it contains `throw`,
+/// `rethrow`, `castclass`, or any `CallBuiltin` (many native builtins raise type
+/// errors), or if it has no body (an extern/native target, conservatively
+/// assumed to throw). It throws transitively if it calls a may-throw method.
+///
+/// The JIT→interpreter bridge uses this: a JIT method may bridge a call to an
+/// ineligible callee **only when that callee cannot throw**, because the bridge
+/// slice without the exceptional-return channel has no way to propagate a throw
+/// out of the JIT frame (see `docs/design/jit-interp-bridge.md`).
+pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
+    let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
+    for (index, method) in module.tables.method_defs.iter().enumerate() {
+        methods_by_name.entry(method.name).or_default().push(index as u32 + 1);
+    }
+    let count = module.tables.method_defs.len();
+    let mut direct = vec![false; count + 1];
+    let mut edges: Vec<Vec<u32>> = vec![Vec::new(); count + 1];
+    for (index, method) in module.tables.method_defs.iter().enumerate() {
+        let rid = index as u32 + 1;
+        if method.body_offset == u32::MAX {
+            direct[rid as usize] = true; // extern/native: assume it can throw
+            continue;
+        }
+        let Ok(body) = read_body(&module.code, method.body_offset) else {
+            direct[rid as usize] = true;
+            continue;
+        };
+        let Ok(instrs) = decode_all(body.code) else {
+            direct[rid as usize] = true;
+            continue;
+        };
+        for instr in &instrs {
+            match instr.opcode {
+                Opcode::Throw | Opcode::Rethrow | Opcode::CastClass | Opcode::CallBuiltin => {
+                    direct[rid as usize] = true;
+                }
+                Opcode::Call | Opcode::CallVirt => {
+                    if let Operand::Token(token) = instr.operand {
+                        if instr.opcode == Opcode::CallVirt {
+                            if let Some(method) =
+                                module.tables.method_defs.get(token.rid() as usize - 1)
+                            {
+                                edges[rid as usize].extend(
+                                    methods_by_name.get(&method.name).into_iter().flatten().copied(),
+                                );
+                            }
+                        } else {
+                            edges[rid as usize].push(token.rid());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut may_throw: HashSet<u32> = (1..=count as u32).filter(|&rid| direct[rid as usize]).collect();
+    loop {
+        let before = may_throw.len();
+        for rid in 1..=count as u32 {
+            if may_throw.contains(&rid) {
+                continue;
+            }
+            if edges[rid as usize].iter().any(|c| may_throw.contains(c)) {
+                may_throw.insert(rid);
+            }
+        }
+        if may_throw.len() == before {
+            break;
+        }
+    }
+    may_throw
+}
+
 /// Compute the set of JIT-eligible method RIDs for `module`.
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
+}
+
+/// Eligibility when a JIT→interpreter call bridge is available: a method may be
+/// eligible even if it directly calls an **ineligible, non-throwing** method,
+/// because that call is bridged to the interpreter. (Throwing ineligible callees
+/// still disqualify the caller until the exceptional-return channel lands.)
+pub fn eligible_methods_bridged(module: &Module, allow_const_str: bool) -> HashSet<u32> {
+    eligible_impl(module, allow_const_str, true)
 }
 
 /// Compute runtime-JIT eligibility when the JIT owns stable copies of module
 /// string bytes. Relocatable/AOT objects must keep the default false mode:
 /// their code cannot embed a process-local module-string pointer.
 pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) -> HashSet<u32> {
+    eligible_impl(module, allow_const_str, false)
+}
+
+/// Shared eligibility implementation. `bridge_available` relaxes the
+/// whole-call-graph fixpoint so a method that directly calls an ineligible but
+/// non-throwing method stays eligible (the call is bridged to the interpreter).
+fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool) -> HashSet<u32> {
+    let may_throw = if bridge_available {
+        methods_that_may_throw(module)
+    } else {
+        HashSet::new()
+    };
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
         methods_by_name
@@ -1018,7 +1112,13 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
     let mut eligible: HashSet<u32> = candidate.keys().copied().collect();
     loop {
         let prev = eligible.clone();
-        eligible.retain(|rid| candidate[rid].iter().all(|c| prev.contains(c)));
+        // A callee must be eligible, OR (with a bridge) ineligible but provably
+        // non-throwing — then the call is routed to the interpreter.
+        eligible.retain(|rid| {
+            candidate[rid]
+                .iter()
+                .all(|c| prev.contains(c) || (bridge_available && !may_throw.contains(c)))
+        });
         if eligible.len() == prev.len() {
             break;
         }
