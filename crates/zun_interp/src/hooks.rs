@@ -3,6 +3,15 @@ use super::Value;
 pub trait CallHook {
     fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value>;
 
+    /// A thrown exception left pending by the most recent [`Self::try_call`]
+    /// whose compiled body unwound (e.g. a JIT method that propagated a throw
+    /// out of a bridged call). The interpreter consults this right after a
+    /// successful `try_call` and, if `Some`, routes it as a thrown value instead
+    /// of using the returned result. The default has no pending channel.
+    fn take_pending_exception(&self) -> Option<Value> {
+        None
+    }
+
     /// Try a host-provided external call identified by module and export.
     /// Returning `None` preserves the ordinary module-loader path.
     fn try_call_external(

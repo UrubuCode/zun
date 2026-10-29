@@ -969,6 +969,11 @@ impl Interp<'_> {
             }
             let _native_roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
             if let Some(result) = hook.try_call(method_rid, &args) {
+                // A hooked (JIT) method may have unwound a throw out of a bridged
+                // call; route it as a thrown value rather than the result.
+                if let Some(exception) = hook.take_pending_exception() {
+                    return Err(RunError::Thrown(exception));
+                }
                 return Ok(result);
             }
         }

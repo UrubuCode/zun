@@ -118,6 +118,38 @@ struct BridgeContext {
 
 thread_local! {
     static BRIDGE_CONTEXT: RefCell<Option<BridgeContext>> = const { RefCell::new(None) };
+    /// Set to a thrown object's handle (nonzero) when a bridged callee throws;
+    /// 0 means no pending exception. The JIT reads it after a call to decide
+    /// whether to route to a catch or propagate; the interpreter consults it
+    /// (via `JitHook::take_pending_exception`) after a hooked JIT call.
+    static PENDING_EXCEPTION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Record a thrown object handle as the pending exception (set by the bridge
+/// wrapper when a bridged callee throws).
+pub(crate) fn set_pending_exception(handle: u64) {
+    PENDING_EXCEPTION.with(|slot| slot.set(handle));
+}
+
+/// Address of the per-thread pending-exception slot, for the JIT to load after a
+/// call. Stable for the thread's life; the JIT runs on the thread that built it.
+// Consumed by the translate post-call check (step 2.2) next.
+#[allow(dead_code)]
+pub(crate) fn pending_slot_addr() -> u64 {
+    PENDING_EXCEPTION.with(|slot| slot.as_ptr() as u64)
+}
+
+/// Take and clear the pending exception handle, if any.
+pub(crate) fn take_pending_exception() -> Option<u64> {
+    PENDING_EXCEPTION.with(|slot| {
+        let handle = slot.get();
+        if handle != 0 {
+            slot.set(0);
+            Some(handle)
+        } else {
+            None
+        }
+    })
 }
 
 /// Install the bridge execution context for the current thread, restoring the
@@ -173,7 +205,16 @@ pub(crate) extern "C" fn zun_jit_call_interp(rid: i64, args_ptr: *const u64, arg
         &[]
     };
     match bridge_call(module, loader, output, rid as u32, args) {
-        Ok(outcome) => outcome.packed,
+        Ok(outcome) => {
+            if outcome.status == STATUS_THREW {
+                // Record the thrown object; the JIT frame's post-call check
+                // routes it (to a catch, or out of the frame).
+                set_pending_exception(outcome.packed);
+                0
+            } else {
+                outcome.packed
+            }
+        }
         Err(_) => 0,
     }
 }

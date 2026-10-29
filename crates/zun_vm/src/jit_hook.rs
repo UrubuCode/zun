@@ -303,6 +303,13 @@ impl CallHook for JitHook<'_> {
         self.rewrite_osr_snapshot_roots(relocation);
     }
 
+    fn take_pending_exception(&self) -> Option<Value> {
+        // A bridged callee that threw left its object handle here; the JIT frame
+        // propagated out, and the interpreter now resumes throwing it.
+        crate::jit_bridge::take_pending_exception()
+            .map(|handle| Value::Object(unsafe { zun_gc::Obj::from_addr(handle as *mut u64) }))
+    }
+
     fn append_roots(&self, roots: &mut Vec<zun_gc::Obj>) {
         let snapshots = self.osr_snapshots.borrow();
         for snapshot in snapshots.iter() {
