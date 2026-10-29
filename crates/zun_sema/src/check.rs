@@ -9303,6 +9303,28 @@ impl Checker<'_> {
                             // (a buffer) falls through to the view path below.
                             if !matches!(kind, hir::BufferViewKind::DataView) && args.len() == 1 {
                                 let mut length = self.check_expr(cx, &args[0]);
+                                // `new Float64Array([1, 2, 3])` copies an array (or
+                                // another typed array) like `<Kind>Array.from`.
+                                if matches!(length.ty, Ty::Array | Ty::BufferView(_)) {
+                                    if let (Some(discriminant), Some((id, _))) = (
+                                        crate::typed_arrays::element_index(kind),
+                                        zun_natives::resolve("buffer", "typedArrayFrom"),
+                                    ) {
+                                        let kind_lit = hir::Expr {
+                                            kind: hir::ExprKind::Number(discriminant as f64),
+                                            ty: Ty::Int(IntKind::U32),
+                                            span,
+                                        };
+                                        return hir::Expr {
+                                            kind: hir::ExprKind::CallBuiltin {
+                                                id,
+                                                args: vec![length, kind_lit],
+                                            },
+                                            ty: Ty::BufferView(kind),
+                                            span,
+                                        };
+                                    }
+                                }
                                 if length.ty.is_int() || matches!(length.ty, Ty::Float(_)) {
                                     coerce_numeric_literal(&mut length, Ty::INT);
                                     let elem = crate::typed_arrays::element_size(kind).unwrap_or(1);

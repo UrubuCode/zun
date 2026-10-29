@@ -3834,9 +3834,25 @@ impl<'a> Interp<'a> {
                         };
                         let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
                         else {
-                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                                "Array.from: value is not array-like",
-                            ))));
+                            // Any other iterable (Set, Map, iterator, user
+                            // iterable) is drained through the iteration protocol.
+                            let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                            let drained = self.drive_iterable(source, target, |heap, array, value| {
+                                heap.array_push(array, value);
+                            });
+                            let array = drained.map_err(|_| {
+                                RunError::Thrown(Value::Str(std::rc::Rc::from(
+                                    "Array.from: value is not array-like",
+                                )))
+                            })?;
+                            if name == "arrayFrom" {
+                                return Ok(Value::Object(array));
+                            }
+                            // Mapped form below re-reads `base`; hand the drained
+                            // array to the shared tail by recursing on it.
+                            let mut forwarded = args.to_vec();
+                            forwarded[0] = Value::Object(array);
+                            return self.call_managed_collection(name, &forwarded);
                         };
                         zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(length);
