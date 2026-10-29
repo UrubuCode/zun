@@ -43,12 +43,22 @@ fn convert_type_annotation(
         type_text = stripped.trim_end();
         is_array = true;
     }
+    // Keep the base name of a generic (`Array<number>` -> `Array`); the type
+    // arguments are erased like everything else.
+    if let Some(generic) = type_text.find('<') {
+        type_text = type_text[..generic].trim_end();
+    }
+    // Zun erases types (PLAN: typed-TS pragmatism). A plain named type keeps its
+    // name (so `Array`/class receivers still resolve); anything the source
+    // language cannot name here — a function type `(x) => y`, a union, a tuple,
+    // an object or literal type — erases to an untyped (`any`) binding rather
+    // than being rejected, matching JS/TS erasure semantics.
     if type_text.is_empty()
         || !type_text
             .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+            .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '$')
     {
-        return Err("OXC adapter supports named TypeScript types only".into());
+        return Ok(None);
     }
     let name_start = start + type_start;
     Ok(Some(crate::ast::TypeAnnotation {
@@ -1097,10 +1107,76 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 span: span(new_expression.span),
             })
         }
+        Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),
         _ => {
             Err("OXC adapter currently supports literal, identifier, and binary expressions".into())
         }
     }
+}
+
+/// Convert an arrow function (`(a) => expr` or `(a) => { … }`) to a
+/// `FunctionExpr` flagged as an arrow. A concise expression body becomes a
+/// single `return`.
+fn convert_arrow(
+    source: &str,
+    arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
+) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let mut params = Vec::with_capacity(arrow.params.items.len());
+    for parameter in &arrow.params.items {
+        let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
+            return Err("OXC adapter supports identifier arrow parameters only".into());
+        };
+        params.push(crate::ast::Param {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
+            default_value: parameter
+                .initializer
+                .as_ref()
+                .map(|initializer| convert_expression(source, initializer))
+                .transpose()?
+                .map(Box::new),
+            is_rest: false,
+        });
+    }
+    if let Some(rest) = arrow.params.rest.as_ref() {
+        let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
+            return Err("OXC adapter supports identifier rest parameters only".into());
+        };
+        params.push(crate::ast::Param {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, rest.type_annotation.as_deref())?,
+            default_value: None,
+            is_rest: true,
+        });
+    }
+    // A concise body (`=> expr`) returns its expression; a block body
+    // (`=> { … }`) converts its statement list.
+    let body = if let Some(expression) = arrow.get_expression() {
+        Block {
+            statements: vec![Stmt::Return {
+                value: Some(convert_expression(source, expression)?),
+                span: span(expression.span()),
+            }],
+            span: span(arrow.span),
+        }
+    } else if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(function_body) = &arrow.body {
+        Block {
+            statements: convert_statement_list(source, &function_body.statements)?,
+            span: span(function_body.span),
+        }
+    } else {
+        return Err("OXC adapter: unexpected arrow body".into());
+    };
+    Ok(Expr::Function(FunctionExpr {
+        params,
+        return_type: convert_type_annotation(source, arrow.return_type.as_deref())?,
+        body,
+        is_arrow: true,
+        is_async: arrow.r#async,
+        is_generator: false,
+        span: span(arrow.span),
+    }))
 }
 
 /// Parse standard JavaScript or TypeScript with OXC.
