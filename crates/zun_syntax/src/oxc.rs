@@ -326,7 +326,7 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 span: span(return_statement.span),
             }),
             Statement::ExpressionStatement(expression_statement) => statements.push(Stmt::Expr(
-                convert_expression(source, &expression_statement.expression)?,
+                convert_effect_expression(source, &expression_statement.expression)?,
             )),
             Statement::BreakStatement(break_statement) => statements.push(Stmt::Break {
                 label: break_statement.label.as_ref().map(|label| Name {
@@ -618,7 +618,7 @@ fn convert_for_statement(
         update: for_statement
             .update
             .as_ref()
-            .map(|expression| convert_expression(source, expression))
+            .map(|expression| convert_effect_expression(source, expression))
             .transpose()?,
         body: convert_if_branch(source, &for_statement.body)?,
         span: span(for_statement.span),
@@ -1551,7 +1551,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
             Ok(Expr::Ident(Name { span: name_span }))
         }
-        Expression::UpdateExpression(update) => convert_update(source, update),
+        Expression::UpdateExpression(update) => convert_update(source, update, true),
         other => {
             let dbg = format!("{other:?}");
             let kind = dbg.split(|c: char| !c.is_alphanumeric()).find(|s| !s.is_empty()).unwrap_or("?");
@@ -1564,7 +1564,44 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
 /// operator). Correct for prefix form and for statement/for-update position
 /// (the value is unused); a postfix result used as a value would see the new
 /// value instead of the old — a known v1 limitation.
+/// Convert an expression evaluated only for its effect (an expression
+/// statement or a `for` update clause): a postfix update there needs no old
+/// value.
+fn convert_effect_expression(
+    source: &str,
+    expression: &Expression<'_>,
+) -> Result<Expr, String> {
+    match expression {
+        Expression::UpdateExpression(update) => convert_update(source, update, false),
+        other => convert_expression(source, other),
+    }
+}
+
+/// Convert `x++`/`x--`. In value position a postfix form yields the old value,
+/// computed as `(x = x ± 1) ∓ 1`.
 fn convert_update(
+    source: &str,
+    update: &oxc_ast::ast::UpdateExpression<'_>,
+    value_used: bool,
+) -> Result<Expr, String> {
+    let updated = convert_update_assign(source, update)?;
+    if value_used && !update.prefix {
+        let whole = Span::new(update.span.start, update.span.end);
+        let undo = match update.operator {
+            oxc_ast::ast::UpdateOperator::Increment => BinaryOp::Sub,
+            oxc_ast::ast::UpdateOperator::Decrement => BinaryOp::Add,
+        };
+        return Ok(Expr::Binary {
+            op: undo,
+            lhs: Box::new(updated),
+            rhs: Box::new(Expr::Number { value: 1.0, span: whole }),
+            span: whole,
+        });
+    }
+    Ok(updated)
+}
+
+fn convert_update_assign(
     source: &str,
     update: &oxc_ast::ast::UpdateExpression<'_>,
 ) -> Result<Expr, String> {
