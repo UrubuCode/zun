@@ -200,7 +200,17 @@ fn convert_declarator(
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     // An uninitialized binding (`let x;`) defaults to `undefined` (`void 0`).
     let init = match declarator.init.as_ref() {
-        Some(initializer) => convert_expression(source, initializer)?,
+        Some(initializer) => {
+            if let (Expression::ClassExpression(_), BindingPattern::BindingIdentifier(binding)) =
+                (initializer, &declarator.id)
+            {
+                CLASS_NAME_HINT
+                    .with(|cell| *cell.borrow_mut() = Some(span(binding.span)));
+            }
+            let converted = convert_expression(source, initializer);
+            CLASS_NAME_HINT.with(|cell| *cell.borrow_mut() = None);
+            converted?
+        }
         None => Expr::Unary {
             op: crate::ast::UnaryOp::Void,
             operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
@@ -1505,6 +1515,30 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         }
         Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),
         Expression::FunctionExpression(function) => convert_oxc_function(source, function),
+        // A class expression is lifted to a hoisted class declaration (Zun
+        // classes are program-global) and the expression becomes a reference
+        // to it, which sema reads as the class constructor descriptor. An
+        // anonymous class takes the name of the binding it initializes (set by
+        // the declarator converter), else the `class` keyword span.
+        Expression::ClassExpression(class_expression) => {
+            let hint = CLASS_NAME_HINT.with(|cell| cell.borrow_mut().take());
+            // A class bound by a declarator takes the binding's name so that
+            // `new Binding()` resolves statically (limitation: an inner
+            // reference to a distinct class-expression name is not bound).
+            let name_span = match (hint, class_expression.id.as_ref()) {
+                (Some(binding), _) => binding,
+                (None, Some(id)) => Span::new(id.span.start, id.span.end),
+                (None, None) => Span::new(
+                    class_expression.span.start,
+                    class_expression.span.start + 5,
+                ),
+            };
+            let mut class = convert_class_declaration(source, class_expression)
+                .map_err(|errors| errors.join("; "))?;
+            class.name = Name { span: name_span };
+            HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
+            Ok(Expr::Ident(Name { span: name_span }))
+        }
         Expression::UpdateExpression(update) => convert_update(source, update),
         other => {
             let dbg = format!("{other:?}");
@@ -2900,6 +2934,13 @@ mod tests {
 }
 
 thread_local! {
+    /// Name span of the binding an anonymous class expression initializes
+    /// (`const C = class {}`), consumed by the class-expression converter.
+    static CLASS_NAME_HINT: std::cell::RefCell<Option<Span>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
     /// Block-local / nested class declarations collected while converting a
     /// module body. Drained into the program's class list in `parse_subset`.
     /// Thread-local so the recursive statement converter can reach it without
@@ -2911,9 +2952,12 @@ thread_local! {
 /// Convert a single OXC class declaration into the AST class (shared by the
 /// top-level scan and the statement converter for block-local classes).
 fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Class<'_>) -> Result<crate::ast::Class, Vec<String>> {
-            let Some(id) = class_declaration.id.as_ref() else {
-                return Err(vec!["OXC adapter requires named classes".into()]);
-            };
+            // Anonymous class expressions get their name patched by the caller.
+            let id_span = class_declaration
+                .id
+                .as_ref()
+                .map(|id| id.span)
+                .unwrap_or(class_declaration.span);
             let base = class_declaration
                 .heritage
                 .as_ref()
@@ -3120,7 +3164,7 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
             }
             return Ok(crate::ast::Class {
                 name: Name {
-                    span: Span::new(id.span.start, id.span.end),
+                    span: Span::new(id_span.start, id_span.end),
                 },
                 // OXC adapter erases generic type parameters (see above).
                 type_params: Vec::new(),
