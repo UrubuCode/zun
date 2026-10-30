@@ -926,7 +926,17 @@ impl Interp<'_> {
                         other => other.box_any(heap),
                     })
                     .ok_or(RunError::BadToken)?;
+                    // Writing at or past the end extends the array (JS semantics);
+                    // the gap slots stay empty.
                     zun_gc::with_current_heap_mut(|heap| {
+                        if let Some(len) = heap.array_len(array) {
+                            if (index as usize) >= len {
+                                heap.array_resize(array, index as usize + 1);
+                                for gap in len..(index as usize) {
+                                    heap.array_set(array, gap, zun_core::Any::void());
+                                }
+                            }
+                        }
                         heap.array_set(array, index as usize, any)
                     })
                     .ok_or(RunError::BadToken)?;
