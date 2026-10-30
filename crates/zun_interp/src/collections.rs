@@ -7578,7 +7578,10 @@ pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
 /// everything else (decimal, scientific, `Infinity`) goes through Rust's `f64`
 /// parser; a failed parse is `NaN`.
 pub(super) fn js_string_to_number(text: &str) -> f64 {
-    let trimmed = text.trim();
+    // ECMAScript StrWhiteSpace: includes U+FEFF, excludes U+0085.
+    let trimmed = text.trim_matches(|c: char| {
+        matches!(c, '﻿') || (c.is_whitespace() && c != '')
+    });
     if trimmed.is_empty() {
         return 0.0;
     }
@@ -7601,6 +7604,8 @@ pub(super) fn js_string_to_number(text: &str) -> f64 {
     match trimmed {
         "Infinity" | "+Infinity" => f64::INFINITY,
         "-Infinity" => f64::NEG_INFINITY,
+        // Rust accepts `inf`/`infinity`/`nan` in any case; JS does not.
+        _ if trimmed.chars().any(|c| c.is_alphabetic() && c != 'e' && c != 'E') => f64::NAN,
         _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
     }
 }

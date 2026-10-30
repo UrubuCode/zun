@@ -3973,6 +3973,23 @@ impl Checker<'_> {
 
     /// Coerce a value to an `f64` argument: integers widen, everything else
     /// goes through JS ToNumber.
+    /// ToString of a `parseInt`/`parseFloat` operand: a string passes through,
+    /// anything else goes through the `String(x)` coercion helper.
+    fn to_string_for_parse(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty == Ty::String || value.ty.is_error() {
+            return value;
+        }
+        let span = value.span;
+        match self.by_name.get("__coerceString").copied() {
+            Some(func) => hir::Expr {
+                kind: hir::ExprKind::Call { func, args: vec![Self::box_to_any(value)] },
+                ty: Ty::String,
+                span,
+            },
+            None => value,
+        }
+    }
+
     fn to_number_for_arg(&mut self, value: hir::Expr) -> hir::Expr {
         if value.ty.is_int() {
             let span = value.span;
@@ -4178,9 +4195,7 @@ impl Checker<'_> {
                 }
                 let Some(id) = resolve(self, "parseFloatPrefix") else { return self.poison(span) };
                 let arg = self.check_expr(cx, &args[0]);
-                if !arg.ty.is_error() && !self.is_assignable(arg.ty, Ty::String) {
-                    self.error(arg.span, "`Number.parseFloat` expects a string argument");
-                }
+                let arg = self.to_string_for_parse(arg);
                 hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
             }
             "parseInt" => {
@@ -4190,12 +4205,21 @@ impl Checker<'_> {
                 }
                 let Some(id) = resolve(self, "parseIntRadix") else { return self.poison(span) };
                 let value = self.check_expr(cx, &args[0]);
-                if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::String) {
-                    self.error(value.span, "`Number.parseInt` expects a string argument");
-                }
+                let value = self.to_string_for_parse(value);
                 let radix = match args.get(1) {
                     Some(arg) => {
                         let mut radix = self.check_expr(cx, arg);
+                        // A dynamic radix goes through ToNumber first.
+                        if radix.ty == Ty::Any {
+                            if let Some((nid, _)) = zun_natives::resolve("collections", "numberCoerce") {
+                                let rspan = radix.span;
+                                radix = hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id: nid, args: vec![radix] },
+                                    ty: Ty::F64,
+                                    span: rspan,
+                                };
+                            }
+                        }
                         coerce_numeric_literal(&mut radix, Ty::Int(IntKind::I32));
                         // JS ToInt32 on the radix: a `number`/other int radix is converted.
                         if radix.ty.is_float() || (radix.ty.is_int() && radix.ty != Ty::Int(IntKind::I32)) {
@@ -6345,6 +6369,10 @@ impl Checker<'_> {
                 // performs string parsing and object→primitive coercion
                 // (`[Symbol.toPrimitive]("number")`) at run time.
                 if name == "Number" && !self.by_name.contains_key(&name) {
+                    // `Number()` with no argument is `+0`.
+                    if args.is_empty() {
+                        return hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::F64, span };
+                    }
                     if args.len() != 1 {
                         self.error(span, "`Number` expects one argument");
                         return self.poison(span);
