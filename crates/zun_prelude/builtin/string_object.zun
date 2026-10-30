@@ -1,0 +1,12 @@
+// `new String(x)` wrapper object. The bare call `String(x)` stays a `string`
+// primitive; `new String(x)` and `Object(<string>)` are lowered by the checker
+// to `new StringObject(<ToString of x>)`. The class is named `StringObject`
+// because `String` is the primitive's annotation and coercion name.
+
+class StringObject {
+    value: string;
+
+    valueOf(): string { return this.value; }
+
+    toString(): string { return this.value; }
+}

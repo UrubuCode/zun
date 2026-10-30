@@ -10528,6 +10528,49 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if name == "String" && !self.classes_by_name.contains_key(&name) {
+                    let Some(&wrapper) = self.classes_by_name.get("StringObject") else {
+                        self.error(class.span, "missing `StringObject` wrapper class");
+                        return self.poison(span);
+                    };
+                    if args.len() > 1 {
+                        self.error(span, "`String` expects at most one argument");
+                        return self.poison(span);
+                    }
+                    let text = match args.first() {
+                        None => hir::Expr {
+                            kind: hir::ExprKind::String(String::new()),
+                            ty: Ty::String,
+                            span,
+                        },
+                        Some(arg) => {
+                            let arg = self.check_expr(cx, arg);
+                            if arg.ty.is_error() {
+                                return self.poison(span);
+                            }
+                            if arg.ty == Ty::String {
+                                arg
+                            } else if let Some(&func) = self.by_name.get("__coerceString") {
+                                hir::Expr {
+                                    kind: hir::ExprKind::Call {
+                                        func,
+                                        args: vec![Self::box_to_any(arg)],
+                                    },
+                                    ty: Ty::String,
+                                    span,
+                                }
+                            } else {
+                                self.error(span, "missing `__coerceString` helper");
+                                return self.poison(span);
+                            }
+                        }
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::New { class: wrapper, args: vec![text] },
+                        ty: Ty::Instance(wrapper),
+                        span,
+                    };
+                }
                 if name == "Boolean" && !self.classes_by_name.contains_key(&name) {
                     let Some(&wrapper) = self.classes_by_name.get("BooleanObject") else {
                         self.error(class.span, "missing `BooleanObject` wrapper class");
