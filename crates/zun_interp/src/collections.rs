@@ -4781,15 +4781,23 @@ impl<'a> Interp<'a> {
                 .unwrap_or(Value::Void))
             }
             "objectFreeze" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // `Object.freeze(primitive)` is the identity (non-objects have
+                // no properties to freeze), returning the argument unchanged.
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let Some(obj) = object(arg) else {
+                    return Ok(arg.clone());
+                };
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));
                 Ok(Value::Object(obj))
             }
             "objectIsFrozen" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                // A dynamic object is frozen only when `Object.freeze` ran on it;
-                // a fixed-layout typed object has an immutable shape, so it is
-                // reported frozen.
+                // A primitive is always "frozen" (ECMAScript); otherwise a
+                // dynamic object is frozen only when `Object.freeze` ran on it,
+                // and a fixed-layout typed object has an immutable shape.
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let Some(obj) = object(arg) else {
+                    return Ok(Value::Bool(true));
+                };
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let frozen = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_frozen(obj))
@@ -5022,12 +5030,19 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(array))
             }
             "objectSeal" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // `Object.seal(primitive)` is the identity (ECMAScript).
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let Some(obj) = object(arg) else {
+                    return Ok(arg.clone());
+                };
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_seal(obj));
                 Ok(Value::Object(obj))
             }
             "objectIsSealed" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let Some(obj) = object(arg) else {
+                    return Ok(Value::Bool(true));
+                };
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let sealed = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_sealed(obj))
@@ -5038,7 +5053,11 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(sealed))
             }
             "objectPreventExtensions" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // `Object.preventExtensions(primitive)` is the identity.
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let Some(proxy) = object(arg) else {
+                    return Ok(arg.clone());
+                };
                 let obj = match self.proxy_route(proxy, "preventExtensions") {
                     ProxyRoute::Trap(callback, target) => {
                         self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
@@ -5051,7 +5070,11 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectIsExtensible" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A primitive is never extensible (ECMAScript).
+                let arg = args.first().ok_or(RunError::BadToken)?;
+                let Some(proxy) = object(arg) else {
+                    return Ok(Value::Bool(false));
+                };
                 let obj = match self.proxy_route(proxy, "isExtensible") {
                     ProxyRoute::Trap(callback, target) => {
                         let result =
@@ -5259,6 +5282,11 @@ impl<'a> Interp<'a> {
         let mut chain = Vec::new();
         let mut current = type_rid;
         loop {
+            // A zero rid is not a valid TypeDef (1-based); stop walking rather
+            // than underflow on `current - 1`.
+            if current == 0 {
+                break;
+            }
             chain.push(current);
             let ty = self
                 .module
