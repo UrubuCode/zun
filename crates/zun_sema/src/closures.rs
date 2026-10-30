@@ -84,7 +84,9 @@ impl Checker<'_> {
                 .unwrap_or(Ty::Any);
             inner.declare(self.text(&parameter.name), ty);
         }
-        let body = self.check_block(&mut inner, &function.body);
+        self.collect_mutated_names(&function.body.statements, &mut inner.mutated_names);
+        let mut body = self.check_block(&mut inner, &function.body);
+        self.rewrite_boxed_lets(&mut body, &inner.boxed);
         // An expression-bodied arrow whose body is a void call (`() => log(x)`)
         // returns nothing: evaluate it as a statement, then return bare.
         let body: Vec<hir::Stmt> = if function.return_type.is_none() {

@@ -127,6 +127,23 @@ pub(super) fn collect_mutated_expr(
         // count: every closure over that variable must then share a cell.
         ast::Expr::Function(function) => {
             collect_mutated_names(checker, &function.body.statements, names);
+            // Record every identifier-like token in the closure source so a
+            // declaration can be boxed up front when a closure may capture it
+            // (a superset is safe: extra boxing only costs a cell).
+            let start = function.span.start as usize;
+            let end = (function.span.end as usize).min(checker.source.len());
+            if start < end {
+                let text = &checker.source[start..end];
+                let mut token = String::new();
+                for ch in text.chars().chain(std::iter::once(' ')) {
+                    if ch.is_alphanumeric() || ch == '_' || ch == '$' {
+                        token.push(ch);
+                    } else if !token.is_empty() {
+                        names.insert(format!("\u{1}{token}"));
+                        token.clear();
+                    }
+                }
+            }
         }
         ast::Expr::Ident(_) | ast::Expr::Number { .. }
         | ast::Expr::BigInt { .. }

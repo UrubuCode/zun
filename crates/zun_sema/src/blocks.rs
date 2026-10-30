@@ -31,7 +31,11 @@ impl<'a> Checker<'a> {
                             if !matches!(slot_ty, crate::hir::Ty::Function(_)) {
                                 let span = name.span;
                                 let read = hir::Expr {
-                                    kind: hir::ExprKind::Local(slot),
+                                    kind: if cx.boxed.contains(&slot) {
+                                        hir::ExprKind::CellLoad { slot }
+                                    } else {
+                                        hir::ExprKind::Local(slot)
+                                    },
                                     ty: slot_ty,
                                     span,
                                 };

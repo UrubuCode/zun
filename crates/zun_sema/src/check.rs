@@ -2176,13 +2176,59 @@ impl Checker<'_> {
                 };
                 let name_text = self.text(name).to_string();
                 let slot = cx.declare(&name_text, var_ty);
+                // A variable that a closure may capture and that is assigned
+                // somewhere is boxed from its declaration, so every access
+                // lowered before the capturing closure already uses the cell.
+                if cx.mutated_names.contains(&name_text)
+                    && cx.mutated_names.contains(&format!("\u{1}{name_text}"))
+                    && !matches!(var_ty, Ty::Function(_))
+                {
+                    cx.boxed.insert(slot);
+                }
                 if cx.boxed.contains(&slot) {
                     hir::Stmt::BoxedLet { slot, init }
                 } else {
                     hir::Stmt::Let { slot, init }
                 }
             }
-            ast::Stmt::Expr(e) => hir::Stmt::Expr(self.check_expr(cx, e)),
+            ast::Stmt::Expr(e) => {
+                let lowered = self.check_expr(cx, e);
+                // A reassignment of a top-level `let` at module scope is mirrored
+                // to the realm global store so closures reading it via
+                // `globalGet` observe the new value.
+                if cx.is_module_scope {
+                    if let ast::Expr::Assign { target, .. } = e {
+                        let name_text = self.text(target).to_string();
+                        if self.module_globals.contains(&name_text) {
+                            let outer = cx.scopes.iter().find_map(|s| s.get(&name_text).copied());
+                            if let hir::ExprKind::Assign { slot, .. }
+                            | hir::ExprKind::CellStore { slot, .. } = &lowered.kind
+                            {
+                                let slot = *slot;
+                                let slot_ty = cx.locals[slot as usize];
+                                if outer == Some(slot) && !matches!(slot_ty, Ty::Function(_)) {
+                                    let span = lowered.span;
+                                    let read = hir::Expr {
+                                        kind: if cx.boxed.contains(&slot) {
+                                            hir::ExprKind::CellLoad { slot }
+                                        } else {
+                                            hir::ExprKind::Local(slot)
+                                        },
+                                        ty: slot_ty,
+                                        span,
+                                    };
+                                    let mirror = self.global_set_expr(&name_text, read, span);
+                                    return hir::Stmt::Group(vec![
+                                        hir::Stmt::Expr(lowered),
+                                        hir::Stmt::Expr(mirror),
+                                    ]);
+                                }
+                            }
+                        }
+                    }
+                }
+                hir::Stmt::Expr(lowered)
+            }
             ast::Stmt::If {
                 cond,
                 then_block,
@@ -11614,6 +11660,24 @@ impl Checker<'_> {
                         ty: return_ty,
                         span,
                     };
+                }
+                // A dynamic (`any`) callee is invoked through the counted
+                // dynamic-call form, which accepts any argument count.
+                if matches!(callee.ty, Ty::Any | Ty::DynamicObject) {
+                    let args: Vec<hir::Expr> =
+                        args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+                    return hir::Expr {
+                        kind: hir::ExprKind::IndirectCall {
+                            callee: Box::new(callee),
+                            args,
+                            func: hir::DYNAMIC_FUNCTION,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
+                if callee.ty.is_error() {
+                    return self.poison(span);
                 }
                 self.error(span, "computed calls are not supported for this callee");
                 self.poison(span)
