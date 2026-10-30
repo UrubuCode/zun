@@ -563,13 +563,19 @@ fn convert_for_statement(
                 let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
                     return Err("OXC adapter supports identifier for-loop bindings".into());
                 };
-                let Some(initializer) = declarator.init.as_ref() else {
-                    return Err("OXC adapter requires an initializer for for-loop bindings".into());
+                let init = match declarator.init.as_ref() {
+                    Some(initializer) => convert_expression(source, initializer)?,
+                    // `for (let i; ...)` — an uninitialized binding is `undefined`.
+                    None => Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+                        span: span(declarator.span),
+                    },
                 };
                 pre.push(Stmt::Let {
                     name: Name { span: span(identifier.span) },
                     ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                    init: convert_expression(source, initializer)?,
+                    init,
                     span: span(declarator.span),
                 });
             }
@@ -580,13 +586,19 @@ fn convert_for_statement(
             let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
                 return Err("OXC adapter supports identifier for-loop bindings".into());
             };
-            let Some(initializer) = declarator.init.as_ref() else {
-                return Err("OXC adapter requires an initializer for for-loop bindings".into());
+            let init = match declarator.init.as_ref() {
+                Some(initializer) => convert_expression(source, initializer)?,
+                // `for (let i; ...)` — an uninitialized binding is `undefined`.
+                None => Expr::Unary {
+                    op: crate::ast::UnaryOp::Void,
+                    operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+                    span: span(declarator.span),
+                },
             };
             Some(Box::new(Stmt::Let {
                 name: Name { span: span(identifier.span) },
                 ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
-                init: convert_expression(source, initializer)?,
+                init,
                 span: span(declarator.span),
             }))
         }
