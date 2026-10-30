@@ -2841,6 +2841,13 @@ impl<'a> Interp<'a> {
                 // `undefined`→NaN. An object runs OrdinaryToPrimitive with hint
                 // "number": call `[Symbol.toPrimitive]("number")` if present and
                 // ToNumber its result, else ToNumber of its string coercion.
+                if let Some(Value::Any(any)) = args.first() {
+                    if any.tag() == zun_core::AnyTag::Symbol {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert a Symbol value to a number".into(),
+                        ));
+                    }
+                }
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let number = self.to_number_value(value)?;
                 Ok(Value::Float(number, zun_il::NumKind::F64))
