@@ -443,6 +443,7 @@ pub const MODULE: crate::Module = crate::Module {
         // then falls back to `[Symbol.toStringTag]` → `"[object <Tag>]"`, else
         // `"[object Object]"`. Appended last so existing dispatch ids stay stable.
         NativeFn { name: "stringCoerce", params: &[Opaque], ret: Str, imp: unavailable },
+        NativeFn { name: "stringCoerceStrict", params: &[Opaque], ret: Str, imp: unavailable },
         // `applyDecorator(decoratorFn, value, context)` invokes a decorator
         // factory's result (a function value) with `(value, context)` at
         // class-definition time, discarding its return value. Backs decorator

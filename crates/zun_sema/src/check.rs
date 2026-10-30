@@ -3962,13 +3962,13 @@ impl Checker<'_> {
             return value;
         }
         let span = value.span;
-        match self.by_name.get("__coerceString").copied() {
-            Some(func) => hir::Expr {
-                kind: hir::ExprKind::Call { func, args: vec![Self::box_to_any(value)] },
-                ty: Ty::String,
-                span,
-            },
-            None => value,
+        let Some((id, _)) = zun_natives::resolve("collections", "stringCoerceStrict") else {
+            return value;
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(value)] },
+            ty: Ty::String,
+            span,
         }
     }
 
@@ -4204,6 +4204,25 @@ impl Checker<'_> {
                         }
                         coerce_numeric_literal(&mut radix, Ty::Int(IntKind::I32));
                         // JS ToInt32 on the radix: a `number`/other int radix is converted.
+                        if radix.ty == Ty::F64 {
+                            // Reduce modulo 2^32 first so the saturating convert
+                            // sees NaN for +-Infinity (ToInt32 gives 0).
+                            let rspan = radix.span;
+                            let modulus = hir::Expr {
+                                kind: hir::ExprKind::Number(4294967296.0),
+                                ty: Ty::F64,
+                                span: rspan,
+                            };
+                            radix = hir::Expr {
+                                kind: hir::ExprKind::Binary {
+                                    op: ast::BinaryOp::Rem,
+                                    lhs: Box::new(radix),
+                                    rhs: Box::new(modulus),
+                                },
+                                ty: Ty::F64,
+                                span: rspan,
+                            };
+                        }
                         if radix.ty.is_float() || (radix.ty.is_int() && radix.ty != Ty::Int(IntKind::I32)) {
                             let rspan = radix.span;
                             radix = hir::Expr {
@@ -5960,7 +5979,7 @@ impl Checker<'_> {
                         && lhs.ty != Ty::BigInt
                         && rhs.ty != Ty::BigInt;
                     if needs_coerce {
-                        if let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "numberCoerceStrict") {
                             let coerce = |e: hir::Expr| hir::Expr {
                                 span: e.span,
                                 kind: hir::ExprKind::CallBuiltin {

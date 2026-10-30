@@ -2786,7 +2786,7 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Bool(found))
             }
-            "stringCoerce" => {
+            "stringCoerce" | "stringCoerceStrict" => {
                 // `String(x)` — ECMAScript ToString. Primitives stringify
                 // directly; an object runs OrdinaryToPrimitive with hint
                 // "string": call `[Symbol.toPrimitive]("string")` if present and
@@ -2825,6 +2825,11 @@ impl<'a> Interp<'a> {
                         }
                     }
                     Value::Any(a) if a.as_symbol().is_some() => {
+                        if name == "stringCoerceStrict" {
+                            return Err(RunError::Native(
+                                "TypeError: Cannot convert a Symbol value to a string".into(),
+                            ));
+                        }
                         let id = a.as_symbol().unwrap_or_else(|| unreachable!());
                         let description = zun_gc::with_current_heap(|heap| {
                             heap.symbol_description(id).map(|d| d.to_string())
@@ -6822,6 +6827,12 @@ impl<'a> Interp<'a> {
                 None => zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name))
                     .map(|method| (method, vec![])),
             };
+            // String hint: `Object.prototype.toString` always exists and
+            // returns a primitive, so a missing own `toString` ends the
+            // search (it never falls through to `valueOf`).
+            if hint == "string" && name == "toString" && method.is_none() {
+                return Ok(None);
+            }
             if let Some((method, call_args)) = method {
                 let result = self.invoke_function_value(method, call_args)?;
                 let result = unbox_arg(&result)?;
