@@ -8012,6 +8012,14 @@ impl Checker<'_> {
                             "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" => {
                                 checked.len() == 1 && checked[0].ty == Ty::String
                             }
+                            // `padStart(target, fill)` with an integer target and
+                            // a string fill keeps the statically typed (JIT-able)
+                            // managed-string ABI; other shapes go dynamic.
+                            "padStart" | "padEnd" => {
+                                checked.len() == 2
+                                    && (checked[0].ty.is_int() || natural_literal(&checked[0]))
+                                    && checked[1].ty == Ty::String
+                            }
                             _ => false,
                         };
                     if !static_ok && checked.iter().all(|e| !e.ty.is_error()) {
