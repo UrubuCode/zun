@@ -177,6 +177,8 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Str,
             imp: unavailable,
         },
+        NativeFn { name: "regexpFlags", params: &[RegExp], ret: Str, imp: unavailable },
+        NativeFn { name: "regexpFlag", params: &[RegExp, Str], ret: Bool, imp: unavailable },
         NativeFn {
             name: "finalizationRegistryNew",
             params: &[Function],

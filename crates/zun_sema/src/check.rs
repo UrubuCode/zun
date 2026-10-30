@@ -11137,6 +11137,36 @@ impl Checker<'_> {
                         span,
                     }, span),
                     Ty::Error => self.poison(span),
+                    Ty::RegExp if fname == "source" || fname == "flags" => {
+                        let native = if fname == "source" { "regexpSource" } else { "regexpFlags" };
+                        let Some((id, _)) = zun_natives::resolve("collections", native) else {
+                            self.error(span, "missing RegExp intrinsic");
+                            return self.poison(span);
+                        };
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                            ty: Ty::String,
+                            span,
+                        }
+                    }
+                    Ty::RegExp
+                        if matches!(
+                            fname.as_str(),
+                            "hasIndices" | "global" | "ignoreCase" | "multiline" | "dotAll"
+                                | "unicode" | "unicodeSets" | "sticky"
+                        ) =>
+                    {
+                        let Some((id, _)) = zun_natives::resolve("collections", "regexpFlag") else {
+                            self.error(span, "missing RegExp intrinsic");
+                            return self.poison(span);
+                        };
+                        let name = hir::Expr { kind: hir::ExprKind::String(fname), ty: Ty::String, span };
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, name] },
+                            ty: Ty::Boolean,
+                            span,
+                        }
+                    }
                     other => {
                         self.error(object.span, format!("type {other:?} has no fields"));
                         self.poison(span)
@@ -11646,6 +11676,7 @@ impl Checker<'_> {
                         Ty::Set => "setIteratorNew",
                         Ty::String => "stringIteratorNew",
                         Ty::Error => "arrayIteratorNew",
+                        Ty::Any | Ty::DynamicObject => "generatorIteratorNew",
                         Ty::BufferView(kind) => match crate::typed_arrays::iterator_new(kind) {
                             Some(new_name) => new_name,
                             None => {

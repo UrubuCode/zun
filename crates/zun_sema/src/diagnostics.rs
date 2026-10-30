@@ -18,6 +18,7 @@ impl Checker<'_> {
             "Intl.RelativeTimeFormat" => "IntlRelativeTimeFormat",
             "Intl.Segmenter" => "IntlSegmenter",
             "Intl.getCanonicalLocales" => "intlGetCanonicalLocales",
+            "String.prototype" => "__thisString",
             _ => raw,
         }
     }

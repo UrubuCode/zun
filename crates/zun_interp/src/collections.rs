@@ -1943,6 +1943,35 @@ impl<'a> Interp<'a> {
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Str(source.into()))
             }
+            "regexpFlags" | "regexpFlag" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let flags = zun_gc::with_current_heap(|heap| {
+                    heap.regex_flags(object).map(str::to_owned)
+                })
+                .ok_or(RunError::BadToken)?;
+                if name == "regexpFlags" {
+                    // The `flags` accessor reports canonical (alphabetical
+                    // by spec order) `dgimsuvy`.
+                    let ordered: String = "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect();
+                    return Ok(Value::Str(ordered.into()));
+                }
+                let flag = match args.get(1) {
+                    Some(Value::Str(text)) => match &**text {
+                        "hasIndices" => 'd',
+                        "global" => 'g',
+                        "ignoreCase" => 'i',
+                        "multiline" => 'm',
+                        "dotAll" => 's',
+                        "unicode" => 'u',
+                        "unicodeSets" => 'v',
+                        "sticky" => 'y',
+                        _ => return Err(RunError::BadToken),
+                    },
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(flags.contains(flag)))
+            }
             "finalizationRegistryNew" => {
                 let cleanup = match args.first().ok_or(RunError::BadToken)? {
                     Value::Function(callback) => *callback,

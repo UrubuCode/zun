@@ -1348,6 +1348,35 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     })
                 }
                 Expression::StaticMemberExpression(member) => {
+                    // `String.prototype.m.call(thisArg, ...rest)` becomes
+                    // `__thisString(thisArg).m(...rest)` (the checker maps the
+                    // `String.prototype` callee text onto the prelude helper).
+                    if !member.optional && member.property.name == "call" {
+                        if let Expression::StaticMemberExpression(method_member) = &member.object {
+                            if let Expression::StaticMemberExpression(proto) = &method_member.object {
+                                if !method_member.optional
+                                    && !proto.optional
+                                    && proto.property.name == "prototype"
+                                    && matches!(&proto.object, Expression::Identifier(id) if id.name == "String")
+                                    && !args.is_empty()
+                                    && !matches!(args[0], Expr::Spread { .. })
+                                {
+                                    let mut rest = args;
+                                    let this_arg = rest.remove(0);
+                                    return Ok(Expr::MethodCall {
+                                        receiver: Box::new(Expr::Call {
+                                            callee: Name { span: span(proto.span) },
+                                            args: vec![this_arg],
+                                            span: span(proto.span),
+                                        }),
+                                        method: Name { span: span(method_member.property.span) },
+                                        args: rest,
+                                        span: span(call.span),
+                                    });
+                                }
+                            }
+                        }
+                    }
                     let receiver = Box::new(convert_expression(source, &member.object)?);
                     let method = Name {
                         span: span(member.property.span),

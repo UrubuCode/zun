@@ -175,6 +175,8 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "regexpSplit",
         "regexpReplace",
         "regexpSource",
+        "regexpFlags",
+        "regexpFlag",
         "finalizationRegistryNew",
         "finalizationRegister",
         "finalizationUnregister",

@@ -95,3 +95,12 @@ function __coerceNumber(value: any): number {
 function __coerceBoolean(value: any): boolean {
     return Boolean(value);
 }
+
+// `String.prototype.m.call(thisArg, ...)`: RequireObjectCoercible + ToString of
+// the receiver (the adapter rewrites the call onto `ToString(thisArg).m(...)`).
+function __thisString(value: any): string {
+    if (value === null || value === undefined) {
+        throw new TypeError("String.prototype method called on null or undefined");
+    }
+    return String(value);
+}
