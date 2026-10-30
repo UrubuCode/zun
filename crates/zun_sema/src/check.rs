@@ -5432,6 +5432,16 @@ impl Checker<'_> {
                         if text == "globalThis" || text == "global" {
                             return hir::Expr { kind: hir::ExprKind::RealmGlobal, ty: Ty::DynamicObject, span };
                         }
+                        // `this` outside a method (module scope, plain function):
+                        // strict-mode `undefined`.
+                        if text == "this" {
+                            let void_zero = ast::Expr::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                                span,
+                            };
+                            return self.check_expr(cx, &void_zero);
+                        }
                         if let Some(capture) = cx.captures.get(&text) {
                             return hir::Expr {
                                 kind: hir::ExprKind::CaptureLoad {
