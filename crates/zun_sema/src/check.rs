@@ -155,6 +155,7 @@ fn check_impl(
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
         module_globals: HashSet::new(),
+        fn_mutated_globals: HashSet::new(),
     };
     checker.collect_type_param_names(program);
     checker.resolve_imports(program, allow_external_modules, allow_core);
@@ -174,6 +175,19 @@ fn check_impl(
         if let ast::Stmt::Let { name, .. } = statement {
             checker.module_globals.insert(checker.text(name).to_string());
         }
+    }
+    {
+        let mut assigned: HashSet<String> = HashSet::new();
+        for function in &program.functions {
+            checker.collect_mutated_names(&function.body.statements, &mut assigned);
+        }
+        for class in &program.classes {
+            for method in &class.methods {
+                checker.collect_mutated_names(&method.body.statements, &mut assigned);
+            }
+        }
+        checker.fn_mutated_globals =
+            assigned.into_iter().filter(|name| checker.module_globals.contains(name)).collect();
     }
 
     let mut functions: Vec<hir::Function> = Vec::new();
@@ -373,6 +387,11 @@ struct Checker<'a> {
     /// function body can read them, matching JS module scope. All are dynamic
     /// (`any`).
     module_globals: HashSet<String>,
+    /// Module globals assigned inside a function or method body (a superset:
+    /// the name may also be a local there). `<main>` reads such a global
+    /// through the realm store so it observes those writes, and mirrors its
+    /// own assignments back.
+    fn_mutated_globals: HashSet<String>,
     /// Every generic type-parameter name declared anywhere in the program
     /// (`function f<T>`, `class C<U>`, `method m<K>`). Zun erases generics, so a
     /// type parameter has no distinct type: `resolve_annotation` treats a name
@@ -2191,44 +2210,7 @@ impl Checker<'_> {
                     hir::Stmt::Let { slot, init }
                 }
             }
-            ast::Stmt::Expr(e) => {
-                let lowered = self.check_expr(cx, e);
-                // A reassignment of a top-level `let` at module scope is mirrored
-                // to the realm global store so closures reading it via
-                // `globalGet` observe the new value.
-                if cx.is_module_scope {
-                    if let ast::Expr::Assign { target, .. } = e {
-                        let name_text = self.text(target).to_string();
-                        if self.module_globals.contains(&name_text) {
-                            let outer = cx.scopes.iter().find_map(|s| s.get(&name_text).copied());
-                            if let hir::ExprKind::Assign { slot, .. }
-                            | hir::ExprKind::CellStore { slot, .. } = &lowered.kind
-                            {
-                                let slot = *slot;
-                                let slot_ty = cx.locals[slot as usize];
-                                if outer == Some(slot) && !matches!(slot_ty, Ty::Function(_)) {
-                                    let span = lowered.span;
-                                    let read = hir::Expr {
-                                        kind: if cx.boxed.contains(&slot) {
-                                            hir::ExprKind::CellLoad { slot }
-                                        } else {
-                                            hir::ExprKind::Local(slot)
-                                        },
-                                        ty: slot_ty,
-                                        span,
-                                    };
-                                    let mirror = self.global_set_expr(&name_text, read, span);
-                                    return hir::Stmt::Group(vec![
-                                        hir::Stmt::Expr(lowered),
-                                        hir::Stmt::Expr(mirror),
-                                    ]);
-                                }
-                            }
-                        }
-                    }
-                }
-                hir::Stmt::Expr(lowered)
-            }
+            ast::Stmt::Expr(e) => hir::Stmt::Expr(self.check_expr(cx, e)),
             ast::Stmt::If {
                 cond,
                 then_block,
@@ -5033,6 +5015,18 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether a read of the module-scope local `name` (in slot `slot`) must go
+    /// through the realm store because a function body assigns that global.
+    fn reads_through_global(&self, cx: &FunctionCx, name: &str, slot: hir::LocalSlot) -> bool {
+        cx.is_module_scope
+            && self.fn_mutated_globals.contains(name)
+            && cx.scopes.iter().find_map(|s| s.get(name).copied()) == Some(slot)
+            && matches!(
+                cx.locals[slot as usize],
+                Ty::Any | Ty::F64 | Ty::Boolean | Ty::String
+            )
+    }
+
     /// A `Ty::String` HIR literal.
     fn string_literal(text: String, span: Span) -> hir::Expr {
         hir::Expr { kind: hir::ExprKind::String(text), ty: Ty::String, span }
@@ -5489,6 +5483,10 @@ impl Checker<'_> {
             ast::Expr::Ident(name) => {
                 let text = self.text(name).to_string();
                 match cx.lookup(&text) {
+                    Some(slot) if self.reads_through_global(cx, &text, slot) => {
+                        let read = self.global_get_expr(&text, span);
+                        Self::unbox_to(read, cx.locals[slot as usize])
+                    }
                     Some(slot) => hir::Expr {
                         ty: cx.locals[slot as usize],
                         kind: if cx.boxed.contains(&slot) {
@@ -5587,7 +5585,12 @@ impl Checker<'_> {
                         // A dynamic value stored into a typed primitive slot is
                         // unboxed so the slot holds the primitive itself.
                         value = Self::unbox_to(value, slot_ty);
-                        hir::Expr {
+                        let mirror_global = cx.is_module_scope
+                            && self.module_globals.contains(&text)
+                            && cx.scopes.iter().find_map(|s| s.get(&text).copied()) == Some(slot)
+                            && !matches!(slot_ty, Ty::Function(_))
+                            && !matches!(value.ty, Ty::Function(_));
+                        let store = hir::Expr {
                             ty: slot_ty,
                             kind: if cx.boxed.contains(&slot) {
                                 hir::ExprKind::CellStore {
@@ -5601,7 +5604,40 @@ impl Checker<'_> {
                                 }
                             },
                             span,
+                        };
+                        if mirror_global {
+                            // Mirror the new value to the realm global store so
+                            // function bodies (which read it via `globalGet`)
+                            // observe it.
+                            let boxed_slot = cx.boxed.contains(&slot);
+                            let make_read = || hir::Expr {
+                                kind: if boxed_slot {
+                                    hir::ExprKind::CellLoad { slot }
+                                } else {
+                                    hir::ExprKind::Local(slot)
+                                },
+                                ty: slot_ty,
+                                span,
+                            };
+                            let read = make_read();
+                            let mirror = self.global_set_expr(&text, make_read(), span);
+                            return hir::Expr {
+                                ty: slot_ty,
+                                kind: hir::ExprKind::Sequence {
+                                    effect: Box::new(hir::Expr {
+                                        ty: slot_ty,
+                                        kind: hir::ExprKind::Sequence {
+                                            effect: Box::new(store),
+                                            value: Box::new(mirror),
+                                        },
+                                        span,
+                                    }),
+                                    value: Box::new(read),
+                                },
+                                span,
+                            };
                         }
+                        store
                     }
                     None => {
                         if let Some(capture) = cx.captures.get(&text).cloned() {
@@ -11122,9 +11158,16 @@ impl Checker<'_> {
             }
             ast::Expr::OptionalCall { callee, args, .. } => {
                 let callee = self.check_expr(cx, callee);
-                let Ty::Function(func) = callee.ty else {
-                    self.error(callee.span, "optional call requires a function value");
-                    return self.poison(span);
+                let func = match callee.ty {
+                    Ty::Function(func) => func,
+                    // A dynamic callee: null/undefined short-circuits, otherwise
+                    // the counted dynamic call applies.
+                    Ty::Any | Ty::DynamicObject => hir::DYNAMIC_FUNCTION,
+                    Ty::Error => return self.poison(span),
+                    _ => {
+                        self.error(callee.span, "optional call requires a function value");
+                        return self.poison(span);
+                    }
                 };
                 let checked: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
                 let return_ty = match func {

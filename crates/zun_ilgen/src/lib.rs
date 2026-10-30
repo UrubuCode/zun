@@ -1056,6 +1056,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
                 self.emit(Instruction::simple(Opcode::UnboxAny));
             }
+            ExprKind::Sequence { effect, value } => {
+                self.expr(effect);
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.expr(value);
+            }
             ExprKind::Assign { slot, value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Dup));
@@ -1342,17 +1347,26 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::ConstNull));
                 self.emit(Instruction::simple(Opcode::CmpEq));
                 let use_null = self.emit_branch(Opcode::BranchTrue);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_undef = self.emit_branch(Opcode::BranchTrue);
                 for arg in args { self.expr(arg); }
-                let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
-                    Token::null(TableKind::MethodDef)
-                } else if *func == hir::DYNAMIC_REDUCER {
-                    Token::null(TableKind::MemberRef)
-                } else { Token::new(TableKind::MethodDef, *func + 1) };
-                self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
+                if *func == hir::DYNAMIC_FUNCTION && args.len() != 1 {
+                    self.emit(Instruction::new(Opcode::CallIndirectN, Operand::Imm32(args.len() as i32)));
+                } else {
+                    let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
+                        Token::null(TableKind::MethodDef)
+                    } else if *func == hir::DYNAMIC_REDUCER {
+                        Token::null(TableKind::MemberRef)
+                    } else { Token::new(TableKind::MethodDef, *func + 1) };
+                    self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
+                }
                 let end = self.emit_branch(Opcode::Branch);
                 self.patch_to_here(use_null);
+                self.patch_to_here(use_undef);
                 self.emit(Instruction::simple(Opcode::Pop));
-                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
                 self.patch_to_here(end);
             }
             ExprKind::CallBuiltin { id, args } => {
@@ -1428,6 +1442,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::ConstNull));
                 self.emit(Instruction::simple(Opcode::CmpEq));
                 let use_null = self.emit_branch(Opcode::BranchTrue);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_undef = self.emit_branch(Opcode::BranchTrue);
                 let property = self.module.strings.intern(name);
                 self.emit(Instruction::new(
                     Opcode::LoadDynamic,
@@ -1435,8 +1453,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 ));
                 let end = self.emit_branch(Opcode::Branch);
                 self.patch_to_here(use_null);
+                self.patch_to_here(use_undef);
                 self.emit(Instruction::simple(Opcode::Pop));
-                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
                 self.patch_to_here(end);
             }
             ExprKind::OptionalDynamicGetValue { object, key } => {
@@ -1445,12 +1464,17 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::ConstNull));
                 self.emit(Instruction::simple(Opcode::CmpEq));
                 let use_null = self.emit_branch(Opcode::BranchTrue);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_undef = self.emit_branch(Opcode::BranchTrue);
                 self.expr(key);
                 self.emit(Instruction::simple(Opcode::LoadDynamicValue));
                 let end = self.emit_branch(Opcode::Branch);
                 self.patch_to_here(use_null);
+                self.patch_to_here(use_undef);
                 self.emit(Instruction::simple(Opcode::Pop));
-                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
                 self.patch_to_here(end);
             }
             ExprKind::OptionalCallBuiltin { id, args } => {
@@ -1459,6 +1483,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.emit(Instruction::simple(Opcode::ConstNull));
                 self.emit(Instruction::simple(Opcode::CmpEq));
                 let use_null = self.emit_branch(Opcode::BranchTrue);
+                self.emit(Instruction::simple(Opcode::Dup));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let use_undef = self.emit_branch(Opcode::BranchTrue);
                 for arg in &args[1..] {
                     self.expr(arg);
                 }
@@ -1468,8 +1496,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 ));
                 let end = self.emit_branch(Opcode::Branch);
                 self.patch_to_here(use_null);
+                self.patch_to_here(use_undef);
                 self.emit(Instruction::simple(Opcode::Pop));
-                self.emit(Instruction::simple(Opcode::ConstNull));
+                self.emit(Instruction::simple(Opcode::ConstUndef));
                 self.patch_to_here(end);
             }
             ExprKind::DynamicSet {

@@ -745,6 +745,14 @@ pub enum ExprKind {
     DynamicNew,
     /// Load the per-realm global singleton.
     RealmGlobal,
+    /// Evaluate `effect` for its side effects (its value is discarded), then
+    /// evaluate to `value`.
+    Sequence {
+        /// Evaluated first and discarded.
+        effect: Box<Expr>,
+        /// The result of the whole expression.
+        value: Box<Expr>,
+    },
     /// Read a named property from a dynamic object.
     DynamicGet {
         /// The object expression.

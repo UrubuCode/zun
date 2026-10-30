@@ -1057,6 +1057,13 @@ impl Interp<'_> {
                 Opcode::Concat => {
                     let b = pop(&mut stack)?;
                     let a = pop(&mut stack)?;
+                    // A string carried through `any` is unboxed before joining.
+                    let unbox = |value: Value| match value {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Any(any)),
+                        other => other,
+                    };
+                    let (a, b) = (unbox(a), unbox(b));
                     stack.push(Value::Str(format!("{}{}", a.as_str(), b.as_str()).into()));
                 }
                 Opcode::CmpEq => cmp(&mut stack, true)?,
@@ -1468,6 +1475,12 @@ impl Interp<'_> {
                     };
                     let args = pop_n(&mut stack, expected_params)?;
                     let function = pop(&mut stack)?;
+                    // A function value carried through `any` is unboxed first.
+                    let function = match function {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Any(any)),
+                        other => other,
+                    };
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
