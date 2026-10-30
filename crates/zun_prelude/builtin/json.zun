@@ -26,8 +26,8 @@ import { string as coreString, number as coreNumber, object as coreObject, array
 class JSON {
     // --- stringify ---------------------------------------------------------
 
-    static stringify(value: any): string {
-        return JSON.write(value, 0);
+    static stringify(value: any, replacer: any = null, space: any = null): any {
+        return coreObject.jsonStringify(value, replacer, space);
     }
 
     // Nesting limit; deeper (or cyclic) input is rejected instead of overflowing

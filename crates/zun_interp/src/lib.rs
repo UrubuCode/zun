@@ -15,6 +15,9 @@ mod errors;
 mod eval;
 mod gc_policy;
 mod hooks;
+mod integrity;
+mod json;
+mod property_ops;
 mod namespace;
 mod native;
 mod node_buffer;
@@ -29,6 +32,23 @@ mod state;
 mod unwind;
 mod typed_arrays;
 pub mod value;
+
+/// Throw a native failure message (`"TypeError: ..."`) from inside the opcode
+/// loop: route it to the innermost handler, or propagate it uncaught.
+macro_rules! throw_native {
+    ($self:ident, $body:ident, $stack:ident, $pc:ident, $at:expr, $message:expr) => {{
+        let message: String = $message;
+        let exception = native_error::split_native_error(&message)
+            .and_then(|(class, text)| $self.make_error_value(class, text));
+        let Some(exception) = exception else {
+            return Err(RunError::Native(message));
+        };
+        if $self.route_exception(&$body, &mut $stack, &mut $pc, $at, &exception) {
+            continue;
+        }
+        return Err(RunError::Thrown(exception));
+    }};
+}
 
 use gc_policy::next_gc_interval;
 use operands::{
@@ -439,9 +459,16 @@ impl Interp<'_> {
                 }
                 Opcode::BoxAny => {
                     let value = pop(&mut stack)?;
-                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
-                        .ok_or(RunError::BadToken)?;
-                    stack.push(Value::Any(any));
+                    // A callable has no `Any` representation; it stays a raw
+                    // function value (a null-sentinel default check, for one,
+                    // only needs to see that it is not null).
+                    if matches!(value, Value::Function(_)) {
+                        stack.push(value);
+                    } else {
+                        let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .ok_or(RunError::BadToken)?;
+                        stack.push(Value::Any(any));
+                    }
                 }
                 Opcode::UnboxAny => {
                     let value = pop(&mut stack)?;
@@ -633,6 +660,12 @@ impl Interp<'_> {
                         // reads them back as `Value::Function`. Capture names are
                         // never accessors, so no accessor lookup happens here.
                         let object = pop(&mut stack)?.as_object();
+                        // An array gets an expando table on first named store.
+                        zun_gc::with_current_heap_mut(|heap| {
+                            if heap.array_len(object).is_some() {
+                                heap.ensure_dynamic_entry(object);
+                            }
+                        });
                         zun_gc::with_current_heap_mut(|heap| {
                             heap.dynamic_set_function(object, name, handle);
                         });
@@ -644,6 +677,47 @@ impl Interp<'_> {
                         let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                             .ok_or(RunError::BadToken)?;
                         let object = pop(&mut stack)?.as_object();
+                        // `arr.length = n` on an array reached through `any`.
+                        if name == "length" {
+                            let level_len = zun_gc::with_current_heap(|heap| {
+                                heap.array_len(object).map(|len| (len, heap.array_integrity(object)))
+                            });
+                            if let Some((len, level)) = level_len {
+                                let wanted = any.as_int().map(|n| n as f64).or_else(|| any.as_float());
+                                if let Some(wanted) = wanted {
+                                    let wanted = wanted as usize;
+                                    if wanted != len {
+                                        let op = if wanted < len { integrity::ArrayOp::Remove } else { integrity::ArrayOp::Write };
+                                        if let Some(message) = integrity::array_refusal(level, op) {
+                                            throw_native!(self, body, stack, pc, next - size, message.to_string());
+                                        }
+                                        zun_gc::with_current_heap_mut(|heap| heap.array_resize(object, wanted));
+                                    }
+                                }
+                                stack.push(value);
+                                continue;
+                            }
+                        }
+                        let refusal = zun_gc::with_current_heap(|heap| {
+                            if heap.dynamic_is_accessor(object, &name) {
+                                if heap.dynamic_accessor_setter(object, &name).is_none() {
+                                    Some(format!("TypeError: Cannot set property {name} of #<Object> which has only a getter"))
+                                } else {
+                                    None
+                                }
+                            } else if !heap.dynamic_can_set(object, &name) {
+                                if heap.dynamic_has(object, &name) {
+                                    Some(format!("TypeError: Cannot assign to read only property '{name}' of object '#<Object>'"))
+                                } else {
+                                    Some(format!("TypeError: Cannot add property {name}, object is not extensible"))
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(message) = refusal {
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
                         // An accessor property invokes its setter; a data property
                         // writes the value slot (rejected silently if non-writable).
                         let setter = zun_gc::with_current_heap(|heap| {
@@ -732,6 +806,50 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let key = pop(&mut stack)?;
                     let object = pop(&mut stack)?.as_object();
+                    {
+                        let key_name: Option<String> = match &key {
+                            Value::Str(text) => Some(text.to_string()),
+                            Value::Int(..) | Value::Float(..) => None,
+                            _ => None,
+                        };
+                        let refusal = zun_gc::with_current_heap(|heap| {
+                            if let Some(len) = heap.array_len(object) {
+                                let level = heap.array_integrity(object);
+                                if matches!(key, Value::Int(..) | Value::Float(..)) {
+                                    let index = key.as_number() as i64;
+                                    if index < 0 {
+                                        return None;
+                                    }
+                                    let op = if (index as usize) < len {
+                                        integrity::ArrayOp::Write
+                                    } else {
+                                        integrity::ArrayOp::Add
+                                    };
+                                    return integrity::array_refusal(level, op).map(str::to_owned);
+                                }
+                                return None;
+                            }
+                            let name = key_name.as_deref()?;
+                            if heap.dynamic_is_accessor(object, name) {
+                                if heap.dynamic_accessor_setter(object, name).is_none() {
+                                    Some(format!("TypeError: Cannot set property {name} of #<Object> which has only a getter"))
+                                } else {
+                                    None
+                                }
+                            } else if !heap.dynamic_can_set(object, name) {
+                                if heap.dynamic_has(object, name) {
+                                    Some(format!("TypeError: Cannot assign to read only property '{name}' of object '#<Object>'"))
+                                } else {
+                                    Some(format!("TypeError: Cannot add property {name}, object is not extensible"))
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(message) = refusal {
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
+                    }
                     match &key {
                         Value::Any(key_any) if key_any.as_symbol().is_some() => {
                             let symbol = key_any.as_symbol().expect("symbol key");
@@ -793,8 +911,21 @@ impl Interp<'_> {
                     if index < 0 {
                         return Err(RunError::Malformed("negative array index".into()));
                     }
-                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
-                        .ok_or(RunError::BadToken)?;
+                    if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Write) {
+                        throw_native!(self, body, stack, pc, next - size, message);
+                    }
+                    // A function element rides the array as a function-box record
+                    // (a callable is not boxable into `Any` directly); calls
+                    // through the element unwrap it again.
+                    let any = zun_gc::with_current_heap_mut(|heap| match &value {
+                        Value::Function(handle) => {
+                            let record = heap.alloc_dynamic();
+                            heap.dynamic_set_function(record, "__boxedFn", *handle);
+                            Some(zun_core::Any::object(record.addr() as usize))
+                        }
+                        other => other.box_any(heap),
+                    })
+                    .ok_or(RunError::BadToken)?;
                     zun_gc::with_current_heap_mut(|heap| {
                         heap.array_set(array, index as usize, any)
                     })
@@ -809,6 +940,11 @@ impl Interp<'_> {
                 }
                 Opcode::ArrayPop => {
                     let array = pop(&mut stack)?.as_object();
+                    if zun_gc::with_current_heap(|heap| heap.array_len(array)) != Some(0) {
+                        if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Remove) {
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
+                    }
                     let value = zun_gc::with_current_heap_mut(|heap| {
                         heap.array_pop(array)
                             .and_then(|any| value::Value::unbox_any(any, heap))
@@ -819,6 +955,9 @@ impl Interp<'_> {
                 Opcode::ArrayPush => {
                     let value = pop(&mut stack)?;
                     let array = pop(&mut stack)?.as_object();
+                    if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Add) {
+                        throw_native!(self, body, stack, pc, next - size, message);
+                    }
                     let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .ok_or(RunError::BadToken)?;
                     let length = zun_gc::with_current_heap_mut(|heap| heap.array_push(array, any))

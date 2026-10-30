@@ -47,3 +47,28 @@ impl Heap {
         Some(length)
     }
 }
+
+impl Heap {
+    /// Integrity level of an array: 0 open, 1 non-extensible, 2 sealed, 3 frozen.
+    /// Unknown objects report 0.
+    pub fn array_integrity(&self, object: Obj) -> u8 {
+        self.arrays.get(&(object.addr() as usize)).map_or(0, zun_core::ArrayStorage::integrity)
+    }
+
+    /// Raise (never lower) the integrity level of an array. Returns `false` for
+    /// a non-array.
+    pub fn array_raise_integrity(&mut self, object: Obj, level: u8) -> bool {
+        match self.arrays.get_mut(&(object.addr() as usize)) {
+            Some(array) => { array.raise_integrity(level); true }
+            None => false,
+        }
+    }
+
+    /// Shrink or grow an array to `new_length` (new slots are `0`-filled).
+    pub fn array_resize(&mut self, object: Obj, new_length: usize) -> bool {
+        match self.arrays.get_mut(&(object.addr() as usize)) {
+            Some(array) => { array.resize(new_length); true }
+            None => false,
+        }
+    }
+}

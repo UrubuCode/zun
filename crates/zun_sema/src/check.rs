@@ -1878,17 +1878,31 @@ impl Checker<'_> {
         cx: &mut FunctionCx,
         read: hir::Expr,
         default: Option<&ast::Expr>,
+        out: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
         let Some(default) = default else { return read };
         let span = read.span;
-        let default = self.check_expr(cx, default);
-        let default = Self::box_to_any(default);
-        let Some((id, _)) = zun_natives::resolve("array", "coalesceUndefined") else {
-            self.error(span, "missing `coalesceUndefined` intrinsic");
+        let Some((id, _)) = zun_natives::resolve("array", "anyIsUndefined") else {
+            self.error(span, "missing `anyIsUndefined` intrinsic");
             return read;
         };
+        // The read happens once (into a temp); the default expression is
+        // evaluated lazily, only when the read is `undefined`.
+        let temp = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+        out.push(hir::Stmt::Let { slot: temp, init: Self::box_to_any(read) });
+        let default = self.check_expr(cx, default);
+        let default = Self::box_to_any(default);
+        let temp_read = || hir::Expr { kind: hir::ExprKind::Local(temp), ty: Ty::Any, span };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(read), default] },
+            kind: hir::ExprKind::Conditional {
+                condition: Box::new(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![temp_read()] },
+                    ty: Ty::Boolean,
+                    span,
+                }),
+                when_true: Box::new(default),
+                when_false: Box::new(temp_read()),
+            },
             ty: Ty::Any,
             span,
         }
@@ -1924,7 +1938,7 @@ impl Checker<'_> {
                 for (index, element) in elements.iter().enumerate() {
                     let Some(element) = element else { continue };
                     let read = self.array_element_read(temp, temp_ty, index, span);
-                    let read = self.apply_default(cx, read, element.default.as_ref());
+                    let read = self.apply_default(cx, read, element.default.as_ref(), out);
                     self.bind_pattern(cx, &element.pattern, read, out);
                 }
                 if let Some(rest) = rest {
@@ -1940,16 +1954,47 @@ impl Checker<'_> {
                 let temp_ty = value.ty;
                 out.push(hir::Stmt::Let { slot: temp, init: value });
                 let mut excluded: Vec<String> = Vec::new();
+                // Computed keys are evaluated exactly once (into a temp) and
+                // then also excluded from the `...rest` object.
+                let mut computed: Vec<(hir::LocalSlot, Ty)> = Vec::new();
                 for property in properties {
-                    let (read, static_key) = self.object_member_read(cx, temp, temp_ty, &property.key, span);
+                    let (read, static_key) = if let ast::PropertyKey::Computed(key_expr) = &property.key {
+                        let key_value = self.check_expr(cx, key_expr);
+                        let key_ty = key_value.ty;
+                        let key_temp = cx.declare(&self.fresh_temp_name(cx), key_ty);
+                        out.push(hir::Stmt::Let { slot: key_temp, init: key_value });
+                        computed.push((key_temp, key_ty));
+                        let object = hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span };
+                        (
+                            hir::Expr {
+                                kind: hir::ExprKind::DynamicGetValue {
+                                    object: Box::new(object),
+                                    key: Box::new(hir::Expr {
+                                        kind: hir::ExprKind::Local(key_temp),
+                                        ty: key_ty,
+                                        span,
+                                    }),
+                                },
+                                ty: Ty::Any,
+                                span,
+                            },
+                            None,
+                        )
+                    } else {
+                        self.object_member_read(cx, temp, temp_ty, &property.key, span)
+                    };
                     if let Some(key) = static_key {
                         excluded.push(key);
                     }
-                    let read = self.apply_default(cx, read, property.default.as_ref());
+                    let read = self.apply_default(cx, read, property.default.as_ref(), out);
                     self.bind_pattern(cx, &property.value, read, out);
                 }
                 if let Some(rest) = rest {
-                    let read = self.object_rest_read(temp, temp_ty, &excluded, span);
+                    let extra: Vec<hir::Expr> = computed
+                        .iter()
+                        .map(|&(slot, ty)| hir::Expr { kind: hir::ExprKind::Local(slot), ty, span })
+                        .collect();
+                    let read = self.object_rest_read(temp, temp_ty, &excluded, extra, span);
                     self.bind_pattern(cx, rest, read, out);
                 }
             }
@@ -2054,7 +2099,14 @@ impl Checker<'_> {
     }
 
     /// Collect the source object's remaining own keys into a fresh object.
-    fn object_rest_read(&mut self, temp: hir::LocalSlot, temp_ty: Ty, excluded: &[String], span: Span) -> hir::Expr {
+    fn object_rest_read(
+        &mut self,
+        temp: hir::LocalSlot,
+        temp_ty: Ty,
+        excluded: &[String],
+        extra: Vec<hir::Expr>,
+        span: Span,
+    ) -> hir::Expr {
         let Some((id, _)) = zun_natives::resolve("array", "objectRest") else {
             self.error(span, "missing `objectRest` intrinsic");
             return self.poison(span);
@@ -2068,6 +2120,7 @@ impl Checker<'_> {
                     span,
                 })
             })
+            .chain(extra.into_iter().map(Some))
             .collect();
         hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
@@ -2844,14 +2897,13 @@ impl Checker<'_> {
                 }
             }
             "has" => builtin(self, "reflectHas", checked, Ty::Boolean),
-            "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean),
-            // `ownKeys` reports all own string keys (not just enumerable ones),
+            "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean),            // `ownKeys` reports all own string keys (not just enumerable ones),
             // and consults a proxy's `ownKeys` trap via the proxy-aware native.
             "ownKeys" => builtin(self, "objectGetOwnPropertyNames", checked, Ty::Array),
             "getOwnPropertyDescriptor" => {
                 builtin(self, "objectGetOwnPropertyDescriptor", checked, Ty::Any)
             }
-            "defineProperty" => builtin(self, "objectDefineProperty", checked, Ty::Any),
+            "defineProperty" => builtin(self, "reflectDefineProperty", checked, Ty::Boolean),
             "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
             "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),
             "isExtensible" => builtin(self, "objectIsExtensible", checked, Ty::Boolean),
@@ -7357,8 +7409,11 @@ impl Checker<'_> {
                                 );
                                 return self.poison(span);
                             }
-                            if param_tys.len() == args.len() {
-                                let mut checked = Vec::with_capacity(args.len());
+                            let optional_count = self.signatures[func as usize].optional_count;
+                            if args.len() <= param_tys.len()
+                                && args.len() >= param_tys.len().saturating_sub(optional_count)
+                            {
+                                let mut checked = Vec::with_capacity(param_tys.len());
                                 for (arg, &expected) in args.iter().zip(&param_tys) {
                                     let mut value = self.check_expr(cx, arg);
                                     // The only argument-checking site that
@@ -7376,6 +7431,20 @@ impl Checker<'_> {
                                         );
                                     }
                                     checked.push(value);
+                                }
+                                // Omitted optional arguments are null sentinels;
+                                // the callee prologue materialises the defaults.
+                                if checked.len() < param_tys.len() {
+                                    let sig = Signature {
+                                        name: self.text(method).to_string(),
+                                        params: param_tys.clone(),
+                                        return_ty,
+                                        optional_count,
+                                        rest_param: None,
+                                        is_generator: false,
+                                        is_static: true,
+                                    };
+                                    self.pad_default_args(&mut checked, &sig, span);
                                 }
                                 return hir::Expr {
                                     kind: hir::ExprKind::StaticCall { func, args: checked },
@@ -9457,11 +9526,12 @@ impl Checker<'_> {
                     self.error(method.span, format!("unknown static method `{}`", self.text(method)));
                     return self.poison(span);
                 };
-                let (param_tys, return_ty) = {
+                let (param_tys, return_ty, optional_count) = {
                     let sig = &self.signatures[func as usize];
-                    (sig.params.clone(), sig.return_ty)
+                    (sig.params.clone(), sig.return_ty, sig.optional_count)
                 };
-                if param_tys.len() != args.len() {
+                let required = param_tys.len().saturating_sub(optional_count);
+                if args.len() > param_tys.len() || args.len() < required {
                     self.error(span, format!("static method `{}` expects {} arguments", self.text(method), param_tys.len()));
                     return self.poison(span);
                 }
@@ -9478,6 +9548,20 @@ impl Checker<'_> {
                         self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
                     }
                     checked.push(value);
+                }
+                // Omitted optional arguments are passed as null sentinels; the
+                // callee prologue materialises its declared defaults.
+                if checked.len() < param_tys.len() {
+                    let sig = Signature {
+                        name: self.text(method).to_string(),
+                        params: param_tys.clone(),
+                        return_ty,
+                        optional_count,
+                        rest_param: None,
+                        is_generator: false,
+                        is_static: true,
+                    };
+                    self.pad_default_args(&mut checked, &sig, span);
                 }
                 hir::Expr {
                     kind: hir::ExprKind::StaticCall { func, args: checked },
@@ -10520,6 +10604,21 @@ impl Checker<'_> {
                     }
                 }
                 if let ast::Expr::Ident(class_name) = object.as_ref() {
+                    // `Object.prototype` as a value: the realm's shared root
+                    // prototype object (what `Object.getPrototypeOf` yields for
+                    // a plain object).
+                    if self.text(class_name) == "Object"
+                        && fname == "prototype"
+                        && !self.classes_by_name.contains_key("Object")
+                    {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "objectPrototype") {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                                ty: Ty::Any,
+                                span,
+                            };
+                        }
+                    }
                     if self.text(class_name) == "Math" && !self.classes_by_name.contains_key("Math") {
                         let constant = match fname.as_str() {
                             "PI" => Some(std::f64::consts::PI),
@@ -11567,7 +11666,8 @@ impl Checker<'_> {
         let object = self.check_expr(cx, object_ast);
         let native = match object.ty {
             Ty::Proxy => "proxyDelete",
-            Ty::DynamicObject | Ty::Any => "reflectDelete",
+            // Modules are strict: a refused delete throws a TypeError.
+            Ty::DynamicObject | Ty::Any => "deleteStrict",
             Ty::Error => return self.poison(span),
             other => {
                 self.error(

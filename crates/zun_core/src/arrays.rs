@@ -4,12 +4,16 @@ use super::Any;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArrayStorage {
     elements: Vec<Any>,
+    /// Integrity level: 0 open, 1 non-extensible, 2 sealed, 3 frozen.
+    integrity: u8,
 }
 
 impl ArrayStorage {
     /// Create an array with `length` initialized to `undefined`-like void values.
-    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::int(0); length] } }
+    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::int(0); length], integrity: 0 } }
     pub fn len(&self) -> usize { self.elements.len() }
+    pub fn integrity(&self) -> u8 { self.integrity }
+    pub fn raise_integrity(&mut self, level: u8) { if level > self.integrity { self.integrity = level; } }
     pub fn is_empty(&self) -> bool { self.elements.is_empty() }
     pub fn get(&self, index: usize) -> Option<Any> { self.elements.get(index).copied() }
 

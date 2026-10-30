@@ -414,7 +414,7 @@ pub const MODULE: crate::Module = crate::Module {
         // `object*` reflectors these touch the managed heap and are intercepted
         // by name; the signatures fix only the argument count the verifier
         // pops. Appended last so existing dispatch ids stay stable.
-        NativeFn { name: "objectDefineProperty", params: &[DynamicObject, Str, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "objectDefineProperty", params: &[DynamicObject, Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "objectDefineProperties", params: &[DynamicObject, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "objectGetOwnPropertyDescriptor", params: &[Opaque, Str], ret: Opaque, imp: unavailable },
         NativeFn { name: "objectGetOwnPropertyDescriptors", params: &[Opaque], ret: DynamicObject, imp: unavailable },
@@ -583,6 +583,18 @@ pub const MODULE: crate::Module = crate::Module {
         // each element, then the variadic/fixed-arity Math function.
         NativeFn { name: "bigIntUshr", params: &[BigInt, BigInt], ret: BigInt, imp: unavailable },
         NativeFn { name: "mathApply", params: &[Str, Opaque], ret: F64, imp: unavailable },
+        // `Reflect.defineProperty(target, key, descriptor)` — boolean success
+        // (key is boxed: string or symbol). Appended last for id stability.
+        NativeFn { name: "reflectDefineProperty", params: &[DynamicObject, Opaque, Opaque], ret: Bool, imp: unavailable },
+        // Strict-mode `delete obj.key`: throws TypeError for a non-configurable
+        // property, otherwise `true`.
+        NativeFn { name: "deleteStrict", params: &[Opaque, Str], ret: Bool, imp: unavailable },
+        // `Object.prototype` as a value: the realm's shared root prototype
+        // object (a lazily created singleton on the realm global object).
+        NativeFn { name: "objectPrototype", params: &[], ret: Opaque, imp: unavailable },
+        // `JSON.stringify(value, replacer?, space?)` — returns the JSON text, or
+        // `undefined` for a non-serialisable top-level value.
+        NativeFn { name: "objectJsonStringify", params: &[Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
     ],
 };
 

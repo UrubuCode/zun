@@ -73,6 +73,50 @@ impl Heap {
         ok
     }
 
+    /// Validated redefinition of an existing property (data descriptor).
+    pub fn dynamic_force_define_data(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        value: zun_core::Any,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> bool {
+        let ok = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|p| p.force_define_data(name, value, writable, enumerable, configurable));
+        if ok {
+            if let Some(child) = value.as_object() {
+                self.write_barrier(object, child as u64);
+            }
+        }
+        ok
+    }
+
+    /// Validated redefinition of an existing property (accessor descriptor).
+    pub fn dynamic_force_define_accessor(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        get: Option<zun_core::FunctionHandle>,
+        set: Option<zun_core::FunctionHandle>,
+        enumerable: bool,
+        configurable: bool,
+    ) -> bool {
+        let ok = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|p| p.force_define_accessor(name, get, set, enumerable, configurable));
+        if ok {
+            for environment in [get, set].into_iter().flatten().filter_map(|f| f.environment()) {
+                self.write_barrier(object, environment as u64);
+            }
+        }
+        ok
+    }
+
     /// `Object.defineProperty` with an **accessor** descriptor.
     pub fn dynamic_define_accessor(
         &mut self,
@@ -224,6 +268,39 @@ impl Heap {
 
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {
         self.dynamic_objects.get_mut(&(object.addr() as usize))?.remove(name)
+    }
+
+    /// Give a non-dynamic object (an array) an expando-property table so
+    /// named properties (`arr.toJSON = fn`) can be stored on it.
+    pub fn ensure_dynamic_entry(&mut self, object: Obj) {
+        self.dynamic_objects.entry(object.addr() as usize).or_default();
+    }
+
+    /// Whether a plain `obj.name = v` would be accepted (see `DynamicObject::can_set`).
+    /// Non-dynamic objects report `true`.
+    pub fn dynamic_can_set(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects.get(&(object.addr() as usize)).is_none_or(|p| p.can_set(name))
+    }
+
+    pub fn dynamic_can_delete(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects.get(&(object.addr() as usize)).is_none_or(|p| p.can_delete(name))
+    }
+
+    pub fn dynamic_define_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId, value: zun_core::Any, enumerable: bool) -> bool {
+        let ok = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .is_some_and(|p| p.define_symbol(symbol, value, enumerable));
+        if ok {
+            if let Some(child) = value.as_object() {
+                self.write_barrier(object, child as u64);
+            }
+        }
+        ok
+    }
+
+    pub fn dynamic_is_symbol_enumerable(&self, object: Obj, symbol: zun_core::SymbolId) -> bool {
+        self.dynamic_objects.get(&(object.addr() as usize)).is_some_and(|p| p.is_symbol_enumerable(symbol))
     }
 
     pub fn dynamic_delete(&mut self, object: Obj, name: &str) -> bool {

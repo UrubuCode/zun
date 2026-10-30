@@ -45,6 +45,7 @@ impl<'a> Interp<'a> {
         if let Some(result) = self.call_decorator_native(name, args) {
             return result;
         }
+        self.guard_array_native(name, args)?;
         let object = |value: &Value| match value {
             Value::Object(object) => Some(*object),
             Value::Any(any) => any
@@ -2019,48 +2020,22 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
-                    heap.dynamic_delete(object, name)
+                    // Deleting an absent key succeeds; a non-configurable one is refused.
+                    if heap.dynamic_can_delete(object, name) {
+                        heap.dynamic_delete(object, name);
+                        true
+                    } else {
+                        false
+                    }
                 })))
             }
+            "deleteStrict" => self.delete_strict(args),
             "reflectSet" => {
                 // `Reflect.set(target, key, value)` returns a boolean success,
                 // respecting writability (existing own data property) and
                 // extensibility (adding a new property). Non-object targets and
                 // failed stores return `false` rather than throwing.
-                let Some(object) = object(args.first().ok_or(RunError::BadToken)?) else {
-                    return Ok(Value::Bool(false));
-                };
-                let key_value = args.get(1).ok_or(RunError::BadToken)?;
-                let name = match key_value {
-                    Value::Str(name) => name.to_string(),
-                    Value::Any(any) => match zun_gc::with_current_heap(|heap| {
-                        any.as_string().and_then(|handle| heap.try_string(handle).map(|s| s.to_string()))
-                    }) {
-                        Some(text) => text,
-                        None => return Ok(Value::Bool(false)),
-                    },
-                    Value::Int(n, _) => n.to_string(),
-                    _ => return Ok(Value::Bool(false)),
-                };
-                let value = any(args.get(2).ok_or(RunError::BadToken)?)
-                    .unwrap_or_else(zun_core::Any::null);
-                let ok = zun_gc::with_current_heap_mut(|heap| {
-                    let exists = heap.dynamic_get(object, &name).is_some();
-                    if exists {
-                        if heap.dynamic_is_writable(object, &name) {
-                            heap.dynamic_set(object, name.clone(), value);
-                            true
-                        } else {
-                            false
-                        }
-                    } else if heap.dynamic_is_extensible(object) {
-                        heap.dynamic_set(object, name.clone(), value);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                Ok(Value::Bool(ok))
+                self.reflect_set(args)
             }
             "proxyNew" => {
                 let target = object(args.first().ok_or(RunError::BadToken)?)
@@ -2452,6 +2427,9 @@ impl<'a> Interp<'a> {
                 if is_array && member.as_ref() == "push" {
                     // `push` has no `array*` native (typed code lowers it to an
                     // instruction); append directly and answer the new length.
+                    if !call_args.is_empty() {
+                        self.guard_array(namespace, crate::integrity::ArrayOp::Add)?;
+                    }
                     let length = zun_gc::with_current_heap_mut(|heap| {
                         for value in &call_args {
                             let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
@@ -2463,6 +2441,9 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Any(zun_core::Any::float(length as f64)));
                 }
                 if is_array && member.as_ref() == "pop" {
+                    if zun_gc::with_current_heap(|heap| heap.array_len(namespace)) != Some(0) {
+                        self.guard_array(namespace, crate::integrity::ArrayOp::Remove)?;
+                    }
                     let removed = zun_gc::with_current_heap_mut(|heap| {
                         let length = heap.array_len(namespace).unwrap_or(0);
                         if length == 0 {
@@ -2484,10 +2465,19 @@ impl<'a> Interp<'a> {
                     let mut native_args = Vec::with_capacity(call_args.len() + 1);
                     native_args.push(Value::Object(namespace));
                     native_args.extend(call_args.iter().cloned());
-                    if let Ok(result) = self.call_managed_collection(&native_name, &native_args) {
-                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
-                            .unwrap_or_else(zun_core::Any::null);
-                        return Ok(Value::Any(boxed));
+                    match self.call_managed_collection(&native_name, &native_args) {
+                        Ok(result) => {
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                        // A refused mutation (frozen/sealed array) or a throwing
+                        // callback must surface; other failures fall through.
+                        Err(error @ RunError::Thrown(_)) => return Err(error),
+                        Err(RunError::Native(message)) if message.starts_with("TypeError: ") => {
+                            return Err(RunError::Native(message));
+                        }
+                        Err(_) => {}
                     }
                 }
                 // A typed class instance reached through `any`: dispatch the
@@ -3816,6 +3806,11 @@ impl<'a> Interp<'a> {
                     ),
                 })
             }
+            "anyIsUndefined" => Ok(Value::Bool(match args.first().ok_or(RunError::BadToken)? {
+                Value::Void => true,
+                Value::Any(any) => any.tag() == zun_core::AnyTag::Void,
+                _ => false,
+            })),
             "coalesceUndefined" => {
                 // Destructuring default: `fallback` when `value` is undefined.
                 let value = args.first().ok_or(RunError::BadToken)?.clone();
@@ -3842,10 +3837,9 @@ impl<'a> Interp<'a> {
                     let mut excluded_names = Vec::with_capacity(excluded_count);
                     for index in 0..excluded_count {
                         if let Some(any) = heap.array_get(excluded, index) {
-                            if let Some(handle) = any.as_string() {
-                                if let Some(key) = heap.try_string(handle) {
-                                    excluded_names.push(key.to_string());
-                                }
+                            // Static keys are strings; a computed key may also be a number.
+                            if let Some(key) = stringify_any(any, heap) {
+                                excluded_names.push(key);
                             }
                         }
                     }
@@ -4659,6 +4653,9 @@ impl<'a> Interp<'a> {
                     // Own enumerable symbol-keyed properties.
                     let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(source));
                     for symbol in symbols {
+                        if !zun_gc::with_current_heap(|heap| heap.dynamic_is_symbol_enumerable(source, symbol)) {
+                            continue;
+                        }
                         let value = zun_gc::with_current_heap(|heap| {
                             heap.dynamic_get_symbol(source, symbol)
                         });
@@ -4667,6 +4664,17 @@ impl<'a> Interp<'a> {
                                 heap.dynamic_set_symbol(target, symbol, value);
                             });
                         }
+                    }
+                    return Ok(Value::Object(target));
+                }
+                // An array source contributes its indexed elements.
+                if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(source)) {
+                    for index in 0..len {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            if let Some(element) = heap.array_get(source, index) {
+                                heap.dynamic_set(target, index.to_string(), element);
+                            }
+                        });
                     }
                     return Ok(Value::Object(target));
                 }
@@ -4787,6 +4795,9 @@ impl<'a> Interp<'a> {
                 let Some(obj) = object(arg) else {
                     return Ok(arg.clone());
                 };
+                if self.apply_nondynamic_integrity(obj, 3)? {
+                    return Ok(Value::Object(obj));
+                }
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));
                 Ok(Value::Object(obj))
             }
@@ -4798,6 +4809,14 @@ impl<'a> Interp<'a> {
                 let Some(obj) = object(arg) else {
                     return Ok(Value::Bool(true));
                 };
+                if let Some(level_len) = zun_gc::with_current_heap(|heap| {
+                    heap.array_len(obj).map(|len| (heap.array_integrity(obj), len))
+                }) {
+                    return Ok(Value::Bool(level_len.0 >= 3));
+                }
+                if let Some(len) = crate::typed_arrays::element_len(obj) {
+                    return Ok(Value::Bool(len == 0));
+                }
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let frozen = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_frozen(obj))
@@ -4807,7 +4826,10 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(frozen))
             }
             "objectCreate" => {
-                let prototype = prototype_from_arg(args.first().ok_or(RunError::BadToken)?);
+                let prototype = Self::normalize_prototype(
+                    prototype_from_arg(args.first().ok_or(RunError::BadToken)?),
+                    args.first().ok_or(RunError::BadToken)?,
+                );
                 let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 Ok(Value::Object(obj))
@@ -4826,7 +4848,20 @@ impl<'a> Interp<'a> {
                     ProxyRoute::NotProxy => proxy,
                 };
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
+                // A dynamic object with no explicit link inherits from the
+                // shared `Object.prototype`; an explicit `null` link
+                // (`Object.create(null)`) stays null.
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                if prototype.is_none() && is_dynamic {
+                    let root = Self::object_prototype_singleton();
+                    return Ok(Value::Any(zun_core::Any::object(root.addr() as usize)));
+                }
                 Ok(Value::Any(prototype.unwrap_or_else(zun_core::Any::null)))
+            }
+            "objectJsonStringify" => self.json_stringify(args),
+            "objectPrototype" => {
+                let root = Self::object_prototype_singleton();
+                Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
             }
             "objectSetPrototypeOf" => {
                 let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -4842,19 +4877,43 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
-                let prototype = prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?);
+                let prototype = Self::normalize_prototype(
+                    prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?),
+                    args.get(1).ok_or(RunError::BadToken)?,
+                );
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 Ok(Value::Object(obj))
             }
             "objectFromEntries" => {
-                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let not_iterable = || {
+                    RunError::Native("TypeError: object is not iterable".into())
+                };
+                let source = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(not_iterable)?;
+                // A non-array iterable (Map, Set, generator, user iterable) is
+                // drained into an array of entries first.
+                let array = if zun_gc::with_current_heap(|heap| heap.array_len(source).is_some()) {
+                    source
+                } else {
+                    let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                    self.drive_iterable(source, target, |heap, array, value| {
+                        heap.array_push(array, value);
+                    })
+                    .map_err(|_| not_iterable())?
+                };
+                let _array_root = [array];
+                let _array_scope = unsafe { zun_gc::NativeRootScope::enter(&_array_root) };
+                let array = _array_root[0];
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(array))
                     .ok_or(RunError::BadToken)?;
                 let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                 for index in 0..length {
                     let pair_any = zun_gc::with_current_heap(|heap| heap.array_get(array, index))
                         .ok_or(RunError::BadToken)?;
-                    let pair = pair_any.as_object().ok_or(RunError::BadToken)?;
+                    let Some(pair) = pair_any.as_object() else {
+                        return Err(RunError::Native(
+                            "TypeError: Iterator value is not an entry object".into(),
+                        ));
+                    };
                     let pair = unsafe { zun_gc::Obj::from_addr(pair as *mut u64) };
                     let (key_any, value_any) = zun_gc::with_current_heap(|heap| {
                         (heap.array_get(pair, 0), heap.array_get(pair, 1))
@@ -4909,30 +4968,39 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Bool(found))
             }
-            "objectDefineProperty" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Str(key) => key.to_string(),
-                    _ => return Err(RunError::BadToken),
+            "objectDefineProperty" | "reflectDefineProperty" => {
+                let strict = name == "objectDefineProperty";
+                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native("TypeError: Object.defineProperty called on non-object".into())
+                })?;
+                let key_value = match crate::property_ops::prop_key(args.get(1).ok_or(RunError::BadToken)?) {
+                    Some(crate::property_ops::PropKey::Str(text)) => Value::Str(text.into()),
+                    Some(crate::property_ops::PropKey::Sym(symbol)) => {
+                        Value::Any(zun_core::Any::symbol(symbol))
+                    }
+                    None => return Err(RunError::BadToken),
                 };
-                let desc = object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let desc = object(args.get(2).ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native("TypeError: Property description must be an object".into())
+                })?;
                 let obj = match self.proxy_route(proxy, "defineProperty") {
                     ProxyRoute::Trap(callback, target) => {
-                        self.invoke_proxy_trap(
+                        let result = self.invoke_proxy_trap(
                             callback,
-                            vec![
-                                Value::Object(target),
-                                Value::Str(key.clone().into()),
-                                Value::Object(desc),
-                            ],
+                            vec![Value::Object(target), key_value, Value::Object(desc)],
                         )?;
-                        return Ok(Value::Object(proxy));
+                        if strict {
+                            return Ok(Value::Object(proxy));
+                        }
+                        return Ok(Value::Bool(zun_gc::with_current_heap(|heap| is_truthy(&result, heap))));
                     }
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
-                self.object_define_one(obj, &key, desc);
-                Ok(Value::Object(obj))
+                self.define_property_native(
+                    &[Value::Object(obj), key_value, Value::Object(desc)],
+                    strict,
+                )
             }
             "objectDefineProperties" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -4948,7 +5016,11 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?;
                     let desc = desc_any.as_object().ok_or(RunError::BadToken)?;
                     let desc = unsafe { zun_gc::Obj::from_addr(desc as *mut u64) };
-                    self.object_define_one(obj, &name, desc);
+                    if !self.define_own_property(obj, &crate::property_ops::PropKey::Str(name.clone()), desc) {
+                        return Err(RunError::Native(format!(
+                            "TypeError: Cannot redefine property: {name}"
+                        )));
+                    }
                 }
                 Ok(Value::Object(obj))
             }
@@ -5035,6 +5107,9 @@ impl<'a> Interp<'a> {
                 let Some(obj) = object(arg) else {
                     return Ok(arg.clone());
                 };
+                if self.apply_nondynamic_integrity(obj, 2)? {
+                    return Ok(Value::Object(obj));
+                }
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_seal(obj));
                 Ok(Value::Object(obj))
             }
@@ -5043,6 +5118,11 @@ impl<'a> Interp<'a> {
                 let Some(obj) = object(arg) else {
                     return Ok(Value::Bool(true));
                 };
+                if let Some((level, len)) = zun_gc::with_current_heap(|heap| {
+                    heap.array_len(obj).map(|len| (heap.array_integrity(obj), len))
+                }) {
+                    return Ok(Value::Bool(level >= 2 || (level >= 1 && len == 0)));
+                }
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let sealed = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_sealed(obj))
@@ -5066,6 +5146,9 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
+                if self.apply_nondynamic_integrity(obj, 1)? {
+                    return Ok(Value::Object(obj));
+                }
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_prevent_extensions(obj));
                 Ok(Value::Object(obj))
             }
@@ -5084,6 +5167,11 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
+                if let Some(level) = zun_gc::with_current_heap(|heap| {
+                    heap.array_len(obj).map(|_| heap.array_integrity(obj))
+                }) {
+                    return Ok(Value::Bool(level == 0));
+                }
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let extensible = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_extensible(obj))
@@ -5332,42 +5420,6 @@ impl<'a> Interp<'a> {
         Ok(out)
     }
 
-    /// Read a boolean descriptor attribute (`writable`/`enumerable`/
-    /// `configurable`) from a descriptor object, defaulting to `false` when the
-    /// field is absent (the `Object.defineProperty` default).
-    fn descriptor_flag(desc: zun_gc::Obj, name: &str) -> bool {
-        zun_gc::with_current_heap(|heap| match heap.dynamic_get(desc, name) {
-            Some(any) => is_truthy(&Value::Any(any), heap),
-            None => false,
-        })
-    }
-
-    /// Apply one `{ value, writable, enumerable, configurable }` or
-    /// `{ get, set, enumerable, configurable }` descriptor object to `obj[key]`.
-    /// A data descriptor reads `value` from the value slot and the boolean
-    /// flags; an accessor descriptor reads `get`/`set` from the function slot
-    /// (function values do not box into `Any`). Rejection (non-configurable
-    /// redefine, or a new key on a non-extensible object) is silent and
-    /// freeze-consistent. Returns whether the definition took effect.
-    fn object_define_one(&self, obj: zun_gc::Obj, key: &str, desc: zun_gc::Obj) -> bool {
-        let get_fn = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(desc, "get"));
-        let set_fn = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(desc, "set"));
-        let enumerable = Self::descriptor_flag(desc, "enumerable");
-        let configurable = Self::descriptor_flag(desc, "configurable");
-        if get_fn.is_some() || set_fn.is_some() {
-            zun_gc::with_current_heap_mut(|heap| {
-                heap.dynamic_define_accessor(obj, key.to_owned(), get_fn, set_fn, enumerable, configurable)
-            })
-        } else {
-            let writable = Self::descriptor_flag(desc, "writable");
-            let value = zun_gc::with_current_heap(|heap| heap.dynamic_get(desc, "value"))
-                .unwrap_or_else(zun_core::Any::null);
-            zun_gc::with_current_heap_mut(|heap| {
-                heap.dynamic_define_data(obj, key.to_owned(), value, writable, enumerable, configurable)
-            })
-        }
-    }
-
     /// Own string property names of `obj` (dynamic or typed), including
     /// non-enumerable keys (`getOwnPropertyNames`).
     fn object_own_names(&mut self, obj: zun_gc::Obj) -> Result<Vec<String>, RunError> {
@@ -5382,6 +5434,32 @@ impl<'a> Interp<'a> {
     /// or `{ get, set, enumerable, configurable }` for `obj[key]`, or `None` if
     /// there is no own property.
     fn build_descriptor(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<zun_gc::Obj>, RunError> {
+        // Arrays: indexed elements and the `length` data property.
+        if let Some((len, level)) = zun_gc::with_current_heap(|heap| {
+            heap.array_len(obj).map(|len| (len, heap.array_integrity(obj)))
+        }) {
+            let entry = if key == "length" {
+                Some((zun_core::Any::int(len as i64), level < 3, false, false))
+            } else {
+                match key.parse::<usize>() {
+                    Ok(index) if index < len => zun_gc::with_current_heap(|heap| heap.array_get(obj, index))
+                        .map(|value| (value, level < 3, true, level < 2)),
+                    _ => None,
+                }
+            };
+            let Some((value, writable, enumerable, configurable)) = entry else {
+                return Ok(None);
+            };
+            let out = zun_gc::with_current_heap_mut(|heap| {
+                let out = heap.alloc_dynamic();
+                heap.dynamic_set(out, "value".to_owned(), value);
+                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
+                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(enumerable));
+                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(configurable));
+                out
+            });
+            return Ok(Some(out));
+        }
         let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
         if is_dynamic {
             let Some(descriptor) = zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key)) else {
@@ -7579,7 +7657,7 @@ fn strict_equals(left: &Value, right: &Value, zero_aware: bool) -> bool {
 
 /// ECMAScript `SameValue`: like `===` but `NaN` equals `NaN` and `+0` differs
 /// from `-0`. Numbers compare by IEEE-754 bit pattern after the `NaN` check.
-fn same_value(left: &Value, right: &Value) -> bool {
+pub(super) fn same_value(left: &Value, right: &Value) -> bool {
     let number = |value: &Value| match value {
         Value::Int(value, _) => Some(*value as f64),
         Value::Float(value, _) => Some(*value),

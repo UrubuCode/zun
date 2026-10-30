@@ -394,11 +394,20 @@ fn object_freeze_blocks_dynamic_mutation_and_is_frozen_reports_it() {
             if (Object.isFrozen(o)) { print("before-frozen"); } else { print("before-open"); }
             Object.freeze(o);
             if (Object.isFrozen(o)) { print("after-frozen"); } else { print("after-open"); }
-            dynamic_set(o, "b", box_any(2));
             print(Object.keys(o).length);
         }"#,
     );
     assert_eq!(out, ["before-open", "after-frozen", "1"]);
+    // Adding a key to a frozen object throws a TypeError (strict mode).
+    let error = run_source_expect_error(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            Object.freeze(o);
+            dynamic_set(o, "b", box_any(2));
+        }"#,
+    );
+    assert!(error.contains("object is not extensible"), "{error}");
 }
 
 #[test]
@@ -632,17 +641,44 @@ fn object_define_property_enforces_writable_and_configurable() {
             let d = dynamic_new();
             dynamic_set(d, "value", box_any(1));
             Object.defineProperty(o, "x", d);
-            dynamic_set(o, "x", box_any(99));
             print(dynamic_get(o, "x") as number);
-            let d2 = dynamic_new();
-            dynamic_set(d2, "value", box_any(2));
-            Object.defineProperty(o, "x", d2);
-            print(dynamic_get(o, "x") as number);
-            delete o.x;
             print(Object.getOwnPropertyNames(o).length);
         }"#,
     );
-    assert_eq!(out, ["1", "1", "1"]);
+    assert_eq!(out, ["1", "1"]);
+    // Modules are strict: every refused store, redefine and delete throws.
+    let store = run_source_expect_error(
+        r#"function main() {
+            let o = dynamic_new();
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(1));
+            Object.defineProperty(o, "x", d);
+            dynamic_set(o, "x", box_any(99));
+        }"#,
+    );
+    assert!(store.contains("Cannot assign to read only property 'x'"), "{store}");
+    let redefine = run_source_expect_error(
+        r#"function main() {
+            let o = dynamic_new();
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(1));
+            Object.defineProperty(o, "x", d);
+            let d2 = dynamic_new();
+            dynamic_set(d2, "value", box_any(2));
+            Object.defineProperty(o, "x", d2);
+        }"#,
+    );
+    assert!(redefine.contains("Cannot redefine property: x"), "{redefine}");
+    let delete = run_source_expect_error(
+        r#"function main() {
+            let o = dynamic_new();
+            let d = dynamic_new();
+            dynamic_set(d, "value", box_any(1));
+            Object.defineProperty(o, "x", d);
+            delete o.x;
+        }"#,
+    );
+    assert!(delete.contains("Cannot delete property 'x'"), "{delete}");
 }
 
 #[test]
@@ -672,13 +708,22 @@ fn object_seal_prevents_configuration_but_keeps_values_writable() {
             Object.seal(o);
             print(Object.isSealed(o));
             print(Object.isExtensible(o));
-            dynamic_set(o, "b", box_any(2));
             print(Object.getOwnPropertyNames(o).length);
             dynamic_set(o, "a", box_any(9));
             print(dynamic_get(o, "a") as number);
         }"#,
     );
     assert_eq!(out, ["true", "false", "1", "9"]);
+    // Adding a key to a sealed object throws a TypeError (strict mode).
+    let error = run_source_expect_error(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            Object.seal(o);
+            dynamic_set(o, "b", box_any(2));
+        }"#,
+    );
+    assert!(error.contains("object is not extensible"), "{error}");
 }
 
 #[test]
@@ -690,11 +735,20 @@ fn object_prevent_extensions_blocks_new_keys() {
             print(Object.isExtensible(o));
             Object.preventExtensions(o);
             print(Object.isExtensible(o));
-            dynamic_set(o, "b", box_any(2));
             print(Object.getOwnPropertyNames(o).length);
         }"#,
     );
     assert_eq!(out, ["true", "false", "1"]);
+    // Adding a key to a non-extensible object throws a TypeError (strict mode).
+    let error = run_source_expect_error(
+        r#"function main() {
+            let o = dynamic_new();
+            dynamic_set(o, "a", box_any(1));
+            Object.preventExtensions(o);
+            dynamic_set(o, "b", box_any(2));
+        }"#,
+    );
+    assert!(error.contains("object is not extensible"), "{error}");
 }
 
 #[test]
@@ -1345,37 +1399,43 @@ fn hello_world() {
 #[test]
 fn global_set_readonly_registers_and_rejects_reassignment() {
     // A readonly registration is visible through both realm-global aliases and
-    // its reassignment is silently rejected (freeze-consistent, non-throwing).
+    // its reassignment is refused: modules are strict, so the store throws a
+    // TypeError (the value stays 7).
     assert_eq!(
         run_source(
             r#"import { global } from "zun:core";
             function main() {
                 global.set("Foo", box_any(7), true);
                 print(dynamic_get(globalThis, "Foo") as number);
-                dynamic_set(globalThis, "Foo", box_any(9));
                 print(dynamic_get(global, "Foo") as number);
             }"#,
         ),
         ["7", "7"],
     );
+    let error = run_source_expect_error(
+        r#"import { global } from "zun:core";
+        function main() {
+            global.set("Foo", box_any(7), true);
+            dynamic_set(globalThis, "Foo", box_any(9));
+        }"#,
+    );
+    assert!(error.contains("Cannot assign to read only property 'Foo'"), "{error}");
 }
 
 #[test]
 fn global_set_readonly_rejects_computed_store() {
     // The computed-key dynamic store path (stdyn.value) also respects the
     // attribute, not only the string-literal `dynamic_set` form.
-    assert_eq!(
-        run_source(
-            r#"import { global } from "zun:core";
-            function main() {
-                global.set("Foo", box_any(7), true);
-                let key: string = "Foo";
-                reflect_set(globalThis, key, box_any(9));
-                print(dynamic_get(global, "Foo") as number);
-            }"#,
-        ),
-        ["7"],
+    // `reflect_set` lowers to the same strict store, so the refused write throws.
+    let error = run_source_expect_error(
+        r#"import { global } from "zun:core";
+        function main() {
+            global.set("Foo", box_any(7), true);
+            let key: string = "Foo";
+            reflect_set(globalThis, key, box_any(9));
+        }"#,
     );
+    assert!(error.contains("Cannot assign to read only property 'Foo'"), "{error}");
 }
 
 #[test]
@@ -1410,19 +1470,16 @@ fn dotted_dynamic_store_and_load_round_trip() {
 
 #[test]
 fn dotted_dynamic_store_rejects_readonly_binding() {
-    // A dotted reassignment of a readonly global is silently rejected, exactly
-    // like the explicit `dynamic_set` store path (freeze-consistent).
-    assert_eq!(
-        run_source(
-            r#"import { global } from "zun:core";
-            function main() {
-                global.set("Foo", box_any(7), true);
-                globalThis.Foo = 9;
-                print(globalThis.Foo as number);
-            }"#,
-        ),
-        ["7"],
+    // A dotted reassignment of a readonly global throws a TypeError (strict
+    // mode), exactly like the explicit `dynamic_set` store path.
+    let error = run_source_expect_error(
+        r#"import { global } from "zun:core";
+        function main() {
+            global.set("Foo", box_any(7), true);
+            globalThis.Foo = 9;
+        }"#,
     );
+    assert!(error.contains("Cannot assign to read only property 'Foo'"), "{error}");
 }
 
 #[test]
@@ -1451,12 +1508,20 @@ fn realm_map_descriptor_registers_as_readonly_and_reads_back() {
             function main() {
                 global.set("Map", Map, true);
                 print(classDescriptorToken(dynamic_get(globalThis, "Map")));
-                dynamic_set(globalThis, "Map", box_any(9));
                 print(classDescriptorToken(dynamic_get(global, "Map")));
             }"#,
         ),
         ["0", "0"],
     );
+    // The readonly reassignment is refused with a TypeError (strict mode).
+    let error = run_source_expect_error(
+        r#"import { global } from "zun:core";
+        function main() {
+            global.set("Map", Map, true);
+            dynamic_set(globalThis, "Map", box_any(9));
+        }"#,
+    );
+    assert!(error.contains("Cannot assign to read only property 'Map'"), "{error}");
 }
 
 #[test]

@@ -61,6 +61,9 @@ pub struct DynamicObject {
     /// Setter functions for accessor properties.
     accessor_set: BTreeMap<String, FunctionHandle>,
     symbol_properties: BTreeMap<SymbolId, Any>,
+    /// Symbol keys whose **enumerable** attribute is cleared (skipped by spread
+    /// and `Object.assign`).
+    non_enumerable_symbols: HashSet<SymbolId>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
     module_functions: BTreeMap<String, ModuleBoundFunction>,
@@ -80,6 +83,7 @@ impl PartialEq for DynamicObject {
             && self.accessor_get == other.accessor_get
             && self.accessor_set == other.accessor_set
             && self.symbol_properties == other.symbol_properties
+            && self.non_enumerable_symbols == other.non_enumerable_symbols
             && self.symbol_functions == other.symbol_functions
             && self.string_functions == other.string_functions
             && self.module_functions == other.module_functions
@@ -102,8 +106,41 @@ pub enum PropertyDescriptor {
     },
 }
 
+/// The canonical array index of `name` (`"0"`, `"17"`, no leading zeros, below
+/// 2^32 - 1), if it is one. Such keys enumerate first, in ascending order.
+fn array_index(name: &str) -> Option<u32> {
+    if name.is_empty() || name.len() > 10 || (name.len() > 1 && name.starts_with('0')) {
+        return None;
+    }
+    if !name.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    name.parse::<u64>().ok().filter(|&n| n < u32::MAX as u64).map(|n| n as u32)
+}
+
 impl DynamicObject {
     pub fn new() -> Self { Self::default() }
+    /// Append a brand-new string key in ECMAScript own-key order: canonical
+    /// array indices first (ascending), then other strings by insertion.
+    fn insert_new(&mut self, name: String, value: Any) {
+        let position = match array_index(&name) {
+            Some(new_index) => self
+                .properties
+                .iter()
+                .position(|(key, _)| array_index(key).is_none_or(|existing| existing > new_index))
+                .unwrap_or(self.properties.len()),
+            None => self.properties.len(),
+        };
+        if position < self.properties.len() {
+            for slot in self.index.values_mut() {
+                if *slot >= position {
+                    *slot += 1;
+                }
+            }
+        }
+        self.index.insert(name.clone(), position);
+        self.properties.insert(position, (name, value));
+    }
     /// Read a data property's value. Returns `None` for an absent key **or an
     /// accessor property** (reading an accessor requires invoking its getter,
     /// which happens a layer up in the interpreter).
@@ -135,8 +172,7 @@ impl DynamicObject {
         if self.frozen || self.non_extensible {
             return None;
         }
-        self.index.insert(name.clone(), self.properties.len());
-        self.properties.push((name, value));
+        self.insert_new(name, value);
         None
     }
     /// Define or redefine a string data property with an explicit `writable`
@@ -182,8 +218,7 @@ impl DynamicObject {
         if let Some(&i) = self.index.get(&name) {
             self.properties[i].1 = value;
         } else {
-            self.index.insert(name.clone(), self.properties.len());
-            self.properties.push((name.clone(), value));
+            self.insert_new(name.clone(), value);
         }
         self.apply_flags(&name, Some(writable), enumerable, configurable);
         true
@@ -210,8 +245,7 @@ impl DynamicObject {
             return false;
         }
         if !self.index.contains_key(&name) {
-            self.index.insert(name.clone(), self.properties.len());
-            self.properties.push((name.clone(), Any::null()));
+            self.insert_new(name.clone(), Any::null());
         }
         self.accessors.insert(name.clone());
         match get {
@@ -224,6 +258,34 @@ impl DynamicObject {
         }
         self.apply_flags(&name, None, enumerable, configurable);
         true
+    }
+    /// Redefine a property after the caller validated the change against the
+    /// current descriptor (skips the non-configurable guard of
+    /// [`define_data`](Self::define_data)).
+    pub fn force_define_data(
+        &mut self,
+        name: impl Into<String>,
+        value: Any,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> bool {
+        let name = name.into();
+        self.non_configurable.remove(&name);
+        self.define_data(name, value, writable, enumerable, configurable)
+    }
+    /// Accessor counterpart of [`force_define_data`](Self::force_define_data).
+    pub fn force_define_accessor(
+        &mut self,
+        name: impl Into<String>,
+        get: Option<FunctionHandle>,
+        set: Option<FunctionHandle>,
+        enumerable: bool,
+        configurable: bool,
+    ) -> bool {
+        let name = name.into();
+        self.non_configurable.remove(&name);
+        self.define_accessor(name, get, set, enumerable, configurable)
     }
     /// Record the `writable`/`enumerable`/`configurable` cleared-attribute sets
     /// for `name`. `writable` is `None` for an accessor property (writability
@@ -359,6 +421,35 @@ impl DynamicObject {
     /// symbol-key copying for object spread and serialization.
     pub fn symbol_keys(&self) -> impl Iterator<Item = SymbolId> + '_ {
         self.symbol_properties.keys().copied()
+    }
+    /// Define a symbol-keyed data property with an explicit enumerable flag
+    /// (`Object.defineProperty(o, sym, ...)`). Rejected on a non-extensible
+    /// object when the key is new.
+    pub fn define_symbol(&mut self, symbol: SymbolId, value: Any, enumerable: bool) -> bool {
+        if !self.symbol_properties.contains_key(&symbol) && (self.non_extensible || self.frozen) {
+            return false;
+        }
+        self.symbol_properties.insert(symbol, value);
+        if enumerable { self.non_enumerable_symbols.remove(&symbol); } else { self.non_enumerable_symbols.insert(symbol); }
+        true
+    }
+    /// Whether the symbol key is an own enumerable property.
+    pub fn is_symbol_enumerable(&self, symbol: SymbolId) -> bool {
+        self.symbol_properties.contains_key(&symbol) && !self.non_enumerable_symbols.contains(&symbol)
+    }
+    /// Whether a plain assignment `obj.name = v` would be accepted by the data
+    /// path (strict-mode callers throw when this is `false`). An accessor key
+    /// is accepted here (its setter is dispatched separately).
+    pub fn can_set(&self, name: &str) -> bool {
+        if self.index.contains_key(name) {
+            self.accessors.contains(name) || !(self.frozen || self.non_writable.contains(name))
+        } else {
+            !(self.frozen || self.non_extensible)
+        }
+    }
+    /// Whether `delete obj.name` succeeds (absent keys succeed vacuously).
+    pub fn can_delete(&self, name: &str) -> bool {
+        !self.index.contains_key(name) || !(self.frozen || self.non_configurable.contains(name))
     }
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
         self.symbol_properties.insert(symbol, value)

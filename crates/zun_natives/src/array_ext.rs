@@ -103,5 +103,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "arrayIncludes", params: &[Array, Opaque, F64], ret: Bool, imp: unavailable },
         // In-place `reverse()`, returning the receiver.
         NativeFn { name: "arrayReverse", params: &[Array], ret: Array, imp: unavailable },
+        // `anyIsUndefined(value)` — whether the value reads as `undefined`.
+        // Backs the lazy destructuring-default test (the default expression is
+        // evaluated only when this is true).
+        NativeFn { name: "anyIsUndefined", params: &[Opaque], ret: Bool, imp: unavailable },
     ],
 };

@@ -307,6 +307,42 @@ impl<'a> Interp<'a> {
                     Value::Void
                 }
             }
+            "split" if !Self::is_regexp(&a0) => {
+                // `split(separator?, limit?)` with a string (or absent) separator.
+                let limit = if Self::is_undefined(&a1) {
+                    usize::MAX
+                } else {
+                    let n = self.dyn_to_number(&a1)?;
+                    if n.is_nan() || n <= 0.0 { 0 } else if n >= 4294967295.0 { usize::MAX } else { n as usize }
+                };
+                let pieces: Vec<String> = if Self::is_undefined(&a0) {
+                    vec![recv.to_owned()]
+                } else {
+                    let separator = units(&self.dyn_to_string(&a0)?);
+                    if separator.is_empty() {
+                        s.iter().map(|unit| from_units(&[*unit])).collect()
+                    } else {
+                        let mut parts = Vec::new();
+                        let mut from = 0;
+                        while let Some(at) = find_from(&s, &separator, from) {
+                            parts.push(from_units(&s[from..at]));
+                            from = at + separator.len();
+                        }
+                        parts.push(from_units(&s[from..]));
+                        parts
+                    }
+                };
+                let pieces: Vec<String> = pieces.into_iter().take(limit).collect();
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(pieces.len());
+                    for (index, piece) in pieces.iter().enumerate() {
+                        let id = heap.intern_string(piece.as_str().into());
+                        heap.array_set(array, index, zun_core::Any::string(id));
+                    }
+                    array
+                });
+                Value::Object(array)
+            }
             "toString" | "valueOf" => Value::Str(recv.into()),
             "toUpperCase" => Value::Str(recv.to_uppercase().into()),
             "toLowerCase" => Value::Str(recv.to_lowercase().into()),

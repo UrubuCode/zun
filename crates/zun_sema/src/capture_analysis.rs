@@ -122,7 +122,13 @@ pub(super) fn collect_mutated_expr(
             collect_mutated_expr(checker, index, names);
             collect_mutated_expr(checker, value, names);
         }
-        ast::Expr::Function(_) | ast::Expr::Ident(_) | ast::Expr::Number { .. }
+        // A nested closure may assign an outer variable (possibly after an
+        // earlier sibling closure already captured it), so its assignments
+        // count: every closure over that variable must then share a cell.
+        ast::Expr::Function(function) => {
+            collect_mutated_names(checker, &function.body.statements, names);
+        }
+        ast::Expr::Ident(_) | ast::Expr::Number { .. }
         | ast::Expr::BigInt { .. }
         | ast::Expr::String { .. } | ast::Expr::Template { .. } | ast::Expr::RegexLiteral { .. }
         | ast::Expr::Bool { .. } | ast::Expr::Null { .. } => {}
