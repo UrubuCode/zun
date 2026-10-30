@@ -3211,6 +3211,11 @@ impl Checker<'_> {
         let mut call_args = vec![receiver];
         let mut offset = self.check_expr(cx, &args[0]);
         coerce_numeric_literal(&mut offset, u64_ty);
+        // JS ToIndex: a `number` offset is truncated to an unsigned index.
+        if offset.ty.is_float() {
+            let span = offset.span;
+            offset = hir::Expr { kind: hir::ExprKind::Convert { value: Box::new(offset) }, ty: u64_ty, span };
+        }
         if !offset.ty.is_int() && !offset.ty.is_error() {
             self.error(offset.span, "DataView byte offset must be an integer");
         }
@@ -4146,6 +4151,15 @@ impl Checker<'_> {
                     Some(arg) => {
                         let mut radix = self.check_expr(cx, arg);
                         coerce_numeric_literal(&mut radix, Ty::Int(IntKind::I32));
+                        // JS ToInt32 on the radix: a `number`/other int radix is converted.
+                        if radix.ty.is_float() || (radix.ty.is_int() && radix.ty != Ty::Int(IntKind::I32)) {
+                            let rspan = radix.span;
+                            radix = hir::Expr {
+                                kind: hir::ExprKind::Convert { value: Box::new(radix) },
+                                ty: Ty::Int(IntKind::I32),
+                                span: rspan,
+                            };
+                        }
                         if !radix.ty.is_error() && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32)) {
                             self.error(radix.span, "`Number.parseInt` radix must be an integer");
                         }
@@ -5774,6 +5788,7 @@ impl Checker<'_> {
                             || objectish(rhs.ty)
                             || (involves_string && lhs.ty != rhs.ty)
                             || (lhs.ty == Ty::Boolean && rhs.ty == Ty::Boolean)
+                            || (lhs.ty == Ty::Array && rhs.ty == Ty::Array)
                             || (lhs.ty != rhs.ty
                                 && !(numeric_ty(lhs.ty) && numeric_ty(rhs.ty))
                                 && lhs.ty != Ty::BigInt
