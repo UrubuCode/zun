@@ -1431,6 +1431,11 @@ impl Interp<'_> {
                 }
                 Opcode::ArrayPop => {
                     let array = pop(&mut stack)?.as_object();
+                    // `pop()` on an empty array answers `undefined`.
+                    if zun_gc::with_current_heap(|heap| heap.array_len(array)) == Some(0) {
+                        stack.push(Value::Void);
+                        continue;
+                    }
                     if zun_gc::with_current_heap(|heap| heap.array_len(array)) != Some(0) {
                         if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Remove) {
                             throw_native!(self, body, stack, pc, next - size, message);

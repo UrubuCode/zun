@@ -37,6 +37,7 @@ pub const MODULE: crate::Module = crate::Module {
         // `splice(start, deleteCount, ...items)` — deletes and inserts the items
         // (gathered into a managed Array by the lowering) at `start`, returning
         // the removed elements.
+        NativeFn { name: "arraySpliceArgs", params: &[Array, Array], ret: Array, imp: unavailable },
         NativeFn { name: "arraySpliceInsert", params: &[Array, U64, U64, Array], ret: Array, imp: unavailable },
         // No-initial-value `reduce`/`reduceRight`: seed from the first/last
         // element and throw a TypeError on an empty array (spec).

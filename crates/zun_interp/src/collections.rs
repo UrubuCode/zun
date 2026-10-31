@@ -4084,6 +4084,55 @@ impl<'a> Interp<'a> {
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(result))
             }
+            "arraySpliceArgs" => {
+                // `splice(...args)` with a runtime argument list: JS clamping rules.
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let list =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let removed = zun_gc::with_current_heap_mut(|heap| {
+                    let to_integer = |any: zun_core::Any| -> f64 {
+                        let n = match Value::unbox_any(any, heap) {
+                            Some(Value::Float(n, _)) => n,
+                            Some(Value::Int(n, _)) => n as f64,
+                            Some(Value::Bool(b)) => f64::from(u8::from(b)),
+                            Some(Value::Null) => 0.0,
+                            Some(Value::Str(text)) => text.trim().parse::<f64>().unwrap_or(f64::NAN),
+                            _ => f64::NAN,
+                        };
+                        if n.is_nan() { 0.0 } else { n.trunc() }
+                    };
+                    let length = heap.array_len(source).unwrap_or(0);
+                    let count = heap.array_len(list).unwrap_or(0);
+                    let len_f = length as f64;
+                    let (start, delete_count) = if count == 0 {
+                        (0usize, 0usize)
+                    } else {
+                        let raw = to_integer(heap.array_get(list, 0).unwrap_or_else(zun_core::Any::void));
+                        let start = if raw < 0.0 { (len_f + raw).max(0.0) } else { raw.min(len_f) } as usize;
+                        let delete_count = if count == 1 {
+                            length - start
+                        } else {
+                            let raw = to_integer(heap.array_get(list, 1).unwrap_or_else(zun_core::Any::void));
+                            raw.max(0.0).min((length - start) as f64) as usize
+                        };
+                        (start, delete_count)
+                    };
+                    let result = heap.alloc_array(delete_count);
+                    for offset in 0..delete_count {
+                        if let Some(element) = heap.array_remove(source, start) {
+                            heap.array_set(result, offset, element);
+                        }
+                    }
+                    for (offset, index) in (2..count).enumerate() {
+                        if let Some(element) = heap.array_get(list, index) {
+                            heap.array_insert(source, start + offset, element);
+                        }
+                    }
+                    result
+                });
+                Ok(Value::Object(removed))
+            }
             "arraySpliceInsert" => {
                 let source =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

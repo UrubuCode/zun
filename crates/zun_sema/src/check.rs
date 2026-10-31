@@ -1513,7 +1513,7 @@ impl Checker<'_> {
             if matches!(f.body.statements.first(), Some(ast::Stmt::Let { name, .. }) if self.text(name) == "arguments") {
                 self.arguments_functions.insert(self.signatures.len() as u32);
             }
-            let params = f
+            let params: Vec<Ty> = f
                 .params
                 .iter()
                 .map(|p| match &p.ty {
@@ -1536,17 +1536,27 @@ impl Checker<'_> {
                     }
                 }
             };
+            let optional_count = {
+                let mut count = 0;
+                for (index, p) in f.params.iter().enumerate().rev() {
+                    if p.is_rest {
+                        continue;
+                    }
+                    if p.default_value.is_some() || params.get(index) == Some(&Ty::Any) {
+                        count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                count
+            };
             self.signatures.push(Signature {
                 name,
                 params,
                 return_ty,
-                optional_count: f
-                    .params
-                    .iter()
-                    .rev()
-                    .filter(|p| !p.is_rest)
-                    .take_while(|p| p.default_value.is_some())
-                    .count(),
+                // Trailing defaulted parameters, and trailing dynamic (`any`) ones —
+                // JS lets any argument be omitted, which reads as `undefined`.
+                optional_count,
                 rest_param: f.params.iter().position(|parameter| parameter.is_rest),
                 is_generator: f.is_generator,
                 is_static: false,
@@ -8546,15 +8556,26 @@ impl Checker<'_> {
                     // `splice(start, deleteCount, ...items)`. The inserted items
                     // are gathered into a managed array (an array literal), so a
                     // single fixed-arity native carries the variadic inserts.
-                    if args.len() < 2 {
-                        self.error(
+                    if args.len() < 2 || args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                        // A runtime argument list (`splice(start)`, `splice(...args)`).
+                        let elements = args
+                            .iter()
+                            .map(|arg| match arg {
+                                ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                                other => ast::ArrayElement::Expr(other.clone()),
+                            })
+                            .collect();
+                        let literal = ast::Expr::ArrayLiteral { elements, span };
+                        let list = self.check_expr(cx, &literal);
+                        let Some((id, _)) = zun_natives::resolve("array", "arraySpliceArgs") else {
+                            self.error(span, "missing Array intrinsic `arraySpliceArgs`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, list] },
+                            ty: Ty::Array,
                             span,
-                            format!(
-                                "`Array.splice` expects at least 2 argument(s), found {}",
-                                args.len()
-                            ),
-                        );
-                        return self.poison(span);
+                        };
                     }
                     let mut start = self.check_expr(cx, &args[0]);
                     coerce_numeric_literal(&mut start, Ty::Int(IntKind::U64));
