@@ -145,6 +145,10 @@ pub const REGEXP: &str = include_str!("../builtin/regexp.zun");
 
 /// The base-type global registry (`builtin/realm.zun`), consumed by
 /// `zun_sema::realm`. See [`MATH`]; kept here so the file lives in-crate.
+/// Async iteration helpers (`builtin/async.zun`): `for await` iterator opening and
+/// closing, and the async-generator object.
+pub const ASYNC: &str = include_str!("../builtin/async.zun");
+
 pub const REALM: &str = include_str!("../builtin/realm.zun");
 
 /// The prelude **classes**, in compile order. Classes cannot cross a module
@@ -177,6 +181,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     CRYPTO,
     HEADERS,
     RESPONSE,
+    ASYNC,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

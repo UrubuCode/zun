@@ -415,6 +415,10 @@ define_opcodes! {
     /// queue, returning a Promise to the caller. Tier 0 only (the JIT's
     /// whitelist never lists it, so such a method stays on the interpreter).
     AsyncStart = 0xAF, None, "async.start", StackEffect::Fixed { pops: 0, pushes: 0 };
+    /// Marker emitted as the first instruction of an `async function*` body.
+    /// Calling such a function creates an async-generator object (a prelude
+    /// wrapper over the underlying coroutine) instead of running the body.
+    AsyncGenStart = 0xB0, None, "async.gen.start", StackEffect::Fixed { pops: 0, pushes: 0 };
 }
 
 #[cfg(test)]

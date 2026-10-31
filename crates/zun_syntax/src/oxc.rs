@@ -820,6 +820,133 @@ fn convert_for_in(
     })
 }
 
+/// Desugar `for await (<binding> of <iterable>) body` into an explicit
+/// async-iterator loop (spec: AsyncIteratorClose on abrupt exit):
+///
+/// ```text
+/// const it = __zunAsyncIterOpen(iterable);
+/// let close = false;
+/// try {
+///   while (true) {
+///     close = false;
+///     const r = await it.next();
+///     if (r.done) break;
+///     close = true;
+///     <binding> = r.value;
+///     body
+///   }
+/// } finally { if (close) await __zunAsyncIterClose(it); }
+/// ```
+fn convert_for_await(
+    source: &str,
+    for_of_statement: &oxc_ast::ast::ForOfStatement<'_>,
+) -> Result<Vec<Stmt>, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let sp = span(for_of_statement.span);
+    let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left else {
+        return Err("OXC adapter supports declared for-await bindings only".into());
+    };
+    if declaration.declarations.len() != 1 {
+        return Err("OXC adapter supports one for-await binding".into());
+    }
+    let declarator = &declaration.declarations[0];
+    let pattern = match &declarator.id {
+        BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
+            name: Name { span: span(identifier.span) },
+            ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+        },
+        other => convert_binding_pattern(source, other)?,
+    };
+    let n = YIELD_STAR_COUNTER.with(|c| {
+        c.set(c.get() + 1);
+        c.get()
+    });
+    let it = crate::ast::synthetic_ident(&format!("__fa_it{n}"));
+    let result = crate::ast::synthetic_ident(&format!("__fa_r{n}"));
+    let close = crate::ast::synthetic_ident(&format!("__fa_close{n}"));
+    let field = |name: Name, key: &str| Expr::Index {
+        object: Box::new(Expr::Ident(name)),
+        index: Box::new(Expr::String { value: key.to_owned(), span: sp }),
+        span: sp,
+    };
+    let set_close = |value: bool| {
+        Stmt::Expr(Expr::Assign {
+            target: close,
+            value: Box::new(Expr::Bool { value, span: sp }),
+            span: sp,
+        })
+    };
+    let awaited = |operand: Expr| Expr::Await { operand: Box::new(operand), span: sp };
+    let mut loop_body = vec![
+        set_close(false),
+        Stmt::Let {
+            name: result,
+            ty: None,
+            init: awaited(Expr::ComputedCall {
+                callee: Box::new(field(it, "next")),
+                args: Vec::new(),
+                span: sp,
+            }),
+            span: sp,
+        },
+        Stmt::If {
+            cond: field(result, "done"),
+            then_block: Block { statements: vec![Stmt::Break { label: None, span: sp }], span: sp },
+            else_block: None,
+            span: sp,
+        },
+        set_close(true),
+    ];
+    loop_body.push(match pattern {
+        crate::ast::Pattern::Ident { name, ty } => {
+            Stmt::Let { name, ty, init: field(result, "value"), span: sp }
+        }
+        other => Stmt::Destructure { pattern: other, init: field(result, "value"), span: sp },
+    });
+    loop_body.extend(convert_if_branch(source, &for_of_statement.body)?.statements);
+    Ok(vec![
+        Stmt::Let {
+            name: it,
+            ty: None,
+            init: Expr::Call {
+                callee: crate::ast::synthetic_ident("__zunAsyncIterOpen"),
+                args: vec![convert_expression(source, &for_of_statement.right)?],
+                span: sp,
+            },
+            span: sp,
+        },
+        Stmt::Let { name: close, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
+        Stmt::Try {
+            body: Block {
+                statements: vec![Stmt::While {
+                    cond: Expr::Bool { value: true, span: sp },
+                    body: Block { statements: loop_body, span: sp },
+                    span: sp,
+                }],
+                span: sp,
+            },
+            catches: Vec::new(),
+            finally: Some(Block {
+                statements: vec![Stmt::If {
+                    cond: Expr::Ident(close),
+                    then_block: Block {
+                        statements: vec![Stmt::Expr(awaited(Expr::Call {
+                            callee: crate::ast::synthetic_ident("__zunAsyncIterClose"),
+                            args: vec![Expr::Ident(it)],
+                            span: sp,
+                        }))],
+                        span: sp,
+                    },
+                    else_block: None,
+                    span: sp,
+                }],
+                span: sp,
+            }),
+            span: sp,
+        },
+    ])
+}
+
 /// Convert a `for (… of …)` statement, with an identifier or destructuring
 /// pattern binding.
 fn convert_for_of(
@@ -828,7 +955,7 @@ fn convert_for_of(
 ) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     if for_of_statement.r#await {
-        return Err("OXC adapter does not support await in for-of loops yet".into());
+        return convert_for_await(source, for_of_statement);
     }
     let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left else {
         return Err("OXC adapter supports declared for-of bindings only".into());
@@ -3793,7 +3920,7 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                             is_extern: false,
                             // A computed-key member is modeled as a static
                             // method (no implicit `this`).
-                            is_static: method.r#static || computed_key.is_some(),
+                            is_static: method.r#static,
                             accessor: match method.kind {
                                 MethodDefinitionKind::Get => Some(crate::ast::AccessorKind::Get),
                                 MethodDefinitionKind::Set => Some(crate::ast::AccessorKind::Set),

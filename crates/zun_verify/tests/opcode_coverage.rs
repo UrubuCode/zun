@@ -124,6 +124,7 @@ const SHAPES: &[(Opcode, Shape)] = &[
     (Opcode::Yield, Shape::Fixed(1, 0)),
     (Opcode::ImportDynamic, Shape::Fixed(1, 1)),
     (Opcode::AsyncStart, Shape::Fixed(0, 0)),
+    (Opcode::AsyncGenStart, Shape::Fixed(0, 0)),
     (Opcode::SqrtF64, Shape::Fixed(1, 1)),
     (Opcode::AbsF64, Shape::Fixed(1, 1)),
     (Opcode::NegF64, Shape::Fixed(1, 1)),

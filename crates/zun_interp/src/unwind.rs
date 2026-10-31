@@ -98,3 +98,9 @@ thread_local! {
     /// another coroutine (consumed once by `call_inner`).
     pub(crate) static ASYNC_BYPASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+
+thread_local! {
+    /// Set by `asyncAwaitMark` just before an `await` suspends inside an async
+    /// generator, so the driver can tell an await from a yield.
+    pub(crate) static ASYNC_AWAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}

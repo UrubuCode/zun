@@ -228,9 +228,13 @@ fn check_impl(
     }
     // Computed-symbol-key methods, in the same (class, method) order used by
     // `collect_signatures`, lowered as static functions (no implicit `this`).
-    for class in &program.classes {
+    for (class_idx, class) in program.classes.iter().enumerate() {
         for sm in &class.symbol_methods {
-            functions.push(checker.check_function(next, &sm.function, None));
+            functions.push(checker.check_function(
+                next,
+                &sm.function,
+                (!sm.function.is_static).then_some(class_idx as u32),
+            ));
             next += 1;
         }
     }
@@ -1643,7 +1647,15 @@ impl Checker<'_> {
         // the module-initializer side-table registration.
         for (class_idx, class) in program.classes.iter().enumerate() {
             for sm in &class.symbol_methods {
-                let mut params = Vec::new();
+                // A non-static symbol method receives the instance as an implicit
+                // leading `this` (flagged by the `@this` name suffix, which the
+                // interpreter's `with_this_arg` keys on); a static one has none.
+                let takes_this = !sm.function.is_static;
+                let mut params = if takes_this {
+                    vec![Ty::Instance(class_idx as u32)]
+                } else {
+                    Vec::new()
+                };
                 for p in &sm.function.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
@@ -1663,7 +1675,11 @@ impl Checker<'_> {
                 };
                 let func_index = self.signatures.len() as u32;
                 self.signatures.push(Signature {
-                    name: format!("[symbol]@{class_idx}"),
+                    name: if takes_this {
+                        format!("[symbol]@{class_idx}@this")
+                    } else {
+                        format!("[symbol]@{class_idx}")
+                    },
                     params,
                     return_ty,
                     optional_count: sm
@@ -1677,9 +1693,10 @@ impl Checker<'_> {
                         .function
                         .params
                         .iter()
-                        .position(|parameter| parameter.is_rest),
+                        .position(|parameter| parameter.is_rest)
+                        .map(|index| index + usize::from(takes_this)),
                     is_generator: false,
-                    is_static: true,
+                    is_static: !takes_this,
                 });
                 match self.well_known_symbol_of_key(&sm.key) {
                     Some(symbol) => {
@@ -1748,7 +1765,7 @@ impl Checker<'_> {
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
         let name = sig.name.clone();
-        if f.is_async {
+        if f.is_async && !f.is_generator {
             if return_ty != Ty::Promise {
                 self.error(
                     f.name.span,
@@ -2761,12 +2778,6 @@ impl Checker<'_> {
                     .iter()
                     .map(|catch| {
                         let ty = self.resolve_annotation(&catch.ty);
-                        if count_awaits_in_block(&catch.body) != 0 {
-                            self.error(
-                                catch.body.span,
-                                "await is not allowed inside a catch handler",
-                            );
-                        }
                         cx.scopes.push(Scope::new());
                         let slot = cx.declare(self.text(&catch.binding), ty);
                         let mut body = self.check_block(cx, &catch.body);
@@ -2798,12 +2809,6 @@ impl Checker<'_> {
                     cx.finally_depth -= 1;
                 }
                 let finally_body = finally.as_ref().map(|block| {
-                    if count_awaits_in_block(block) != 0 {
-                        self.error(
-                            block.span,
-                            "await is not allowed inside a finally handler",
-                        );
-                    }
                     self.check_block(cx, block)
                 });
                 hir::Stmt::Try {
@@ -4975,11 +4980,21 @@ impl Checker<'_> {
                 return self.poison(span);
             }
         };
-        if args.len() != 1 {
-            self.error(span, format!("`Promise.{method}` expects 1 argument, found {}", args.len()));
-            return self.poison(span);
-        }
-        let mut arg = self.check_expr(cx, &args[0]);
+        // `Promise.resolve()` / `Promise.reject()` settle with `undefined`.
+        let undefined_arg = ast::Expr::Unary {
+            op: ast::UnaryOp::Void,
+            operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+            span,
+        };
+        let arg_expr = match args.len() {
+            0 if arg_ty == Ty::Any => &undefined_arg,
+            1 => &args[0],
+            _ => {
+                self.error(span, format!("`Promise.{method}` expects 1 argument, found {}", args.len()));
+                return self.poison(span);
+            }
+        };
+        let mut arg = self.check_expr(cx, arg_expr);
         if arg_ty == Ty::Array {
             if !arg.ty.is_error() && !self.is_assignable(arg.ty, Ty::Array) {
                 self.error(arg.span, format!("`Promise.{method}` expects an array of promises"));

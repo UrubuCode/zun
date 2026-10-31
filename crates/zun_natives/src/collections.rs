@@ -617,6 +617,13 @@ pub const MODULE: crate::Module = crate::Module {
         // `globalRead(name)` — read an undeclared identifier: the realm global
         // when present, otherwise a ReferenceError (`name is not defined`).
         NativeFn { name: "globalRead", params: &[Str], ret: Opaque, imp: unavailable },
+        // Async-generator support. `asyncAwaitMark(v)` flags the next suspension
+        // as an `await` (returns `v`); `asyncGenResume(gen, mode, value)` resumes
+        // the coroutine (mode 0 next, 1 return, 2 throw) and answers
+        // `[kind, value]` with kind 0 = await, 1 = yield, 2 = finished.
+        NativeFn { name: "asyncAwaitMark", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "asyncGenResume", params: &[Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "asyncIterOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
     ],
 };
 

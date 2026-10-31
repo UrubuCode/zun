@@ -5,6 +5,7 @@ use super::value::Value;
 use super::state::{Aggregate, CombinatorKind, ExecutionFrame, ExecutionOutcome, Reaction, ReactionKind, TimerEntry};
 use zun_sched::{Continuation, ContinuationId, Settlement, TaskId};
 use zun_module::read_body;
+use zun_il::{decode_one, Opcode};
 
 /// `Promise.withResolvers` settle modes, stored in the settler record's
 /// `__settleMode` slot (as a float `Any`).
@@ -882,7 +883,7 @@ impl<'a> Interp<'a> {
                 let generator = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_generator(0, method_rid, values)
                 });
-                Ok(Value::Object(generator))
+                self.finish_generator_creation(method_rid, generator)
             }
             "generatorIteratorDone" => {
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
@@ -2199,6 +2200,42 @@ impl<'a> Interp<'a> {
                 let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                     .unwrap_or_else(zun_core::Any::void);
                 Ok(Value::Any(boxed))
+            }
+            "asyncAwaitMark" => {
+                crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(true));
+                Ok(args.first().cloned().unwrap_or(Value::Void))
+            }
+            "asyncGenResume" => self.async_gen_resume(args),
+            "asyncIterOpen" => {
+                // `source[Symbol.asyncIterator]()` when the source carries that
+                // method (own symbol slot or a class symbol method); `undefined`
+                // otherwise so the prelude falls back to the sync iterator.
+                let Some(source) = as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
+                else {
+                    return Ok(Value::Void);
+                };
+                let roots = [source];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let async_id = zun_core::WellKnownSymbol::AsyncIterator.id();
+                let handle = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_symbol_function(roots[0], async_id)
+                })
+                .or_else(|| {
+                    self.class_symbol_methods
+                        .get(&(roots[0].type_rid(), async_id.get()))
+                        .copied()
+                });
+                let Some(handle) = handle else {
+                    return Ok(Value::Void);
+                };
+                let call_args = self.with_this_arg(handle, roots[0], Vec::new());
+                let result = self.invoke_function_value(handle, call_args)?;
+                match as_object_ref(&unbox_arg(&result)?) {
+                    Some(obj) => Ok(Value::Any(zun_core::Any::object(obj.addr() as usize))),
+                    None => Err(RunError::Native(
+                        format!("TypeError: [Symbol.asyncIterator]() did not return an object ({result:?})"),
+                    )),
+                }
             }
             "generatorSent" => Ok(crate::unwind::GENERATOR_SENT
                 .with(|sent| sent.borrow_mut().take())
@@ -8386,7 +8423,8 @@ impl<'a> Interp<'a> {
             let hint_value = zun_gc::with_current_heap_mut(|heap| {
                 Value::Any(zun_core::Any::string(heap.intern_string(hint.into())))
             });
-            let result = self.invoke_function_value(handle, vec![hint_value])?;
+            let call_args = self.with_this_arg(handle, obj, vec![hint_value]);
+            let result = self.invoke_function_value(handle, call_args)?;
             return Ok(Some(unbox_arg(&result)?));
         }
         let order: [&str; 2] = if hint == "string" {
@@ -8488,6 +8526,129 @@ impl<'a> Interp<'a> {
         let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
             .unwrap_or_else(zun_core::Any::null);
         self.settle_promise_resolve(target, boxed);
+    }
+
+    /// `asyncGenResume(gen, mode, value)`: advance an async-generator coroutine
+    /// (mode 0 = next, 1 = return, 2 = throw) and answer `[kind, value]` where
+    /// kind 0 = the body awaits `value`, 1 = it yielded `value`, 2 = it finished
+    /// with `value`. A body exception propagates as a thrown value.
+    fn async_gen_resume(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let generator = as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?).ok_or(RunError::BadToken)?;
+        let mode = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+            Value::Int(n, _) => n,
+            Value::Float(n, _) => n as i64,
+            _ => 0,
+        };
+        let value = unbox_arg(args.get(2).unwrap_or(&Value::Void))?;
+        let roots = [generator];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let (done, started) = zun_gc::with_current_heap(|heap| {
+            heap.generator_state(roots[0])
+                .map(|state| (state.done, state.frame.is_some()))
+                .unwrap_or((true, false))
+        });
+        let finish = |kind: i64, value: Value| -> Result<Value, RunError> {
+            zun_gc::with_current_heap_mut(|heap| {
+                let array = heap.alloc_array(2);
+                let kind_any = Value::Float(kind as f64, zun_il::NumKind::F64).box_any(heap)?;
+                let value_any = value.box_any(heap)?;
+                heap.array_set(array, 0, kind_any);
+                heap.array_set(array, 1, value_any);
+                Some(Value::Any(zun_core::Any::object(array.addr() as usize)))
+            })
+            .ok_or(RunError::BadToken)
+        };
+        match mode {
+            1 => {
+                if done || !started {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        if let Some(state) = heap.generator_state_mut(roots[0]) {
+                            state.done = true;
+                            state.frame = None;
+                        }
+                    });
+                    return finish(2, value);
+                }
+                crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(false));
+                let result = self.generator_return(roots[0], value)?;
+                let flagged = crate::unwind::ASYNC_AWAIT.with(|flag| flag.replace(false));
+                let result_obj = as_object_ref(&unbox_arg(&result)?).ok_or(RunError::BadToken)?;
+                let (inner, finished) = zun_gc::with_current_heap(|heap| {
+                    let inner = heap
+                        .dynamic_get(result_obj, "value")
+                        .and_then(|any| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void);
+                    let finished = heap
+                        .dynamic_get(result_obj, "done")
+                        .and_then(|any| any.as_bool())
+                        .unwrap_or(true);
+                    (inner, finished)
+                });
+                return finish(if finished { 2 } else if flagged { 0 } else { 1 }, inner);
+            }
+            2 => {
+                if done || !started {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        if let Some(state) = heap.generator_state_mut(roots[0]) {
+                            state.done = true;
+                            state.frame = None;
+                        }
+                    });
+                    return Err(RunError::Thrown(value));
+                }
+                crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = Some(value));
+            }
+            _ => {
+                if done {
+                    return finish(2, Value::Void);
+                }
+                crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = Some(value));
+            }
+        }
+        crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(false));
+        let result = self.call_managed_collection("generatorIteratorNext", &[Value::Object(roots[0])]);
+        crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
+        crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
+        let awaited = crate::unwind::ASYNC_AWAIT.with(|flag| flag.replace(false));
+        let value = result?;
+        let finished = zun_gc::with_current_heap(|heap| {
+            heap.generator_state(roots[0]).map(|state| state.done).unwrap_or(true)
+        });
+        finish(if finished { 2 } else if awaited { 0 } else { 1 }, value)
+    }
+
+    /// Finish creating a generator object: an `async function*` hands the raw
+    /// coroutine to the prelude's `__zunMakeAsyncGen`, which wraps it in an
+    /// async-generator object (queueing, promise-returning `next`/`return`/`throw`).
+    pub(crate) fn finish_generator_creation(
+        &mut self,
+        method_rid: u32,
+        generator: zun_gc::Obj,
+    ) -> Result<Value, RunError> {
+        let is_async_gen = self
+            .module
+            .tables
+            .method_defs
+            .get((method_rid as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&self.module.code, method.body_offset).ok())
+            .map(|body| {
+                matches!(decode_one(&body.code), Ok((first, _)) if first.opcode == Opcode::AsyncGenStart)
+            })
+            .unwrap_or(false);
+        if !is_async_gen {
+            return Ok(Value::Object(generator));
+        }
+        let maker = self
+            .module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| self.module.strings.get(method.name) == "__zunMakeAsyncGen")
+            .map(|index| index as u32 + 1)
+            .ok_or_else(|| RunError::Native("async generator support is unavailable".into()))?;
+        let roots = [generator];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        self.call(maker, vec![Value::Object(roots[0])], None)
     }
 
     /// Entry of an `async` function: allocate its result Promise and a

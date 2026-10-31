@@ -448,8 +448,11 @@ fn lower_function<'a>(
         points: Vec::new(),
         regex_plan,
         is_async: f.is_async,
+        is_async_gen: f.is_async && f.is_generator,
     };
-    if f.is_async {
+    if f.is_async && f.is_generator {
+        gen.emit(Instruction::simple(Opcode::AsyncGenStart));
+    } else if f.is_async {
         gen.emit(Instruction::simple(Opcode::AsyncStart));
     }
     gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16, &f.locals);
@@ -498,6 +501,7 @@ fn lower_closure_function<'a>(
         points: Vec::new(),
         regex_plan,
         is_async: f.is_async,
+        is_async_gen: false,
     };
     if f.is_async {
         gen.emit(Instruction::simple(Opcode::AsyncStart));
@@ -559,6 +563,9 @@ struct FnLowerer<'a, 'b> {
     regex_plan: &'a [RegexPlan],
     /// Whether the function being lowered is `async` (awaits suspend like yields).
     is_async: bool,
+    /// Whether it is an async generator (awaits are tagged so the driver can tell
+    /// them from yields).
+    is_async_gen: bool,
 }
 
 impl<'a, 'b> FnLowerer<'a, 'b> {
@@ -1311,6 +1318,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     // Inside an `async` body an await suspends like a yield: the
                     // coroutine driver parks the frame on the awaited value and
                     // resumes with the settlement (or throws at this point).
+                    if self.is_async_gen {
+                        let (mark_id, _) = zun_natives::resolve("collections", "asyncAwaitMark")
+                            .expect("asyncAwaitMark intrinsic");
+                        self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(mark_id as i32)));
+                    }
                     self.emit(Instruction::simple(Opcode::Yield));
                     let (sent_id, _) = zun_natives::resolve("collections", "generatorSent")
                         .expect("generatorSent intrinsic");

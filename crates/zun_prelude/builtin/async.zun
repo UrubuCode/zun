@@ -1,0 +1,145 @@
+// Async iteration support (prelude).
+//
+//   __zunAsyncIterOpen(src)     GetIterator(src, async) for `for await`
+//   __zunAsyncIterClose(it)     AsyncIteratorClose on an abrupt loop exit
+//   __zunMakeAsyncGen(coroutine) the object an `async function*` call returns
+//
+// Async generators are generator-style coroutines whose awaits are tagged; the
+// `asyncGenResume` native runs one step and says whether the body awaited,
+// yielded or finished. `__AsyncGenerator` queues next/return/throw requests and
+// settles one promise per request, in order.
+
+import { collections as asyncCollections } from "zun:core";
+
+class __AsyncFromSync {
+    it: any;
+
+    constructor(it: any) {
+        this.it = it;
+    }
+
+    async wrap(r: any): Promise<any> {
+        const value = await r.value;
+        return { value: value, done: r.done };
+    }
+
+    next(v: any): any {
+        return this.wrap(this.it.next(v));
+    }
+
+    return(v: any): any {
+        const method = this.it["return"];
+        if (method == null) {
+            return Promise.resolve({ value: v, done: true });
+        }
+        return this.wrap(this.it.return(v));
+    }
+}
+
+function __zunAsyncIterOpen(src: any): any {
+    if (src == null) {
+        throw new TypeError("object is not async iterable");
+    }
+    const it: any = asyncCollections.asyncIterOpen(src);
+    if (it !== undefined) {
+        return it;
+    }
+    return new __AsyncFromSync(src[Symbol.iterator]());
+}
+
+async function __zunAsyncIterClose(it: any): Promise<any> {
+    const method = it["return"];
+    if (method == null) {
+        return undefined;
+    }
+    await it.return();
+    return undefined;
+}
+
+class __AsyncGenerator {
+    g: any;
+    queue: Array = [];
+    busy: boolean = false;
+    finished: boolean = false;
+
+    constructor(g: any) {
+        this.g = g;
+    }
+
+    next(v: any): any {
+        return this.enqueue(0, v);
+    }
+
+    return(v: any): any {
+        return this.enqueue(1, v);
+    }
+
+    throw(e: any): any {
+        return this.enqueue(2, e);
+    }
+
+    [Symbol.asyncIterator](): any {
+        return this;
+    }
+
+    enqueue(mode: number, value: any): any {
+        const d: any = Promise.withResolvers();
+        this.queue.push([mode, value, d]);
+        if (!this.busy) {
+            this.drain();
+        }
+        return d.promise;
+    }
+
+    async drain(): Promise<any> {
+        this.busy = true;
+        while (this.queue.length > 0) {
+            const req: any = this.queue.shift();
+            const d: any = req[2];
+            try {
+                const res: any = await this.step(req[0], req[1]);
+                d.resolve(res);
+            } catch (e) {
+                d.reject(e);
+            }
+        }
+        this.busy = false;
+        return undefined;
+    }
+
+    async step(mode: number, value: any): Promise<any> {
+        let m: number = mode;
+        let v: any = value;
+        while (true) {
+            let r: any;
+            try {
+                r = asyncCollections.asyncGenResume(this.g, m, v);
+            } catch (e) {
+                this.finished = true;
+                throw e;
+            }
+            const kind: number = r[0];
+            if (kind == 0) {
+                try {
+                    v = await r[1];
+                    m = 0;
+                } catch (e) {
+                    v = e;
+                    m = 2;
+                }
+                continue;
+            }
+            if (kind == 1) {
+                const yielded: any = await r[1];
+                return { value: yielded, done: false };
+            }
+            this.finished = true;
+            const returned: any = await r[1];
+            return { value: returned, done: true };
+        }
+    }
+}
+
+function __zunMakeAsyncGen(g: any): any {
+    return new __AsyncGenerator(g);
+}

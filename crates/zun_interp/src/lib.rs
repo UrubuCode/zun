@@ -322,7 +322,7 @@ impl Interp<'_> {
         })
         .ok_or(RunError::BadToken)?;
         let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_generator(0, method_rid, boxed));
-        Ok(Value::Object(object))
+        self.finish_generator_creation(method_rid, object)
     }
 
     /// Call the method at `method_rid` (1-based) with `args`, returning its
@@ -363,6 +363,11 @@ impl Interp<'_> {
             .map_err(|e| RunError::Malformed(e.to_string()))?;
 
         let resumed = self.resume_frame.is_some();
+        if resumed {
+            // A resumed coroutine frame never consumes the async-start bypass; leaving
+            // it set would let a callee async function skip its coroutine setup.
+            unwind::ASYNC_BYPASS.with(|flag| flag.set(false));
+        }
         let mut frame = if let Some(frame) = self.resume_frame.take() {
             if frame.method_rid != method_rid {
                 return Err(RunError::Malformed(
@@ -469,7 +474,7 @@ impl Interp<'_> {
             *pc = next;
 
             match instr.opcode {
-                Opcode::Nop | Opcode::AsyncStart => {}
+                Opcode::Nop | Opcode::AsyncStart | Opcode::AsyncGenStart => {}
                 Opcode::LoadStatic => {
                     let token = operand_token(&instr.operand);
                     let (owner, field) = self.static_field_key(token)?;
