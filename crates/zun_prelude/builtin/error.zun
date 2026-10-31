@@ -114,34 +114,19 @@ class URIError extends Error {
     }
 }
 
-// `AggregateError(errors, message)` — carries the list of errors that a
-// combinator (e.g. `Promise.any`) collected. It does *not* extend `Error`:
-// Zun builds an object field-by-field with inherited fields first, so an
-// `extends Error` subclass would force `message` ahead of `errors` and could
-// not express JS's `(errors, message)` order. Declared standalone, the field
-// order is ours to choose, so the JS constructor shape is preserved. The cost
-// is that `aggregate instanceof Error` is false; the shared surface
-// (`name`/`toString`/`stack`) is duplicated here instead of inherited.
-class AggregateError {
-    errors: Array;
-    message: string;
-    stackFrames: string = captureStackTrace();
+// `AggregateError(errors, message, options)` — carries the list of errors that
+// a combinator (e.g. `Promise.any`) collected. It extends `Error`; construction
+// runs its own constructor, so the (errors, message) argument order does not
+// depend on field order.
+class AggregateError extends Error {
+    errors: any;
 
-    get name(): string {
+    constructor(errors: any, message?: string, options?: any) {
+        super(message === undefined ? "" : message, options);
+        this.errors = [...errors];
+    }
+
+    get errorName(): string {
         return "AggregateError";
-    }
-
-    toString(): string {
-        if (this.message == "") {
-            return this.name;
-        }
-        return this.name + ": " + this.message;
-    }
-
-    get stack(): string {
-        if (this.stackFrames == "") {
-            return this.toString();
-        }
-        return this.toString() + "\n" + this.stackFrames;
     }
 }

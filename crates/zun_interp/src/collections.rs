@@ -6716,9 +6716,22 @@ impl<'a> Interp<'a> {
             }
             current = ty.base.rid();
         }
+        // Every TypeDef's field range already includes the inherited fields
+        // (base-first), so only the concrete type is walked. The leading fields
+        // that belong to a runtime-internal base (the `Error` record slots,
+        // `AggregateError.errors`, a `__Builtin*` wrapper's native value) are
+        // not own enumerable properties and are skipped.
+        let mut hidden_prefix = 0usize;
+        for &rid in &chain {
+            let ty = self.module.tables.type_defs.get(rid as usize - 1).ok_or(RunError::BadToken)?;
+            let name = self.module.strings.get(ty.name);
+            if name == "Error" || name == "AggregateError" || name.starts_with("__Builtin") {
+                hidden_prefix = hidden_prefix.max((ty.field_end - ty.field_start) as usize);
+            }
+        }
         chain.reverse();
         let mut out = Vec::new();
-        for type_rid in chain {
+        for type_rid in chain.into_iter().rev().take(1) {
             let (field_start, field_end) = {
                 let ty = self
                     .module
@@ -6729,6 +6742,9 @@ impl<'a> Interp<'a> {
                 (ty.field_start, ty.field_end)
             };
             for field_rid in field_start..field_end {
+                if ((field_rid - field_start) as usize) < hidden_prefix {
+                    continue;
+                }
                 let field = self
                     .module
                     .tables
