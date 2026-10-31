@@ -373,9 +373,28 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     .transpose()?,
                 span: span(return_statement.span),
             }),
-            Statement::ExpressionStatement(expression_statement) => statements.push(Stmt::Expr(
-                convert_effect_expression(source, &expression_statement.expression)?,
-            )),
+            Statement::ExpressionStatement(expression_statement) => {
+                // A statement-level comma sequence (`a = 1, b = 2;`) is split
+                // into one statement per operand: same evaluation order, no
+                // closure per execution.
+                let mut inner = &expression_statement.expression;
+                while let Expression::ParenthesizedExpression(parenthesized) = inner {
+                    inner = &parenthesized.expression;
+                }
+                match inner {
+                    Expression::SequenceExpression(sequence)
+                        if !source[sequence.span.start as usize..sequence.span.end as usize].contains("yield") =>
+                    {
+                        for operand in sequence.expressions.iter() {
+                            statements.push(Stmt::Expr(convert_effect_expression(source, operand)?));
+                        }
+                    }
+                    _ => statements.push(Stmt::Expr(convert_effect_expression(
+                        source,
+                        &expression_statement.expression,
+                    )?)),
+                }
+            }
             Statement::BreakStatement(break_statement) => statements.push(Stmt::Break {
                 label: break_statement.label.as_ref().map(|label| Name {
                     span: span(label.span),

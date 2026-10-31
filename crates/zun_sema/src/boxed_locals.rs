@@ -121,3 +121,33 @@ fn collect_boxed_lets(statement: &hir::Stmt, out: &mut Vec<hir::LocalSlot>) {
         _ => {}
     }
 }
+
+/// A parameter that closures capture and mutate lives in a shared cell: wrap
+/// its incoming value in a fresh cell at function entry.
+pub(super) fn box_parameters(
+    body: &mut Vec<hir::Stmt>,
+    boxed: &HashSet<hir::LocalSlot>,
+    locals: &[Ty],
+    param_count: usize,
+) {
+    let mut slots: Vec<hir::LocalSlot> = boxed
+        .iter()
+        .copied()
+        .filter(|slot| (*slot as usize) < param_count)
+        .collect();
+    slots.sort_unstable();
+    for (index, slot) in slots.into_iter().enumerate() {
+        let ty = locals.get(slot as usize).copied().unwrap_or(Ty::Any);
+        body.insert(
+            index,
+            hir::Stmt::BoxedLet {
+                slot,
+                init: hir::Expr {
+                    kind: hir::ExprKind::Local(slot),
+                    ty,
+                    span: zun_common::Span::new(0, 0),
+                },
+            },
+        );
+    }
+}

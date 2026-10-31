@@ -75,6 +75,7 @@ impl Checker<'_> {
         if takes_this {
             inner.declare("this", Ty::DynamicObject);
         }
+        let mut declared_params: Vec<(String, hir::LocalSlot)> = Vec::new();
         for (index, parameter) in function.params.iter().enumerate() {
             // Explicit annotation wins; otherwise a contextual hint types the
             // parameter (e.g. a Promise executor's `res`/`rej` become
@@ -86,7 +87,8 @@ impl Checker<'_> {
                 .map(|annotation| self.resolve_annotation(annotation))
                 .or_else(|| param_hint.as_ref().and_then(|hints| hints.get(index).copied()))
                 .unwrap_or(Ty::Any);
-            inner.declare(self.text(&parameter.name), ty);
+            let slot = inner.declare(self.text(&parameter.name), ty);
+            declared_params.push((self.text(&parameter.name).to_string(), slot));
         }
         // A named closure (`const f = () => … f() …`, a nested `function f`)
         // can call itself: bind its own name to a function value made from
@@ -109,11 +111,26 @@ impl Checker<'_> {
             _ => None,
         };
         self.collect_mutated_names(&function.body.statements, &mut inner.mutated_names);
+        for (pname, slot) in declared_params {
+            if !function.params.iter().any(|p| p.is_rest || p.default_value.is_some())
+                && inner.mutated_names.contains(&pname)
+                && inner.mutated_names.contains(&format!("{pname}"))
+                && !matches!(inner.locals[slot as usize], Ty::Function(_))
+            {
+                inner.boxed.insert(slot);
+            }
+        }
         let mut body = self.check_block(&mut inner, &function.body);
         if let Some(binding) = self_binding {
             body.insert(0, binding);
         }
         self.rewrite_boxed_lets(&mut body, &inner.boxed);
+        boxed_locals::box_parameters(
+            &mut body,
+            &inner.boxed,
+            &inner.locals,
+            function.params.len() + usize::from(takes_this),
+        );
         // An expression-bodied arrow whose body is a void call (`() => log(x)`)
         // returns nothing: evaluate it as a statement, then return bare.
         let body: Vec<hir::Stmt> = if function.return_type.is_none() {
@@ -163,10 +180,15 @@ impl Checker<'_> {
         self.closures.push(hir::ClosureFunction {
             name: {
                 let rest_suffix = if function.params.iter().any(|p| p.is_rest) { "@rest" } else { "" };
+                // The same source closure can be checked more than once (e.g. each
+                // arm of a runtime-key dispatch chain re-checks its arguments);
+                // keep every checked copy uniquely named.
+                let copies = self.closures.iter().filter(|c| c.name.starts_with(&format!("<closure@{}", span.start)) && c.name[("<closure@".len())..].trim_start_matches(|ch: char| ch.is_ascii_digit()).starts_with(|ch: char| ch == '@' || ch == '>' || ch == '#')).count();
+                let unique = if copies == 0 { String::new() } else { format!("#{copies}") };
                 if takes_this {
-                    format!("<closure@{}@this{rest_suffix}>", span.start)
+                    format!("<closure@{}{unique}@this{rest_suffix}>", span.start)
                 } else {
-                    format!("<closure@{}{rest_suffix}>", span.start)
+                    format!("<closure@{}{unique}{rest_suffix}>", span.start)
                 }
             },
             param_count: function.params.len() as u16 + u16::from(takes_this),

@@ -4,6 +4,30 @@ use super::native::{from_native_value, to_native_arg};
 use super::stack::pop_n;
 use super::{Interp, RunError, Value};
 
+thread_local! {
+    static MANAGED_BUILTIN_CACHE: std::cell::RefCell<std::collections::HashMap<u32, Option<&'static str>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Memoized classification of a builtin id as an interpreter-floor ("managed")
+/// native. The underlying lookups scan name tables, so doing them per call
+/// would dominate dynamic-heavy code.
+fn managed_builtin_name(id: u32) -> Option<&'static str> {
+    if let Some(hit) = MANAGED_BUILTIN_CACHE.with(|cache| cache.borrow().get(&id).copied()) {
+        return hit;
+    }
+    let name = managed_collection_builtin(id)
+        .or_else(|| managed_buffer_builtin(id))
+        .or_else(|| managed_node_buffer_builtin(id))
+        .or_else(|| managed_typeinfo_builtin(id))
+        .or_else(|| managed_error_builtin(id))
+        .or_else(|| managed_timers_builtin(id))
+        .or_else(|| managed_array_ext_builtin(id))
+        .or_else(|| managed_number_builtin(id));
+    MANAGED_BUILTIN_CACHE.with(|cache| cache.borrow_mut().insert(id, name));
+    name
+}
+
 pub(super) fn call_builtin(
     interp: &mut Interp<'_>,
     id: i32,
@@ -11,15 +35,7 @@ pub(super) fn call_builtin(
 ) -> Result<(), RunError> {
     let id = id as u32;
     let args = pop_n(stack, zun_natives::param_count(id))?;
-    if let Some(name) = managed_collection_builtin(id)
-        .or_else(|| managed_buffer_builtin(id))
-        .or_else(|| managed_node_buffer_builtin(id))
-        .or_else(|| managed_typeinfo_builtin(id))
-        .or_else(|| managed_error_builtin(id))
-        .or_else(|| managed_timers_builtin(id))
-        .or_else(|| managed_array_ext_builtin(id))
-        .or_else(|| managed_number_builtin(id))
-    {
+    if let Some(name) = managed_builtin_name(id) {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
     }

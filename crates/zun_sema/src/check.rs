@@ -1729,11 +1729,21 @@ impl Checker<'_> {
             let this_ty = *param_tys_iter.next().expect("method has a this param");
             cx.declare("this", this_ty);
         }
+        let mut declared_params: Vec<(String, hir::LocalSlot)> = Vec::new();
         for (p, &ty) in f.params.iter().zip(param_tys_iter) {
             let pname = self.text(&p.name).to_string();
-            cx.declare(&pname, ty);
+            let slot = cx.declare(&pname, ty);
+            declared_params.push((pname, slot));
         }
         self.collect_mutated_names(&f.body.statements, &mut cx.mutated_names);
+        for (pname, slot) in declared_params {
+            if cx.mutated_names.contains(&pname)
+                && cx.mutated_names.contains(&format!("{pname}"))
+                && !matches!(cx.locals[slot as usize], Ty::Function(_))
+            {
+                cx.boxed.insert(slot);
+            }
+        }
 
         let body = if f.is_extern && f.external_module.is_some() {
             let module = f.external_module.as_deref().unwrap_or_default();
@@ -1871,6 +1881,7 @@ impl Checker<'_> {
         } else {
             let mut body = self.check_block(&mut cx, &f.body);
             self.rewrite_boxed_lets(&mut body, &cx.boxed);
+            boxed_locals::box_parameters(&mut body, &cx.boxed, &cx.locals, param_tys.len());
             body
         };
         let defaults = f
