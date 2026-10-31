@@ -573,6 +573,8 @@ pub const MODULE: crate::Module = crate::Module {
         // stable.
         NativeFn { name: "dynamicCall3", params: &[Opaque, Str, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "dynamicCall4", params: &[Opaque, Str, Opaque, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "dynamicCall5", params: &[Opaque, Str, Opaque, Opaque, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "dynamicCall6", params: &[Opaque, Str, Opaque, Opaque, Opaque, Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
         // `stringMethod(receiver, name, a0, a1)` — a `String.prototype` method with
         // full JS argument coercion (optional / `undefined` / fractional /
         // non-number arguments). Appended last so existing dispatch ids stay stable.

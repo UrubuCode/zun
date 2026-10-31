@@ -1250,6 +1250,22 @@ impl Interp<'_> {
                                 heap.dynamic_set_function(object, key.as_ref().to_owned(), handle);
                             });
                         }
+                        Value::Str(key)
+                            if zun_gc::with_current_heap(|heap| {
+                                !heap.is_dynamic_object(object)
+                                    && heap.array_len(object).is_none()
+                                    && object.type_rid() >= 1
+                            }) =>
+                        {
+                            // A typed class instance: a declared field takes the
+                            // value in place; any other name becomes an expando.
+                            if !self.instance_member_set(object, key, &value) {
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    heap.ensure_instance_bag(object);
+                                    heap.dynamic_set(object, key.as_ref().to_owned(), any);
+                                });
+                            }
+                        }
                         Value::Str(key) => {
                             zun_gc::with_current_heap_mut(|heap| {
                                 if let Some(len) = heap.array_len(object) {
@@ -1914,7 +1930,29 @@ impl Interp<'_> {
                         crate::collections::unbox_function_box(function, heap)
                     });
                     let Value::Function(handle) = function else {
-                        return Err(RunError::BadToken);
+                        // Calling a non-callable value is a catchable TypeError.
+                        let what = match &function {
+                            Value::Void => "undefined",
+                            Value::Null => "null",
+                            Value::Bool(_) => "boolean",
+                            Value::Int(..) | Value::Float(..) => "number",
+                            Value::Str(_) => "string",
+                            _ => "value",
+                        };
+                        if what == "value" {
+                            return Err(RunError::BadToken);
+                        }
+                        let message = format!("{what} is not a function");
+                        match self.new_error_object("TypeError", &message) {
+                            Some(error) => {
+                                let exception = Value::Object(error);
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            None => return Err(RunError::Native(format!("TypeError: {message}"))),
+                        }
                     };
                     if handle.generator_method().is_some() {
                         let result = self.invoke_function_value(handle, args)?;

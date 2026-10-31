@@ -2509,7 +2509,7 @@ impl<'a> Interp<'a> {
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
-            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" => {
+            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" | "dynamicCall5" | "dynamicCall6" => {
                 // A string receiver (an `any`-typed string): JS String methods.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     // A RegExp argument routes the regex-taking String methods
@@ -7115,6 +7115,17 @@ impl<'a> Interp<'a> {
         });
         if let Some(value) = own {
             return Ok(value);
+        }
+        // A typed class instance exposes its declared fields and getters.
+        let typed = zun_gc::with_current_heap(|heap| {
+            (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
+                && heap.array_len(object).is_none()
+                && object.type_rid() >= 1
+        });
+        if typed {
+            if let Some(value) = self.instance_member_get(object, name)? {
+                return Ok(value);
+            }
         }
         Ok(self.prototype_chain_get(object, name)?.unwrap_or(Value::Void))
     }

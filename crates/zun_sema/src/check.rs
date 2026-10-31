@@ -7643,6 +7643,39 @@ impl Checker<'_> {
                     };
                 }
                 let Some(&func) = self.by_name.get(&name) else {
+                    // An undeclared callee is a run-time error (it may sit in dead
+                    // code): `undefined()` is a TypeError, any other undeclared
+                    // name a ReferenceError raised by reading it.
+                    let callee_value = if name == "undefined" {
+                        Some(self.check_expr(
+                            cx,
+                            &ast::Expr::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                                span,
+                            },
+                        ))
+                    } else {
+                        zun_natives::resolve("collections", "globalRead").map(|(id, _)| hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::string_literal(name.clone(), span)],
+                            },
+                            ty: Ty::Any,
+                            span,
+                        })
+                    };
+                    if let Some(callee_value) = callee_value {
+                        return hir::Expr {
+                            kind: hir::ExprKind::IndirectCall {
+                                callee: Box::new(callee_value),
+                                args,
+                                func: hir::DYNAMIC_FUNCTION,
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
                     self.error(callee.span, format!("unknown function `{name}`"));
                     return self.poison(span);
                 };
@@ -8659,7 +8692,7 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 4 {
+                if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 6 {
                     // Dynamic member call on an `any`/dynamic receiver (e.g. a
                     // namespace from `import()`, or an object-literal method in
                     // the function slot): dispatched by name at run time.
@@ -8669,6 +8702,8 @@ impl Checker<'_> {
                         "dynamicCall2",
                         "dynamicCall3",
                         "dynamicCall4",
+                        "dynamicCall5",
+                        "dynamicCall6",
                     ][args.len()];
                     let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(span, format!("missing collection intrinsic `{native_name}`"));
@@ -12227,7 +12262,7 @@ impl Checker<'_> {
                         }
                     }
                 }
-                if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                if matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_)) {
                     let key = self.check_expr(cx, index);
                     return hir::Expr {
                         kind: hir::ExprKind::DynamicGetValue {
@@ -12297,7 +12332,7 @@ impl Checker<'_> {
                 // Computed property store on a dynamic receiver: a Symbol key
                 // routes to the symbol-keyed slot, a string/number key to the
                 // ordinary dynamic property. The key and value are boxed to `Any`.
-                if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                if matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_)) {
                     let key = self.check_expr(cx, index);
                     self.mark_this_closure(value);
                     let value = self.check_expr(cx, value);
@@ -12760,7 +12795,7 @@ impl Checker<'_> {
                 // `recv[key](args)` on a dynamic receiver: a member call (keeps
                 // `this`), dispatched by the stringified key at run time.
                 if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
-                    if args.len() <= 4 && !matches!(key_ast.as_ref(), ast::Expr::Spread { .. }) {
+                    if args.len() <= 6 && !matches!(key_ast.as_ref(), ast::Expr::Spread { .. }) {
                         let recv_hir = self.check_expr(cx, recv_ast);
                         if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject | Ty::Array | Ty::Map | Ty::Set | Ty::String) {
                             let key_hir = self.check_expr(cx, key_ast);
@@ -12776,6 +12811,8 @@ impl Checker<'_> {
                                     "dynamicCall2",
                                     "dynamicCall3",
                                     "dynamicCall4",
+                                    "dynamicCall5",
+                                    "dynamicCall6",
                                 ][args.len()];
                                 if let Some((id, _)) = zun_natives::resolve("collections", native_name) {
                                     let mut call_args = vec![recv_hir, key_hir];
