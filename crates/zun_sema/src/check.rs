@@ -158,6 +158,7 @@ fn check_impl(
         module_globals: HashSet::new(),
         arguments_functions: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
+        reassigned_fn_names: HashSet::new(),
         chain_roots: Vec::new(),
     };
     checker.collect_type_param_names(program);
@@ -187,6 +188,19 @@ fn check_impl(
         for class in &program.classes {
             for method in &class.methods {
                 checker.collect_mutated_names(&method.body.statements, &mut assigned);
+            }
+        }
+        // Function-valued module bindings (`let f = function () {}`) that any
+        // top-level code reassigns are shared through the realm store as well,
+        // since closures at module scope cannot write the entry's locals.
+        let mut top_assigned: HashSet<String> = HashSet::new();
+        checker.collect_mutated_names(&program.top_level, &mut top_assigned);
+        for statement in &program.top_level {
+            if let ast::Stmt::Let { name, init: ast::Expr::Function(_), .. } = statement {
+                let text = checker.text(name).to_string();
+                if top_assigned.contains(&text) {
+                    assigned.insert(text);
+                }
             }
         }
         checker.fn_mutated_globals =
@@ -400,6 +414,8 @@ struct Checker<'a> {
     /// through the realm store so it observes those writes, and mirrors its
     /// own assignments back.
     fn_mutated_globals: HashSet<String>,
+    /// Names of function-valued bindings that are reassigned (dynamic callee).
+    reassigned_fn_names: HashSet<String>,
     /// Temps bound by enclosing `OptionalChain` guards (innermost last).
     chain_roots: Vec<ast::Name>,
     /// Every generic type-parameter name declared anywhere in the program
@@ -2205,7 +2221,7 @@ impl Checker<'_> {
                 hir::Stmt::Group(out)
             }
             ast::Stmt::Let { name, ty, init, .. } => {
-                if matches!(init, ast::Expr::Function(_)) {
+                if matches!(init, ast::Expr::Function(_)) && !cx.mutated_names.contains(self.text(name)) {
                     self.closure_self_name = Some(self.text(name).to_string());
                 }
                 // The adapter's injected `arguments = [p1, ..., ...rest]` (name and
@@ -2250,13 +2266,26 @@ impl Checker<'_> {
                     None => init.ty,
                 };
                 let name_text = self.text(name).to_string();
+                // A function-valued variable that is reassigned somewhere holds
+                // an arbitrary function: calls go through the dynamic path.
+                let reassigned_fn = declared.is_none()
+                    && matches!(var_ty, Ty::Function(_))
+                    && cx.mutated_names.contains(&name_text)
+                    && cx.mutated_names.contains(&format!("{name_text}"));
+                let boxed_fn = reassigned_fn
+                    && cx.mutated_names.contains(&name_text)
+                    && cx.mutated_names.contains(&format!("{name_text}"));
+                if reassigned_fn {
+                    self.reassigned_fn_names.insert(name_text.clone());
+                }
+                let var_ty = if reassigned_fn { Ty::Function(hir::DYNAMIC_FUNCTION) } else { var_ty };
                 let slot = cx.declare(&name_text, var_ty);
                 // A variable that a closure may capture and that is assigned
                 // somewhere is boxed from its declaration, so every access
                 // lowered before the capturing closure already uses the cell.
                 if cx.mutated_names.contains(&name_text)
                     && cx.mutated_names.contains(&format!("\u{1}{name_text}"))
-                    && !matches!(var_ty, Ty::Function(_))
+                    && (boxed_fn || !matches!(var_ty, Ty::Function(_)))
                 {
                     cx.boxed.insert(slot);
                 }
@@ -5361,10 +5390,11 @@ impl Checker<'_> {
         cx.is_module_scope
             && self.fn_mutated_globals.contains(name)
             && cx.scopes.iter().find_map(|s| s.get(name).copied()) == Some(slot)
-            && matches!(
+            && (matches!(
                 cx.locals[slot as usize],
                 Ty::Any | Ty::F64 | Ty::Boolean | Ty::String
-            )
+            ) || (cx.locals[slot as usize] == Ty::Function(hir::DYNAMIC_FUNCTION)
+                && self.reassigned_fn_names.contains(name)))
     }
 
     /// A `Ty::String` HIR literal.
@@ -5933,8 +5963,9 @@ impl Checker<'_> {
                         let mirror_global = cx.is_module_scope
                             && self.module_globals.contains(&text)
                             && cx.scopes.iter().find_map(|s| s.get(&text).copied()) == Some(slot)
-                            && !matches!(slot_ty, Ty::Function(_))
-                            && !matches!(value.ty, Ty::Function(_));
+                            && (slot_ty == Ty::Function(hir::DYNAMIC_FUNCTION)
+                                || (!matches!(slot_ty, Ty::Function(_))
+                                    && !matches!(value.ty, Ty::Function(_))));
                         let store = hir::Expr {
                             ty: slot_ty,
                             kind: if cx.boxed.contains(&slot) {
@@ -6837,7 +6868,26 @@ impl Checker<'_> {
 
                 // A local shadows a capture of the same name. Inside a closure a captured
                 // callable is read from the environment instead of a local slot.
+                if let Some(slot) = cx.lookup(&name) {
+                    if cx.locals[slot as usize] == Ty::Function(hir::DYNAMIC_FUNCTION)
+                        && self.reads_through_global(cx, &name, slot)
+                    {
+                        let callee = self.global_get_expr(&name, span);
+                        return hir::Expr {
+                            kind: hir::ExprKind::IndirectCall {
+                                callee: Box::new(callee),
+                                args,
+                                func: hir::DYNAMIC_FUNCTION,
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
+                }
                 let callee_source: Option<(hir::ExprKind, Ty)> = match cx.lookup(&name) {
+                    Some(slot) if cx.boxed.contains(&slot) => {
+                        Some((hir::ExprKind::CellLoad { slot }, cx.locals[slot as usize]))
+                    }
                     Some(slot) => Some((hir::ExprKind::Local(slot), cx.locals[slot as usize])),
                     None => cx.captures.get(&name).map(|capture| {
                         (
@@ -6860,6 +6910,7 @@ impl Checker<'_> {
                             }
                         }
                         hir::ExprKind::Local(slot) => hir::ExprKind::Local(*slot),
+                        hir::ExprKind::CellLoad { slot } => hir::ExprKind::CellLoad { slot: *slot },
                         _ => unreachable!(),
                     };
 
@@ -8092,6 +8143,42 @@ impl Checker<'_> {
                     };
                 }
                 if receiver.ty == Ty::Array && mname == "push" {
+                    if args.len() > 1 && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                        // `push(a, b, c)`: evaluate the receiver once into a temp and
+                        // push each value in order; the result is the final length.
+                        let name = self.fresh_temp_name(cx);
+                        let slot = cx.declare(&name, Ty::Array);
+                        let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::Array, span };
+                        let mut pushes = Vec::with_capacity(args.len());
+                        for arg in args.iter() {
+                            let value = self.check_expr(cx, arg);
+                            pushes.push(hir::Expr {
+                                kind: hir::ExprKind::ArrayPush { object: Box::new(local(span)), value: Box::new(value) },
+                                ty: Ty::Int(IntKind::U64),
+                                span,
+                            });
+                        }
+                        let mut result = pushes.pop().expect("at least two pushes");
+                        while let Some(effect) = pushes.pop() {
+                            result = hir::Expr {
+                                kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                                ty: Ty::Int(IntKind::U64),
+                                span,
+                            };
+                        }
+                        return hir::Expr {
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot, value: Box::new(receiver) },
+                                    ty: Ty::Array,
+                                    span,
+                                }),
+                                value: Box::new(result),
+                            },
+                            ty: Ty::Int(IntKind::U64),
+                            span,
+                        };
+                    }
                     if args.len() != 1 {
                         self.error(span, "Array.push expects one argument");
                         return self.poison(span);
@@ -12372,14 +12459,67 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `console[key](args)` with a runtime key: dispatch on the key over
+                // the console methods (the key is evaluated once into a temp).
+                if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
+                    if matches!(recv_ast.as_ref(), ast::Expr::Ident(id) if self.text(id) == "console" && cx.lookup("console").is_none())
+                        && !matches!(key_ast.as_ref(), ast::Expr::String { .. })
+                    {
+                        let key_hir = self.check_expr(cx, key_ast);
+                        if !key_hir.ty.is_error() {
+                            let key_hir = self.to_string_for_parse(key_hir);
+                            let (slot, tmp) = self.synthetic_local(cx, Ty::String);
+                            let mut chain = ast::Expr::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                                span,
+                            };
+                            for method in ["debug", "info", "warn", "error", "log"] {
+                                chain = ast::Expr::Conditional {
+                                    condition: Box::new(ast::Expr::Binary {
+                                        op: ast::BinaryOp::Eq,
+                                        lhs: Box::new(ast::Expr::Ident(tmp)),
+                                        rhs: Box::new(ast::Expr::String { value: method.to_string(), span }),
+                                        span,
+                                    }),
+                                    when_true: Box::new(ast::Expr::MethodCall {
+                                        receiver: recv_ast.clone(),
+                                        method: ast::synthetic_ident(method),
+                                        args: args.clone(),
+                                        span,
+                                    }),
+                                    when_false: Box::new(chain),
+                                    span,
+                                };
+                            }
+                            let body = self.check_expr(cx, &chain);
+                            let ty = body.ty;
+                            return hir::Expr {
+                                kind: hir::ExprKind::Sequence {
+                                    effect: Box::new(hir::Expr {
+                                        kind: hir::ExprKind::Assign { slot, value: Box::new(key_hir) },
+                                        ty: Ty::String,
+                                        span,
+                                    }),
+                                    value: Box::new(body),
+                                },
+                                ty,
+                                span,
+                            };
+                        }
+                    }
+                }
                 // `recv[key](args)` on a dynamic receiver: a member call (keeps
                 // `this`), dispatched by the stringified key at run time.
                 if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
                     if args.len() <= 4 && !matches!(key_ast.as_ref(), ast::Expr::Spread { .. }) {
                         let recv_hir = self.check_expr(cx, recv_ast);
-                        if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                        if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject | Ty::Array) {
                             let key_hir = self.check_expr(cx, key_ast);
-                            if matches!(key_hir.ty, Ty::String | Ty::F64) || key_hir.ty.is_int() {
+                            let array_ok = recv_hir.ty != Ty::Array || matches!(key_hir.ty, Ty::String | Ty::Any);
+                            if array_ok
+                                && (matches!(key_hir.ty, Ty::String | Ty::F64 | Ty::Any) || key_hir.ty.is_int())
+                            {
                                 let key_hir = self.to_string_for_parse(key_hir);
                                 let native_name = [
                                     "dynamicCall0",

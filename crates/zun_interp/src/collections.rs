@@ -6893,11 +6893,60 @@ impl<'a> Interp<'a> {
 
     /// Read member `name` of a dynamic object for `o[name]`: own accessor,
     /// own data slot, own function slot, then the explicit prototype chain.
+    /// The `obj.constructor` record (`{ name, __classDesc }`) of a typed class
+    /// instance, or one naming `Array`/`Object` for arrays and plain objects
+    /// without an own `constructor`.
+    fn constructor_record(&mut self, obj: zun_gc::Obj) -> Option<zun_gc::Obj> {
+        let builtin_name = zun_gc::with_current_heap(|heap| {
+            if heap.array_len(obj).is_some() {
+                Some("Array")
+            } else if heap.is_dynamic_object(obj)
+                && !heap.is_instance_bag(obj)
+                && heap.dynamic_get(obj, "constructor").is_none()
+                && heap.dynamic_get_function(obj, "constructor").is_none()
+            {
+                Some("Object")
+            } else {
+                None
+            }
+        });
+        if let Some(class_name) = builtin_name {
+            return Some(zun_gc::with_current_heap_mut(|heap| {
+                let record = heap.alloc_dynamic();
+                let name_any = Value::Str(class_name.into()).box_any(heap).unwrap_or_else(zun_core::Any::null);
+                heap.dynamic_set(record, "name", name_any);
+                record
+            }));
+        }
+        let typed = zun_gc::with_current_heap(|heap| {
+            (!heap.is_dynamic_object(obj) || heap.is_instance_bag(obj)) && heap.array_len(obj).is_none()
+        });
+        let type_rid = obj.type_rid();
+        if !typed || type_rid < 1 {
+            return None;
+        }
+        let def = self.module.tables.type_defs.get(type_rid as usize - 1)?;
+        let class_name = self.module.strings.get(def.name).to_string();
+        let token = type_rid | zun_natives::USER_CLASS_FLAG;
+        Some(zun_gc::with_current_heap_mut(|heap| {
+            let record = heap.alloc_dynamic();
+            let name_any = Value::Str(class_name.into()).box_any(heap).unwrap_or_else(zun_core::Any::null);
+            heap.dynamic_set(record, "name", name_any);
+            heap.dynamic_set(record, "__classDesc", zun_core::Any::class_descriptor(token));
+            record
+        }))
+    }
+
     pub(crate) fn dynamic_member_get(
         &mut self,
         object: zun_gc::Obj,
         name: &str,
     ) -> Result<Value, RunError> {
+        if name == "constructor" {
+            if let Some(record) = self.constructor_record(object) {
+                return Ok(Value::Object(record));
+            }
+        }
         let getter = zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, name));
         if let Some(getter) = getter {
             let args = self.with_this_arg(getter, object, Vec::new());

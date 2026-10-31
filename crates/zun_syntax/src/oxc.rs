@@ -1105,6 +1105,20 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         }
         Expression::ComputedMemberExpression(member) => {
             let object = Box::new(convert_expression(source, &member.object)?);
+            // `obj['name']` with a plain identifier-shaped literal is `obj.name`.
+            if let Expression::StringLiteral(text) = &member.expression {
+                if text.value.as_str().is_some_and(is_plain_identifier)
+                    && (text.span.end - text.span.start) as usize
+                        == text.value.as_str().map_or(0, str::len) + 2
+                {
+                    let field = Name { span: Span::new(text.span.start + 1, text.span.end - 1) };
+                    return Ok(if member.optional {
+                        Expr::OptionalField { object, field, span: span(member.span) }
+                    } else {
+                        Expr::Field { object, field, span: span(member.span) }
+                    });
+                }
+            }
             let index = Box::new(convert_expression(source, &member.expression)?);
             if member.optional {
                 return Ok(Expr::OptionalIndex {
@@ -1676,6 +1690,22 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                         })
                     }
                 }
+                // `obj['name'](args)` with a plain identifier-shaped literal key is
+                // the method call `obj.name(args)` (the name span skips the quotes).
+                Expression::ComputedMemberExpression(member)
+                    if !member.optional
+                        && matches!(&member.expression, Expression::StringLiteral(text)
+                            if text.value.as_str().is_some_and(is_plain_identifier)
+                                && (text.span.end - text.span.start) as usize == text.value.as_str().map_or(0, str::len) + 2) =>
+                {
+                    let Expression::StringLiteral(text) = &member.expression else { unreachable!() };
+                    Ok(Expr::MethodCall {
+                        receiver: Box::new(convert_expression(source, &member.object)?),
+                        method: Name { span: Span::new(text.span.start + 1, text.span.end - 1) },
+                        args,
+                        span: span(call.span),
+                    })
+                }
                 // Any other callee is an arbitrary function-valued expression
                 // (`a[b]()`, `f()()`, `(cond ? f : g)(…)`): call it indirectly.
                 other => Ok(Expr::ComputedCall {
@@ -2088,6 +2118,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     let mut imports = Vec::new();
     let mut classes = Vec::new();
     let mut top_level = Vec::new();
+    let mut hoisted_functions: Vec<Stmt> = Vec::new();
     for statement in parsed.program.body {
         TOP_LEVEL_BLOCK.with(|cell| {
             cell.set(match &statement {
@@ -2222,6 +2253,23 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             },
             _ => None,
         };
+        // A top-level function declaration that the program reassigns
+        // (`f = function () {}`, the string-array obfuscator idiom) is a mutable
+        // binding: lower it to a `let` hoisted to the head of the module body.
+        if let Some(function) = function {
+            if let Some(id) = function.id.as_ref() {
+                let name = &source[id.span.start as usize..id.span.end as usize];
+                if !function.generator
+                    && !function.r#async
+                    && name_is_reassigned(&source[function.span.start as usize..function.span.end as usize], name) {
+                    hoisted_functions.extend(
+                        convert_statement_list(source, std::slice::from_ref(&statement))
+                            .map_err(|error| vec![error])?,
+                    );
+                    continue;
+                }
+            }
+        }
         let Some(function) = function else {
             // Any other top-level node is an executable module statement (a JS/TS
             // module body): convert it and collect it to run as the program.
@@ -2297,6 +2345,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     // Drain the block-local / nested classes collected while converting the
     // module body (and function/method bodies) into the program's class list.
     HOISTED_CLASSES.with(|cells| classes.append(&mut cells.borrow_mut()));
+    hoisted_functions.append(&mut top_level);
+    let top_level = hoisted_functions;
     Ok(Program {
         functions,
         classes,
@@ -4254,4 +4304,45 @@ fn param_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
         }
     }
     names
+}
+
+/// Whether `name` appears as the target of a plain `=` assignment anywhere in
+/// `source` (a textual approximation; only used for function declarations).
+fn name_is_reassigned(source: &str, name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut from = 0;
+    while let Some(found) = source[from..].find(name) {
+        let start = from + found;
+        let end = start + name.len();
+        from = end;
+        if start > 0 && (is_word(bytes[start - 1]) || bytes[start - 1] == b'.') {
+            continue;
+        }
+        if end < bytes.len() && is_word(bytes[end]) {
+            continue;
+        }
+        let mut cursor = end;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor < bytes.len()
+            && bytes[cursor] == b'='
+            && !matches!(bytes.get(cursor + 1), Some(b'=') | Some(b'>'))
+        {
+            let before = source[..start].trim_end();
+            if before.ends_with("let") || before.ends_with("const") || before.ends_with("var") {
+                continue;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `text` is a plain ASCII identifier (usable as a method name).
+fn is_plain_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
