@@ -1563,6 +1563,21 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     value,
                     span: span(assignment.span),
                 }),
+                // `obj['name'] = v` with a plain identifier-shaped literal is `obj.name = v`.
+                AssignmentTarget::ComputedMemberExpression(member)
+                    if matches!(&member.expression, Expression::StringLiteral(text)
+                        if text.value.as_str().is_some_and(is_plain_identifier)
+                            && (text.span.end - text.span.start) as usize
+                                == text.value.as_str().map_or(0, str::len) + 2) =>
+                {
+                    let Expression::StringLiteral(text) = &member.expression else { unreachable!() };
+                    Ok(Expr::FieldAssign {
+                        object: Box::new(convert_expression(source, &member.object)?),
+                        field: Name { span: Span::new(text.span.start + 1, text.span.end - 1) },
+                        value,
+                        span: span(assignment.span),
+                    })
+                }
                 AssignmentTarget::ComputedMemberExpression(member) => Ok(Expr::IndexAssign {
                     object: Box::new(convert_expression(source, &member.object)?),
                     index: Box::new(convert_expression(source, &member.expression)?),
@@ -3487,7 +3502,20 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                         // to a Symbol-keyed side-table entry; a plain name is a
                         // vtable method. `name_span` carries the key span in the
                         // computed case (used only for diagnostics).
-                        let (name_span, computed_key) = if method.computed {
+                        // `['name']() {}` with a plain identifier-shaped literal is a named method.
+                        let literal_name = match (&method.key, method.computed) {
+                            (PropertyKey::StringLiteral(text), true)
+                                if text.value.as_str().is_some_and(is_plain_identifier)
+                                    && (text.span.end - text.span.start) as usize
+                                        == text.value.as_str().map_or(0, str::len) + 2 =>
+                            {
+                                Some(Span::new(text.span.start + 1, text.span.end - 1))
+                            }
+                            _ => None,
+                        };
+                        let (name_span, computed_key) = if let Some(literal) = literal_name {
+                            (literal, None)
+                        } else if method.computed {
                             let key_expression = method.key.as_expression().ok_or_else(|| {
                                 vec!["OXC adapter requires an expression computed method key".to_owned()]
                             })?;
@@ -3615,6 +3643,90 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                         return Err(vec![
                             "OXC adapter does not support this class element yet".into()
                         ])
+                    }
+                }
+            }
+            // JS classes create fields by assignment: `this.name = …` in a
+            // constructor of a base-less class declares an `any` field.
+            if base.is_none() {
+                for element in &class_declaration.body.body {
+                    let ClassElement::MethodDefinition(method) = element else { continue };
+                    if method.kind != oxc_ast::ast::MethodDefinitionKind::Constructor {
+                        continue;
+                    }
+                    let (start, end) = (method.span.start as usize, method.span.end as usize);
+                    let text = &source[start..end];
+                    let bytes = text.as_bytes();
+                    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+                    // Both `this.name =` and `this['name'] =` spellings.
+                    let mut candidates: Vec<(usize, usize)> = Vec::new();
+                    for (marker, skip) in [("this.", 5usize), ("this['", 6), ("this[\"", 6)] {
+                        let mut from = 0;
+                        while let Some(found) = text[from..].find(marker) {
+                            let at = from + found;
+                            from = at + skip;
+                            if at > 0 && (is_word(bytes[at - 1]) || bytes[at - 1] == b'.') {
+                                continue;
+                            }
+                            candidates.push((at, skip));
+                        }
+                    }
+                    for (at, skip) in candidates {
+                        let quoted = skip == 6;
+                        let name_start = at + skip;
+                        let mut name_end = name_start;
+                        while name_end < bytes.len() && is_word(bytes[name_end]) {
+                            name_end += 1;
+                        }
+                        if name_end == name_start || !is_plain_identifier(&text[name_start..name_end]) {
+                            continue;
+                        }
+                        let mut cursor = name_end;
+                        if quoted {
+                            // closing quote and bracket
+                            if bytes.get(cursor).is_none_or(|b| *b != 39u8 && *b != b'"')
+                                || bytes.get(cursor + 1) != Some(&b']')
+                            {
+                                continue;
+                            }
+                            cursor += 2;
+                        }
+                        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                            cursor += 1;
+                        }
+                        let assigns = cursor < bytes.len()
+                            && bytes[cursor] == b'='
+                            && !matches!(bytes.get(cursor + 1), Some(b'=') | Some(b'>'));
+                        if !assigns {
+                            continue;
+                        }
+                        let field_name = &text[name_start..name_end];
+                        let known = fields.iter().any(|field: &crate::ast::ClassField| {
+                            source.get(field.name.span.start as usize..field.name.span.end as usize)
+                                == Some(field_name)
+                        }) || methods.iter().any(|method: &crate::ast::Function| {
+                            source.get(method.name.span.start as usize..method.name.span.end as usize)
+                                == Some(field_name)
+                        });
+                        if known {
+                            continue;
+                        }
+                        let field_span = Span::new((start + name_start) as u32, (start + name_end) as u32);
+                        fields.push(crate::ast::ClassField {
+                            name: Name { span: field_span },
+                            decorators: Vec::new(),
+                            ty: crate::ast::TypeAnnotation {
+                                name: Name { span: Span::new(field_span.start, field_span.start) },
+                                is_array: false,
+                            },
+                            is_static: false,
+                            is_private: false,
+                            initializer: Some(Box::new(Expr::Unary {
+                                op: crate::ast::UnaryOp::Void,
+                                operand: Box::new(Expr::Number { value: 0.0, span: field_span }),
+                                span: field_span,
+                            })),
+                        });
                     }
                 }
             }

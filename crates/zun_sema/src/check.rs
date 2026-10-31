@@ -12533,7 +12533,14 @@ impl Checker<'_> {
                             "Object" => &[
                                 ("keys", 1, 1), ("values", 1, 1), ("entries", 1, 1), ("assign", 1, 99),
                                 ("freeze", 1, 1), ("isFrozen", 1, 1), ("create", 1, 1), ("getPrototypeOf", 1, 1),
-                                ("defineProperty", 3, 3),
+                                ("defineProperty", 3, 3), ("getOwnPropertyDescriptor", 2, 2),
+                                ("getOwnPropertyNames", 1, 1), ("fromEntries", 1, 1), ("seal", 1, 1),
+                                ("isSealed", 1, 1), ("isExtensible", 1, 1), ("preventExtensions", 1, 1),
+                                ("setPrototypeOf", 2, 2), ("hasOwn", 2, 2), ("getOwnPropertySymbols", 1, 1),
+                            ],
+                            "Reflect" => &[
+                                ("get", 2, 2), ("set", 3, 3), ("has", 2, 2), ("ownKeys", 1, 1),
+                                ("defineProperty", 3, 3), ("getPrototypeOf", 1, 1), ("deleteProperty", 2, 2),
                             ],
                             "Array" => &[("isArray", 1, 1), ("from", 1, 3), ("of", 0, 99)],
                             "Number" => &[
