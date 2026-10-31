@@ -585,7 +585,52 @@ impl Checker<'_> {
         if !registry.is_empty() {
             let (set_id, _) = zun_natives::resolve("collections", "globalSet")
                 .expect("globalSet intrinsic must exist");
+            // Namespace globals are plain objects; function-like globals reuse the
+            // `Object` descriptor so `typeof globalThis[name]` reports the right kind.
+            let object_token = registry.iter().find(|(n, _)| n.as_str() == "Object").map(|(_, b)| b.token);
+            let extra_globals: Vec<(&str, bool)> = vec![
+                ("Math", true), ("JSON", true), ("Reflect", true), ("Proxy", false), ("parseInt", false),
+                ("parseFloat", false), ("isNaN", false), ("isFinite", false), ("encodeURIComponent", false),
+                ("decodeURIComponent", false), ("encodeURI", false), ("decodeURI", false),
+            ];
+            for (name, is_object) in extra_globals {
+                if registry.iter().any(|(n, _)| n.as_str() == name) && name != "Reflect" {
+                    continue;
+                }
+                let value = if is_object {
+                    hir::Expr {
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(hir::Expr {
+                                kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                                ty: Ty::DynamicObject,
+                                span,
+                            }),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    }
+                } else if let Some(token) = object_token {
+                    self.realm_descriptor_expr(token, span)
+                } else {
+                    continue;
+                };
+                body.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: set_id,
+                        args: vec![
+                            hir::Expr { kind: hir::ExprKind::String(name.to_string()), ty: Ty::String, span },
+                            value,
+                            hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span },
+                        ],
+                    },
+                    ty: Ty::Void,
+                    span,
+                }));
+            }
             for (name, binding) in registry {
+                if name.as_str() == "Reflect" {
+                    continue;
+                }
                 let descriptor = self.realm_descriptor_expr(binding.token, span);
                 body.push(hir::Stmt::Expr(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
@@ -2005,6 +2050,26 @@ impl Checker<'_> {
                 // A dynamic source may hold a string or any iterable, not just
                 // an Array: materialize it through the iteration protocol first.
                 let value = if value.ty == Ty::Any {
+                    // Without a rest element only `elements.len()` values are taken
+                    // and an unfinished iterator is closed afterwards.
+                    let limited = rest.is_none().then(|| zun_natives::resolve("array", "arrayDestructure")).flatten();
+                    if let Some((id, _)) = limited {
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![
+                                    value,
+                                    hir::Expr {
+                                        kind: hir::ExprKind::Number(elements.len() as f64),
+                                        ty: Ty::Int(IntKind::U32),
+                                        span,
+                                    },
+                                ],
+                            },
+                            ty: Ty::Array,
+                            span,
+                        }
+                    } else {
                     match zun_natives::resolve("array", "arrayFrom") {
                         Some((id, _)) => hir::Expr {
                             kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
@@ -2012,6 +2077,7 @@ impl Checker<'_> {
                             span,
                         },
                         None => value,
+                    }
                     }
                 } else {
                     value
@@ -7841,6 +7907,44 @@ impl Checker<'_> {
                 args,
                 ..
             } => {
+                // `Object.prototype.toString.call(value)`.
+                if self.text(method) == "call" && args.len() == 1 && !self.classes_by_name.contains_key("Object") {
+                    let is_proto_to_string = match receiver.as_ref() {
+                        ast::Expr::Field { object: proto, field: member, .. } => {
+                            self.text(member) == "toString"
+                                && match proto.as_ref() {
+                                    ast::Expr::Field { object: base, field: p, .. } => {
+                                        self.text(p) == "prototype"
+                                            && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Object")
+                                    }
+                                    ast::Expr::StaticField { class, field: p, .. } => {
+                                        self.text(p) == "prototype" && self.text(class) == "Object"
+                                    }
+                                    _ => false,
+                                }
+                        }
+                        _ => false,
+                    };
+                    if is_proto_to_string {
+                        if let Some((id, _)) = zun_natives::resolve_name("objectToStringTag") {
+                            let value = self.check_expr(cx, &args[0]);
+                            let value = if value.ty == Ty::Any {
+                                value
+                            } else {
+                                hir::Expr {
+                                    span: value.span,
+                                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                    ty: Ty::Any,
+                                }
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                                ty: Ty::String,
+                                span,
+                            };
+                        }
+                    }
+                }
                 // `Math.<fn>.apply(thisArg, array)` / `.call(thisArg, ...args)`.
                 if let ast::Expr::Field { object: inner_obj, field: inner_field, .. } = receiver.as_ref() {
                     if let ast::Expr::Ident(m) = inner_obj.as_ref() {
@@ -8319,6 +8423,71 @@ impl Checker<'_> {
                             object: Box::new(receiver),
                         },
                         ty: Ty::Any,
+                        span,
+                    };
+                }
+                // `push()` / `unshift()` with no values only report the length.
+                if receiver.ty == Ty::Array && matches!(mname.as_str(), "push" | "unshift") && args.is_empty() {
+                    return hir::Expr {
+                        kind: hir::ExprKind::ArrayLength { object: Box::new(receiver) },
+                        ty: Ty::Int(IntKind::U64),
+                        span,
+                    };
+                }
+                // `unshift(a, b, c)` prepends each value from the last to the first so
+                // the final order is `a, b, c`; the result is the final length.
+                if receiver.ty == Ty::Array
+                    && mname == "unshift"
+                    && args.len() > 1
+                    && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                {
+                    let Some((id, _)) = zun_natives::resolve("collections", "arrayUnshift") else {
+                        self.error(span, "missing Array intrinsic `arrayUnshift`");
+                        return self.poison(span);
+                    };
+                    let name = self.fresh_temp_name(cx);
+                    let slot = cx.declare(&name, Ty::Array);
+                    let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::Array, span };
+                    let mut calls = Vec::with_capacity(args.len());
+                    for arg in args.iter().rev() {
+                        let value = self.check_expr(cx, arg);
+                        calls.push(hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![local(span), value] },
+                            ty: Ty::Int(IntKind::U64),
+                            span,
+                        });
+                    }
+                    let mut result = calls.pop().expect("at least two unshifts");
+                    while let Some(effect) = calls.pop() {
+                        result = hir::Expr {
+                            kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                            ty: Ty::Int(IntKind::U64),
+                            span,
+                        };
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(hir::Expr {
+                                kind: hir::ExprKind::Assign { slot, value: Box::new(receiver) },
+                                ty: Ty::Array,
+                                span,
+                            }),
+                            value: Box::new(result),
+                        },
+                        ty: Ty::Int(IntKind::U64),
+                        span,
+                    };
+                }
+                // `join()` defaults the separator to a comma.
+                if receiver.ty == Ty::Array && mname == "join" && args.is_empty() {
+                    let Some((id, _)) = zun_natives::resolve("collections", "arrayJoin") else {
+                        self.error(span, "missing Array intrinsic `arrayJoin`");
+                        return self.poison(span);
+                    };
+                    let separator = hir::Expr { kind: hir::ExprKind::String(",".to_string()), ty: Ty::String, span };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, separator] },
+                        ty: Ty::String,
                         span,
                     };
                 }

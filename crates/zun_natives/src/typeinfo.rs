@@ -38,6 +38,11 @@ fn typeof_any(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nativ
     Ok(NativeValue::Str(name.to_string()))
 }
 
+/// Heap-free `Object.prototype.toString.call` fallback (managed floor refines it).
+fn object_to_string_tag(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Str("[object Object]".to_string()))
+}
+
 /// Heap-free `instanceof` fallback: without the class hierarchy it cannot
 /// decide membership, so it answers `false` (never a false positive).
 fn instanceof_class(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -56,6 +61,13 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[Opaque],
             ret: Str,
             imp: typeof_any,
+        },
+        NativeFn {
+            // `Object.prototype.toString.call(value)`.
+            name: "objectToStringTag",
+            params: &[Opaque],
+            ret: Str,
+            imp: object_to_string_tag,
         },
         NativeFn {
             // `value instanceof C` when the static type cannot fold the answer.

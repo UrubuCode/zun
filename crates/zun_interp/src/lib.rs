@@ -1118,11 +1118,30 @@ impl Interp<'_> {
                                     Err(error) => return Err(error),
                                 }
                             } else {
-                                zun_gc::with_current_heap(|heap| {
-                                heap.dynamic_get_symbol(object, symbol)
-                                    .map(Value::Any)
-                                    .unwrap_or(Value::Void)
-                            })
+                                let own = zun_gc::with_current_heap(|heap| {
+                                    heap.dynamic_get_symbol(object, symbol).map(Value::Any)
+                                });
+                                match own {
+                                    Some(found) => found,
+                                    // Built-in iterables expose `[Symbol.iterator]` as a
+                                    // callable that produces their iterator.
+                                    None if symbol == zun_core::WellKnownSymbol::Iterator.id()
+                                        && zun_gc::with_current_heap(|heap| {
+                                            heap.array_len(object).is_some()
+                                                || heap.set_values(object).is_some()
+                                                || heap.map_entries(object).is_some()
+                                                || heap.array_iterator_done(object).is_some()
+                                                || heap.set_iterator_done(object).is_some()
+                                                || heap.map_iterator_done(object).is_some()
+                                        }) =>
+                                    {
+                                        Value::Function(zun_core::FunctionHandle::new_generator_method(
+                                            3,
+                                            object.addr() as usize,
+                                        ))
+                                    }
+                                    None => Value::Void,
+                                }
                             }
                         } else {
                             return Err(RunError::BadToken);

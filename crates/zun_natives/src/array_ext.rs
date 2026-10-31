@@ -48,6 +48,7 @@ pub const MODULE: crate::Module = crate::Module {
         // or a string; other iterables are deferred. The mapped form invokes the
         // callback with `(value, index)`.
         NativeFn { name: "arrayFrom", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayDestructure", params: &[Opaque, U32], ret: Array, imp: unavailable },
         NativeFn { name: "arrayFromMapped", params: &[Opaque, Function], ret: Array, imp: unavailable },
         // `arraySpreadAppend(target, source)` appends every element of the
         // iterable `source` (a managed Array or a string, matching `arrayFrom`'s

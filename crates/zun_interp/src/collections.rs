@@ -4588,6 +4588,56 @@ impl<'a> Interp<'a> {
                     .unwrap_or(false);
                 Ok(Value::Bool(is_array))
             }
+            "arrayDestructure" => {
+                // `[a, b] = iterable`: take at most `count` values through the
+                // iteration protocol, then close the iterator if it has more.
+                let concrete = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                let count = match args.get(1) {
+                    Some(Value::Int(n, _)) => *n as usize,
+                    Some(Value::Float(n, _)) => *n as usize,
+                    _ => 0,
+                };
+                let source = match &concrete {
+                    Value::Object(_) | Value::Any(_) => object(&concrete),
+                    _ => None,
+                };
+                let lazy = source.filter(|source| {
+                    zun_gc::with_current_heap(|heap| heap.array_len(*source).is_none())
+                });
+                let Some(source) = lazy else {
+                    return self.call_managed_collection("arrayFrom", &args[..1]);
+                };
+                let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                let setup = [target];
+                let wrapper = {
+                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
+                    Self::value_object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
+                };
+                let roots = [wrapper, setup[0]];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let mut exhausted = false;
+                for _ in 0..count {
+                    if matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+                        exhausted = true;
+                        break;
+                    }
+                    let value = self.protocol_next(roots[0])?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], boxed));
+                }
+                if !exhausted {
+                    self.call_managed_collection(
+                        "generatorIteratorClose",
+                        &[Value::Object(roots[0]), Value::Bool(false)],
+                    )?;
+                }
+                Ok(Value::Object(roots[1]))
+            }
             "arrayFrom" | "arrayFromMapped" => {
                 // Build the base array from the source (a managed Array or a
                 // string; other iterables are deferred).
@@ -6026,6 +6076,56 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Str(name.into()))
             }
+            "objectToStringTag" => {
+                // `Object.prototype.toString.call(value)`: the builtin tag, or a
+                // string `[Symbol.toStringTag]` own/inherited property.
+                let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let tag: String = match &value {
+                    Value::Void => "Undefined".into(),
+                    Value::Null => "Null".into(),
+                    Value::Int(..) | Value::Float(..) => "Number".into(),
+                    Value::Bool(_) => "Boolean".into(),
+                    Value::Str(_) => "String".into(),
+                    Value::Function(_) => "Function".into(),
+                    Value::Any(a) if a.as_symbol().is_some() => "Symbol".into(),
+                    Value::Object(obj) => {
+                        let obj = *obj;
+                        let custom = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(obj, zun_core::WellKnownSymbol::ToStringTag.id())
+                                .and_then(|any| match Value::unbox_any(any, heap) {
+                                    Some(Value::Str(text)) => Some(text.to_string()),
+                                    _ => None,
+                                })
+                        });
+                        if let Some(custom) = custom {
+                            custom
+                        } else {
+                            zun_gc::with_current_heap(|heap| {
+                                if heap.array_len(obj).is_some() {
+                                    "Array"
+                                } else if heap.generator_state(obj).is_some() {
+                                    "Generator"
+                                } else if heap.regex_source(obj).is_some() {
+                                    "RegExp"
+                                } else if heap.bigint_value(obj).is_some() {
+                                    "BigInt"
+                                } else if heap.promise_state(obj).is_some() {
+                                    "Promise"
+                                } else if heap.map_entries(obj).is_some() {
+                                    "Map"
+                                } else if heap.set_values(obj).is_some() {
+                                    "Set"
+                                } else {
+                                    "Object"
+                                }
+                            })
+                            .into()
+                        }
+                    }
+                    _ => "Object".into(),
+                };
+                Ok(Value::Str(format!("[object {tag}]").into()))
+            }
             "instanceofClass" => {
                 // Runtime `instanceof` for an operand whose static type does not
                 // fold the answer. The second argument is the right-hand class's
@@ -7002,6 +7102,8 @@ impl<'a> Interp<'a> {
                 Ok(result?.unwrap_or(Value::Void))
             }
             1 => self.generator_return(generator, first),
+            // `iterable[Symbol.iterator]` read off a built-in iterable, called.
+            3 => self.call_managed_collection("symbolIteratorCall", &[Value::Object(generator)]),
             _ => {
                 let suspended = zun_gc::with_current_heap(|heap| {
                     heap.generator_state(generator)
