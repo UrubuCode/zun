@@ -3241,6 +3241,29 @@ impl<'a> Interp<'a> {
                 };
                 self.class_symbol_methods
                     .insert((class_rid, symbol.get()), function);
+                // Subclasses inherit the symbol method unless they declare their own.
+                let count = self.module.tables.type_defs.len() as u32;
+                for rid in 1..=count {
+                    if rid == class_rid {
+                        continue;
+                    }
+                    let mut cursor = rid;
+                    let mut hops = 0;
+                    while hops < 64 {
+                        hops += 1;
+                        let Some(def) = self.module.tables.type_defs.get(cursor as usize - 1) else { break };
+                        if def.base.is_null() || def.base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                            break;
+                        }
+                        cursor = def.base.rid();
+                        if cursor == class_rid {
+                            self.class_symbol_methods
+                                .entry((rid, symbol.get()))
+                                .or_insert(function);
+                            break;
+                        }
+                    }
+                }
                 Ok(Value::Void)
             }
             "classSetMethod" => {

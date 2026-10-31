@@ -56,3 +56,123 @@ class __BuiltinPromise {
         return Promise.any(items);
     }
 }
+
+class __BuiltinMap {
+    inner: Map<any, any> = new Map();
+
+    constructor(iterable?: any) {
+        if (iterable !== undefined && iterable !== null) {
+            for (const entry of iterable) {
+                this.set(entry[0], entry[1]);
+            }
+        }
+    }
+
+    set(key: any, value: any): any {
+        this.inner.set(key, value);
+        return this;
+    }
+
+    get(key: any): any {
+        return this.inner.get(key);
+    }
+
+    has(key: any): boolean {
+        return this.inner.has(key);
+    }
+
+    delete(key: any): boolean {
+        return this.inner.delete(key);
+    }
+
+    clear(): void {
+        this.inner.clear();
+    }
+
+    get size(): number {
+        return this.inner.size;
+    }
+
+    keys(): any {
+        return this.inner.keys();
+    }
+
+    values(): any {
+        return this.inner.values();
+    }
+
+    entries(): any {
+        return this.inner.entries();
+    }
+
+    forEach(callback: any, thisArg?: any): void {
+        const self = this;
+        this.inner.forEach((value: any, key: any) => {
+            callback(value, key, self);
+        });
+    }
+
+    *[Symbol.iterator](): any {
+        for (const entry of this.inner.entries()) {
+            yield entry;
+        }
+    }
+}
+
+class __BuiltinSet {
+    inner: Set<any> = new Set();
+
+    constructor(iterable?: any) {
+        if (iterable !== undefined && iterable !== null) {
+            for (const value of iterable) {
+                this.add(value);
+            }
+        }
+    }
+
+    add(value: any): any {
+        this.inner.add(value);
+        return this;
+    }
+
+    has(value: any): boolean {
+        return this.inner.has(value);
+    }
+
+    delete(value: any): boolean {
+        return this.inner.delete(value);
+    }
+
+    clear(): void {
+        this.inner.clear();
+    }
+
+    get size(): number {
+        return this.inner.size;
+    }
+
+    keys(): any {
+        return this.inner.values();
+    }
+
+    values(): any {
+        return this.inner.values();
+    }
+
+    entries(): any {
+        return this.inner.entries();
+    }
+
+    forEach(callback: any, thisArg?: any): void {
+        const self = this;
+        this.inner.forEach((value: any) => {
+            callback(value, value, self);
+        });
+    }
+
+    *[Symbol.iterator](): any {
+        for (const value of this.inner.values()) {
+            yield value;
+        }
+    }
+}

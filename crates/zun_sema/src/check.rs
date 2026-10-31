@@ -2515,7 +2515,7 @@ impl Checker<'_> {
                     Ty::DynamicObject => {
                         ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext")
                     }
-                    Ty::Instance(idx) if self.classes_with_iterator.contains(&idx) => {
+                    Ty::Instance(idx) if self.class_has_iterator(idx) => {
                         ("generatorIteratorNew", "generatorIteratorDone", "generatorIteratorNext")
                     }
                     Ty::Error => ("arrayIteratorNew", "arrayIteratorDone", "arrayIteratorNext"),
@@ -14000,6 +14000,18 @@ impl Checker<'_> {
             ty: Ty::Boolean,
             span,
         }
+    }
+
+    /// Whether the class or one of its bases declares `[Symbol.iterator]`.
+    fn class_has_iterator(&self, class_index: u32) -> bool {
+        let mut current = Some(class_index);
+        while let Some(c) = current {
+            if self.classes_with_iterator.contains(&c) {
+                return true;
+            }
+            current = self.classes.get(c as usize).and_then(|info| info.base);
+        }
+        false
     }
 
     /// Whether class `class_index` is `target` or a (transitive) subclass of it.
