@@ -1055,48 +1055,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 span: span(member.span),
             })
         }
-        Expression::ChainExpression(chain) => match &chain.expression {
-            ChainElement::StaticMemberExpression(member) => Ok(Expr::OptionalField {
-                object: Box::new(convert_expression(source, &member.object)?),
-                field: Name {
-                    span: span(member.property.span),
-                },
-                span: span(chain.span),
-            }),
-            ChainElement::ComputedMemberExpression(member) => Ok(Expr::OptionalIndex {
-                object: Box::new(convert_expression(source, &member.object)?),
-                index: Box::new(convert_expression(source, &member.expression)?),
-                span: span(chain.span),
-            }),
-            ChainElement::CallExpression(call) => {
-                let mut args = Vec::with_capacity(call.arguments.len());
-                for argument in &call.arguments {
-                    args.push(convert_argument(source, argument)?);
-                }
-                if let Expression::StaticMemberExpression(member) = &call.callee {
-                    if call.optional && !member.optional {
-                        // `recv.m?.(args)`: the *callee* is optional, not the receiver.
-                        return Ok(Expr::OptionalCall {
-                            callee: Box::new(convert_expression(source, &call.callee)?),
-                            args,
-                            span: span(chain.span),
-                        });
-                    }
-                    return Ok(Expr::OptionalMethodCall {
-                        object: Box::new(convert_expression(source, &member.object)?),
-                        method: Name { span: span(member.property.span) },
-                        args,
-                        span: span(chain.span),
-                    });
-                }
-                Ok(Expr::OptionalCall {
-                    callee: Box::new(convert_expression(source, &call.callee)?),
-                    args,
-                    span: span(chain.span),
-                })
-            }
-            _ => Err("OXC adapter currently supports optional static members only".into()),
-        },
+        Expression::ChainExpression(chain) => convert_chain(source, chain),
         Expression::BinaryExpression(binary) => {
             let op = match binary.operator {
                 BinaryOperator::Equality => BinaryOp::LooseEq,
@@ -1238,6 +1197,54 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     return Err("OXC adapter does not support compound assignment yet".into());
                 }
             };
+            if let Some(op) = compound {
+                let whole = span(assignment.span);
+                let logical = matches!(
+                    assignment.operator,
+                    AssignmentOperator::LogicalAnd
+                        | AssignmentOperator::LogicalOr
+                        | AssignmentOperator::LogicalNullish
+                );
+                let member = match &assignment.left {
+                    AssignmentTarget::StaticMemberExpression(m) => Some(MemberRef::Static(m)),
+                    AssignmentTarget::ComputedMemberExpression(m) => Some(MemberRef::Computed(m)),
+                    AssignmentTarget::PrivateFieldExpression(m) => Some(MemberRef::Private(m)),
+                    _ => None,
+                };
+                if let Some(member) = member {
+                    // The target's object and key are evaluated exactly once;
+                    // a logical assignment only stores when it does not
+                    // short-circuit.
+                    let (binds, read, store) = decompose_member(source, member)?;
+                    let rhs = convert_expression(source, &assignment.right)?;
+                    let body = if logical {
+                        Expr::Binary {
+                            op,
+                            lhs: Box::new(read),
+                            rhs: Box::new(store.build(rhs, whole)),
+                            span: whole,
+                        }
+                    } else {
+                        store.build(
+                            Expr::Binary { op, lhs: Box::new(read), rhs: Box::new(rhs), span: whole },
+                            whole,
+                        )
+                    };
+                    return Ok(wrap_binds(binds, body, whole));
+                }
+                if logical {
+                    if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+                        let name = Name { span: span(identifier.span) };
+                        let rhs = convert_expression(source, &assignment.right)?;
+                        return Ok(Expr::Binary {
+                            op,
+                            lhs: Box::new(Expr::Ident(name)),
+                            rhs: Box::new(Expr::Assign { target: name, value: Box::new(rhs), span: whole }),
+                            span: whole,
+                        });
+                    }
+                }
+            }
             let mut value = convert_expression(source, &assignment.right)?;
             if let Some(op) = compound {
                 // `a OP= b` desugars to `a = (a OP b)`. Known v1 limitation: a
@@ -1675,6 +1682,16 @@ fn convert_update_assign(
     let whole = span(update.span);
     let one = || Expr::Number { value: 1.0, span: whole };
     let step = |read: Expr| Expr::Binary { op, lhs: Box::new(read), rhs: Box::new(one()), span: whole };
+    let member = match &update.argument {
+        SimpleAssignmentTarget::StaticMemberExpression(m) => Some(MemberRef::Static(m)),
+        SimpleAssignmentTarget::ComputedMemberExpression(m) => Some(MemberRef::Computed(m)),
+        SimpleAssignmentTarget::PrivateFieldExpression(m) => Some(MemberRef::Private(m)),
+        _ => None,
+    };
+    if let Some(member) = member {
+        let (binds, read, store) = decompose_member(source, member)?;
+        return Ok(wrap_binds(binds, store.build(step(read), whole), whole));
+    }
     match &update.argument {
         SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
             let target = Name { span: span(identifier.span) };
@@ -3365,4 +3382,322 @@ fn inject_arguments_object(
             span: word,
         },
     );
+}
+
+/// Whether the member/call spine of `expression` contains an optional link
+/// (`?.`), i.e. whether it is part of an optional chain.
+fn spine_has_optional(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::StaticMemberExpression(member) => {
+            member.optional || spine_has_optional(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            member.optional || spine_has_optional(&member.object)
+        }
+        Expression::CallExpression(call) => call.optional || spine_has_optional(&call.callee),
+        Expression::TSNonNullExpression(inner) => spine_has_optional(&inner.expression),
+        _ => false,
+    }
+}
+
+/// Convert one link of an optional chain. Every `?.` link pushes the value
+/// computed so far onto `guards` and continues on a [`Expr::ChainRoot`]
+/// placeholder, so a nullish guard short-circuits the *rest* of the chain.
+fn chain_link(
+    source: &str,
+    expression: &Expression<'_>,
+    guards: &mut Vec<Expr>,
+) -> Result<Expr, String> {
+    if !spine_has_optional(expression) {
+        return convert_expression(source, expression);
+    }
+    match expression {
+        Expression::StaticMemberExpression(member) => chain_static(source, member, guards),
+        Expression::ComputedMemberExpression(member) => chain_computed(source, member, guards),
+        Expression::CallExpression(call) => chain_call(source, call, guards),
+        Expression::TSNonNullExpression(inner) => chain_link(source, &inner.expression, guards),
+        other => convert_expression(source, other),
+    }
+}
+
+fn chain_guard(object: Expr, optional: bool, guards: &mut Vec<Expr>) -> Expr {
+    if optional {
+        let span = object.span();
+        guards.push(object);
+        Expr::ChainRoot { depth: 0, span }
+    } else {
+        object
+    }
+}
+
+fn chain_static(
+    source: &str,
+    member: &oxc_ast::ast::StaticMemberExpression<'_>,
+    guards: &mut Vec<Expr>,
+) -> Result<Expr, String> {
+    let object = chain_link(source, &member.object, guards)?;
+    let object = chain_guard(object, member.optional, guards);
+    Ok(Expr::Field {
+        object: Box::new(object),
+        field: Name { span: Span::new(member.property.span.start, member.property.span.end) },
+        span: Span::new(member.span.start, member.span.end),
+    })
+}
+
+fn chain_computed(
+    source: &str,
+    member: &oxc_ast::ast::ComputedMemberExpression<'_>,
+    guards: &mut Vec<Expr>,
+) -> Result<Expr, String> {
+    let object = chain_link(source, &member.object, guards)?;
+    let object = chain_guard(object, member.optional, guards);
+    Ok(Expr::Index {
+        object: Box::new(object),
+        index: Box::new(convert_expression(source, &member.expression)?),
+        span: Span::new(member.span.start, member.span.end),
+    })
+}
+
+fn chain_call(
+    source: &str,
+    call: &oxc_ast::ast::CallExpression<'_>,
+    guards: &mut Vec<Expr>,
+) -> Result<Expr, String> {
+    let span = Span::new(call.span.start, call.span.end);
+    let mut args = Vec::with_capacity(call.arguments.len());
+    for argument in &call.arguments {
+        args.push(convert_argument(source, argument)?);
+    }
+    match &call.callee {
+        Expression::StaticMemberExpression(member) => {
+            let object = chain_link(source, &member.object, guards)?;
+            let object = chain_guard(object, member.optional, guards);
+            let method = Name { span: Span::new(member.property.span.start, member.property.span.end) };
+            if call.optional {
+                Ok(Expr::OptionalCall {
+                    callee: Box::new(Expr::Field {
+                        object: Box::new(object),
+                        field: method,
+                        span: Span::new(member.span.start, member.span.end),
+                    }),
+                    args,
+                    span,
+                })
+            } else {
+                Ok(Expr::MethodCall { receiver: Box::new(object), method, args, span })
+            }
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let object = chain_link(source, &member.object, guards)?;
+            let object = chain_guard(object, member.optional, guards);
+            let callee = Expr::Index {
+                object: Box::new(object),
+                index: Box::new(convert_expression(source, &member.expression)?),
+                span: Span::new(member.span.start, member.span.end),
+            };
+            if call.optional {
+                Ok(Expr::OptionalCall { callee: Box::new(callee), args, span })
+            } else {
+                Ok(Expr::ComputedCall { callee: Box::new(callee), args, span })
+            }
+        }
+        other => {
+            let callee = chain_link(source, other, guards)?;
+            if call.optional {
+                Ok(Expr::OptionalCall { callee: Box::new(callee), args, span })
+            } else {
+                Ok(Expr::ComputedCall { callee: Box::new(callee), args, span })
+            }
+        }
+    }
+}
+
+fn convert_chain(
+    source: &str,
+    chain: &oxc_ast::ast::ChainExpression<'_>,
+) -> Result<Expr, String> {
+    let mut guards: Vec<Expr> = Vec::new();
+    let chain_span = Span::new(chain.span.start, chain.span.end);
+    let body = match &chain.expression {
+        ChainElement::StaticMemberExpression(member) => chain_static(source, member, &mut guards)?,
+        ChainElement::ComputedMemberExpression(member) => {
+            chain_computed(source, member, &mut guards)?
+        }
+        ChainElement::CallExpression(call) => chain_call(source, call, &mut guards)?,
+        ChainElement::TSNonNullExpression(inner) => {
+            chain_link(source, &inner.expression, &mut guards)?
+        }
+        _ => return Err("OXC adapter does not support optional private members yet".into()),
+    };
+    if guards.is_empty() {
+        return Ok(body);
+    }
+    if guards.len() == 1 {
+        let is_root = |expr: &Expr| matches!(expr, Expr::ChainRoot { .. });
+        match body {
+            Expr::Field { object, field, .. } if is_root(&object) => {
+                let guard = guards.pop().unwrap();
+                return Ok(Expr::OptionalField { object: Box::new(guard), field, span: chain_span });
+            }
+            Expr::Index { object, index, .. } if is_root(&object) => {
+                let guard = guards.pop().unwrap();
+                return Ok(Expr::OptionalIndex { object: Box::new(guard), index, span: chain_span });
+            }
+            Expr::MethodCall { receiver, method, args, .. } if is_root(&receiver) => {
+                let guard = guards.pop().unwrap();
+                return Ok(Expr::OptionalMethodCall {
+                    object: Box::new(guard),
+                    method,
+                    args,
+                    span: chain_span,
+                });
+            }
+            other => {
+                let guard = guards.pop().unwrap();
+                return Ok(Expr::OptionalChain {
+                    object: Box::new(guard),
+                    body: Box::new(other),
+                    span: chain_span,
+                });
+            }
+        }
+    }
+    let mut result = body;
+    for guard in guards.into_iter().rev() {
+        result = Expr::OptionalChain {
+            object: Box::new(guard),
+            body: Box::new(result),
+            span: chain_span,
+        };
+    }
+    Ok(result)
+}
+
+/// A member-expression assignment target (`o.f`, `o[k]`, `o.#p`).
+enum MemberRef<'a, 'b> {
+    Static(&'a oxc_ast::ast::StaticMemberExpression<'b>),
+    Computed(&'a oxc_ast::ast::ComputedMemberExpression<'b>),
+    Private(&'a oxc_ast::ast::PrivateFieldExpression<'b>),
+}
+
+/// How a decomposed member target stores a value.
+enum MemberStore {
+    Field { object: Expr, field: Name },
+    Index { object: Expr, index: Expr },
+}
+
+impl MemberStore {
+    fn build(&self, value: Expr, span: Span) -> Expr {
+        match self {
+            MemberStore::Field { object, field } => Expr::FieldAssign {
+                object: Box::new(object.clone()),
+                field: *field,
+                value: Box::new(value),
+                span,
+            },
+            MemberStore::Index { object, index } => Expr::IndexAssign {
+                object: Box::new(object.clone()),
+                index: Box::new(index.clone()),
+                value: Box::new(value),
+                span,
+            },
+        }
+    }
+}
+
+fn is_simple_operand(expression: &Expression<'_>) -> bool {
+    matches!(
+        expression,
+        Expression::Identifier(_)
+            | Expression::ThisExpression(_)
+            | Expression::Super(_)
+            | Expression::StringLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NullLiteral(_)
+    )
+}
+
+/// Split a member target into the sub-expressions that must be evaluated once
+/// (`binds`, outermost first), a read of the target, and a store builder; the
+/// read/store reference the bound values through [`Expr::ChainRoot`].
+fn decompose_member(
+    source: &str,
+    member: MemberRef<'_, '_>,
+) -> Result<(Vec<Expr>, Expr, MemberStore), String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let (object_ast, key_ast) = match &member {
+        MemberRef::Static(m) => (&m.object, None),
+        MemberRef::Computed(m) => (&m.object, Some(&m.expression)),
+        MemberRef::Private(m) => (&m.object, None),
+    };
+    let bind_object = !is_simple_operand(object_ast);
+    let bind_key = key_ast.map(|key| !is_simple_operand(key)).unwrap_or(false);
+    let count = bind_object as u32 + bind_key as u32;
+    let mut binds = Vec::new();
+    let object_span = span(object_ast.span());
+    let object_expr = convert_expression(source, object_ast)?;
+    let object = if bind_object {
+        binds.push(object_expr);
+        Expr::ChainRoot { depth: count - 1, span: object_span }
+    } else {
+        object_expr
+    };
+    let key = match key_ast {
+        Some(key) => {
+            let key_span = span(key.span());
+            let key_expr = convert_expression(source, key)?;
+            Some(if bind_key {
+                binds.push(key_expr);
+                Expr::ChainRoot { depth: 0, span: key_span }
+            } else {
+                key_expr
+            })
+        }
+        None => None,
+    };
+    Ok(match member {
+        MemberRef::Static(m) => {
+            let field = Name { span: span(m.property.span) };
+            (
+                binds,
+                Expr::Field { object: Box::new(object.clone()), field, span: span(m.span) },
+                MemberStore::Field { object, field },
+            )
+        }
+        MemberRef::Computed(m) => {
+            let index = key.expect("computed member has a key");
+            (
+                binds,
+                Expr::Index {
+                    object: Box::new(object.clone()),
+                    index: Box::new(index.clone()),
+                    span: span(m.span),
+                },
+                MemberStore::Index { object, index },
+            )
+        }
+        MemberRef::Private(m) => {
+            let field = Name { span: span(m.field.span) };
+            let private = Expr::PrivateField {
+                object: Box::new(object),
+                field,
+                span: span(m.span),
+            };
+            (
+                binds,
+                private.clone(),
+                MemberStore::Field { object: private, field },
+            )
+        }
+    })
+}
+
+/// Wrap `body` in `TempBind`s for `binds` (outermost first).
+fn wrap_binds(binds: Vec<Expr>, body: Expr, span: Span) -> Expr {
+    let mut result = body;
+    for value in binds.into_iter().rev() {
+        result = Expr::TempBind { value: Box::new(value), body: Box::new(result), span };
+    }
+    result
 }

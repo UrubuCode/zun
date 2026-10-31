@@ -112,6 +112,15 @@ pub(super) fn collect_mutated_expr(
             collect_mutated_expr(checker, object, names);
             collect_mutated_expr(checker, index, names);
         }
+        ast::Expr::ChainRoot { .. } => {}
+        ast::Expr::TempBind { value, body, .. } => {
+            collect_mutated_expr(checker, value, names);
+            collect_mutated_expr(checker, body, names);
+        }
+        ast::Expr::OptionalChain { object, body, .. } => {
+            collect_mutated_expr(checker, object, names);
+            collect_mutated_expr(checker, body, names);
+        }
         ast::Expr::OptionalCall { callee, args, .. } => {
             collect_mutated_expr(checker, callee, names);
             for arg in args { collect_mutated_expr(checker, arg, names); }

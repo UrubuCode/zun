@@ -489,6 +489,15 @@ impl Checker<'_> {
                 self.collect_capture_expr(cx, parameters, object, uses);
                 self.collect_capture_expr(cx, parameters, index, uses);
             }
+            ast::Expr::ChainRoot { .. } => {}
+            ast::Expr::TempBind { value, body, .. } => {
+                self.collect_capture_expr(cx, parameters, value, uses);
+                self.collect_capture_expr(cx, parameters, body, uses);
+            }
+            ast::Expr::OptionalChain { object, body, .. } => {
+                self.collect_capture_expr(cx, parameters, object, uses);
+                self.collect_capture_expr(cx, parameters, body, uses);
+            }
             ast::Expr::OptionalCall { callee, args, .. } => {
                 self.collect_capture_expr(cx, parameters, callee, uses);
                 for arg in args {

@@ -196,7 +196,7 @@ impl Interp<'_> {
                 return Ok(None);
             }
             if let Some(getter) = getter {
-                return self.invoke_function_value(getter, Vec::new()).map(Some);
+                return self.invoke_function_value(getter, self.with_this_arg(getter, obj, Vec::new())).map(Some);
             }
             if accessor {
                 return Ok(Some(Value::Void));

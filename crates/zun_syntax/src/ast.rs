@@ -891,6 +891,15 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// Placeholder for the guarded value of the innermost enclosing
+    /// [`Expr::OptionalChain`] (the left side of a `?.` link).
+    ChainRoot { depth: u32, span: Span },
+    /// Evaluates `value` once into a temporary, then evaluates `body` with
+    /// [`Expr::ChainRoot`] (depth 0 = innermost binding) referring to it.
+    TempBind { value: Box<Expr>, body: Box<Expr>, span: Span },
+    /// `object?.<rest of chain>`: evaluates `object`; if nullish the whole
+    /// chain is `undefined`, else `body` runs with [`Expr::ChainRoot`] bound to it.
+    OptionalChain { object: Box<Expr>, body: Box<Expr>, span: Span },
     /// `object?.method(args)` — a null-safe managed method call.
     OptionalMethodCall {
         object: Box<Expr>,
@@ -1005,6 +1014,9 @@ impl Expr {
             | Expr::OptionalField { span, .. }
             | Expr::OptionalIndex { span, .. }
             | Expr::OptionalCall { span, .. }
+            | Expr::ChainRoot { span, .. }
+            | Expr::TempBind { span, .. }
+            | Expr::OptionalChain { span, .. }
             | Expr::OptionalMethodCall { span, .. }
             | Expr::Spread { span, .. }
             | Expr::Cast { span, .. }

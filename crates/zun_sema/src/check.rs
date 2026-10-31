@@ -156,6 +156,7 @@ fn check_impl(
         enums: HashMap::new(),
         module_globals: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
+        chain_roots: Vec::new(),
     };
     checker.collect_type_param_names(program);
     checker.resolve_imports(program, allow_external_modules, allow_core);
@@ -392,6 +393,8 @@ struct Checker<'a> {
     /// through the realm store so it observes those writes, and mirrors its
     /// own assignments back.
     fn_mutated_globals: HashSet<String>,
+    /// Temps bound by enclosing `OptionalChain` guards (innermost last).
+    chain_roots: Vec<ast::Name>,
     /// Every generic type-parameter name declared anywhere in the program
     /// (`function f<T>`, `class C<U>`, `method m<K>`). Zun erases generics, so a
     /// type parameter has no distinct type: `resolve_annotation` treats a name
@@ -5394,7 +5397,12 @@ impl Checker<'_> {
                     );
                     return;
                 };
+                if let ast::Expr::Function(function) = &property.value {
+                    let body = &self.source[function.span.start as usize..function.span.end as usize];
+                    self.closure_takes_this = body.contains("this");
+                }
                 let func = self.check_expr(cx, &property.value);
+                self.closure_takes_this = false;
                 let accessor_slot = if property.kind == ast::PropertyKind::Get { "get" } else { "set" };
                 // Build the accessor descriptor `{ get|set: fn }` as a dynamic
                 // object (the function lives in its string function slot), then
@@ -11391,6 +11399,77 @@ impl Checker<'_> {
                     }
                 }
             }
+            ast::Expr::ChainRoot { depth, .. } => {
+                let len = self.chain_roots.len();
+                let Some(root) = len
+                    .checked_sub(1 + *depth as usize)
+                    .and_then(|index| self.chain_roots.get(index))
+                    .copied()
+                else {
+                    self.error(span, "optional chain placeholder outside a chain");
+                    return self.poison(span);
+                };
+                self.check_expr(cx, &ast::Expr::Ident(root))
+            }
+            ast::Expr::TempBind { value, body, .. } => {
+                let bound = self.check_expr(cx, value);
+                if bound.ty.is_error() {
+                    return self.poison(span);
+                }
+                let (slot, tmp) = self.synthetic_local(cx, bound.ty);
+                self.chain_roots.push(tmp);
+                let result = self.check_expr(cx, body);
+                self.chain_roots.pop();
+                let ty = result.ty;
+                hir::Expr {
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                            ty: Ty::Any,
+                            span,
+                        }),
+                        value: Box::new(result),
+                    },
+                    ty,
+                    span,
+                }
+            }
+            ast::Expr::OptionalChain { object, body, .. } => {
+                let guard = self.check_expr(cx, object);
+                if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
+                    let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                    let tmp_expr = ast::Expr::Ident(tmp);
+                    self.chain_roots.push(tmp);
+                    let result = self.optional_guarded(
+                        cx,
+                        slot,
+                        Self::box_to_any(guard),
+                        tmp_expr,
+                        body.as_ref().clone(),
+                        span,
+                    );
+                    self.chain_roots.pop();
+                    return result;
+                }
+                // A statically non-nullable guard: no short-circuit possible.
+                let (slot, tmp) = self.synthetic_local(cx, guard.ty);
+                self.chain_roots.push(tmp);
+                let value = self.check_expr(cx, body);
+                self.chain_roots.pop();
+                let ty = value.ty;
+                hir::Expr {
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Assign { slot, value: Box::new(guard) },
+                            ty: Ty::Any,
+                            span,
+                        }),
+                        value: Box::new(value),
+                    },
+                    ty,
+                    span,
+                }
+            }
             ast::Expr::OptionalField { object, field, .. } => {
                 let object_ast: &ast::Expr = object;
                 let object = self.check_expr(cx, object);
@@ -11460,6 +11539,60 @@ impl Checker<'_> {
                             span,
                         };
                         return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), test, call, span);
+                    }
+                }
+                if let ast::Expr::Index { object: recv, index: key, .. } = callee.as_ref() {
+                    let recv_hir = self.check_expr(cx, recv);
+                    if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                        let tmp_expr = ast::Expr::Ident(tmp);
+                        let test = ast::Expr::Index {
+                            object: Box::new(tmp_expr.clone()),
+                            index: key.clone(),
+                            span,
+                        };
+                        let call = ast::Expr::ComputedCall {
+                            callee: Box::new(test.clone()),
+                            args: args.clone(),
+                            span,
+                        };
+                        return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), test, call, span);
+                    }
+                }
+                if let ast::Expr::OptionalIndex { object: recv, index: key, .. } = callee.as_ref() {
+                    let recv_hir = self.check_expr(cx, recv);
+                    if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                        let tmp_expr = ast::Expr::Ident(tmp);
+                        let call = ast::Expr::OptionalCall {
+                            callee: Box::new(ast::Expr::Index {
+                                object: Box::new(tmp_expr.clone()),
+                                index: key.clone(),
+                                span,
+                            }),
+                            args: args.clone(),
+                            span,
+                        };
+                        return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), tmp_expr, call, span);
+                    }
+                }
+                if let ast::Expr::OptionalField { object: recv, field, .. } = callee.as_ref() {
+                    // `(recv?.m)?.()` keeps `this = recv`; a nullish `recv`
+                    // short-circuits to undefined.
+                    let recv_hir = self.check_expr(cx, recv);
+                    if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                        let tmp_expr = ast::Expr::Ident(tmp);
+                        let call = ast::Expr::OptionalCall {
+                            callee: Box::new(ast::Expr::Field {
+                                object: Box::new(tmp_expr.clone()),
+                                field: *field,
+                                span,
+                            }),
+                            args: args.clone(),
+                            span,
+                        };
+                        return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), tmp_expr, call, span);
                     }
                 }
                 let callee_hir = self.check_expr(cx, callee);
@@ -12038,6 +12171,55 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `recv[key](args)` on a dynamic receiver: a member call (keeps
+                // `this`), dispatched by the stringified key at run time.
+                if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
+                    if args.len() <= 4 && !matches!(key_ast.as_ref(), ast::Expr::Spread { .. }) {
+                        let recv_hir = self.check_expr(cx, recv_ast);
+                        if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                            let key_hir = self.check_expr(cx, key_ast);
+                            if matches!(key_hir.ty, Ty::String | Ty::F64) || key_hir.ty.is_int() {
+                                let key_hir = self.to_string_for_parse(key_hir);
+                                let native_name = [
+                                    "dynamicCall0",
+                                    "dynamicCall1",
+                                    "dynamicCall2",
+                                    "dynamicCall3",
+                                    "dynamicCall4",
+                                ][args.len()];
+                                if let Some((id, _)) = zun_natives::resolve("collections", native_name) {
+                                    let mut call_args = vec![recv_hir, key_hir];
+                                    for arg in args {
+                                        call_args.push(self.check_expr(cx, arg));
+                                    }
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                        ty: Ty::Any,
+                                        span,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+                // `recv?.[key](args)`: receiver-guarded member call.
+                if let ast::Expr::OptionalIndex { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
+                    let recv_hir = self.check_expr(cx, recv_ast);
+                    if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                        let tmp_expr = ast::Expr::Ident(tmp);
+                        let call = ast::Expr::ComputedCall {
+                            callee: Box::new(ast::Expr::Index {
+                                object: Box::new(tmp_expr.clone()),
+                                index: key_ast.clone(),
+                                span,
+                            }),
+                            args: args.clone(),
+                            span,
+                        };
+                        return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), tmp_expr, call, span);
+                    }
+                }
                 let callee = self.check_expr(cx, callee);
                 if let Ty::Function(func) = callee.ty {
                     let mut args: Vec<hir::Expr> =
@@ -12234,6 +12416,60 @@ impl Checker<'_> {
         operand: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        // `delete a?.b` / `delete a?.[k]` / `delete a?.b.c`: a nullish guard
+        // short-circuits to `true`; otherwise delete through the chain root.
+        {
+            let guarded: Option<(&ast::Expr, ast::Expr)> = match operand {
+                ast::Expr::OptionalField { object, field, .. } => Some((
+                    object.as_ref(),
+                    ast::Expr::Field { object: Box::new(ast::Expr::ChainRoot { depth: 0, span }), field: *field, span },
+                )),
+                ast::Expr::OptionalIndex { object, index, .. } => Some((
+                    object.as_ref(),
+                    ast::Expr::Index { object: Box::new(ast::Expr::ChainRoot { depth: 0, span }), index: index.clone(), span },
+                )),
+                ast::Expr::OptionalChain { object, body, .. } => Some((object.as_ref(), body.as_ref().clone())),
+                _ => None,
+            };
+            if let Some((guard_ast, body)) = guarded {
+                let guard = self.check_expr(cx, guard_ast);
+                let (slot, tmp) = self.synthetic_local(cx, if matches!(guard.ty, Ty::Any | Ty::DynamicObject) { Ty::Any } else { guard.ty });
+                let tmp_expr = ast::Expr::Ident(tmp);
+                self.chain_roots.push(tmp);
+                let delete = ast::Expr::Unary { op: ast::UnaryOp::Delete, operand: Box::new(body), span };
+                let cond = if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
+                    ast::Expr::Conditional {
+                        condition: Box::new(ast::Expr::Binary {
+                            op: ast::BinaryOp::LooseEq,
+                            lhs: Box::new(tmp_expr),
+                            rhs: Box::new(ast::Expr::Null { span }),
+                            span,
+                        }),
+                        when_true: Box::new(ast::Expr::Bool { value: true, span }),
+                        when_false: Box::new(delete),
+                        span,
+                    }
+                } else {
+                    delete
+                };
+                let value = self.check_expr(cx, &cond);
+                self.chain_roots.pop();
+                let ty = value.ty;
+                let bound = if matches!(guard.ty, Ty::Any | Ty::DynamicObject) { Self::box_to_any(guard) } else { guard };
+                return hir::Expr {
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                            ty: Ty::Any,
+                            span,
+                        }),
+                        value: Box::new(value),
+                    },
+                    ty,
+                    span,
+                };
+            }
+        }
         let (object_ast, key) = match operand {
             ast::Expr::Field { object, field, .. } => {
                 let key = hir::Expr {
@@ -12245,6 +12481,7 @@ impl Checker<'_> {
             }
             ast::Expr::Index { object, index, .. } => {
                 let key = self.check_expr(cx, index);
+                let key = if matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() { self.to_string_for_parse(key) } else { key };
                 if !key.ty.is_error() && key.ty != Ty::String {
                     self.error(key.span, "`delete obj[k]` requires a string key");
                 }
@@ -12806,6 +13043,9 @@ fn count_yields_in_expr(expr: &ast::Expr) -> usize {
         MethodCall { receiver, args, .. } | OptionalMethodCall { object: receiver, args, .. } => count_yields_in_expr(receiver) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         OptionalField { object, .. } | Field { object, .. } | PrivateField { object, .. } => count_yields_in_expr(object),
         OptionalIndex { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
+        ChainRoot { .. } => 0,
+        TempBind { value, body, .. } => count_yields_in_expr(value) + count_yields_in_expr(body),
+        OptionalChain { object, body, .. } => count_yields_in_expr(object) + count_yields_in_expr(body),
         OptionalCall { callee, args, .. } => count_yields_in_expr(callee) + args.iter().map(count_yields_in_expr).sum::<usize>(),
         FieldAssign { object, value, .. } | PrivateFieldAssign { object, value, .. } => count_yields_in_expr(object) + count_yields_in_expr(value),
         Index { object, index, .. } => count_yields_in_expr(object) + count_yields_in_expr(index),
@@ -12907,6 +13147,9 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
         StaticField { .. } => 0,
         OptionalField { object, .. } => count_awaits_in_expr(object),
         OptionalIndex { object, index, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(index),
+        ChainRoot { .. } => 0,
+        TempBind { value, body, .. } => count_awaits_in_expr(value) + count_awaits_in_expr(body),
+        OptionalChain { object, body, .. } => count_awaits_in_expr(object) + count_awaits_in_expr(body),
         OptionalCall { callee, args, .. } => count_awaits_in_expr(callee) + args.iter().map(count_awaits_in_expr).sum::<usize>(),
         OptionalMethodCall { object, args, .. } => {
             count_awaits_in_expr(object) + args.iter().map(count_awaits_in_expr).sum::<usize>()

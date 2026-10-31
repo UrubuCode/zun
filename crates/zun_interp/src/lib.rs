@@ -580,6 +580,20 @@ impl Interp<'_> {
                         }
                         other => other.clone(),
                     };
+                    if matches!(concrete, Value::Void | Value::Null) {
+                        let kind = if matches!(concrete, Value::Null) { "null" } else { "undefined" };
+                        let message = format!("Cannot read properties of {kind} (reading '{name}')");
+                        match self.new_error_object("TypeError", &message) {
+                            Some(error) => {
+                                let exception = Value::Object(error);
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            None => return Err(RunError::Native(format!("TypeError: {message}"))),
+                        }
+                    }
                     if name == "constructor" {
                         if let Value::Object(obj) = &concrete {
                             let obj = *obj;
@@ -654,7 +668,7 @@ impl Interp<'_> {
                         None
                     };
                     let value = if let Some(getter) = getter {
-                        match self.invoke_function_value(getter, Vec::new()) {
+                        match self.invoke_function_value(getter, self.with_this_arg(getter, object, Vec::new())) {
                             Ok(v) => v,
                             Err(RunError::Thrown(exception)) => {
                                 if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
@@ -790,7 +804,7 @@ impl Interp<'_> {
                         });
                         if is_accessor {
                             if let Some(setter) = setter {
-                                match self.invoke_function_value(setter, vec![Value::Any(any)]) {
+                                match self.invoke_function_value(setter, self.with_this_arg(setter, object, vec![Value::Any(any)])) {
                                     Ok(_) => {}
                                     Err(RunError::Thrown(exception)) => {
                                         if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
@@ -813,7 +827,35 @@ impl Interp<'_> {
                     // A Symbol key reads the symbol-keyed slot; a string key the
                     // ordinary dynamic property.
                     let key = pop(&mut stack)?;
-                    let object = pop(&mut stack)?.as_object();
+                    let key = match key {
+                        Value::Any(any) if any.as_symbol().is_none() => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
+                        }
+                        other => other,
+                    };
+                    let object_raw = pop(&mut stack)?;
+                    {
+                        let concrete = match &object_raw {
+                            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .unwrap_or(Value::Void),
+                            other => other.clone(),
+                        };
+                        if matches!(concrete, Value::Void | Value::Null) {
+                            let kind = if matches!(concrete, Value::Null) { "null" } else { "undefined" };
+                            let message = format!("Cannot read properties of {kind}");
+                            match self.new_error_object("TypeError", &message) {
+                                Some(error) => {
+                                    let exception = Value::Object(error);
+                                    if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                None => return Err(RunError::Native(format!("TypeError: {message}"))),
+                            }
+                        }
+                    }
+                    let object = object_raw.as_object();
                     let value = if let Value::Any(any) = &key {
                         if let Some(symbol) = any.as_symbol() {
                             zun_gc::with_current_heap(|heap| {
@@ -863,6 +905,12 @@ impl Interp<'_> {
                     let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .ok_or(RunError::BadToken)?;
                     let key = pop(&mut stack)?;
+                    let key = match key {
+                        Value::Any(any) if any.as_symbol().is_none() => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
+                        }
+                        other => other,
+                    };
                     let object = pop(&mut stack)?.as_object();
                     {
                         let key_name: Option<String> = match &key {

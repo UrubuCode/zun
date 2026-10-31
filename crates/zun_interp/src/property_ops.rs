@@ -419,7 +419,7 @@ impl Interp<'_> {
                         .unwrap_or_else(zun_core::Any::null);
                     let arg = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
                         .unwrap_or(Value::Any(any));
-                    self.invoke_function_value(setter, vec![arg])?;
+                    self.invoke_function_value(setter, self.with_this_arg(setter, target, vec![arg]))?;
                     return Ok(Value::Bool(true));
                 }
                 if !zun_gc::with_current_heap(|heap| heap.dynamic_can_set(target, &name)) {

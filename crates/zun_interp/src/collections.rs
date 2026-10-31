@@ -2446,6 +2446,48 @@ impl<'a> Interp<'a> {
                         };
                     }
                 }
+                // `Function.prototype.call/apply` on a function value reached
+                // through `any`.
+                if let Value::Function(handle) = &receiver_concrete {
+                    if matches!(member.as_ref(), "call" | "apply") {
+                        let handle = *handle;
+                        let unboxed = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => zun_gc::with_current_heap(|heap| {
+                                    Value::unbox_any(*any, heap)
+                                })
+                                .ok_or(RunError::BadToken),
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut it = unboxed.into_iter();
+                        let this_arg = it.next().unwrap_or(Value::Void);
+                        let mut rest: Vec<Value> = if member.as_ref() == "apply" {
+                            match it.next() {
+                                Some(Value::Object(array)) => self.read_array_values(array)?,
+                                _ => Vec::new(),
+                            }
+                        } else {
+                            it.collect()
+                        };
+                        let takes_this = !handle.is_bound()
+                            && self
+                                .module
+                                .tables
+                                .method_defs
+                                .get((handle.method_rid() as usize).wrapping_sub(1))
+                                .map(|method| self.module.strings.get(method.name).ends_with("@this>"))
+                                .unwrap_or(false);
+                        if takes_this {
+                            rest.insert(0, this_arg);
+                        }
+                        let result = self.invoke_function_value(handle, rest)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 let namespace = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
                 // A built-in iterator object (from `Array`/`Map`/`Set`
@@ -2592,6 +2634,20 @@ impl<'a> Interp<'a> {
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
+                }
+                let is_module_member = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_module_function(namespace, &member).is_some()
+                });
+                if !is_module_member {
+                    // Neither a method nor a namespace export: the member is
+                    // missing or not callable.
+                    return match self.new_error_object(
+                        "TypeError",
+                        &format!("{member} is not a function"),
+                    ) {
+                        Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                        None => Err(RunError::BadToken),
+                    };
                 }
                 let loader = self.loader.ok_or(RunError::BadToken)?;
                 let result = super::namespace::call_namespace_member(
@@ -4682,7 +4738,7 @@ impl<'a> Interp<'a> {
                             continue;
                         }
                         let boxed = if let Some(getter) = getter {
-                            let got = self.invoke_function_value(getter, Vec::new())?;
+                            let got = self.invoke_function_value(getter, self.with_this_arg(getter, source, Vec::new()))?;
                             zun_gc::with_current_heap_mut(|heap| got.box_any(heap))
                                 .unwrap_or_else(zun_core::Any::null)
                         } else {
@@ -4707,7 +4763,7 @@ impl<'a> Interp<'a> {
                         if is_accessor {
                             match setter {
                                 Some(setter) => {
-                                    self.invoke_function_value(setter, vec![Value::Any(boxed)])?;
+                                    self.invoke_function_value(setter, self.with_this_arg(setter, target, vec![Value::Any(boxed)]))?;
                                 }
                                 None => {
                                     return Err(RunError::Native(format!(
@@ -4774,6 +4830,16 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
+                // Function values do not box to `Any`; they ride the global
+                // object's function slot.
+                if let Some(Value::Function(handle)) = args.get(1) {
+                    let handle = *handle;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let global = heap.global_object();
+                        heap.dynamic_set_function(global, name, handle);
+                    });
+                    return Ok(Value::Void);
+                }
                 let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let readonly = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
@@ -4792,6 +4858,14 @@ impl<'a> Interp<'a> {
                     let global = heap.global_object();
                     heap.dynamic_get(global, &name)
                 });
+                if value.is_none() {
+                    let function = zun_gc::with_current_heap_mut(|heap| {
+                        { let global = heap.global_object(); heap.dynamic_get_function(global, &name) }
+                    });
+                    if let Some(handle) = function {
+                        return Ok(Value::Function(handle));
+                    }
+                }
                 Ok(value.map(Value::Any).unwrap_or(Value::Void))
             }
             "realmDescriptor" => {
@@ -5430,7 +5504,7 @@ impl<'a> Interp<'a> {
                     continue;
                 }
                 let value = if let Some(getter) = getter {
-                    self.invoke_function_value(getter, Vec::new())?
+                    self.invoke_function_value(getter, self.with_this_arg(getter, obj, Vec::new()))?
                 } else if zun_gc::with_current_heap(|heap| heap.dynamic_is_accessor(obj, &key)) {
                     Value::Void
                 } else if let Some(data) = data {
@@ -6098,6 +6172,29 @@ impl<'a> Interp<'a> {
             zun_gc::with_current_heap_mut(|heap| sink(heap, roots[1], boxed));
         }
         Ok(roots[1])
+    }
+
+    /// Arguments for invoking an object-literal accessor/method closure: a
+    /// closure that uses `this` (marked `@this`) takes the receiver first.
+    pub(crate) fn with_this_arg(
+        &self,
+        handle: zun_core::FunctionHandle,
+        receiver: zun_gc::Obj,
+        mut args: Vec<Value>,
+    ) -> Vec<Value> {
+        if !handle.is_bound() {
+            let takes_this = self
+                .module
+                .tables
+                .method_defs
+                .get((handle.method_rid() as usize).wrapping_sub(1))
+                .map(|method| self.module.strings.get(method.name).contains("@this"))
+                .unwrap_or(false);
+            if takes_this {
+                args.insert(0, Value::Object(receiver));
+            }
+        }
+        args
     }
 
     /// Invoke a function value with the given positional arguments. The engine
