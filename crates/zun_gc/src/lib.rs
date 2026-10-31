@@ -131,6 +131,10 @@ pub struct GeneratorState {
     pub done: bool,
     pub current: zun_core::Any,
     pub has_current: bool,
+    /// Value a `return(v)` completion owes the caller once a yielding
+    /// `finally` finishes and the generator completes.
+    pub pending_return: zun_core::Any,
+    pub has_pending_return: bool,
 }
 
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a

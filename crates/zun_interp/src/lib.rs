@@ -716,6 +716,27 @@ impl Interp<'_> {
                             }
                         }
                     }
+                    // `prim.constructor` is a record naming the wrapper class.
+                    if name == "constructor" {
+                        let wrapper = match &concrete {
+                            Value::Str(_) => Some("String"),
+                            Value::Bool(_) => Some("Boolean"),
+                            Value::Float(..) | Value::Int(..) => Some("Number"),
+                            _ => None,
+                        };
+                        if let Some(class_name) = wrapper {
+                            let record = zun_gc::with_current_heap_mut(|heap| {
+                                let record = heap.alloc_dynamic();
+                                let name_any = Value::Str(class_name.into())
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                heap.dynamic_set(record, "name", name_any);
+                                record
+                            });
+                            stack.push(Value::Object(record));
+                            continue;
+                        }
+                    }
                     if name == "length" {
                         match &concrete {
                             Value::Str(text) => {

@@ -108,6 +108,8 @@ impl Heap {
             done: false,
             current: zun_core::Any::null(),
             has_current: false,
+            pending_return: zun_core::Any::void(),
+            has_pending_return: false,
         });
         object
     }

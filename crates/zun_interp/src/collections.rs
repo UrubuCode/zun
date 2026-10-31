@@ -1066,6 +1066,15 @@ impl<'a> Interp<'a> {
                             .ok_or(RunError::BadToken)?;
                         value
                     }
+                    ExecutionOutcome::Thrown(value)
+                        if state.has_pending_return && crate::unwind::is_generator_return(&value) =>
+                    {
+                        state.done = true;
+                        state.has_pending_return = false;
+                        state.current = state.pending_return;
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(state.current, heap))
+                            .ok_or(RunError::BadToken)?
+                    }
                     ExecutionOutcome::Thrown(value) => {
                         state.done = true;
                         state.current = zun_core::Any::void();
@@ -6861,6 +6870,106 @@ impl<'a> Interp<'a> {
 
     /// Invoke a generator method value (`gen.next` / `gen.return` / `gen.throw`)
     /// obtained by reading the property off a generator object.
+    /// Allocate a fresh `{ value, done }` iterator-result object.
+    fn make_iter_result(&mut self, value: Value, done: bool) -> Value {
+        let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+            .unwrap_or_else(zun_core::Any::void);
+        let value_root: Vec<zun_gc::Obj> = boxed
+            .as_object()
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+            .into_iter()
+            .collect();
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&value_root) };
+        let result = zun_gc::with_current_heap_mut(|heap| {
+            let result = heap.alloc_dynamic();
+            let value_any = match value_root.first() {
+                Some(object) => zun_core::Any::object(object.addr() as usize),
+                None => boxed,
+            };
+            heap.dynamic_set(result, "value", value_any);
+            heap.dynamic_set(result, "done", zun_core::Any::bool(done));
+            result
+        });
+        Value::Any(zun_core::Any::object(result.addr() as usize))
+    }
+
+    /// `generator.return(value)`: resume a suspended generator as a return
+    /// completion so its `finally` clauses run. A `finally` may override the
+    /// result with its own `return` or suspend the completion with a `yield`.
+    fn generator_return(&mut self, generator: zun_gc::Obj, value: Value) -> Result<Value, RunError> {
+        let mut state = zun_gc::with_current_heap_mut(|heap| heap.generator_state_take(generator))
+            .ok_or(RunError::BadToken)?;
+        let saved = if state.done { None } else { state.frame.take() };
+        state.has_current = false;
+        state.current = zun_core::Any::void();
+        let Some(saved) = saved else {
+            state.done = true;
+            zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+            return Ok(self.make_iter_result(value, true));
+        };
+        let locals = zun_gc::with_current_heap(|heap| {
+            saved.locals.iter().map(|v| gen_unbox(*v, heap)).collect::<Option<Vec<_>>>()
+        })
+        .ok_or(RunError::BadToken)?;
+        let stack = zun_gc::with_current_heap(|heap| {
+            saved.eval_stack.iter().map(|v| gen_unbox(*v, heap)).collect::<Option<Vec<_>>>()
+        })
+        .ok_or(RunError::BadToken)?;
+        let mut frame = ExecutionFrame::new(state.method_rid, locals);
+        frame.pc = saved.pc;
+        frame.stack = stack;
+        // The state stays taken while the body runs, so a re-entrant call
+        // finds no live generator.
+        let roots = [generator];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(true));
+        let outcome = self.resume_suspended(frame);
+        crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(false));
+        let generator = roots[0];
+        let result = match outcome {
+            ExecutionOutcome::Thrown(thrown) if crate::unwind::is_generator_return(&thrown) => {
+                state.done = true;
+                self.make_iter_result(value, true)
+            }
+            ExecutionOutcome::Complete(returned) => {
+                state.done = true;
+                self.make_iter_result(returned, true)
+            }
+            ExecutionOutcome::Suspended(frame) => {
+                let yielded = self.yielded.take().ok_or(RunError::Malformed(
+                    "generator suspended without yielding a value".into(),
+                ))?;
+                let locals = zun_gc::with_current_heap_mut(|heap| {
+                    frame.locals.iter().map(|v| gen_box(v, heap)).collect::<Option<Vec<_>>>()
+                })
+                .ok_or(RunError::BadToken)?;
+                let eval_stack = zun_gc::with_current_heap_mut(|heap| {
+                    frame.stack.iter().map(|v| gen_box(v, heap)).collect::<Option<Vec<_>>>()
+                })
+                .ok_or(RunError::BadToken)?;
+                state.frame = Some(zun_gc::GeneratorFrame {
+                    method_rid: frame.method_rid,
+                    pc: frame.pc,
+                    locals,
+                    eval_stack,
+                });
+                state.pending_return = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                    .ok_or(RunError::BadToken)?;
+                state.has_pending_return = true;
+                zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                return Ok(self.make_iter_result(yielded, false));
+            }
+            ExecutionOutcome::Thrown(thrown) => {
+                state.done = true;
+                zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                return Err(RunError::Thrown(thrown));
+            }
+            ExecutionOutcome::Fault(error) => return Err(error),
+        };
+        zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+        Ok(result)
+    }
+
     pub(crate) fn call_generator_method(
         &mut self,
         kind: u32,
@@ -6880,28 +6989,7 @@ impl<'a> Interp<'a> {
                 crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
                 Ok(result?.unwrap_or(Value::Void))
             }
-            1 => {
-                self.close_generator(generator, false)?;
-                let boxed = zun_gc::with_current_heap_mut(|heap| first.box_any(heap))
-                    .unwrap_or_else(zun_core::Any::void);
-                let value_root: Vec<zun_gc::Obj> = boxed
-                    .as_object()
-                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-                    .into_iter()
-                    .collect();
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&value_root) };
-                let result = zun_gc::with_current_heap_mut(|heap| {
-                    let result = heap.alloc_dynamic();
-                    let value_any = match value_root.first() {
-                        Some(object) => zun_core::Any::object(object.addr() as usize),
-                        None => boxed,
-                    };
-                    heap.dynamic_set(result, "value", value_any);
-                    heap.dynamic_set(result, "done", zun_core::Any::bool(true));
-                    result
-                });
-                Ok(Value::Any(zun_core::Any::object(result.addr() as usize)))
-            }
+            1 => self.generator_return(generator, first),
             _ => {
                 let suspended = zun_gc::with_current_heap(|heap| {
                     heap.generator_state(generator)
