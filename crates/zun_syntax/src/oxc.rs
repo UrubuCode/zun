@@ -537,6 +537,8 @@ fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr
     }
     let mut statements = prologue;
     statements.extend(convert_statement_list(source, &body.statements)?);
+    let mut params = params;
+    inject_arguments_object(source, span(function.span), &mut params, &mut statements);
     Ok(Expr::Function(FunctionExpr {
         params,
         return_type: convert_type_annotation(source, function.return_type.as_deref())?,
@@ -1988,6 +1990,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 is_rest: true,
             });
         }
+        inject_arguments_object(source, function_span, &mut params, &mut statements);
         functions.push(Function {
             name: Name {
                 span: span(id.span),
@@ -3183,6 +3186,12 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                                 is_rest: true,
                             });
                         }
+                        inject_arguments_object(
+                            source,
+                            Span::new(method.span.start, method.span.end),
+                            &mut params,
+                            &mut method_statements,
+                        );
                         let decorators = method
                             .decorators
                             .iter()
@@ -3271,4 +3280,72 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                 symbol_methods,
                 span: Span::new(class_declaration.span.start, class_declaration.span.end),
             });
+}
+
+/// Find the first whole-word occurrence of `arguments` inside `[start, end)` of
+/// the source, returning its span.
+fn find_arguments_word(source: &str, start: u32, end: u32) -> Option<Span> {
+    let text = source.get(start as usize..end as usize)?;
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut from = 0;
+    while let Some(found) = text[from..].find("arguments") {
+        let at = from + found;
+        let after = at + "arguments".len();
+        let before_ok = at == 0 || !is_ident(bytes[at - 1]);
+        let after_ok = after >= bytes.len() || !is_ident(bytes[after]);
+        if before_ok && after_ok {
+            return Some(Span::new(start + at as u32, start + after as u32));
+        }
+        from = after;
+    }
+    None
+}
+
+/// Give a non-arrow function its implicit `arguments` object: an Array local
+/// `arguments = [p1, ..., pn, ...rest]` built at the top of the body. A function
+/// that does not already end in a rest parameter gets a synthetic one so extra
+/// call arguments are collected.
+fn inject_arguments_object(
+    source: &str,
+    function_span: Span,
+    params: &mut Vec<crate::ast::Param>,
+    statements: &mut Vec<Stmt>,
+) {
+    let Some(word) = find_arguments_word(source, function_span.start, function_span.end) else {
+        return;
+    };
+    let rest_name = match params.last() {
+        Some(last) if last.is_rest => last.name,
+        _ => {
+            let name = Name {
+                span: Span::new(
+                    crate::ast::SYNTHETIC_NAME_BASE + 0x0800_0000 + function_span.start,
+                    crate::ast::SYNTHETIC_NAME_BASE + 0x0800_0000 + function_span.start,
+                ),
+            };
+            params.push(crate::ast::Param {
+                name,
+                ty: None,
+                default_value: None,
+                is_rest: true,
+            });
+            name
+        }
+    };
+    let mut elements: Vec<crate::ast::ArrayElement> = params
+        .iter()
+        .filter(|param| !param.is_rest)
+        .map(|param| crate::ast::ArrayElement::Expr(Expr::Ident(param.name)))
+        .collect();
+    elements.push(crate::ast::ArrayElement::Spread(Expr::Ident(rest_name)));
+    statements.insert(
+        0,
+        Stmt::Let {
+            name: Name { span: word },
+            ty: None,
+            init: Expr::ArrayLiteral { elements, span: word },
+            span: word,
+        },
+    );
 }

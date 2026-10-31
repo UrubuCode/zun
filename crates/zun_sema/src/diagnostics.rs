@@ -4,7 +4,7 @@ use super::*;
 
 /// Names whose span starts at or above this value are synthetic temporaries
 /// rather than source slices; their text is ` synth#<index>`.
-pub(crate) const SYNTHETIC_NAME_BASE: u32 = 0xF000_0000;
+pub(crate) const SYNTHETIC_NAME_BASE: u32 = ast::SYNTHETIC_NAME_BASE;
 
 impl Checker<'_> {
     /// Declare a fresh synthetic local in the current scope and return the

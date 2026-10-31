@@ -1026,3 +1026,8 @@ impl Expr {
         }
     }
 }
+
+/// Names whose span starts at or above this value are compiler-synthesized
+/// identifiers (not source slices); sema resolves their text as
+/// ` synth#<start - SYNTHETIC_NAME_BASE>`.
+pub const SYNTHETIC_NAME_BASE: u32 = 0xF000_0000;

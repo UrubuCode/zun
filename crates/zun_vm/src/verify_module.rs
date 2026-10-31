@@ -170,6 +170,32 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
             let handle = u8::from(opcode == Opcode::CallIndirect);
             Some((body.param_count as u8 + handle, 1))
         }
+        // Rest-parameter calls: the count immediate states the pushed operands
+        // (the callee packs the trailing ones into its rest array).
+        Opcode::CallRest | Opcode::CallVirtRest => match operand {
+            Operand::TokenImm32(_, count) if (0..255).contains(count) => Some((*count as u8, 1)),
+            _ => None,
+        },
+        Opcode::CallIndirectRest => match operand {
+            Operand::TokenImm32(_, count) if (0..255).contains(count) => {
+                Some((*count as u8 + 1, 1))
+            }
+            _ => None,
+        },
+        Opcode::CallRestArray => Some((1, 1)),
+        Opcode::CallVirtRestArray => Some((2, 1)),
+        Opcode::CallRestArrayFixed => match operand {
+            Operand::TokenImm32(_, count) if (0..255).contains(count) => {
+                Some((*count as u8 + 1, 1))
+            }
+            _ => None,
+        },
+        Opcode::CallVirtRestArrayFixed => match operand {
+            Operand::TokenImm32(_, count) if (0..255).contains(count) => {
+                Some((*count as u8 + 2, 1))
+            }
+            _ => None,
+        },
         // newobj pops one initializer per field and pushes the new reference.
         Opcode::NewObj => {
             let token = match operand {
