@@ -1647,7 +1647,7 @@ impl Checker<'_> {
             }
             if parameter.default_value.is_some() {
                 saw_default = true;
-            } else if saw_default {
+            } else if saw_default && !parameter.is_rest {
                 self.error(
                     parameter.name.span,
                     "a required parameter cannot follow a default parameter",

@@ -316,7 +316,7 @@ impl Interp<'_> {
     fn call_inner(
         &mut self,
         method_rid: u32,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         parent: Option<&RootLink>,
     ) -> Result<Value, RunError> {
         let method = self
@@ -339,6 +339,28 @@ impl Interp<'_> {
             }
             frame
         } else {
+            // Dynamic-call argument adaptation (ECMAScript semantics): a
+            // closure with a rest parameter (`<closure@..@rest>`) packs its
+            // trailing arguments into an array; any other callee drops
+            // surplus arguments (missing ones read as `undefined`).
+            let declared = body.param_count as usize;
+            if self.module.strings.get(method.name).ends_with("@rest>") && declared > 0 {
+                let fixed = declared - 1;
+                let rest_values: Vec<Value> =
+                    if args.len() > fixed { args.split_off(fixed) } else { Vec::new() };
+                args.resize(fixed, Value::Void);
+                let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
+                    let array = heap.alloc_array(rest_values.len());
+                    for (index, value) in rest_values.iter().enumerate() {
+                        let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                        let _ = heap.array_set(array, index, any);
+                    }
+                    Ok(array)
+                })?;
+                args.push(Value::Object(rest_array));
+            } else if args.len() > declared {
+                args.truncate(declared);
+            }
             let mut locals: Vec<Value> = Vec::with_capacity(body.local_count as usize);
             locals.extend(args);
             locals.resize(body.local_count as usize, Value::Void);
@@ -1553,12 +1575,10 @@ impl Interp<'_> {
                     let target_body = read_body(&self.module.code, target.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let hidden_environment = environment.is_some();
-                    if dynamic
-                        && target_body.param_count
-                            != (expected_params + if hidden_environment { 1 } else { 0 }) as u16
-                    {
-                        return Err(RunError::BadToken);
-                    }
+                    // A dynamic call adapts surplus/missing arguments to the
+                    // callee's parameters in `call_inner` (JS semantics), so a
+                    // count mismatch is not an error here.
+                    let _ = hidden_environment;
                     let call_args = if let Some(environment) = environment {
                         let mut closure_args = Vec::with_capacity(args.len() + 1);
                         closure_args.push(Value::Object(environment));

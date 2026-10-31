@@ -27,7 +27,7 @@ impl Checker<'_> {
         let mut saw_default = false;
         for parameter in &function.params {
             if parameter.is_rest {
-                self.error(parameter.name.span, "rest parameters are not lowered yet");
+                continue;
             }
             if parameter.default_value.is_some() {
                 saw_default = true;
@@ -136,10 +136,13 @@ impl Checker<'_> {
             defaults.insert(0, None);
         }
         self.closures.push(hir::ClosureFunction {
-            name: if takes_this {
-                format!("<closure@{}@this>", span.start)
-            } else {
-                format!("<closure@{}>", span.start)
+            name: {
+                let rest_suffix = if function.params.iter().any(|p| p.is_rest) { "@rest" } else { "" };
+                if takes_this {
+                    format!("<closure@{}@this{rest_suffix}>", span.start)
+                } else {
+                    format!("<closure@{}{rest_suffix}>", span.start)
+                }
             },
             param_count: function.params.len() as u16 + u16::from(takes_this),
             rest_param: function

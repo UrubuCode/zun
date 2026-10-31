@@ -229,9 +229,8 @@
     }
 
     #[test]
-    fn rest_parameters_remain_gated_until_variadic_lowering_exists() {
-        assert!(first_error("function main() { let collect = function(...values: any) { return values; }; }")
-            .contains("rest parameters are not lowered yet"));
+    fn closure_rest_parameters_are_accepted() {
+        check_ok("function main() { let collect = function(...values: any) { return values; }; }");
     }
 
     #[test]
