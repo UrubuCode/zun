@@ -2512,6 +2512,47 @@ impl<'a> Interp<'a> {
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" => {
                 // A string receiver (an `any`-typed string): JS String methods.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    // A RegExp argument routes the regex-taking String methods
+                    // (`replace`/`replaceAll`/`match`/`matchAll`/`search`) to the
+                    // regex natives, as the statically typed forms do.
+                    if let (Value::Str(member), Some(first)) = (args.get(1).ok_or(RunError::BadToken)?, args.get(2)) {
+                        let regex = match unbox_arg(first) {
+                            Ok(Value::Object(obj))
+                                if zun_gc::with_current_heap(|heap| heap.regex_source(obj).is_some()) =>
+                            {
+                                Some(Value::Object(obj))
+                            }
+                            _ => None,
+                        };
+                        if let Some(regex) = regex {
+                            let subject = Value::Str(text.clone());
+                            let routed = match member.as_ref() {
+                                "replace" | "replaceAll" if args.len() == 4 => {
+                                    let all = member.as_ref() == "replaceAll";
+                                    match unbox_arg(&args[3])? {
+                                        Value::Function(handle) => Some(self.call_managed_collection(
+                                            "replaceFn",
+                                            &[regex, subject, Value::Function(handle), Value::Bool(all)],
+                                        )?),
+                                        Value::Str(replacement) => Some(self.call_managed_collection(
+                                            "regexpReplace",
+                                            &[regex, subject, Value::Str(replacement)],
+                                        )?),
+                                        _ => None,
+                                    }
+                                }
+                                "match" => Some(self.call_managed_collection("regexpExec", &[regex, subject])?),
+                                "search" => Some(self.call_managed_collection("regexpSearch", &[regex, subject])?),
+                                "matchAll" => Some(self.call_managed_collection("stringMatchAll", &[regex, subject])?),
+                                _ => None,
+                            };
+                            if let Some(result) = routed {
+                                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                    .unwrap_or_else(zun_core::Any::null);
+                                return Ok(Value::Any(boxed));
+                            }
+                        }
+                    }
                     if let Value::Str(member) = args.get(1).ok_or(RunError::BadToken)? {
                         if let Some(result) = self.string_method_dyn(&text, member, &args[2..])? {
                             let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
