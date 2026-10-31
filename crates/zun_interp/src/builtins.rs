@@ -232,6 +232,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectHasOwn",
         "objectIsPrototypeOf",
         "functionApply",
+        "functionCallSpread",
         "functionBind",
         "arrayForEach",
         "arrayMap",

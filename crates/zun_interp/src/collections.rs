@@ -3127,6 +3127,26 @@ impl<'a> Interp<'a> {
                 call_args.extend(spread);
                 self.invoke_function_value(target, call_args)
             }
+            "functionCallSpread" => {
+                // `f(...xs)` / `f(a, ...xs, b)`: invoke `f` with the array's
+                // elements as the positional arguments.
+                let callee = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let callee = zun_gc::with_current_heap(|heap| unbox_function_box(callee, heap));
+                let target = match callee {
+                    Value::Function(handle) => handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let spread = self.read_array_values(array)?;
+                let call_args = zun_gc::with_current_heap(|heap| {
+                    spread
+                        .into_iter()
+                        .map(|value| unbox_function_box(value, heap))
+                        .collect::<Vec<_>>()
+                });
+                self.invoke_function_value(target, call_args)
+            }
             "functionBind" => {
                 // `f.bind(thisArg, ...partial)`: allocate a bound function whose
                 // prepended arguments are `[thisArg, ...partial]` (the array

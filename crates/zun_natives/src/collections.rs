@@ -321,6 +321,7 @@ pub const MODULE: crate::Module = crate::Module {
         // the array; `bind(function, prependedArray)` allocates a bound function
         // value whose prepended arguments are `[thisArg, ...partialArgs]`.
         NativeFn { name: "functionApply", params: &[Function, Opaque, Array], ret: Opaque, imp: unavailable },
+        NativeFn { name: "functionCallSpread", params: &[Function, Array], ret: Opaque, imp: unavailable },
         NativeFn { name: "functionBind", params: &[Function, Array], ret: Function, imp: unavailable },
         // Standard `Array.prototype` callback methods. Each re-enters the
         // interpreter, invoking the callback with the ECMAScript signature

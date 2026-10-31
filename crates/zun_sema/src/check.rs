@@ -3933,6 +3933,37 @@ impl Checker<'_> {
         hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
     }
 
+    /// `f(a, ...xs, b)` on a function value: collect the arguments into one
+    /// array literal (spreads flattened) and invoke through `functionCallSpread`.
+    fn check_spread_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let callee_hir = self.check_expr(cx, callee);
+        if !matches!(callee_hir.ty, Ty::Function(_) | Ty::Any) {
+            return None;
+        }
+        let elements = args
+            .iter()
+            .map(|arg| match arg {
+                ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                other => ast::ArrayElement::Expr(other.clone()),
+            })
+            .collect();
+        let literal = ast::Expr::ArrayLiteral { elements, span };
+        let mut array = self.check_expr(cx, &literal);
+        self.box_function_array_elements(&mut array);
+        let (id, _) = zun_natives::resolve("collections", "functionCallSpread")?;
+        Some(hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![callee_hir, array] },
+            ty: Ty::Any,
+            span,
+        })
+    }
+
     /// `{ slot = bound; test == null ? undefined : call }`: the shared shape of
     /// optional calls on dynamic receivers (`bound` evaluated exactly once).
     fn optional_guarded(
@@ -6459,6 +6490,39 @@ impl Checker<'_> {
                                 span,
                             };
                         }
+                    }
+                }
+                if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                    && (self.by_name.contains_key(&name) || cx.lookup(&name).is_some())
+                {
+                    // A named function whose only parameter is the rest array
+                    // takes the flattened argument array directly.
+                    if let Some(&func) = self.by_name.get(&name) {
+                        if cx.lookup(&name).is_none()
+                            && self.signatures[func as usize].rest_param == Some(0)
+                        {
+                            let elements = args
+                                .iter()
+                                .map(|arg| match arg {
+                                    ast::Expr::Spread { expr, .. } => {
+                                        ast::ArrayElement::Spread((**expr).clone())
+                                    }
+                                    other => ast::ArrayElement::Expr(other.clone()),
+                                })
+                                .collect();
+                            let literal = ast::Expr::ArrayLiteral { elements, span };
+                            let array = self.check_expr(cx, &literal);
+                            let return_ty = self.signatures[func as usize].return_ty;
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallRestArray { func, args: Box::new(array) },
+                                ty: return_ty,
+                                span,
+                            };
+                        }
+                    }
+                    let callee_expr = ast::Expr::Ident(*callee);
+                    if let Some(call) = self.check_spread_call(cx, &callee_expr, args, span) {
+                        return call;
                     }
                 }
                 let mut args: Vec<hir::Expr> =
@@ -11915,6 +11979,11 @@ impl Checker<'_> {
             }
             ast::Expr::Function(function) => self.check_closure_expr(cx, function, span),
             ast::Expr::ComputedCall { callee, args, .. } => {
+                if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                    if let Some(call) = self.check_spread_call(cx, callee, args, span) {
+                        return call;
+                    }
+                }
                 let is_well_known_iterator = matches!(callee.as_ref(), ast::Expr::Index {
                     index,
                     ..
