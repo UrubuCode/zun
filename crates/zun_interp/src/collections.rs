@@ -5611,6 +5611,22 @@ impl<'a> Interp<'a> {
                 if dynamic_source {
                     // Enumerable own keys in order; source getters and target
                     // setters run; a refused write is a TypeError (strict mode).
+                    // Methods live in the function slots: copy those first (a data key
+                    // of the same name below still wins).
+                    let target_is_dynamic =
+                        zun_gc::with_current_heap(|heap| heap.is_dynamic_object(target));
+                    if target_is_dynamic {
+                        let (named, symbolic) =
+                            zun_gc::with_current_heap(|heap| heap.dynamic_function_entries(source));
+                        zun_gc::with_current_heap_mut(|heap| {
+                            for (name, handle) in named {
+                                heap.dynamic_set_function(target, name, handle);
+                            }
+                            for (symbol, handle) in symbolic {
+                                heap.dynamic_set_symbol_function(target, symbol, handle);
+                            }
+                        });
+                    }
                     let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(source))
                         .unwrap_or_default();
                     for key in keys {

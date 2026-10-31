@@ -232,6 +232,13 @@ impl Heap {
     pub fn dynamic_get_symbol_function(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_function(symbol))
     }
+    /// Own function-slot entries (string-keyed methods, then symbol-keyed ones).
+    pub fn dynamic_function_entries(&self, object: Obj) -> (Vec<(String, zun_core::FunctionHandle)>, Vec<(zun_core::SymbolId, zun_core::FunctionHandle)>) {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .map(|properties| (properties.function_entries(), properties.symbol_function_entries()))
+            .unwrap_or_default()
+    }
     pub fn dynamic_get_function(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects
             .get(&(object.addr() as usize))

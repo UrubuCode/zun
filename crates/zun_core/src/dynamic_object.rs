@@ -476,6 +476,14 @@ impl DynamicObject {
     pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
         self.symbol_functions.get(&symbol).copied()
     }
+    /// Own string-keyed function-slot entries (methods), in no particular order.
+    pub fn function_entries(&self) -> Vec<(String, FunctionHandle)> {
+        self.string_functions.iter().map(|(name, handle)| (name.clone(), *handle)).collect()
+    }
+    /// Own symbol-keyed function-slot entries.
+    pub fn symbol_function_entries(&self) -> Vec<(SymbolId, FunctionHandle)> {
+        self.symbol_functions.iter().map(|(symbol, handle)| (*symbol, *handle)).collect()
+    }
     pub fn get_function(&self, name: &str) -> Option<FunctionHandle> {
         self.string_functions.get(name).copied()
     }
