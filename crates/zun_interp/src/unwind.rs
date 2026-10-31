@@ -91,3 +91,10 @@ thread_local! {
     /// expression (read once by `generatorSent`).
     pub(crate) static GENERATOR_SENT: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
 }
+
+thread_local! {
+    /// Set by the async driver right before it starts an async body through the
+    /// generic dispatch path, so method entry runs the body instead of creating
+    /// another coroutine (consumed once by `call_inner`).
+    pub(crate) static ASYNC_BYPASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}

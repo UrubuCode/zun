@@ -447,7 +447,11 @@ fn lower_function<'a>(
         self_closure: None,
         points: Vec::new(),
         regex_plan,
+        is_async: f.is_async,
     };
+    if f.is_async {
+        gen.emit(Instruction::simple(Opcode::AsyncStart));
+    }
     gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16, &f.locals);
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
@@ -493,7 +497,11 @@ fn lower_closure_function<'a>(
         self_closure: Some(closure_index),
         points: Vec::new(),
         regex_plan,
+        is_async: f.is_async,
     };
+    if f.is_async {
+        gen.emit(Instruction::simple(Opcode::AsyncStart));
+    }
     gen.emit_defaults(&f.defaults, 1, &f.locals);
     gen.stmts(&f.body);
     if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
@@ -549,6 +557,8 @@ struct FnLowerer<'a, 'b> {
     /// Lowering plan for each static regex (parallel to
     /// `Program::regex_matchers`); see [`RegexPlan`].
     regex_plan: &'a [RegexPlan],
+    /// Whether the function being lowered is `async` (awaits suspend like yields).
+    is_async: bool,
 }
 
 impl<'a, 'b> FnLowerer<'a, 'b> {
@@ -1297,7 +1307,17 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             }
             ExprKind::Await { operand } => {
                 self.expr(operand);
-                self.emit(Instruction::simple(Opcode::Await));
+                if self.is_async {
+                    // Inside an `async` body an await suspends like a yield: the
+                    // coroutine driver parks the frame on the awaited value and
+                    // resumes with the settlement (or throws at this point).
+                    self.emit(Instruction::simple(Opcode::Yield));
+                    let (sent_id, _) = zun_natives::resolve("collections", "generatorSent")
+                        .expect("generatorSent intrinsic");
+                    self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(sent_id as i32)));
+                } else {
+                    self.emit(Instruction::simple(Opcode::Await));
+                }
             }
             ExprKind::ImportDynamic { specifier } => {
                 self.expr(specifier);

@@ -2800,6 +2800,23 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A Promise reached through `any` (an awaited/dynamic value, an
+                // async closure's result) answers `then`/`catch`/`finally`.
+                if matches!(member.as_ref(), "then" | "catch" | "finally")
+                    && zun_gc::with_current_heap(|heap| heap.promise_state(namespace)).is_some()
+                {
+                    let native = match member.as_ref() {
+                        "then" => "promiseThen",
+                        "catch" => "promiseCatch",
+                        _ => "promiseFinally",
+                    };
+                    let mut native_args = vec![Value::Object(namespace)];
+                    native_args.extend(call_args.iter().cloned());
+                    let result = self.call_managed_collection(native, &native_args)?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    return Ok(Value::Any(boxed));
+                }
                 // A concrete array receiver dispatches its native methods
                 // (`join`, `map`, `slice`, …) the same as a typed array, so an
                 // array reached through `any` keeps its full method surface. The
@@ -8473,6 +8490,115 @@ impl<'a> Interp<'a> {
         self.settle_promise_resolve(target, boxed);
     }
 
+    /// Entry of an `async` function: allocate its result Promise and a
+    /// generator-style coroutine over the body, run the body to its first
+    /// `await` (synchronously, as the spec requires) and hand the Promise back.
+    pub(crate) fn async_start(&mut self, method_rid: u32, args: Vec<Value>) -> Result<Value, RunError> {
+        let boxed = zun_gc::with_current_heap_mut(|heap| {
+            args.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+        })
+        .ok_or(RunError::BadToken)?;
+        let (promise, generator) = zun_gc::with_current_heap_mut(|heap| {
+            let promise = heap.alloc_promise();
+            let generator = heap.alloc_generator(0, method_rid, boxed);
+            (promise, generator)
+        });
+        let roots = [promise, generator];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        self.async_step(roots[1], roots[0], Ok(Value::Void))?;
+        // Closures are called through function values, whose results are
+        // dynamically typed (`any`); named functions and methods return the
+        // Promise object itself.
+        let dynamic_result = self
+            .module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+            .map(|method| self.module.strings.get(method.name).starts_with("<closure@"))
+            .unwrap_or(false);
+        if dynamic_result {
+            Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)))
+        } else {
+            Ok(Value::Object(roots[0]))
+        }
+    }
+
+    /// Advance an async coroutine one step: resume it with `input` (a value, or
+    /// an exception raised at the `await`), then either settle `promise` (body
+    /// finished or threw) or park the coroutine on the awaited value.
+    pub(super) fn async_step(
+        &mut self,
+        generator: zun_gc::Obj,
+        promise: zun_gc::Obj,
+        input: Result<Value, Value>,
+    ) -> Result<(), RunError> {
+        let roots = [generator, promise];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        match input {
+            Ok(value) => crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = Some(value)),
+            Err(thrown) => {
+                crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = Some(thrown))
+            }
+        }
+        crate::unwind::ASYNC_BYPASS.with(|flag| flag.set(true));
+        let result =
+            self.call_managed_collection("generatorIteratorNext", &[Value::Object(roots[0])]);
+        crate::unwind::ASYNC_BYPASS.with(|flag| flag.set(false));
+        crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
+        crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
+        let done = zun_gc::with_current_heap(|heap| {
+            heap.generator_state(roots[0]).map(|state| state.done).unwrap_or(true)
+        });
+        match result {
+            Err(RunError::Thrown(thrown)) => {
+                let message = value_to_error_string(&thrown);
+                let boxed = zun_gc::with_current_heap_mut(|heap| thrown.box_any(heap));
+                match boxed {
+                    Some(reason) => {
+                        self.settle_promise_reject_value(roots[1], reason, message);
+                    }
+                    None => {
+                        self.settle_promise_reject(roots[1], message);
+                    }
+                }
+                Ok(())
+            }
+            Err(other) => Err(other),
+            Ok(value) if done => {
+                self.settle_target_with(roots[1], value);
+                Ok(())
+            }
+            Ok(value) => {
+                // `await value`: a Promise is awaited directly; anything else
+                // (a plain value or a thenable) is first resolved into a fresh
+                // Promise so it takes the same one-tick path.
+                let awaited = match as_object_ref(&value) {
+                    Some(obj)
+                        if zun_gc::with_current_heap(|heap| heap.promise_state(obj)).is_some() =>
+                    {
+                        obj
+                    }
+                    _ => {
+                        let fresh = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                        let inner = [fresh];
+                        let _inner_scope = unsafe { zun_gc::NativeRootScope::enter(&inner) };
+                        self.settle_target_with(inner[0], value);
+                        inner[0]
+                    }
+                };
+                let awaited_roots = [awaited];
+                let _awaited_scope = unsafe { zun_gc::NativeRootScope::enter(&awaited_roots) };
+                self.notice_promise(awaited_roots[0]);
+                self.attach_reaction(
+                    awaited_roots[0],
+                    roots[1],
+                    ReactionKind::AsyncStep { generator: Value::Object(roots[0]) },
+                );
+                Ok(())
+            }
+        }
+    }
+
     /// Attach a reaction to `source` and bridge its control onto the scheduler.
     /// The reaction waits on `source`'s scheduler promise; when that settles
     /// (now or later), the scheduler enqueues this continuation and the
@@ -8589,6 +8715,16 @@ impl<'a> Interp<'a> {
             ReactionKind::Combinator { aggregate, index } => {
                 let settlement = self.promise_settlement_of(roots[0])?;
                 self.combinator_input_settled(aggregate, index, settlement);
+            }
+            ReactionKind::AsyncStep { generator } => {
+                let generator = as_object_ref(&generator).ok_or(RunError::BadToken)?;
+                let input = match crate::settled_await_value(roots[0]) {
+                    Ok(Some(value)) => Ok(value),
+                    Ok(None) => return Ok(()),
+                    Err(RunError::Thrown(thrown)) => Err(thrown),
+                    Err(other) => return Err(other),
+                };
+                self.async_step(generator, roots[1], input)?;
             }
             ReactionKind::ThenableJob { thenable, then } => {
                 let _ = thenable;

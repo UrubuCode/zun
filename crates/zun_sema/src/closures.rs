@@ -9,12 +9,6 @@ impl Checker<'_> {
         function: &ast::FunctionExpr,
         span: Span,
     ) -> hir::Expr {
-        if function.is_async {
-            self.error(
-                span,
-                "async closures are parsed but source-level async lowering is not implemented yet",
-            );
-        }
         if function.is_generator {
             self.error(span, "generator closures are not implemented yet");
         }
@@ -47,12 +41,16 @@ impl Checker<'_> {
         let mut inner = FunctionCx {
             locals: Vec::new(),
             scopes: vec![Scope::new()],
-            return_ty: function
-                .return_type
-                .as_ref()
-                .map(|annotation| self.resolve_annotation(annotation))
-                .unwrap_or(Ty::Any),
-            is_generator: false,
+            return_ty: if function.is_async {
+                Ty::Any
+            } else {
+                function
+                    .return_type
+                    .as_ref()
+                    .map(|annotation| self.resolve_annotation(annotation))
+                    .unwrap_or(Ty::Any)
+            },
+            is_generator: function.is_async,
             loop_depth: 0,
             loop_labels: Vec::new(),
             switch_depth: 0,
@@ -145,7 +143,9 @@ impl Checker<'_> {
         } else {
             body
         };
-        let return_ty = if function.return_type.is_some() {
+        let return_ty = if function.is_async {
+            Ty::Any
+        } else if function.return_type.is_some() {
             inner.return_ty
         } else {
             first_return_ty(&body).unwrap_or(Ty::Void)
@@ -200,6 +200,7 @@ impl Checker<'_> {
             defaults,
             locals: inner.locals,
             return_ty,
+            is_async: function.is_async,
             captures: captures.clone(),
             body,
         });

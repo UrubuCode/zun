@@ -1529,7 +1529,9 @@ impl Checker<'_> {
                 // value, else `void` — so a value-returning JS function is not
                 // forced to `void` (which would reject every `return x`).
                 None => {
-                    if block_returns_value(&f.body) {
+                    if f.is_async {
+                        Ty::Promise
+                    } else if block_returns_value(&f.body) {
                         Ty::Any
                     } else {
                         Ty::Void
@@ -1758,12 +1760,15 @@ impl Checker<'_> {
             // Bodies containing await remain gated until state-machine IL is
             // available, so the front end never emits an invalid suspension.
         }
+        // An async body is checked (and lowered) as a coroutine returning `any`;
+        // the Promise typing lives only on the signature that callers see.
+        let return_ty = if f.is_async { Ty::Any } else { return_ty };
 
         let mut cx = FunctionCx {
             locals: Vec::new(),
             scopes: vec![Scope::new()],
             return_ty,
-            is_generator: f.is_generator,
+            is_generator: f.is_generator || f.is_async,
             loop_depth: 0,
             loop_labels: Vec::new(),
             switch_depth: 0,
@@ -5821,12 +5826,7 @@ impl Checker<'_> {
         match expr {
             ast::Expr::Await { operand, .. } => {
                 let checked = self.check_expr(cx, operand);
-                if checked.ty != Ty::Promise && checked.ty != Ty::Any {
-                    self.error(
-                        checked.span,
-                        "await operand must have Promise type",
-                    );
-                }
+                // `await` accepts any value: a non-Promise resumes on the next tick.
                 let span = checked.span;
                 hir::Expr {
                     kind: hir::ExprKind::Await {

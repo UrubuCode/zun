@@ -171,6 +171,9 @@ pub(super) enum ReactionKind {
     /// target. `then` is the callable (`Value::Function`), `thenable` its
     /// receiver object (kept alive here).
     ThenableJob { thenable: Value, then: Value },
+    /// Resumption of an `async` coroutine awaiting the source promise; the
+    /// reaction target is the async function's own result promise.
+    AsyncStep { generator: Value },
 }
 
 /// A scheduled reaction: the control ids the scheduler holds, the heap promises
@@ -282,6 +285,9 @@ impl AsyncState {
                     }
                 }
                 ReactionKind::Combinator { .. } => {}
+                ReactionKind::AsyncStep { generator } => {
+                    rewritten += usize::from(generator.rewrite_managed_reference(relocation));
+                }
                 ReactionKind::ThenableJob { thenable, then } => {
                     rewritten += usize::from(thenable.rewrite_managed_reference(relocation));
                     rewritten += usize::from(then.rewrite_managed_reference(relocation));
@@ -333,6 +339,9 @@ impl<'a> Interp<'a> {
                 }
                 ReactionKind::Finally { on_finally } => values.extend(on_finally.clone()),
                 ReactionKind::Combinator { .. } => {}
+                ReactionKind::AsyncStep { generator } => {
+                    values.push(generator.clone());
+                }
                 ReactionKind::ThenableJob { thenable, then } => {
                     values.push(thenable.clone());
                     values.push(then.clone());

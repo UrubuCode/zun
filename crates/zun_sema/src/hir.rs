@@ -306,6 +306,8 @@ pub struct ClosureFunction {
     pub locals: Vec<Ty>,
     /// Checked return type.
     pub return_ty: Ty,
+    /// Whether the closure is `async` (lowered as a coroutine).
+    pub is_async: bool,
     /// Captured environment layout.
     pub captures: Vec<Capture>,
     /// Checked body.

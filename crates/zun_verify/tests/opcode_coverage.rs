@@ -123,6 +123,7 @@ const SHAPES: &[(Opcode, Shape)] = &[
     // Publishes the value on the iterator result rather than returning it.
     (Opcode::Yield, Shape::Fixed(1, 0)),
     (Opcode::ImportDynamic, Shape::Fixed(1, 1)),
+    (Opcode::AsyncStart, Shape::Fixed(0, 0)),
     (Opcode::SqrtF64, Shape::Fixed(1, 1)),
     (Opcode::AbsF64, Shape::Fixed(1, 1)),
     (Opcode::NegF64, Shape::Fixed(1, 1)),

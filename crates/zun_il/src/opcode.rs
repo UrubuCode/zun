@@ -409,6 +409,12 @@ define_opcodes! {
     /// handle; pushes the result. Tier 0 only: not JIT-eligible, so a method
     /// using it stays on the interpreter.
     CallIndirectN = 0xAE, Imm32, "call.indirect.n", StackEffect::Call;
+    /// Marker emitted as the first instruction of an `async` function body. It
+    /// has no stack effect; the interpreter recognises it at method entry and
+    /// runs the body as a generator-style coroutine driven by the microtask
+    /// queue, returning a Promise to the caller. Tier 0 only (the JIT's
+    /// whitelist never lists it, so such a method stays on the interpreter).
+    AsyncStart = 0xAF, None, "async.start", StackEffect::Fixed { pops: 0, pushes: 0 };
 }
 
 #[cfg(test)]

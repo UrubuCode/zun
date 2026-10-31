@@ -278,6 +278,9 @@ impl Interp<'_> {
             let mut offset = 0;
             while offset < body.code.len() {
                 let (instruction, size) = decode_one(&body.code[offset..]).ok()?;
+                if instruction.opcode == Opcode::AsyncStart {
+                    return Some(false);
+                }
                 if instruction.opcode == Opcode::Yield {
                     return Some(true);
                 }
@@ -421,6 +424,11 @@ impl Interp<'_> {
                     }
                 }
             }
+            if matches!(decode_one(&body.code), Ok((first, _)) if first.opcode == Opcode::AsyncStart)
+                && !unwind::ASYNC_BYPASS.with(|flag| flag.replace(false))
+            {
+                return self.async_start(method_rid, args);
+            }
             let mut locals: Vec<Value> = Vec::with_capacity(body.local_count as usize);
             locals.extend(args);
             locals.resize(body.local_count as usize, Value::Void);
@@ -461,7 +469,7 @@ impl Interp<'_> {
             *pc = next;
 
             match instr.opcode {
-                Opcode::Nop => {}
+                Opcode::Nop | Opcode::AsyncStart => {}
                 Opcode::LoadStatic => {
                     let token = operand_token(&instr.operand);
                     let (owner, field) = self.static_field_key(token)?;
