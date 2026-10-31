@@ -7649,15 +7649,27 @@ impl<'a> Interp<'a> {
     /// The `obj.constructor` record (`{ name, __classDesc }`) of a typed class
     /// instance, or one naming `Array`/`Object` for arrays and plain objects
     /// without an own `constructor`.
-    fn constructor_record(&mut self, obj: zun_gc::Obj) -> Option<zun_gc::Obj> {
+    /// `{ name, __classDesc }` for a built-in constructor, with the descriptor
+    /// read off the realm global so `x.constructor === Array` holds.
+    pub(crate) fn builtin_constructor_record(class_name: &str) -> zun_gc::Obj {
+        zun_gc::with_current_heap_mut(|heap| {
+            let record = heap.alloc_dynamic();
+            let name_any = Value::Str(class_name.into()).box_any(heap).unwrap_or_else(zun_core::Any::null);
+            heap.dynamic_set(record, "name", name_any);
+            let global = heap.global_object();
+            if let Some(desc) = heap.dynamic_get(global, class_name) {
+                if desc.as_class_descriptor().is_some() {
+                    heap.dynamic_set(record, "__classDesc", desc);
+                }
+            }
+            record
+        })
+    }
+
+    pub(crate) fn constructor_record(&mut self, obj: zun_gc::Obj) -> Option<zun_gc::Obj> {
         let builtin_name = zun_gc::with_current_heap(|heap| builtin_constructor_name(heap, obj));
         if let Some(class_name) = builtin_name {
-            return Some(zun_gc::with_current_heap_mut(|heap| {
-                let record = heap.alloc_dynamic();
-                let name_any = Value::Str(class_name.into()).box_any(heap).unwrap_or_else(zun_core::Any::null);
-                heap.dynamic_set(record, "name", name_any);
-                record
-            }));
+            return Some(Self::builtin_constructor_record(class_name));
         }
         let typed = zun_gc::with_current_heap(|heap| {
             (!heap.is_dynamic_object(obj) || heap.is_instance_bag(obj)) && heap.array_len(obj).is_none()

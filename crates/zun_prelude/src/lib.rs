@@ -149,6 +149,9 @@ pub const REGEXP: &str = include_str!("../builtin/regexp.zun");
 /// closing, and the async-generator object.
 pub const ASYNC: &str = include_str!("../builtin/async.zun");
 
+/// Wrapper bases for `class X extends <Built-in>` (`builtin/builtin_bases.zun`).
+pub const BUILTIN_BASES: &str = include_str!("../builtin/builtin_bases.zun");
+
 pub const REALM: &str = include_str!("../builtin/realm.zun");
 
 /// The prelude **classes**, in compile order. Classes cannot cross a module
@@ -182,6 +185,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     HEADERS,
     RESPONSE,
     ASYNC,
+    BUILTIN_BASES,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

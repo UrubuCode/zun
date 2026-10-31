@@ -1,0 +1,58 @@
+// Wrapper base classes behind `class X extends <Built-in>`.
+//
+// Built-in values (Promise, Map, Set, ...) are runtime-owned and have no class
+// layout a user class could extend. The checker therefore maps `extends
+// Promise` onto `__BuiltinPromise`: an ordinary class that owns the native value
+// in `inner` and forwards the built-in's surface to it. A subclass instance is
+// a thenable / iterable-by-forwarding object rather than the native value
+// itself, which is enough for `await`, `then` chains and statics inheritance.
+
+class __BuiltinPromise {
+    inner: any;
+
+    constructor(executor: any) {
+        const w: any = Promise.withResolvers();
+        this.inner = w.promise;
+        try {
+            executor(w.resolve, w.reject);
+        } catch (e) {
+            w.reject(e);
+        }
+    }
+
+    then(onFulfilled?: any, onRejected?: any): any {
+        return this.inner.then(onFulfilled, onRejected);
+    }
+
+    catch(onRejected?: any): any {
+        return this.inner.catch(onRejected);
+    }
+
+    finally(onFinally?: any): any {
+        return this.inner.finally(onFinally);
+    }
+
+    static resolve(value: any): any {
+        return new __BuiltinPromise((res: any, rej: any) => res(value));
+    }
+
+    static reject(reason: any): any {
+        return new __BuiltinPromise((res: any, rej: any) => rej(reason));
+    }
+
+    static all(items: any): any {
+        return Promise.all(items);
+    }
+
+    static allSettled(items: any): any {
+        return Promise.allSettled(items);
+    }
+
+    static race(items: any): any {
+        return Promise.race(items);
+    }
+
+    static any(items: any): any {
+        return Promise.any(items);
+    }
+}

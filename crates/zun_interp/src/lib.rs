@@ -675,48 +675,9 @@ impl Interp<'_> {
                     }
                     if name == "constructor" {
                         if let Value::Object(obj) = &concrete {
-                            let obj = *obj;
-                            // Plain dynamic objects and arrays without an own
-                            // `constructor` expose a record naming `Object`/`Array`.
-                            let builtin_name = zun_gc::with_current_heap(|heap| {
-                                crate::collections::builtin_constructor_name(heap, obj)
-                            });
-                            if let Some(class_name) = builtin_name {
-                                let record = zun_gc::with_current_heap_mut(|heap| {
-                                    let record = heap.alloc_dynamic();
-                                    let name_any = Value::Str(class_name.into())
-                                        .box_any(heap)
-                                        .unwrap_or_else(zun_core::Any::null);
-                                    heap.dynamic_set(record, "name", name_any);
-                                    record
-                                });
+                            if let Some(record) = self.constructor_record(*obj) {
                                 stack.push(Value::Object(record));
                                 continue;
-                            }
-                            let typed = zun_gc::with_current_heap(|heap| {
-                                (!heap.is_dynamic_object(obj) || heap.is_instance_bag(obj)) && heap.array_len(obj).is_none()
-                            });
-                            let type_rid = obj.type_rid();
-                            if typed && type_rid >= 1 {
-                                if let Some(def) = self.module.tables.type_defs.get(type_rid as usize - 1) {
-                                    let class_name = self.module.strings.get(def.name).to_string();
-                                    let token = type_rid | zun_natives::USER_CLASS_FLAG;
-                                    let record = zun_gc::with_current_heap_mut(|heap| {
-                                        let record = heap.alloc_dynamic();
-                                        let name_any = Value::Str(class_name.into())
-                                            .box_any(heap)
-                                            .unwrap_or_else(zun_core::Any::null);
-                                        heap.dynamic_set(record, "name", name_any);
-                                        heap.dynamic_set(
-                                            record,
-                                            "__classDesc",
-                                            zun_core::Any::class_descriptor(token),
-                                        );
-                                        record
-                                    });
-                                    stack.push(Value::Object(record));
-                                    continue;
-                                }
                             }
                         }
                     }
@@ -729,14 +690,7 @@ impl Interp<'_> {
                             _ => None,
                         };
                         if let Some(class_name) = wrapper {
-                            let record = zun_gc::with_current_heap_mut(|heap| {
-                                let record = heap.alloc_dynamic();
-                                let name_any = Value::Str(class_name.into())
-                                    .box_any(heap)
-                                    .unwrap_or_else(zun_core::Any::null);
-                                heap.dynamic_set(record, "name", name_any);
-                                record
-                            });
+                            let record = Self::builtin_constructor_record(class_name);
                             stack.push(Value::Object(record));
                             continue;
                         }

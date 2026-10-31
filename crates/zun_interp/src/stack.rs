@@ -76,7 +76,27 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
     } else {
         (a, b)
     };
+    // Constructor records (`x.constructor`) compare equal to the class value
+    // (or another record) they describe, by realm/class descriptor.
+    let ctor_desc = |value: &Value| -> Option<u32> {
+        match value {
+            Value::Any(any) => any.as_class_descriptor(),
+            Value::Object(obj) => zun_gc::with_current_heap(|heap| {
+                heap.dynamic_get(*obj, "__classDesc").and_then(|d| d.as_class_descriptor())
+            }),
+            _ => None,
+        }
+    };
+    let ctor_pair = match (&a, &b) {
+        (Value::Object(x), Value::Object(y)) if x.addr() == y.addr() => None,
+        (Value::Object(_), _) | (_, Value::Object(_)) => match (ctor_desc(&a), ctor_desc(&b)) {
+            (Some(x), Some(y)) => Some(x == y),
+            _ => None,
+        },
+        _ => None,
+    };
     let equal = match (&a, &b) {
+        _ if ctor_pair.is_some() => ctor_pair.unwrap_or(false),
         (Value::Float(x, _), Value::Float(y, _)) => x == y,
         (Value::Int(x, _), Value::Float(y, _)) | (Value::Float(y, _), Value::Int(x, _)) => {
             (*x as f64) == *y
