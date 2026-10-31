@@ -1252,8 +1252,15 @@ impl Interp<'_> {
                     if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Add) {
                         throw_native!(self, body, stack, pc, next - size, message);
                     }
-                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
-                        .ok_or(RunError::BadToken)?;
+                    let any = zun_gc::with_current_heap_mut(|heap| match &value {
+                        Value::Function(handle) => {
+                            let record = heap.alloc_dynamic();
+                            heap.dynamic_set_function(record, "__boxedFn", *handle);
+                            Some(zun_core::Any::object(record.addr() as usize))
+                        }
+                        other => other.box_any(heap),
+                    })
+                    .ok_or(RunError::BadToken)?;
                     let length = zun_gc::with_current_heap_mut(|heap| heap.array_push(array, any))
                         .ok_or(RunError::BadToken)?;
                     stack.push(Value::Int(length as i64, zun_il::NumKind::U64));
@@ -1775,6 +1782,10 @@ impl Interp<'_> {
                             .unwrap_or(Value::Any(any)),
                         other => other,
                     };
+                    // A function stored in an array/`any` slot rides a `__boxedFn` record.
+                    let function = zun_gc::with_current_heap(|heap| {
+                        crate::collections::unbox_function_box(function, heap)
+                    });
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };

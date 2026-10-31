@@ -2612,7 +2612,27 @@ impl Checker<'_> {
                         }
                         cx.scopes.push(Scope::new());
                         let slot = cx.declare(self.text(&catch.binding), ty);
-                        let body = self.check_block(cx, &catch.body);
+                        let mut body = self.check_block(cx, &catch.body);
+                        // A catch binding captured and mutated by a closure lives
+                        // in a cell: the handler receives the exception in a raw
+                        // slot and the body starts by moving it into the cell.
+                        let slot = if cx.boxed.contains(&slot) {
+                            let raw = cx.declare("__catch_exception", ty);
+                            body.insert(
+                                0,
+                                hir::Stmt::Let {
+                                    slot,
+                                    init: hir::Expr {
+                                        kind: hir::ExprKind::Local(raw),
+                                        ty,
+                                        span: catch.body.span,
+                                    },
+                                },
+                            );
+                            raw
+                        } else {
+                            slot
+                        };
                         cx.scopes.pop();
                         hir::CatchClause { slot, ty, body }
                     })

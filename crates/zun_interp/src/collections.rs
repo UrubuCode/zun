@@ -8201,7 +8201,7 @@ fn as_object_ref(value: &Value) -> Option<zun_gc::Obj> {
 /// lane (the bound-function record's `__args` array) is wrapped in a dynamic
 /// object holding the callable in a `__boxedFn` function slot. A plain object
 /// without that slot, and every non-object value, passes through unchanged.
-fn unbox_function_box(value: Value, heap: &zun_gc::Heap) -> Value {
+pub(crate) fn unbox_function_box(value: Value, heap: &zun_gc::Heap) -> Value {
     if let Value::Object(object) = value {
         if let Some(handle) = heap.dynamic_get_function(object, "__boxedFn") {
             return Value::Function(handle);
