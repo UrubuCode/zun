@@ -1467,6 +1467,7 @@ impl Checker<'_> {
                     .params
                     .iter()
                     .rev()
+                    .filter(|p| !p.is_rest)
                     .take_while(|p| p.default_value.is_some())
                     .count(),
                 rest_param: f.params.iter().position(|parameter| parameter.is_rest),
@@ -7353,16 +7354,20 @@ impl Checker<'_> {
                 };
                 let rest_index = sig.rest_param;
                 if let Some(rest_index) = rest_index {
-                    if args.len() < rest_index {
+                    let rest_required = rest_index.saturating_sub(optional_count);
+                    if args.len() < rest_required {
                         self.error(
                             span,
                             format!(
                                 "`{name}` expects at least {} argument(s), found {}",
-                                rest_index,
+                                rest_required,
                                 args.len()
                             ),
                         );
                     } else {
+                        while args.len() < rest_index {
+                            args.push(default_args::missing_arg(param_tys[args.len()], span));
+                        }
                         for (arg, &expected) in args.iter_mut().take(rest_index).zip(&param_tys) {
                             coerce_numeric_literal(arg, expected);
                             if !expected.is_error()

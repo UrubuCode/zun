@@ -444,7 +444,7 @@ fn lower_function<'a>(
         points: Vec::new(),
         regex_plan,
     };
-    gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16);
+    gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16, &f.locals);
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
     // implicit return. (Non-void paths are the verifier's job later.)
@@ -478,7 +478,7 @@ fn lower_closure_function<'a>(
         points: Vec::new(),
         regex_plan,
     };
-    gen.emit_defaults(&f.defaults, 1);
+    gen.emit_defaults(&f.defaults, 1, &f.locals);
     gen.stmts(&f.body);
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
@@ -518,13 +518,19 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
 
     /// Materialize omitted arguments before entering the function body. Calls
     /// use null sentinels so the framed ABI remains fixed-width.
-    fn emit_defaults(&mut self, defaults: &[Option<hir::Expr>], slot_offset: u16) {
+    fn emit_defaults(&mut self, defaults: &[Option<hir::Expr>], slot_offset: u16, locals: &[zun_sema::hir::Ty]) {
         for (index, default) in defaults.iter().enumerate() {
             let Some(default) = default else { continue };
             let slot = slot_offset + index as u16;
             self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
             self.emit(Instruction::simple(Opcode::BoxAny));
-            self.emit(Instruction::simple(Opcode::ConstNull));
+            // Dynamic params use `undefined` as the omitted marker (an explicit
+            // `null` keeps its value); typed params keep the null sentinel.
+            if locals.get(slot as usize) == Some(&zun_sema::hir::Ty::Any) {
+                self.emit(Instruction::simple(Opcode::ConstUndef));
+            } else {
+                self.emit(Instruction::simple(Opcode::ConstNull));
+            }
             self.emit(Instruction::simple(Opcode::CmpEq));
             let skip = self.emit_branch(Opcode::BranchFalse);
             self.expr(default);
@@ -1115,8 +1121,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.emit(Instruction::simple(Opcode::ConstNull));
                     self.emit(Instruction::simple(Opcode::CmpEq));
                     let use_rhs = self.emit_branch(Opcode::BranchTrue);
+                    self.emit(Instruction::simple(Opcode::Dup));
+                    self.emit(Instruction::simple(Opcode::ConstUndef));
+                    self.emit(Instruction::simple(Opcode::CmpEq));
+                    let use_rhs_undef = self.emit_branch(Opcode::BranchTrue);
                     let end = self.emit_branch(Opcode::Branch);
                     self.patch_to_here(use_rhs);
+                    self.patch_to_here(use_rhs_undef);
                     self.emit(Instruction::simple(Opcode::Pop));
                     self.expr(rhs);
                     self.patch_to_here(end);

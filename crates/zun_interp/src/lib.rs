@@ -630,6 +630,15 @@ impl Interp<'_> {
                             _ => {}
                         }
                     }
+                    // A primitive number/boolean/undefined/null receiver has no own
+                    // properties here: the read yields `undefined`.
+                    if matches!(
+                        concrete,
+                        Value::Bool(_) | Value::Int(..) | Value::Float(..) | Value::Void | Value::Null
+                    ) {
+                        stack.push(Value::Void);
+                        continue;
+                    }
                     let object = concrete.as_object();
                     // An accessor property invokes its getter (NUCLEUS §6);
                     // a data property (or an absent key) reads the value slot.

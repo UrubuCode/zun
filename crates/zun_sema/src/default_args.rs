@@ -26,11 +26,26 @@ impl<'a> Checker<'a> {
             return;
         }
         while args.len() < sig.params.len() {
-            args.push(hir::Expr {
-                kind: hir::ExprKind::Null,
-                ty: sig.params[args.len()],
-                span,
-            });
+            let ty = sig.params[args.len()];
+            args.push(missing_arg(ty, span));
         }
+    }
+}
+
+/// The placeholder for an omitted argument: undefined for dynamic params (so
+/// an explicit null is distinguishable and does not trigger the default),
+/// the null sentinel for typed params.
+pub(super) fn missing_arg(ty: hir::Ty, span: Span) -> hir::Expr {
+    if ty == hir::Ty::Any {
+        hir::Expr {
+            kind: hir::ExprKind::Unary {
+                op: hir::UnaryOp::Void,
+                operand: Box::new(hir::Expr { kind: hir::ExprKind::Null, ty: hir::Ty::Any, span }),
+            },
+            ty: hir::Ty::Any,
+            span,
+        }
+    } else {
+        hir::Expr { kind: hir::ExprKind::Null, ty, span }
     }
 }
