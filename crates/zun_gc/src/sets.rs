@@ -8,6 +8,10 @@ impl Heap {
     }
 
     pub fn set_add(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
+        let value = match value.as_float() {
+            Some(f) if f == 0.0 => zun_core::Any::float(0.0),
+            _ => value,
+        };
         let hash = self.any_hash(value);
         let strings = &self.strings;
         let set = self.sets.get_mut(&(object.addr() as usize))?;

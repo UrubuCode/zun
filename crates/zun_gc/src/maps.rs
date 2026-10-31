@@ -8,6 +8,11 @@ impl Heap {
     }
 
     pub fn map_insert(&mut self, object: Obj, key: zun_core::Any, value: zun_core::Any) -> Option<zun_core::Any> {
+        // Map keys normalise -0 to +0 (ECMAScript Map.prototype.set).
+        let key = match key.as_float() {
+            Some(f) if f == 0.0 => zun_core::Any::float(0.0),
+            _ => key,
+        };
         let hash = self.any_hash(key);
         let strings = &self.strings;
         let result = self.maps.get_mut(&(object.addr() as usize))?.insert(key, value, hash, |candidate| any_same_value_zero(candidate, key, strings));

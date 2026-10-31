@@ -2184,11 +2184,28 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                         span: span(new_expression.span),
                     })
                 }
-                callee => Ok(Expr::NewDynamic {
+                callee => {
+                    // `new (class X {})(...)`: the class expression is hoisted to a
+                    // named class, so construct it statically.
+                    let mut peeled = callee;
+                    while let Expression::ParenthesizedExpression(inner) = peeled {
+                        peeled = &inner.expression;
+                    }
+                    if matches!(peeled, Expression::ClassExpression(_)) {
+                        if let Expr::Ident(name) = convert_expression(source, peeled)? {
+                            return Ok(Expr::New {
+                                class: name,
+                                args,
+                                span: span(new_expression.span),
+                            });
+                        }
+                    }
+                    Ok(Expr::NewDynamic {
                     callee: Box::new(convert_expression(source, callee)?),
                     args,
                     span: span(new_expression.span),
-                }),
+                    })
+                }
             }
         }
         Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),

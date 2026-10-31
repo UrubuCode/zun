@@ -164,6 +164,10 @@ pub(super) enum ReactionKind {
     /// `finally(onFinally)`: runs the cleanup on settlement and passes the
     /// source settlement through unless the cleanup throws.
     Finally { on_finally: Option<Value> },
+    /// Tail of `finally` whose cleanup returned a promise/thenable: once that
+    /// wait promise (the reaction source) fulfils, copy `original`'s
+    /// settlement to the target; if it rejects, reject the target with it.
+    FinallyPass { original: Value },
     /// One input of a combinator; updates `aggregates[aggregate]` at `index`.
     Combinator { aggregate: usize, index: usize },
     /// Thenable-adoption job (ECMAScript NewPromiseResolveThenableJob): calls
@@ -286,6 +290,9 @@ impl AsyncState {
                         rewritten += usize::from(value.rewrite_managed_reference(relocation));
                     }
                 }
+                ReactionKind::FinallyPass { original } => {
+                    rewritten += usize::from(original.rewrite_managed_reference(relocation));
+                }
                 ReactionKind::Combinator { .. } => {}
                 ReactionKind::AsyncStep { generator } => {
                     rewritten += usize::from(generator.rewrite_managed_reference(relocation));
@@ -343,6 +350,7 @@ impl<'a> Interp<'a> {
                     values.extend(on_rejected.clone());
                 }
                 ReactionKind::Finally { on_finally } => values.extend(on_finally.clone()),
+                ReactionKind::FinallyPass { original } => values.push(original.clone()),
                 ReactionKind::Combinator { .. } => {}
                 ReactionKind::AsyncStep { generator } => {
                     values.push(generator.clone());

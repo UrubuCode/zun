@@ -8633,6 +8633,25 @@ impl<'a> Interp<'a> {
     fn settle_target_with(&mut self, target: zun_gc::Obj, value: Value) {
         if let Some(obj) = as_object_ref(&value) {
             if let Some(state) = zun_gc::with_current_heap(|heap| heap.promise_state(obj)) {
+                // ECMAScript NewPromiseResolveThenableJob: adopting a native
+                // Promise costs a job (which attaches the pass-through reaction)
+                // plus the reaction tick.
+                let dummy = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                let roots = [target, obj, dummy];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.promise_resolve(roots[2], zun_core::Any::null())
+                });
+                self.attach_reaction(
+                    roots[2],
+                    roots[0],
+                    ReactionKind::ThenableJob {
+                        thenable: Value::Object(roots[1]),
+                        then: Value::Void,
+                    },
+                );
+                return;
+                #[allow(unreachable_code)]
                 match state {
                     zun_core::ManagedPromiseState::Resolved => {
                         let inner = zun_gc::with_current_heap(|heap| heap.promise_result(obj))
@@ -9037,30 +9056,27 @@ impl<'a> Interp<'a> {
                 let cleanup_error = match as_function(&on_finally) {
                     Some(callback) => match self.invoke_callback(callback, vec![]) {
                         Ok(result) => {
-                            // A cleanup that returns an already-rejected Promise
-                            // overrides the original settlement.
-                            let rejected = as_object_ref(&unbox_arg(&result).unwrap_or(Value::Void))
-                                .and_then(|obj| {
+                            // A cleanup that returns a Promise or thenable delays the
+                            // pass-through until that value settles.
+                            let waits = as_object_ref(&unbox_arg(&result).unwrap_or(Value::Void))
+                                .filter(|obj| {
                                     zun_gc::with_current_heap(|heap| {
-                                        match heap.promise_state(obj) {
-                                            Some(zun_core::ManagedPromiseState::Rejected) => {
-                                                Some((obj, heap.promise_reason(obj), heap.promise_error(obj)))
-                                            }
-                                            _ => None,
-                                        }
+                                        heap.promise_state(*obj).is_some()
+                                            || heap.dynamic_get_function(*obj, "then").is_some()
+                                            || (!heap.is_dynamic_object(*obj)
+                                                && self.instance_method_rid(*obj, "then").is_some())
                                     })
                                 });
-                            if let Some((obj, reason, error)) = rejected {
-                                self.notice_promise(obj);
-                                let error = error.unwrap_or_else(|| "Promise rejected".into());
-                                match reason {
-                                    Some(reason) => {
-                                        self.settle_promise_reject_value(roots[1], reason, error);
-                                    }
-                                    None => {
-                                        self.settle_promise_reject(roots[1], error);
-                                    }
-                                }
+                            if let Some(obj) = waits {
+                                let wait = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                                let wait_roots = [wait, obj, roots[0], roots[1]];
+                                let _wait_scope = unsafe { zun_gc::NativeRootScope::enter(&wait_roots) };
+                                self.settle_target_with(wait_roots[0], Value::Object(wait_roots[1]));
+                                self.attach_reaction(
+                                    wait_roots[0],
+                                    wait_roots[3],
+                                    ReactionKind::FinallyPass { original: Value::Object(wait_roots[2]) },
+                                );
                                 return Ok(());
                             }
                             None
@@ -9074,6 +9090,32 @@ impl<'a> Interp<'a> {
                     self.reject_with_thrown(roots[1], &error);
                 } else {
                     match settlement {
+                        PromiseSettlement::Resolved(value) => {
+                            self.settle_promise_resolve(roots[1], value);
+                        }
+                        PromiseSettlement::Rejected(error, Some(reason)) => {
+                            self.settle_promise_reject_value(roots[1], reason, error);
+                        }
+                        PromiseSettlement::Rejected(error, None) => {
+                            self.settle_promise_reject(roots[1], error);
+                        }
+                        PromiseSettlement::Pending => {}
+                    }
+                }
+            }
+            ReactionKind::FinallyPass { original } => {
+                let waited = self.promise_settlement_of(roots[0])?;
+                if let PromiseSettlement::Rejected(error, reason) = waited {
+                    match reason {
+                        Some(reason) => {
+                            self.settle_promise_reject_value(roots[1], reason, error);
+                        }
+                        None => {
+                            self.settle_promise_reject(roots[1], error);
+                        }
+                    }
+                } else if let Some(original) = as_object_ref(&original) {
+                    match self.promise_settlement_of(original)? {
                         PromiseSettlement::Resolved(value) => {
                             self.settle_promise_resolve(roots[1], value);
                         }
@@ -9110,7 +9152,16 @@ impl<'a> Interp<'a> {
                 self.async_step(generator, roots[1], input)?;
             }
             ReactionKind::ThenableJob { thenable, then } => {
-                if let Value::Int(rid, _) = then {
+                if matches!(then, Value::Void) {
+                    // Native Promise adoption: pass its settlement through.
+                    if let Some(source) = as_object_ref(&thenable) {
+                        self.attach_reaction(
+                            source,
+                            roots[1],
+                            ReactionKind::Then { on_fulfilled: None, on_rejected: None },
+                        );
+                    }
+                } else if let Value::Int(rid, _) = then {
                     let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
                     let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
                     match self.call(
@@ -9239,6 +9290,20 @@ impl<'a> Interp<'a> {
         if let Some(obj) = as_object_ref(value) {
             if zun_gc::with_current_heap(|heap| heap.promise_state(obj)).is_some() {
                 return obj;
+            }
+        }
+        // A thenable object is adopted (its `then` runs as a microtask job).
+        if let Some(obj) = as_object_ref(value) {
+            let thenable = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_get_function(obj, "then").is_some()
+                    || (!heap.is_dynamic_object(obj) && self.instance_method_rid(obj, "then").is_some())
+            });
+            if thenable {
+                let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                let roots = [promise];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                self.settle_target_with(roots[0], Value::Object(obj));
+                return roots[0];
             }
         }
         let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
