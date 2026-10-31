@@ -6376,7 +6376,15 @@ impl<'a> Interp<'a> {
                                     _ => None,
                                 })
                         });
-                        if let Some(custom) = custom {
+                        let class_tag = self
+                            .module
+                            .tables
+                            .type_defs
+                            .get((obj.type_rid() as usize).wrapping_sub(1))
+                            .map(|def| self.module.strings.get(def.name))
+                            .filter(|name| *name == "__AsyncGenerator")
+                            .map(|_| "AsyncGenerator".to_string());
+                        if let Some(custom) = custom.or(class_tag) {
                             custom
                         } else {
                             zun_gc::with_current_heap(|heap| {

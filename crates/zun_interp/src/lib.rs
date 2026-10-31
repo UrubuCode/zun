@@ -1153,7 +1153,22 @@ impl Interp<'_> {
                                             object.addr() as usize,
                                         ))
                                     }
-                                    None => Value::Void,
+                                    None => {
+                                        // A symbol-keyed *method* lives in the function
+                                        // slot (own) or the per-class symbol table.
+                                        let handle = zun_gc::with_current_heap(|heap| {
+                                            heap.dynamic_get_symbol_function(object, symbol)
+                                        })
+                                        .or_else(|| {
+                                            self.class_symbol_methods
+                                                .get(&(object.type_rid(), symbol.get()))
+                                                .copied()
+                                        });
+                                        match handle {
+                                            Some(handle) => Value::Function(handle),
+                                            None => Value::Void,
+                                        }
+                                    }
                                 }
                             }
                         } else {
