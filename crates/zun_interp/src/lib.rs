@@ -1146,8 +1146,16 @@ impl Interp<'_> {
                     // Box any non-function value for the slot (a primitive or
                     // `null` assigned through a computed key, e.g. `o[k] = v`
                     // where `v: any = 5.0`, reaches here unboxed).
-                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
-                        .ok_or(RunError::BadToken)?;
+                    let fn_value = match &value {
+                        Value::Function(handle) => Some(*handle),
+                        _ => None,
+                    };
+                    let any = if fn_value.is_some() {
+                        zun_core::Any::void()
+                    } else {
+                        zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            .ok_or(RunError::BadToken)?
+                    };
                     let key = pop(&mut stack)?;
                     let key = match key {
                         Value::Any(any) if any.as_symbol().is_none() => {
@@ -1224,6 +1232,16 @@ impl Interp<'_> {
                                     heap.ensure_dynamic_entry(object);
                                 }
                                 heap.dynamic_set_symbol(object, symbol, any);
+                            });
+                        }
+                        Value::Str(key) if fn_value.is_some() && zun_gc::with_current_heap(|heap| heap.array_len(object).is_none()) => {
+                            // A function value rides the object's function slot.
+                            let handle = fn_value.expect("function value");
+                            zun_gc::with_current_heap_mut(|heap| {
+                                if heap.dynamic_get_function(object, key).is_none() {
+                                    heap.dynamic_remove(object, key);
+                                }
+                                heap.dynamic_set_function(object, key.as_ref().to_owned(), handle);
                             });
                         }
                         Value::Str(key) => {

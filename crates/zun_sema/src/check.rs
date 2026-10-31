@@ -3074,6 +3074,11 @@ impl Checker<'_> {
         };
         let mut checked: Vec<hir::Expr> =
             args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+        // The optional `receiver` of `Reflect.get` / `Reflect.set` is accepted and
+        // ignored: the operation is applied to the target directly.
+        if (method == "get" && checked.len() == 3) || (method == "set" && checked.len() == 4) {
+            checked.pop();
+        }
         if checked.len() != expected {
             self.error(
                 span,
@@ -5476,6 +5481,18 @@ impl Checker<'_> {
         entries
     }
 
+    /// A non-arrow `function` expression that mentions `this` and is stored as a
+    /// property behaves like a method: arm `closure_takes_this` so it receives
+    /// the receiver as its hidden first parameter.
+    fn mark_this_closure(&mut self, value: &ast::Expr) {
+        if let ast::Expr::Function(function) = value {
+            if !function.is_arrow {
+                let body = &self.source[function.span.start as usize..function.span.end as usize];
+                self.closure_takes_this = body.contains("this");
+            }
+        }
+    }
+
     fn lower_object_property(
         &mut self,
         cx: &mut FunctionCx,
@@ -5492,7 +5509,19 @@ impl Checker<'_> {
         };
         match property.kind {
             ast::PropertyKind::Init => {
+                // A `function` expression that mentions `this` and is stored as
+                // a data property behaves like a method: it receives the object
+                // as its hidden first parameter.
+                if named_key.is_some() {
+                    if let ast::Expr::Function(function) = &property.value {
+                        if !function.is_arrow {
+                            let body = &self.source[function.span.start as usize..function.span.end as usize];
+                            self.closure_takes_this = body.contains("this");
+                        }
+                    }
+                }
                 let checked = self.check_expr(cx, &property.value);
+                self.closure_takes_this = false;
                 // A function-valued data property (`{ f: () => 1 }`) lives in the
                 // object's function slot, exactly like method shorthand, so
                 // `obj.f()` and the `valueOf`/`toString` coercion hooks find it.
@@ -12243,7 +12272,9 @@ impl Checker<'_> {
                 // ordinary dynamic property. The key and value are boxed to `Any`.
                 if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
                     let key = self.check_expr(cx, index);
+                    self.mark_this_closure(value);
                     let value = self.check_expr(cx, value);
+                    self.closure_takes_this = false;
                     let boxed = if value.ty == Ty::Any {
                         value
                     } else {
@@ -12395,7 +12426,9 @@ impl Checker<'_> {
                     }
                 }
                 let object = self.check_expr(cx, object);
+                self.mark_this_closure(value);
                 let mut value = self.check_expr(cx, value);
+                self.closure_takes_this = false;
                 match object.ty {
                     Ty::Instance(class) => match self.field_of(class, &fname) {
                         Some((slot, ty)) => {
@@ -12615,7 +12648,7 @@ impl Checker<'_> {
                                 ("setPrototypeOf", 2, 2), ("hasOwn", 2, 2), ("getOwnPropertySymbols", 1, 1),
                             ],
                             "Reflect" => &[
-                                ("get", 2, 2), ("set", 3, 3), ("has", 2, 2), ("ownKeys", 1, 1),
+                                ("get", 2, 3), ("set", 3, 4), ("has", 2, 2), ("ownKeys", 1, 1),
                                 ("defineProperty", 3, 3), ("getPrototypeOf", 1, 1), ("deleteProperty", 2, 2),
                             ],
                             "Array" => &[("isArray", 1, 1), ("from", 1, 3), ("of", 0, 99)],
