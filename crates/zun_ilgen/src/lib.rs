@@ -501,9 +501,11 @@ fn lower_closure_function<'a>(
         points: Vec::new(),
         regex_plan,
         is_async: f.is_async,
-        is_async_gen: false,
+        is_async_gen: f.is_async && f.is_generator,
     };
-    if f.is_async {
+    if f.is_async && f.is_generator {
+        gen.emit(Instruction::simple(Opcode::AsyncGenStart));
+    } else if f.is_async {
         gen.emit(Instruction::simple(Opcode::AsyncStart));
     }
     gen.emit_defaults(&f.defaults, 1, &f.locals);

@@ -308,6 +308,8 @@ pub struct ClosureFunction {
     pub return_ty: Ty,
     /// Whether the closure is `async` (lowered as a coroutine).
     pub is_async: bool,
+    /// Whether the closure is a generator (`function*`).
+    pub is_generator: bool,
     /// Captured environment layout.
     pub captures: Vec<Capture>,
     /// Checked body.

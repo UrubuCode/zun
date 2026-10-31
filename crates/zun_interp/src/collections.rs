@@ -7670,6 +7670,10 @@ impl<'a> Interp<'a> {
             return self.invoke_promise_settler(promise, mode, call_args);
         }
         let (method_rid, final_args) = self.resolve_call_target(handle, call_args)?;
+        // Calling a generator function value creates the generator object.
+        if self.method_contains_yield(method_rid) {
+            return self.create_generator(method_rid, &final_args);
+        }
         self.call(method_rid, final_args, None)
     }
 

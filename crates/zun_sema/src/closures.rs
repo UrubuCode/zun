@@ -9,9 +9,6 @@ impl Checker<'_> {
         function: &ast::FunctionExpr,
         span: Span,
     ) -> hir::Expr {
-        if function.is_generator {
-            self.error(span, "generator closures are not implemented yet");
-        }
         // Contextual typing (TS-style): take any parameter-type hint parked by
         // the argument-checking site. It applies only to THIS closure — taken
         // once so a nested/sibling closure does not inherit it.
@@ -41,7 +38,7 @@ impl Checker<'_> {
         let mut inner = FunctionCx {
             locals: Vec::new(),
             scopes: vec![Scope::new()],
-            return_ty: if function.is_async {
+            return_ty: if function.is_async || function.is_generator {
                 Ty::Any
             } else {
                 function
@@ -50,7 +47,7 @@ impl Checker<'_> {
                     .map(|annotation| self.resolve_annotation(annotation))
                     .unwrap_or(Ty::Any)
             },
-            is_generator: function.is_async,
+            is_generator: function.is_async || function.is_generator,
             loop_depth: 0,
             loop_labels: Vec::new(),
             switch_depth: 0,
@@ -143,7 +140,7 @@ impl Checker<'_> {
         } else {
             body
         };
-        let return_ty = if function.is_async {
+        let return_ty = if function.is_async || function.is_generator {
             Ty::Any
         } else if function.return_type.is_some() {
             inner.return_ty
@@ -201,6 +198,7 @@ impl Checker<'_> {
             locals: inner.locals,
             return_ty,
             is_async: function.is_async,
+            is_generator: function.is_generator,
             captures: captures.clone(),
             body,
         });
