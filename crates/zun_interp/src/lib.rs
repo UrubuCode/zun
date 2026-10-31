@@ -1090,6 +1090,9 @@ impl Interp<'_> {
                         // A canonical index string on an array addresses the element.
                         Value::Str(text) => zun_gc::with_current_heap(|heap| {
                             let len = heap.array_len(object)?;
+                            if &**text == "length" {
+                                return Some(Value::Float(len as f64, zun_il::NumKind::F64));
+                            }
                             let index = text.parse::<usize>().ok().filter(|i| i.to_string() == **text)?;
                             Some(if index < len {
                                 heap.array_get(object, index)

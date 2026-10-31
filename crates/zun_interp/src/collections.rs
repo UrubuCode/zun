@@ -2234,7 +2234,12 @@ impl<'a> Interp<'a> {
                         return true;
                     }
                     match key.parse::<u64>() {
-                        Ok(index) if index.to_string() == key => (index as usize) < len,
+                        Ok(index) if index.to_string() == key => {
+                            (index as usize) < len
+                                && !heap
+                                    .array_get(array, index as usize)
+                                    .is_some_and(|element| element.is_hole())
+                        }
                         _ => false,
                     }
                 })))
@@ -2768,6 +2773,10 @@ impl<'a> Interp<'a> {
                 if is_array {
                     let mut chars = member.chars();
                     let native_name = match chars.next() {
+                        // `sort` has two natives, chosen by the comparator's presence.
+                        _ if member.as_ref() == "sort" => {
+                            if call_args.is_empty() { "arraySortDefault" } else { "arraySortBy" }.to_string()
+                        }
                         Some(first) => {
                             format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
                         }
@@ -4557,11 +4566,38 @@ impl<'a> Interp<'a> {
                             let drained = self.drive_iterable(source, target, |heap, array, value| {
                                 heap.array_push(array, value);
                             });
-                            let array = drained.map_err(|_| {
-                                RunError::Thrown(Value::Str(std::rc::Rc::from(
-                                    "Array.from: value is not array-like",
-                                )))
-                            })?;
+                            let array = match drained {
+                                Ok(array) => array,
+                                Err(_) => {
+                                    // An array-like plain object (`{ length: n, 0: .. }`).
+                                    let built = zun_gc::with_current_heap_mut(|heap| {
+                                        if !heap.is_dynamic_object(source) {
+                                            return None;
+                                        }
+                                        let length = heap.dynamic_get(source, "length").and_then(|any| {
+                                            match Value::unbox_any(any, heap) {
+                                                Some(Value::Float(n, _)) if n >= 0.0 => Some(n as usize),
+                                                Some(Value::Int(n, _)) if n >= 0 => Some(n as usize),
+                                                _ => None,
+                                            }
+                                        });
+                                        let length = length.unwrap_or(0);
+                                        let array = heap.alloc_array(length);
+                                        for index in 0..length {
+                                            let value = heap
+                                                .dynamic_get(source, &index.to_string())
+                                                .unwrap_or_else(zun_core::Any::void);
+                                            heap.array_set(array, index, value);
+                                        }
+                                        Some(array)
+                                    });
+                                    built.ok_or_else(|| {
+                                        RunError::Thrown(Value::Str(std::rc::Rc::from(
+                                            "Array.from: value is not array-like",
+                                        )))
+                                    })?
+                                }
+                            };
                             if name == "arrayFrom" {
                                 return Ok(Value::Object(array));
                             }
@@ -5492,6 +5528,45 @@ impl<'a> Interp<'a> {
                 );
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 Ok(Value::Object(obj))
+            }
+            "objectGroupBy" => {
+                let source = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let callback = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Function(handle) => *handle,
+                    _ => return Err(RunError::BadToken),
+                };
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                    .ok_or(RunError::BadToken)?;
+                let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                let roots = [source, obj];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for index in 0..length {
+                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
+                        .ok_or(RunError::BadToken)?;
+                    let produced = self.invoke_callback(
+                        callback,
+                        vec![Value::Any(element), Value::Any(zun_core::Any::float(index as f64))],
+                    )?;
+                    let key_any = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    let key = zun_gc::with_current_heap(|heap| stringify_any(key_any, heap))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let group = match heap
+                            .dynamic_get(roots[1], &key)
+                            .and_then(|any| any.as_object())
+                        {
+                            Some(address) => unsafe { zun_gc::Obj::from_addr(address as *mut u64) },
+                            None => {
+                                let group = heap.alloc_array(0);
+                                heap.dynamic_set(roots[1], key.clone(), zun_core::Any::object(group.addr() as usize));
+                                group
+                            }
+                        };
+                        heap.array_push(group, element);
+                    });
+                }
+                Ok(Value::Object(roots[1]))
             }
             "objectFromEntries" => {
                 let not_iterable = || {

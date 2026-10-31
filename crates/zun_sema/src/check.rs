@@ -2786,7 +2786,7 @@ impl Checker<'_> {
             | "getOwnPropertyNames" | "getOwnPropertySymbols" | "seal" | "isSealed"
             | "preventExtensions" | "isExtensible" => Some(1usize),
             "setPrototypeOf" | "is" | "getOwnPropertyDescriptor"
-            | "defineProperties" | "hasOwn" => Some(2usize),
+            | "defineProperties" | "hasOwn" | "groupBy" => Some(2usize),
             "defineProperty" => Some(3usize),
             "assign" => None,
             _ => {
@@ -2827,6 +2827,7 @@ impl Checker<'_> {
             "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
             "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),
             "fromEntries" => builtin(self, "objectFromEntries", checked, Ty::DynamicObject),
+            "groupBy" => builtin(self, "objectGroupBy", checked, Ty::DynamicObject),
             "is" => builtin(self, "objectIs", checked, Ty::Boolean),
             "defineProperty" => builtin(self, "objectDefineProperty", checked, Ty::Any),
             "defineProperties" => builtin(self, "objectDefineProperties", checked, Ty::Any),
@@ -12609,7 +12610,7 @@ impl Checker<'_> {
                                 ("keys", 1, 1), ("values", 1, 1), ("entries", 1, 1), ("assign", 1, 99),
                                 ("freeze", 1, 1), ("isFrozen", 1, 1), ("create", 1, 1), ("getPrototypeOf", 1, 1),
                                 ("defineProperty", 3, 3), ("getOwnPropertyDescriptor", 2, 2),
-                                ("getOwnPropertyNames", 1, 1), ("fromEntries", 1, 1), ("seal", 1, 1),
+                                ("getOwnPropertyNames", 1, 1), ("fromEntries", 1, 1), ("groupBy", 2, 2), ("seal", 1, 1),
                                 ("isSealed", 1, 1), ("isExtensible", 1, 1), ("preventExtensions", 1, 1),
                                 ("setPrototypeOf", 2, 2), ("hasOwn", 2, 2), ("getOwnPropertySymbols", 1, 1),
                             ],
