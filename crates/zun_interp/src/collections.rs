@@ -1034,7 +1034,7 @@ impl<'a> Interp<'a> {
                     self.resume_suspended(frame)
                 } else {
                     let initial_args = zun_gc::with_current_heap(|heap| {
-                        state.args.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+                        state.args.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
                     self.dispatch_outcome(state.method_rid, initial_args, None)
@@ -8591,7 +8591,16 @@ impl<'a> Interp<'a> {
                     zun_core::ManagedPromiseState::Rejected => {
                         let error = zun_gc::with_current_heap(|heap| heap.promise_error(obj))
                             .unwrap_or_else(|| "Promise rejected".into());
-                        self.settle_promise_reject(target, error);
+                        let reason = zun_gc::with_current_heap(|heap| heap.promise_reason(obj));
+                        self.notice_promise(obj);
+                        match reason {
+                            Some(reason) => {
+                                self.settle_promise_reject_value(target, reason, error);
+                            }
+                            None => {
+                                self.settle_promise_reject(target, error);
+                            }
+                        }
                     }
                     // Adopt a pending Promise: a pass-through reaction copies its
                     // settlement to `target` when it settles.
@@ -8768,7 +8777,7 @@ impl<'a> Interp<'a> {
     /// `await` (synchronously, as the spec requires) and hand the Promise back.
     pub(crate) fn async_start(&mut self, method_rid: u32, args: Vec<Value>) -> Result<Value, RunError> {
         let boxed = zun_gc::with_current_heap_mut(|heap| {
-            args.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+            args.iter().map(|value| gen_box(value, heap)).collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let (promise, generator) = zun_gc::with_current_heap_mut(|heap| {
@@ -9695,7 +9704,7 @@ const GENERATOR_FUNCTION_SLOT: &str = "$genfn";
 
 /// Box a value for a generator's saved frame. Function values have no `Any`
 /// form, so they ride in a holder object's function slot.
-fn gen_box(value: &Value, heap: &mut zun_gc::Heap) -> Option<zun_core::Any> {
+pub(crate) fn gen_box(value: &Value, heap: &mut zun_gc::Heap) -> Option<zun_core::Any> {
     if let Value::Function(function) = value {
         let holder = heap.alloc_dynamic();
         heap.dynamic_set_function(holder, GENERATOR_FUNCTION_SLOT.to_string(), *function);

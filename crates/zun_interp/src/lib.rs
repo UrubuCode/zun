@@ -318,7 +318,7 @@ impl Interp<'_> {
             return Err(RunError::BadToken);
         }
         let boxed = zun_gc::with_current_heap_mut(|heap| {
-            args.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+            args.iter().map(|value| crate::collections::gen_box(value, heap)).collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_generator(0, method_rid, boxed));
