@@ -608,6 +608,9 @@ pub const MODULE: crate::Module = crate::Module {
         // `JSON.stringify(value, replacer?, space?)` — returns the JSON text, or
         // `undefined` for a non-serialisable top-level value.
         NativeFn { name: "objectJsonStringify", params: &[Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
+        // `globalRead(name)` — read an undeclared identifier: the realm global
+        // when present, otherwise a ReferenceError (`name is not defined`).
+        NativeFn { name: "globalRead", params: &[Str], ret: Opaque, imp: unavailable },
     ],
 };
 

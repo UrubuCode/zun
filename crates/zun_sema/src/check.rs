@@ -5520,7 +5520,7 @@ impl Checker<'_> {
                         // slot (the enabler for user `[Symbol.iterator]` /
                         // `[Symbol.hasInstance]` methods); a string key uses the
                         // ordinary string function slot.
-                        if key.ty == Ty::Symbol {
+                        if key.ty == Ty::Symbol || key.ty == Ty::Any {
                             if let Some(builtin) =
                                 self.resolve_collection(span, "dynamicSetSymbolFunction")
                             {
@@ -5934,6 +5934,18 @@ impl Checker<'_> {
                         // scope resolves through `globalGet` (dynamic).
                         if self.module_globals.contains(&text) {
                             return self.global_get_expr(&text, span);
+                        }
+                        // An undeclared identifier is a run-time ReferenceError (it
+                        // may sit in dead code), not a compile error.
+                        if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![Self::string_literal(text.clone(), span)],
+                                },
+                                ty: Ty::Any,
+                                span,
+                            };
                         }
                         self.error(span, format!("unknown variable `{text}`"));
                         self.poison(span)
@@ -12041,6 +12053,52 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::Index { object, index, .. } => {
+                // `Symbol[key]` with a runtime key: pick the well-known symbol by name.
+                if matches!(object.as_ref(), ast::Expr::Ident(id) if self.text(id) == "Symbol" && cx.lookup("Symbol").is_none())
+                    && !matches!(index.as_ref(), ast::Expr::String { .. })
+                {
+                    let key_hir = self.check_expr(cx, index);
+                    if !key_hir.ty.is_error() {
+                        let key_hir = self.to_string_for_parse(key_hir);
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::String);
+                        let mut chain = ast::Expr::Unary {
+                            op: ast::UnaryOp::Void,
+                            operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                            span,
+                        };
+                        for well_known in ["iterator", "asyncIterator", "hasInstance", "toPrimitive", "toStringTag"] {
+                            chain = ast::Expr::Conditional {
+                                condition: Box::new(ast::Expr::Binary {
+                                    op: ast::BinaryOp::Eq,
+                                    lhs: Box::new(ast::Expr::Ident(tmp)),
+                                    rhs: Box::new(ast::Expr::String { value: well_known.to_string(), span }),
+                                    span,
+                                }),
+                                when_true: Box::new(ast::Expr::Field {
+                                    object: object.clone(),
+                                    field: ast::synthetic_ident(well_known),
+                                    span,
+                                }),
+                                when_false: Box::new(chain),
+                                span,
+                            };
+                        }
+                        let body = self.check_expr(cx, &chain);
+                        let ty = body.ty;
+                        return hir::Expr {
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot, value: Box::new(key_hir) },
+                                    ty: Ty::String,
+                                    span,
+                                }),
+                                value: Box::new(body),
+                            },
+                            ty: if ty == Ty::Symbol { Ty::Any } else { ty },
+                            span,
+                        };
+                    }
+                }
                 let object = self.check_expr(cx, object);
                 if let ast::Expr::String { value: key, .. } = index.as_ref() {
                     if let Ty::Instance(class) = object.ty {
@@ -12462,7 +12520,25 @@ impl Checker<'_> {
                 // `console[key](args)` with a runtime key: dispatch on the key over
                 // the console methods (the key is evaluated once into a temp).
                 if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
-                    if matches!(recv_ast.as_ref(), ast::Expr::Ident(id) if self.text(id) == "console" && cx.lookup("console").is_none())
+                    let namespace_methods: &[&str] = match recv_ast.as_ref() {
+                        ast::Expr::Ident(id) if cx.lookup(self.text(id)).is_none() => match self.text(id) {
+                            "console" => &["debug", "info", "warn", "error", "log"],
+                            "JSON" => &["stringify", "parse"],
+                            "Math" => &[
+                                "abs", "floor", "ceil", "round", "max", "min", "sqrt", "pow", "trunc", "sign",
+                            ],
+                            "Object" => &[
+                                "keys", "values", "entries", "assign", "freeze", "isFrozen", "create",
+                                "getPrototypeOf", "defineProperty",
+                            ],
+                            "Array" => &["isArray", "from", "of"],
+                            "Number" => &["isInteger", "isNaN", "isFinite", "parseFloat", "parseInt"],
+                            "String" => &["fromCharCode"],
+                            _ => &[],
+                        },
+                        _ => &[],
+                    };
+                    if !namespace_methods.is_empty()
                         && !matches!(key_ast.as_ref(), ast::Expr::String { .. })
                     {
                         let key_hir = self.check_expr(cx, key_ast);
@@ -12474,7 +12550,7 @@ impl Checker<'_> {
                                 operand: Box::new(ast::Expr::Number { value: 0.0, span }),
                                 span,
                             };
-                            for method in ["debug", "info", "warn", "error", "log"] {
+                            for method in namespace_methods.iter().copied() {
                                 chain = ast::Expr::Conditional {
                                     condition: Box::new(ast::Expr::Binary {
                                         op: ast::BinaryOp::Eq,
@@ -12872,7 +12948,19 @@ impl Checker<'_> {
         operand: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
-        let operand = self.check_expr(cx, operand);
+        let mut operand = self.check_expr(cx, operand);
+        // `typeof undeclared` is "undefined", never a ReferenceError.
+        if let hir::ExprKind::CallBuiltin { id, args } = &mut operand.kind {
+            if let (Some((read, _)), Some((get, _))) = (
+                zun_natives::resolve("collections", "globalRead"),
+                zun_natives::resolve("collections", "globalGet"),
+            ) {
+                if *id == read {
+                    *id = get;
+                    let _ = args;
+                }
+            }
+        }
         let type_string = match operand.ty {
             Ty::Error => return self.poison(span),
             Ty::Int(_) | Ty::Float(_) => "number",

@@ -1021,6 +1021,16 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 .expressions
                 .split_last()
                 .ok_or("OXC adapter: empty sequence expression")?;
+            // A sequence containing `yield` cannot live in a closure: hoist the
+            // leading expressions to statements before the containing statement.
+            if source[sequence.span.start as usize..sequence.span.end as usize].contains("yield") {
+                let mut prelude = Vec::with_capacity(leading.len());
+                for expression in leading {
+                    prelude.push(Stmt::Expr(convert_expression(source, expression)?));
+                }
+                PENDING_PRELUDE.with(|pending| pending.borrow_mut().extend(prelude));
+                return convert_expression(source, last);
+            }
             let mut statements = Vec::with_capacity(sequence.expressions.len());
             for expression in leading {
                 statements.push(Stmt::Expr(convert_expression(source, expression)?));

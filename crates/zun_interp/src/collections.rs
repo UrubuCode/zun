@@ -1019,11 +1019,11 @@ impl<'a> Interp<'a> {
                 }
                 let outcome = if let Some(saved) = state.frame.take() {
                     let locals = zun_gc::with_current_heap(|heap| {
-                        saved.locals.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+                        saved.locals.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
                     let stack = zun_gc::with_current_heap(|heap| {
-                        saved.eval_stack.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+                        saved.eval_stack.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
                     let mut frame = ExecutionFrame::new(state.method_rid, locals);
@@ -1045,11 +1045,11 @@ impl<'a> Interp<'a> {
                         state.current = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                             .ok_or(RunError::BadToken)?;
                         let locals = zun_gc::with_current_heap_mut(|heap| {
-                            frame.locals.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+                            frame.locals.iter().map(|value| gen_box(value, heap)).collect::<Option<Vec<_>>>()
                         })
                         .ok_or(RunError::BadToken)?;
                         let eval_stack = zun_gc::with_current_heap_mut(|heap| {
-                            frame.stack.iter().map(|value| value.box_any(heap)).collect::<Option<Vec<_>>>()
+                            frame.stack.iter().map(|value| gen_box(value, heap)).collect::<Option<Vec<_>>>()
                         })
                         .ok_or(RunError::BadToken)?;
                         state.frame = Some(zun_gc::GeneratorFrame {
@@ -3065,17 +3065,26 @@ impl<'a> Interp<'a> {
                 // symbol-function slot since functions are not boxable `Any`.
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                let symbol = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
-                    _ => return Err(RunError::BadToken),
-                };
                 let function = match args.get(2).ok_or(RunError::BadToken)? {
                     Value::Function(function) => *function,
                     _ => return Err(RunError::BadToken),
                 };
-                zun_gc::with_current_heap_mut(|heap| {
-                    heap.dynamic_set_symbol_function(object, symbol, function);
-                });
+                let symbol = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol(),
+                    _ => return Err(RunError::BadToken),
+                };
+                match symbol {
+                    Some(symbol) => zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set_symbol_function(object, symbol, function);
+                    }),
+                    None => {
+                        // A runtime key that is not a symbol names an ordinary method.
+                        let name = self.dyn_to_string(&args[1])?;
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set_function(object, name, function);
+                        });
+                    }
+                }
                 Ok(Value::Void)
             }
             "instanceofDynamic" => {
@@ -5276,6 +5285,24 @@ impl<'a> Interp<'a> {
                 }
                 Ok(value.map(Value::Any).unwrap_or(Value::Void))
             }
+            "globalRead" => {
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let found = zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    if let Some(any) = heap.dynamic_get(global, &name) {
+                        Some(Value::Any(any))
+                    } else {
+                        heap.dynamic_get_function(global, &name).map(Value::Function)
+                    }
+                });
+                match found {
+                    Some(value) => Ok(value),
+                    None => Err(RunError::Native(format!("ReferenceError: {name} is not defined"))),
+                }
+            }
             "realmDescriptor" => {
                 // Box a base-type metadata token into an opaque class-descriptor
                 // `Any` (PLAN §3.1). The token arrives as a `number`.
@@ -6617,11 +6644,11 @@ impl<'a> Interp<'a> {
             return Ok(Value::Bool(true));
         };
         let locals = zun_gc::with_current_heap(|heap| {
-            saved.locals.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+            saved.locals.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let stack = zun_gc::with_current_heap(|heap| {
-            saved.eval_stack.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+            saved.eval_stack.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let mut frame = ExecutionFrame::new(state.method_rid, locals);
@@ -8670,4 +8697,29 @@ pub(super) fn same_value(left: &Value, right: &Value) -> bool {
         },
         _ => false,
     }
+}
+
+/// Marker slot naming a holder object that carries a suspended function value.
+const GENERATOR_FUNCTION_SLOT: &str = "$genfn";
+
+/// Box a value for a generator's saved frame. Function values have no `Any`
+/// form, so they ride in a holder object's function slot.
+fn gen_box(value: &Value, heap: &mut zun_gc::Heap) -> Option<zun_core::Any> {
+    if let Value::Function(function) = value {
+        let holder = heap.alloc_dynamic();
+        heap.dynamic_set_function(holder, GENERATOR_FUNCTION_SLOT.to_string(), *function);
+        return Some(zun_core::Any::object(holder.addr() as usize));
+    }
+    value.box_any(heap)
+}
+
+/// Inverse of [`gen_box`].
+fn gen_unbox(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<Value> {
+    let value = Value::unbox_any(any, heap)?;
+    if let Value::Object(object) = &value {
+        if let Some(function) = heap.dynamic_get_function(*object, GENERATOR_FUNCTION_SLOT) {
+            return Some(Value::Function(function));
+        }
+    }
+    Some(value)
 }

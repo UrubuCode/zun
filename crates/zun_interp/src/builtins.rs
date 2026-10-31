@@ -34,7 +34,7 @@ pub(super) fn call_builtin(
 /// is thrown as a managed `Error` subclass instance (so `catch (e)` sees the
 /// right `name` and `message`); any other message stays an interpreter error.
 fn native_error_to_run_error(interp: &mut Interp<'_>, message: String) -> RunError {
-    for class in ["RangeError", "TypeError"] {
+    for class in ["RangeError", "TypeError", "ReferenceError"] {
         let Some(text) = message.strip_prefix(class).and_then(|rest| rest.strip_prefix(": ")) else {
             continue;
         };
@@ -260,6 +260,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "arraySplice",
         "globalSet",
         "globalGet",
+        "globalRead",
         "realmDescriptor",
         "classDescriptorToken",
         "symbolNew",

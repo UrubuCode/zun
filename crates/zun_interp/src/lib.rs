@@ -262,6 +262,34 @@ impl Interp<'_> {
     /// Create the managed identity of a generator invocation. The execution
     /// body is deliberately not entered here; `generatorIteratorNext` owns
     /// resume and stores the suspended state after the first yield.
+    /// Whether the method body at `method_rid` contains a `yield` (cached).
+    pub(crate) fn method_contains_yield(&self, method_rid: u32) -> bool {
+        thread_local! {
+            static CACHE: std::cell::RefCell<std::collections::HashMap<(usize, u32), bool>> =
+                std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        let key = (self.module as *const Module as usize, method_rid);
+        if let Some(known) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
+            return known;
+        }
+        let found = (|| {
+            let method = self.module.tables.method_defs.get((method_rid as usize).checked_sub(1)?)?;
+            let body = read_body(&self.module.code, method.body_offset).ok()?;
+            let mut offset = 0;
+            while offset < body.code.len() {
+                let (instruction, size) = decode_one(&body.code[offset..]).ok()?;
+                if instruction.opcode == Opcode::Yield {
+                    return Some(true);
+                }
+                offset += size;
+            }
+            Some(false)
+        })()
+        .unwrap_or(false);
+        CACHE.with(|cache| cache.borrow_mut().insert(key, found));
+        found
+    }
+
     pub(crate) fn create_generator(
         &mut self,
         method_rid: u32,
@@ -1903,6 +1931,13 @@ impl Interp<'_> {
                     } else {
                         args
                     };
+                    // Calling a generator function through a function value creates
+                    // the generator object instead of running the body.
+                    if self.method_contains_yield(handle.method_rid()) {
+                        let generator = self.create_generator(handle.method_rid(), &call_args)?;
+                        stack.push(generator);
+                        continue;
+                    }
                     let link = RootLink {
                         stack: std::ptr::from_mut(stack.as_mut_slice()),
                         locals: std::ptr::from_mut(locals.as_mut_slice()),
