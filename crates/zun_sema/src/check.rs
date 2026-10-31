@@ -6803,6 +6803,20 @@ impl Checker<'_> {
                 if name == "super" {
                     return self.check_super_call(cx, None, args, span);
                 }
+                // The Error family is callable without `new` (`TypeError("x")`).
+                if matches!(
+                    name.as_str(),
+                    "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
+                        | "TypeError" | "URIError" | "AggregateError"
+                ) && self.classes_by_name.contains_key(&name)
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                {
+                    return self.check_expr(
+                        cx,
+                        &ast::Expr::New { class: *callee, args: args.clone(), span },
+                    );
+                }
                 // Internal: the value of the `generator.return(v)` request being
                 // unwound (used by the `yield*` desugaring to forward it).
                 if name == "__generatorReturnValue" && args.is_empty() {
