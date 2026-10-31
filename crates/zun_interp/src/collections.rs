@@ -5570,6 +5570,15 @@ impl<'a> Interp<'a> {
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 Ok(Value::Object(obj))
             }
+            "templateObject" => {
+                let cooked = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let raw = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.ensure_dynamic_entry(cooked);
+                    heap.dynamic_set(cooked, "raw".to_owned(), zun_core::Any::object(raw.addr() as usize));
+                });
+                Ok(Value::Object(cooked))
+            }
             "objectGroupBy" => {
                 let source = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {

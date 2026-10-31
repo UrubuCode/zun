@@ -441,6 +441,43 @@ impl RegexValue {
         &self.source
     }
 
+    /// Capture-group names by group number (index 0 is the whole match and is
+    /// always `None`; an unnamed group is `None`). Scanned from the source so it
+    /// is independent of the selected engine.
+    pub fn group_names(&self) -> Vec<Option<String>> {
+        let chars: Vec<char> = self.source.chars().collect();
+        let mut names: Vec<Option<String>> = vec![None];
+        let mut index = 0;
+        let mut in_class = false;
+        while index < chars.len() {
+            match chars[index] {
+                '\\' => index += 1,
+                '[' if !in_class => in_class = true,
+                ']' if in_class => in_class = false,
+                '(' if !in_class => {
+                    if chars.get(index + 1) == Some(&'?') {
+                        if chars.get(index + 2) == Some(&'<')
+                            && !matches!(chars.get(index + 3), Some('=') | Some('!'))
+                        {
+                            let mut name = String::new();
+                            let mut at = index + 3;
+                            while at < chars.len() && chars[at] != '>' {
+                                name.push(chars[at]);
+                                at += 1;
+                            }
+                            names.push(Some(name));
+                        }
+                    } else {
+                        names.push(None);
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        names
+    }
+
     pub fn is_match(&self, input: &str) -> Result<bool, RegexError> {
         match &self.engine {
             Engine::Re2(re) => Ok(re.is_match(input)),

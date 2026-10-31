@@ -318,6 +318,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "objectGetPrototypeOf", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "objectSetPrototypeOf", params: &[DynamicObject, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "objectFromEntries", params: &[Array], ret: DynamicObject, imp: unavailable },
+        NativeFn { name: "templateObject", params: &[Array, Array], ret: Array, imp: unavailable },
         NativeFn { name: "objectGroupBy", params: &[Array, Function], ret: DynamicObject, imp: unavailable },
         NativeFn { name: "objectIs", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "objectHasOwn", params: &[Opaque, Str], ret: Bool, imp: unavailable },

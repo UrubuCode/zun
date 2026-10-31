@@ -42,19 +42,60 @@ impl Heap {
             Ok(matches) => matches,
             Err(error) => return Some(Err(error)),
         };
+        let names = self.regexes.get(&(object.addr() as usize))?.group_names();
+        let spans = match self
+            .regexes
+            .get(&(object.addr() as usize))
+            .map(|regex| regex.match_spans(input, true))?
+        {
+            Ok(spans) => spans,
+            Err(error) => return Some(Err(error)),
+        };
         let outer = self.alloc_array(matches.len());
-        for (index, groups) in matches.into_iter().enumerate() {
-            let inner = self.alloc_array(groups.len());
-            for (group_index, group) in groups.into_iter().enumerate() {
-                let value = match group {
-                    Some(text) => zun_core::Any::string(self.intern_string(text.into())),
-                    None => zun_core::Any::void(),
-                };
-                self.array_set(inner, group_index, value);
-            }
+        for (index, (start, _end, groups)) in spans.into_iter().enumerate().take(matches.len()) {
+            let inner = self.alloc_match_array(input, start, groups, &names);
             self.array_set(outer, index, zun_core::Any::object(inner.addr() as usize));
         }
         Some(Ok(outer))
+    }
+
+    /// Build a match-result array: the groups plus the `index`, `input` and
+    /// `groups` expando properties of an `exec` / `matchAll` result.
+    fn alloc_match_array(
+        &mut self,
+        input: &str,
+        start_byte: usize,
+        groups: Vec<Option<String>>,
+        names: &[Option<String>],
+    ) -> Obj {
+        let array = self.alloc_array(groups.len());
+        let mut named: Vec<(String, zun_core::Any)> = Vec::new();
+        for (index, group) in groups.into_iter().enumerate() {
+            let value = match group {
+                Some(text) => zun_core::Any::string(self.intern_string(text.into())),
+                None => zun_core::Any::void(),
+            };
+            if let Some(Some(name)) = names.get(index) {
+                named.push((name.clone(), value));
+            }
+            self.array_set(array, index, value);
+        }
+        self.ensure_dynamic_entry(array);
+        let utf16_index = input[..start_byte.min(input.len())].encode_utf16().count();
+        self.dynamic_set(array, "index".to_owned(), zun_core::Any::float(utf16_index as f64));
+        let input_any = zun_core::Any::string(self.intern_string(input.into()));
+        self.dynamic_set(array, "input".to_owned(), input_any);
+        let groups_any = if named.is_empty() {
+            zun_core::Any::void()
+        } else {
+            let object = self.alloc_dynamic();
+            for (name, value) in named {
+                self.dynamic_set(object, name, value);
+            }
+            zun_core::Any::object(object.addr() as usize)
+        };
+        self.dynamic_set(array, "groups".to_owned(), groups_any);
+        array
     }
 
     pub fn regex_source(&self, object: Obj) -> Option<&str> {
@@ -165,26 +206,17 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
-        let groups = match self
-            .regexes
-            .get(&(object.addr() as usize))
-            .map(|regex| regex.captures(input))?
-        {
-            Ok(groups) => groups,
-            Err(error) => return Some(Err(error)),
+        let (spans, names) = {
+            let regex = self.regexes.get(&(object.addr() as usize))?;
+            match regex.match_spans(input, false) {
+                Ok(spans) => (spans, regex.group_names()),
+                Err(error) => return Some(Err(error)),
+            }
         };
-        let Some(groups) = groups else {
+        let Some((start, _end, groups)) = spans.into_iter().next() else {
             return Some(Ok(None));
         };
-        let array = self.alloc_array(groups.len());
-        for (index, group) in groups.into_iter().enumerate() {
-            let value = match group {
-                Some(text) => zun_core::Any::string(self.intern_string(text.into())),
-                None => zun_core::Any::void(),
-            };
-            self.array_set(array, index, value);
-        }
-        Some(Ok(Some(array)))
+        Some(Ok(Some(self.alloc_match_array(input, start, groups, &names))))
     }
 }
 

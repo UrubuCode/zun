@@ -5909,20 +5909,50 @@ impl Checker<'_> {
             ast::Expr::TaggedTemplate { tag, cooked, raw, exprs, .. } => {
                 if !self.tag_is_string_raw(tag) {
                     // A user tag is called as `tag(strings, ...substitutions)`.
-                    let strings = ast::Expr::ArrayLiteral {
-                        elements: cooked
+                    let literal = |chunks: &[String]| ast::Expr::ArrayLiteral {
+                        elements: chunks
                             .iter()
                             .map(|chunk| ast::ArrayElement::Expr(ast::Expr::String { value: chunk.clone(), span }))
                             .collect(),
                         span,
                     };
-                    let mut args = vec![strings];
+                    let cooked_array = self.check_expr(cx, &literal(cooked));
+                    let raw_array = self.check_expr(cx, &literal(raw));
+                    let Some((template_id, _)) = zun_natives::resolve("collections", "templateObject") else {
+                        self.error(span, "missing `templateObject` intrinsic");
+                        return self.poison(span);
+                    };
+                    let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
+                    let mut args = vec![ast::Expr::Ident(tmp)];
                     args.extend(exprs.iter().map(|expression| (**expression).clone()));
                     let call = match tag.as_ref() {
                         ast::Expr::Ident(name) => ast::Expr::Call { callee: *name, args, span },
                         other => ast::Expr::ComputedCall { callee: Box::new(other.clone()), args, span },
                     };
-                    return self.check_expr(cx, &call);
+                    let call = self.check_expr(cx, &call);
+                    let ty = call.ty;
+                    return hir::Expr {
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(hir::Expr {
+                                kind: hir::ExprKind::Assign {
+                                    slot,
+                                    value: Box::new(hir::Expr {
+                                        kind: hir::ExprKind::CallBuiltin {
+                                            id: template_id,
+                                            args: vec![cooked_array, raw_array],
+                                        },
+                                        ty: Ty::Array,
+                                        span,
+                                    }),
+                                },
+                                ty: Ty::Array,
+                                span,
+                            }),
+                            value: Box::new(call),
+                        },
+                        ty,
+                        span,
+                    };
                 }
                 self.check_tagged_template(cx, tag, raw, exprs, span)
             }
@@ -11786,6 +11816,16 @@ impl Checker<'_> {
                         ty: Ty::String,
                         span,
                     }, span),
+                    // Match-result arrays carry `index` / `input` / `groups` (and a
+                    // template strings array `raw`) as expando properties.
+                    Ty::Array if matches!(fname.as_str(), "index" | "input" | "groups" | "raw") => hir::Expr {
+                        kind: hir::ExprKind::DynamicGet {
+                            object: Box::new(object),
+                            name: fname,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    },
                     // Function objects carry an expando property bag
                     // (`fn['x'] = ...`), resolved at run time by the interpreter.
                     Ty::Function(_) => hir::Expr {
