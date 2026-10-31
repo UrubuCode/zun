@@ -11275,6 +11275,20 @@ impl Checker<'_> {
                     };
                 }
                 let Some(&class_idx) = self.classes_by_name.get(&name) else {
+                    // An undeclared constructor name is a run-time ReferenceError
+                    // (it may sit in dead code), like an undeclared identifier read.
+                    if cx.lookup(&name).is_none() && !self.by_name.contains_key(&name) && !self.module_globals.contains(&name) {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![Self::string_literal(name.clone(), span)],
+                                },
+                                ty: Ty::Any,
+                                span,
+                            };
+                        }
+                    }
                     self.error(class.span, format!("unknown class `{name}`"));
                     return self.poison(span);
                 };
