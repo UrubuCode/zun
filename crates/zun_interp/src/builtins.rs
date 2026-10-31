@@ -204,6 +204,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "setCallArgc",
         "argumentsObject",
         "arrayMakeHole",
+        "arrayDeleteIndex",
         "arrayPushHole",
         "arrayHas",
         "reflectDelete",

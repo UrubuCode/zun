@@ -2136,6 +2136,24 @@ impl<'a> Interp<'a> {
                     heap.dynamic_has(object, name)
                 })))
             }
+            "arrayDeleteIndex" => {
+                // `delete arr[i]`: leave a hole at an in-range index.
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Int(value, _) if value >= 0 => value as usize,
+                    Value::Float(value, _) if value >= 0.0 && value.fract() == 0.0 => value as usize,
+                    _ => return Ok(Value::Bool(true)),
+                };
+                if self.guard_array(array, crate::integrity::ArrayOp::Remove).is_err() {
+                    return Err(RunError::Native("TypeError: Cannot delete property of [object Array]".into()));
+                }
+                zun_gc::with_current_heap_mut(|heap| {
+                    if heap.array_len(array).is_some_and(|len| index < len) {
+                        heap.array_set(array, index, zun_core::Any::hole());
+                    }
+                });
+                Ok(Value::Bool(true))
+            }
             "arrayMakeHole" => {
                 let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let index = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {

@@ -3179,6 +3179,11 @@ impl Checker<'_> {
         }
         // The target must be a dynamic receiver (plain object or `any`); a Proxy
         // target is itself a dynamic receiver at runtime.
+        // A managed collection target is handed to the natives as a dynamic receiver.
+        if matches!(checked[0].ty, Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_)) {
+            let target = checked.remove(0);
+            checked.insert(0, Self::box_to_any(target));
+        }
         let target_ok = matches!(checked[0].ty, Ty::DynamicObject | Ty::Any | Ty::Proxy)
             || checked[0].ty.is_error();
         if !target_ok {
@@ -6464,6 +6469,7 @@ impl Checker<'_> {
                             || t == Ty::Boolean
                             || t == Ty::BigInt
                             || t == Ty::Array
+                            || t == Ty::Void
                             || matches!(t, Ty::Int(_))
                     };
                     let numeric_ty = |t: Ty| t.is_int() || t.is_float();
@@ -9836,6 +9842,16 @@ impl Checker<'_> {
                     _ => None,
                 });
                 if let Some((native_name, return_ty, expected)) = managed_method {
+                    // A callback method's optional `thisArg` is accepted and ignored.
+                    let args = if receiver.ty == Ty::Array
+                        && expected.len() == 1
+                        && args.len() == 2
+                        && expected[0] == Ty::Function(hir::DYNAMIC_FUNCTION)
+                    {
+                        &args[..1]
+                    } else {
+                        args
+                    };
                     if args.len() != expected.len() {
                         self.error(
                             span,
@@ -13342,6 +13358,25 @@ impl Checker<'_> {
                     ty,
                     span,
                 };
+            }
+        }
+        // `delete arr[i]` on a typed array leaves a hole.
+        if let ast::Expr::Index { object, index, .. } = operand {
+            if matches!(object.as_ref(), ast::Expr::Ident(_)) {
+                let probe = self.check_expr(cx, object);
+                if probe.ty == Ty::Array {
+                    let mut key = self.check_expr(cx, index);
+                    if !key.ty.is_error() && matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() {
+                        key = Self::box_to_any(key);
+                    }
+                    if let Some((id, _)) = zun_natives::resolve("collections", "arrayDeleteIndex") {
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![probe, key] },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                    }
+                }
             }
         }
         let (object_ast, key) = match operand {

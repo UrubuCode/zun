@@ -209,6 +209,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "generatorReturnValue", params: &[], ret: Opaque, imp: unavailable },
         NativeFn { name: "setCallArgc", params: &[Opaque, F64], ret: Opaque, imp: unavailable },
         NativeFn { name: "argumentsObject", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayDeleteIndex", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "arrayMakeHole", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "arrayPushHole", params: &[Opaque], ret: Bool, imp: unavailable },
         NativeFn {
