@@ -644,6 +644,36 @@ impl Interp<'_> {
                             _ => {}
                         }
                     }
+                    // A RegExp object read through `any`: the flag accessors
+                    // and `source`/`flags`/`lastIndex`.
+                    if let Value::Object(regex) = &concrete {
+                        let info = zun_gc::with_current_heap(|heap| {
+                            heap.regex_source(*regex)
+                                .map(|source| (source.to_owned(), heap.regex_flags(*regex).unwrap_or("").to_owned()))
+                        });
+                        if let Some((source, flags)) = info {
+                            let flag_of = |c: char| Some(Value::Bool(flags.contains(c)));
+                            let answer = match name.as_str() {
+                                "source" => Some(Value::Str(source.into())),
+                                "flags" => Some(Value::Str(
+                                    "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect::<String>().into(),
+                                )),
+                                "global" => flag_of('g'),
+                                "ignoreCase" => flag_of('i'),
+                                "multiline" => flag_of('m'),
+                                "dotAll" => flag_of('s'),
+                                "unicode" => flag_of('u'),
+                                "unicodeSets" => flag_of('v'),
+                                "sticky" => flag_of('y'),
+                                "hasIndices" => flag_of('d'),
+                                _ => None,
+                            };
+                            if let Some(answer) = answer {
+                                stack.push(answer);
+                                continue;
+                            }
+                        }
+                    }
                     // A primitive number/boolean/undefined/null receiver has no own
                     // properties here: the read yields `undefined`.
                     if matches!(
@@ -715,6 +745,17 @@ impl Interp<'_> {
                                     None => member,
                                 }
                             }
+                            None => Value::Void,
+                        }
+                    } else {
+                        value
+                    };
+                    // An inherited property: walk the explicit prototype chain
+                    // (`Object.create(proto)`); getters run with the original
+                    // receiver as `this`.
+                    let value = if matches!(value, Value::Void) {
+                        match self.prototype_chain_get(object, &name)? {
+                            Some(inherited) => inherited,
                             None => Value::Void,
                         }
                     } else {
@@ -817,6 +858,9 @@ impl Interp<'_> {
                             }
                         } else {
                             zun_gc::with_current_heap_mut(|heap| {
+                                if heap.array_len(object).is_some() {
+                                    heap.ensure_dynamic_entry(object);
+                                }
                                 heap.dynamic_set(object, name, any);
                             });
                         }
@@ -858,20 +902,39 @@ impl Interp<'_> {
                     let object = object_raw.as_object();
                     let value = if let Value::Any(any) = &key {
                         if let Some(symbol) = any.as_symbol() {
-                            zun_gc::with_current_heap(|heap| {
+                            if let Some(getter) = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_getter(object, symbol)) {
+                                let call_args = self.with_this_arg(getter, object, Vec::new());
+                                match self.invoke_function_value(getter, call_args) {
+                                    Ok(v) => v,
+                                    Err(RunError::Thrown(exception)) => {
+                                        if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                            continue;
+                                        }
+                                        return Err(RunError::Thrown(exception));
+                                    }
+                                    Err(error) => return Err(error),
+                                }
+                            } else {
+                                zun_gc::with_current_heap(|heap| {
                                 heap.dynamic_get_symbol(object, symbol)
                                     .map(Value::Any)
                                     .unwrap_or(Value::Void)
                             })
+                            }
                         } else {
                             return Err(RunError::BadToken);
                         }
                     } else if let Value::Str(key) = &key {
-                        zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get(object, key)
-                                .map(Value::Any)
-                                .unwrap_or(Value::Void)
-                        })
+                        match self.dynamic_member_get(object, key) {
+                            Ok(v) => v,
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
                     } else if matches!(key, Value::Int(..) | Value::Float(..)) {
                         // A numeric computed key: an array index on an array,
                         // otherwise the stringified property on a dynamic object
@@ -960,6 +1023,9 @@ impl Interp<'_> {
                         Value::Any(key_any) if key_any.as_symbol().is_some() => {
                             let symbol = key_any.as_symbol().expect("symbol key");
                             zun_gc::with_current_heap_mut(|heap| {
+                                if heap.array_len(object).is_some() || heap.regex_source(object).is_some() {
+                                    heap.ensure_dynamic_entry(object);
+                                }
                                 heap.dynamic_set_symbol(object, symbol, any);
                             });
                         }
@@ -977,6 +1043,10 @@ impl Interp<'_> {
                                 if heap.array_len(object).is_some() {
                                     let index = key.as_number() as i64;
                                     if index >= 0 {
+                                        let len = heap.array_len(object).unwrap_or(0);
+                                        if index as usize >= len {
+                                            heap.array_resize(object, index as usize + 1);
+                                        }
                                         heap.array_set(object, index as usize, any);
                                     }
                                 } else {

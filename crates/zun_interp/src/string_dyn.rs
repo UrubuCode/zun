@@ -90,6 +90,13 @@ impl<'a> Interp<'a> {
 
     /// ECMAScript ToString over any value (objects run OrdinaryToPrimitive).
     pub(super) fn dyn_to_string(&mut self, value: &Value) -> Result<String, RunError> {
+        if let Ok(Value::Any(any)) = unbox_arg(value) {
+            if any.as_symbol().is_some() {
+                return Err(RunError::Native(
+                    "TypeError: Cannot convert a Symbol value to a string".into(),
+                ));
+            }
+        }
         Ok(match unbox_arg(value)? {
             Value::Object(obj) => {
                 if let Some(text) = zun_gc::with_current_heap(|heap| {
@@ -112,14 +119,23 @@ impl<'a> Interp<'a> {
     }
 
     /// ECMAScript IsRegExp: a truthy `Symbol.match` property, else a real regexp.
-    fn is_regexp(value: &Value) -> bool {
-        let Ok(Value::Object(obj)) = unbox_arg(value) else { return false };
-        zun_gc::with_current_heap(|heap| {
+    fn is_regexp(&mut self, value: &Value) -> Result<bool, RunError> {
+        let Ok(Value::Object(obj)) = unbox_arg(value) else { return Ok(false) };
+        // A `Symbol.match` accessor is read exactly once.
+        let getter = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_symbol_getter(obj, zun_core::WellKnownSymbol::Match.id())
+        });
+        if let Some(getter) = getter {
+            let args = self.with_this_arg(getter, obj, Vec::new());
+            let result = self.invoke_function_value(getter, args)?;
+            return Ok(zun_gc::with_current_heap(|heap| is_truthy(&result, heap)));
+        }
+        Ok(zun_gc::with_current_heap(|heap| {
             match heap.dynamic_get_symbol(obj, zun_core::WellKnownSymbol::Match.id()) {
                 Some(any) => is_truthy(&Value::Any(any), heap),
                 None => heap.regex_source(obj).is_some(),
             }
-        })
+        }))
     }
 
     /// Whether an argument is `undefined` (an absent argument arrives as one).
@@ -207,7 +223,7 @@ impl<'a> Interp<'a> {
                     }
                 }
             }
-            "includes" | "startsWith" | "endsWith" if Self::is_regexp(&a0) => {
+            "includes" | "startsWith" | "endsWith" if self.is_regexp(&a0)? => {
                 return Err(RunError::Native(format!(
                     "TypeError: First argument to String.prototype.{name} must not be a regular expression"
                 )));
@@ -307,7 +323,7 @@ impl<'a> Interp<'a> {
                     Value::Void
                 }
             }
-            "split" if !Self::is_regexp(&a0) => {
+            "split" if !self.is_regexp(&a0)? => {
                 // `split(separator?, limit?)` with a string (or absent) separator.
                 let limit = if Self::is_undefined(&a1) {
                     usize::MAX

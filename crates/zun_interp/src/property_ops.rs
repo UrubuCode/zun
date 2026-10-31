@@ -167,6 +167,15 @@ impl Interp<'_> {
                 let enumerable = desc.enumerable.unwrap_or_else(|| {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_symbol_enumerable(obj, *symbol))
                 });
+                if desc.is_accessor() {
+                    return zun_gc::with_current_heap_mut(|heap| {
+                        let ok = heap.dynamic_define_symbol(obj, *symbol, zun_core::Any::void(), enumerable);
+                        if let Some(getter) = desc.get {
+                            heap.dynamic_set_symbol_getter(obj, *symbol, getter);
+                        }
+                        ok
+                    });
+                }
                 return zun_gc::with_current_heap_mut(|heap| {
                     heap.dynamic_define_symbol(obj, *symbol, value, enumerable)
                 });

@@ -216,6 +216,19 @@ impl Heap {
             .unwrap_or_default()
     }
 
+    pub fn dynamic_symbol_getter(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_getter(symbol))
+    }
+    pub fn dynamic_set_symbol_getter(&mut self, object: Obj, symbol: zun_core::SymbolId, function: zun_core::FunctionHandle) {
+        self.ensure_dynamic_entry(object);
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            properties.set_symbol_getter(symbol, function);
+        }
+        if let Some(environment) = function.environment() {
+            self.write_barrier(object, environment as u64);
+        }
+    }
+
     pub fn dynamic_get_symbol_function(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_function(symbol))
     }

@@ -67,6 +67,7 @@ impl Checker<'_> {
             this_class: outer.this_class,
             is_constructor: false,
             is_module_scope: false,
+            finally_depth: 0,
         };
         // The hidden environment is always local zero. User parameters and
         // ordinary locals follow it, matching the indirect-call ABI.

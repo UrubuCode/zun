@@ -302,6 +302,7 @@ pub const MODULE: crate::Module = crate::Module {
         // by name; the signatures here fix only the argument count the verifier
         // pops. `Opaque`/`Any` stand for "any managed value".
         NativeFn { name: "objectKeys", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "objectForInKeys", params: &[Opaque], ret: Array, imp: unavailable },
         NativeFn { name: "objectValues", params: &[Opaque], ret: Array, imp: unavailable },
         NativeFn { name: "objectEntries", params: &[Opaque], ret: Array, imp: unavailable },
         NativeFn { name: "objectAssign", params: &[DynamicObject, Opaque], ret: DynamicObject, imp: unavailable },
@@ -477,6 +478,7 @@ pub const MODULE: crate::Module = crate::Module {
         // object). Touches the managed heap, intercepted by name. Appended last
         // so existing dispatch ids stay stable.
         NativeFn { name: "objectGetOwnPropertySymbols", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "reflectOwnKeys", params: &[Opaque], ret: Array, imp: unavailable },
         // NUCLEUS #5: `Number(x)` coercion (ECMAScript ToNumber). The argument
         // arrives as an immediate `Any` (`Opaque`); an object runs
         // OrdinaryToPrimitive(hint "number") via `[Symbol.toPrimitive]`.

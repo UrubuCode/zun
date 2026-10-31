@@ -441,6 +441,7 @@ fn lower_function<'a>(
         continue_patches: Vec::new(),
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
+        break_finally_depths: Vec::new(),
         closure_method_base,
         self_closure: None,
         points: Vec::new(),
@@ -485,6 +486,7 @@ fn lower_closure_function<'a>(
         continue_patches: Vec::new(),
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
+        break_finally_depths: Vec::new(),
         closure_method_base,
         self_closure: Some(closure_index),
         points: Vec::new(),
@@ -524,6 +526,8 @@ struct FnLowerer<'a, 'b> {
     continue_patches: Vec<Vec<BranchPatch>>,
     handlers: Vec<ExceptionHandler>,
     finally_bodies: Vec<&'a [Stmt]>,
+    /// `finally_bodies.len()` when each enclosing break target was entered.
+    break_finally_depths: Vec<usize>,
     /// Index of the closure being lowered (for [`ExprKind::SelfClosure`]).
     self_closure: Option<u32>,
     closure_method_base: u32,
@@ -559,6 +563,21 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(slot)));
             self.patch_to_here(skip);
         }
+    }
+
+    /// Inline the pending `finally` bodies that sit inside the target scope
+    /// (those entered after `depth`), innermost first, for a `break` or
+    /// `continue` that leaves them.
+    fn run_finally_to(&mut self, depth: usize) {
+        let saved = self.finally_bodies.clone();
+        for (index, cleanup) in saved.iter().enumerate().rev() {
+            if index < depth {
+                break;
+            }
+            self.finally_bodies.truncate(index);
+            self.stmts(cleanup);
+        }
+        self.finally_bodies = saved;
     }
 
     fn emit_dynamic_load(&mut self, name: &str) {
@@ -743,6 +762,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(cond);
                 let to_exit = self.emit_branch(Opcode::BranchFalse);
                 self.break_patches.push(Vec::new());
+                self.break_finally_depths.push(self.finally_bodies.len());
                 self.loop_labels.push(self.pending_label.take());
                 self.continue_targets.push(vec![loop_start]);
                 self.continue_patches.push(Vec::new());
@@ -752,6 +772,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.continue_targets.pop();
                 self.continue_patches.pop();
                 self.loop_labels.pop();
+                self.break_finally_depths.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -759,6 +780,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             Stmt::DoWhile { body, cond } => {
                 let loop_start = self.code.len();
                 self.break_patches.push(Vec::new());
+                self.break_finally_depths.push(self.finally_bodies.len());
                 self.loop_labels.push(self.pending_label.take());
                 self.continue_targets.push(vec![usize::MAX]);
                 self.continue_patches.push(Vec::new());
@@ -771,6 +793,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
                 self.expr(cond);
                 self.emit_branch_back(Opcode::BranchTrue, loop_start);
+                self.break_finally_depths.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -788,6 +811,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(cond);
                 let to_exit = self.emit_branch(Opcode::BranchFalse);
                 self.break_patches.push(Vec::new());
+                self.break_finally_depths.push(self.finally_bodies.len());
                 self.loop_labels.push(self.pending_label.take());
                 self.continue_targets.push(vec![usize::MAX]);
                 self.continue_patches.push(Vec::new());
@@ -804,6 +828,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
                 self.emit_branch_back(Opcode::Branch, loop_start);
                 self.patch_to_here(to_exit);
+                self.break_finally_depths.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -825,6 +850,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.expr(done);
                 let to_exit = self.emit_branch(Opcode::BranchTrue);
                 self.break_patches.push(Vec::new());
+                self.break_finally_depths.push(self.finally_bodies.len());
                 self.loop_labels.push(self.pending_label.take());
                 self.continue_targets.push(vec![loop_start]);
                 self.continue_patches.push(Vec::new());
@@ -839,6 +865,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.continue_targets.pop();
                 self.continue_patches.pop();
                 self.loop_labels.pop();
+                self.break_finally_depths.pop();
                 for patch in self.break_patches.pop().unwrap_or_default() {
                     self.patch_to_here(patch);
                 }
@@ -857,6 +884,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     // target only. An empty continue-target list marks it as
                     // not a loop.
                     self.break_patches.push(Vec::new());
+                    self.break_finally_depths.push(self.finally_bodies.len());
                     self.loop_labels.push(Some(label.clone()));
                     self.continue_targets.push(Vec::new());
                     self.continue_patches.push(Vec::new());
@@ -866,13 +894,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.continue_targets.pop();
                     self.continue_patches.pop();
                     self.loop_labels.pop();
+                    self.break_finally_depths.pop();
                     for patch in self.break_patches.pop().unwrap_or_default() {
                         self.patch_to_here(patch);
                     }
                 }
             }
             Stmt::Break(label) => {
-                let patch = self.emit_branch(Opcode::Branch);
                 // An unlabeled `break` targets the innermost loop or switch,
                 // never a plain labeled block.
                 let target = label.as_ref().and_then(|name| {
@@ -884,6 +912,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     })
                 });
                 if let Some(index) = target {
+                    self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0));
+                }
+                let patch = self.emit_branch(Opcode::Branch);
+                if let Some(index) = target {
                     if let Some(patches) = self.break_patches.get_mut(index) {
                         patches.push(patch);
                     }
@@ -894,6 +926,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.loop_labels.iter().rposition(|candidate| candidate.as_ref() == Some(name))
                 }).or_else(|| (0..self.continue_targets.len()).rev().find(|&i| !self.continue_targets[i].is_empty()));
                 if let Some(index) = target_index {
+                    self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0));
                     let target = self.continue_targets[index].last().copied().unwrap_or(usize::MAX);
                     if target == usize::MAX {
                         let patch = self.emit_branch(Opcode::Branch);

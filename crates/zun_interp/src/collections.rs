@@ -2930,6 +2930,17 @@ impl<'a> Interp<'a> {
                             heap.bigint_value(obj).map(|v| v.to_string()).unwrap_or_default()
                         })
                     }
+                    Value::Object(obj)
+                        if zun_gc::with_current_heap(|heap| heap.regex_source(obj).is_some()) =>
+                    {
+                        zun_gc::with_current_heap(|heap| {
+                            let source = heap.regex_source(obj).unwrap_or_default();
+                            let flags = heap.regex_flags(obj).unwrap_or_default();
+                            let ordered: String =
+                                "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect();
+                            format!("/{source}/{ordered}")
+                        })
+                    }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()
@@ -4665,7 +4676,84 @@ impl<'a> Interp<'a> {
                 self.queue_microtask(callback)?;
                 Ok(Value::Void)
             }
+            "objectForInKeys" => {
+                // `for (k in obj)`: own enumerable keys first, then enumerable
+                // keys inherited along the explicit prototype chain; a key
+                // already seen (even a non-enumerable own one) shadows.
+                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut keys: Vec<String> = Vec::new();
+                if is_dynamic {
+                    let mut current = obj;
+                    for _ in 0..256 {
+                        let own = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_keys(current).unwrap_or_default().into_iter()
+                                .map(|key| {
+                                    let enumerable = heap.dynamic_is_enumerable(current, &key);
+                                    (key, enumerable)
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                        for (key, enumerable) in own {
+                            if seen.insert(key.clone()) && enumerable {
+                                keys.push(key);
+                            }
+                        }
+                        let next = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_prototype(current)
+                                .and_then(|any| any.as_object())
+                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                        });
+                        match next {
+                            Some(next) => current = next,
+                            None => break,
+                        }
+                    }
+                } else {
+                    keys = self.object_own_entries(obj)?.into_iter().map(|(key, _)| key).collect();
+                }
+                let array = zun_gc::with_current_heap_mut(|heap| {
+                    let array = heap.alloc_array(keys.len());
+                    for (index, key) in keys.iter().enumerate() {
+                        let item = Value::Str(key.clone().into())
+                            .box_any(heap)
+                            .unwrap_or_else(zun_core::Any::null);
+                        let _ = heap.array_set(array, index, item);
+                    }
+                    array
+                });
+                Ok(Value::Object(array))
+            }
             "objectKeys" => {
+                // Primitives: a string exposes its characters, other
+                // primitives have no own properties, null/undefined throw.
+                match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => {
+                        let count = text.chars().count();
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(count);
+                            for index in 0..count {
+                                let item = Value::Str(index.to_string().into())
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                let _ = heap.array_set(array, index, item);
+                            }
+                            array
+                        });
+                        return Ok(Value::Object(array));
+                    }
+                    Value::Int(..) | Value::Float(..) | Value::Bool(_) => {
+                        let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                        return Ok(Value::Object(array));
+                    }
+                    Value::Null | Value::Void => {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert undefined or null to object".into(),
+                        ));
+                    }
+                    _ => {}
+                }
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let entries = self.object_own_entries(obj)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
@@ -5262,6 +5350,26 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(array))
             }
+            "reflectOwnKeys" => {
+                // Own string keys followed by own symbol keys. A proxy's
+                // `ownKeys` trap result is returned as is.
+                let names = self.call_managed_collection("objectGetOwnPropertyNames", args)?;
+                let Value::Object(names_array) = names else { return Ok(names) };
+                let target = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(target));
+                if symbols.is_empty() {
+                    return Ok(Value::Object(names_array));
+                }
+                let roots = [names_array];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                zun_gc::with_current_heap_mut(|heap| {
+                    for symbol in symbols {
+                        let end = heap.array_len(roots[0]).unwrap_or(0);
+                        heap.array_insert(roots[0], end, zun_core::Any::symbol(symbol));
+                    }
+                });
+                Ok(Value::Object(roots[0]))
+            }
             "objectGetOwnPropertySymbols" => {
                 // `Object.getOwnPropertySymbols(obj)` — an array of the object's
                 // own symbol keys (as `Any` symbol values), in insertion-stable
@@ -5511,6 +5619,59 @@ impl<'a> Interp<'a> {
         &mut self,
         obj: zun_gc::Obj,
     ) -> Result<Vec<(String, Value)>, RunError> {
+        // A primitive wrapper object (`new String("hi")`, `new Number(1)`):
+        // a string wrapper exposes its characters; number/boolean wrappers
+        // have no own enumerable properties.
+        if !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) && obj.type_rid() >= 1 {
+            let wrapper = self
+                .module
+                .tables
+                .type_defs
+                .get(obj.type_rid() as usize - 1)
+                .map(|def| self.module.strings.get(def.name).to_string());
+            match wrapper.as_deref() {
+                Some("StringObject") => {
+                    let text = match self.instance_member_get(obj, "value")? {
+                        Some(Value::Str(text)) => text.to_string(),
+                        _ => String::new(),
+                    };
+                    return Ok(text
+                        .chars()
+                        .enumerate()
+                        .map(|(index, ch)| (index.to_string(), Value::Str(ch.to_string().into())))
+                        .collect());
+                }
+                Some("NumberObject") | Some("BooleanObject") => return Ok(Vec::new()),
+                _ => {}
+            }
+        }
+        // An array: its present indices (as strings), then enumerable expando
+        // properties.
+        if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
+            let mut out: Vec<(String, Value)> = Vec::new();
+            for index in 0..len {
+                let element = zun_gc::with_current_heap(|heap| {
+                    heap.array_get(obj, index).and_then(|any| Value::unbox_any(any, heap))
+                });
+                if let Some(element) = element {
+                    out.push((index.to_string(), element));
+                }
+            }
+            let expandos = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_keys(obj)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|key| heap.dynamic_is_enumerable(obj, key))
+                    .filter_map(|key| {
+                        heap.dynamic_get(obj, &key)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                            .map(|value| (key, value))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            out.extend(expandos);
+            return Ok(out);
+        }
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
             let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj))
                 .ok_or(RunError::BadToken)?;
@@ -5599,6 +5760,28 @@ impl<'a> Interp<'a> {
     /// Own string property names of `obj` (dynamic or typed), including
     /// non-enumerable keys (`getOwnPropertyNames`).
     fn object_own_names(&mut self, obj: zun_gc::Obj) -> Result<Vec<String>, RunError> {
+        if !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) && obj.type_rid() >= 1 {
+            let is_string_wrapper = self
+                .module
+                .tables
+                .type_defs
+                .get(obj.type_rid() as usize - 1)
+                .map(|def| self.module.strings.get(def.name) == "StringObject")
+                .unwrap_or(false);
+            if is_string_wrapper {
+                let mut names: Vec<String> =
+                    self.object_own_entries(obj)?.into_iter().map(|(name, _)| name).collect();
+                names.push("length".to_owned());
+                return Ok(names);
+            }
+        }
+        if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
+            let mut names: Vec<String> = (0..len).map(|index| index.to_string()).collect();
+            names.push("length".to_owned());
+            let expandos = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).unwrap_or_default();
+            names.extend(expandos);
+            return Ok(names);
+        }
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
             zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
         } else {
@@ -6195,6 +6378,69 @@ impl<'a> Interp<'a> {
             zun_gc::with_current_heap_mut(|heap| sink(heap, roots[1], boxed));
         }
         Ok(roots[1])
+    }
+
+    /// Read `name` from the explicit prototype chain of `receiver` (not the
+    /// receiver itself): data slots, function slots, and accessors (invoked
+    /// with `receiver` as `this`).
+    pub(crate) fn prototype_chain_get(
+        &mut self,
+        receiver: zun_gc::Obj,
+        name: &str,
+    ) -> Result<Option<Value>, RunError> {
+        let mut current = receiver;
+        for _ in 0..256 {
+            let Some(next) = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_prototype(current)
+                    .and_then(|any| any.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+            }) else {
+                return Ok(None);
+            };
+            current = next;
+            let getter =
+                zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(current, name));
+            if let Some(getter) = getter {
+                let args = self.with_this_arg(getter, receiver, Vec::new());
+                return self.invoke_function_value(getter, args).map(Some);
+            }
+            let found = zun_gc::with_current_heap(|heap| {
+                if let Some(any) = heap.dynamic_get(current, name) {
+                    Some(Value::Any(any))
+                } else {
+                    heap.dynamic_get_function(current, name).map(Value::Function)
+                }
+            });
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        Ok(None)
+    }
+
+    /// Read member `name` of a dynamic object for `o[name]`: own accessor,
+    /// own data slot, own function slot, then the explicit prototype chain.
+    pub(crate) fn dynamic_member_get(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+    ) -> Result<Value, RunError> {
+        let getter = zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, name));
+        if let Some(getter) = getter {
+            let args = self.with_this_arg(getter, object, Vec::new());
+            return self.invoke_function_value(getter, args);
+        }
+        let own = zun_gc::with_current_heap(|heap| {
+            if let Some(any) = heap.dynamic_get(object, name) {
+                Some(Value::Any(any))
+            } else {
+                heap.dynamic_get_function(object, name).map(Value::Function)
+            }
+        });
+        if let Some(value) = own {
+            return Ok(value);
+        }
+        Ok(self.prototype_chain_get(object, name)?.unwrap_or(Value::Void))
     }
 
     /// Arguments for invoking an object-literal accessor/method closure: a
@@ -7889,6 +8135,10 @@ pub(super) fn same_value(left: &Value, right: &Value) -> bool {
         (Value::Object(left), Value::Object(right)) => left.addr() == right.addr(),
         (Value::Null, Value::Null) => true,
         (Value::Void, Value::Void) => true,
+        (Value::Any(left), Value::Any(right)) => match (left.as_symbol(), right.as_symbol()) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        },
         _ => false,
     }
 }

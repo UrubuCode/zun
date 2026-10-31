@@ -65,6 +65,8 @@ pub struct DynamicObject {
     /// and `Object.assign`).
     non_enumerable_symbols: HashSet<SymbolId>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
+    /// Getter functions of symbol-keyed accessor properties.
+    symbol_getters: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
     module_functions: BTreeMap<String, ModuleBoundFunction>,
     module_classes: BTreeMap<String, ModuleBoundClass>,
@@ -85,6 +87,7 @@ impl PartialEq for DynamicObject {
             && self.symbol_properties == other.symbol_properties
             && self.non_enumerable_symbols == other.non_enumerable_symbols
             && self.symbol_functions == other.symbol_functions
+            && self.symbol_getters == other.symbol_getters
             && self.string_functions == other.string_functions
             && self.module_functions == other.module_functions
             && self.module_classes == other.module_classes
@@ -454,6 +457,12 @@ impl DynamicObject {
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
         self.symbol_properties.insert(symbol, value)
     }
+    pub fn get_symbol_getter(&self, symbol: SymbolId) -> Option<FunctionHandle> {
+        self.symbol_getters.get(&symbol).copied()
+    }
+    pub fn set_symbol_getter(&mut self, symbol: SymbolId, function: FunctionHandle) -> Option<FunctionHandle> {
+        self.symbol_getters.insert(symbol, function)
+    }
     pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
         self.symbol_functions.get(&symbol).copied()
     }
@@ -510,6 +519,7 @@ impl DynamicObject {
             .chain(self.prototype.iter().filter_map(|value| value.as_object()))
             .chain(self.symbol_properties.values().filter_map(|value| value.as_object()))
             .chain(self.symbol_functions.values().filter_map(|value| value.environment()))
+            .chain(self.symbol_getters.values().filter_map(|value| value.environment()))
             .chain(self.string_functions.values().filter_map(|value| value.environment()))
             .chain(self.accessor_get.values().filter_map(|value| value.environment()))
             .chain(self.accessor_set.values().filter_map(|value| value.environment()))

@@ -431,6 +431,8 @@ struct FunctionCx {
     /// `let`/`const` declaration binds a module global (stored via `globalSet`)
     /// rather than a frame local.
     is_module_scope: bool,
+    /// Number of enclosing `try` statements that have a `finally` clause.
+    finally_depth: usize,
 }
 
 #[derive(Default)]
@@ -533,6 +535,7 @@ impl Checker<'_> {
             this_class: None,
             is_constructor: false,
             is_module_scope: true,
+            finally_depth: 0,
         };
         self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
         let mut body = self.check_block(&mut cx, &block);
@@ -1694,6 +1697,7 @@ impl Checker<'_> {
             this_class,
             is_constructor: this_class.is_some() && self.text(&f.name) == "constructor",
             is_module_scope: false,
+            finally_depth: 0,
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -2387,7 +2391,7 @@ impl Checker<'_> {
                         ty: Ty::Any,
                     }
                 };
-                let Some((keys_id, _)) = zun_natives::resolve("collections", "objectKeys") else {
+                let Some((keys_id, _)) = zun_natives::resolve("collections", "objectForInKeys") else {
                     self.error(span, "missing `objectKeys` intrinsic");
                     return hir::Stmt::Expr(self.poison(span));
                 };
@@ -2504,6 +2508,26 @@ impl Checker<'_> {
                     }
                     _ => {}
                 }
+                // Inside a `try` with a `finally`, the return value is computed
+                // first and held in a temporary while the cleanup runs.
+                if cx.finally_depth > 0 {
+                    if let Some(v) = value {
+                        if !matches!(v.kind, hir::ExprKind::Number(_) | hir::ExprKind::String(_) | hir::ExprKind::Boolean(_) | hir::ExprKind::Null) && !v.ty.is_error() {
+                            let span = v.span;
+                            let ty = v.ty;
+                            let (slot, _) = self.synthetic_local(cx, ty);
+                            return hir::Stmt::Group(vec![
+                                hir::Stmt::Let { slot, init: v },
+                                hir::Stmt::Return(Some(hir::Expr {
+                                    kind: hir::ExprKind::Local(slot),
+                                    ty,
+                                    span,
+                                })),
+                            ]);
+                        }
+                        return hir::Stmt::Return(Some(v));
+                    }
+                }
                 hir::Stmt::Return(value)
             }
             ast::Stmt::Throw { value, .. } => hir::Stmt::Throw(self.check_expr(cx, value)),
@@ -2513,6 +2537,10 @@ impl Checker<'_> {
                 finally,
                 ..
             } => {
+                let has_finally = finally.is_some();
+                if has_finally {
+                    cx.finally_depth += 1;
+                }
                 let body = self.check_block(cx, body);
                 let catches = catches
                     .iter()
@@ -2531,6 +2559,9 @@ impl Checker<'_> {
                         hir::CatchClause { slot, ty, body }
                     })
                     .collect();
+                if has_finally {
+                    cx.finally_depth -= 1;
+                }
                 let finally_body = finally.as_ref().map(|block| {
                     if count_awaits_in_block(block) != 0 {
                         self.error(
@@ -2964,7 +2995,7 @@ impl Checker<'_> {
             "has" => builtin(self, "reflectHas", checked, Ty::Boolean),
             "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean),            // `ownKeys` reports all own string keys (not just enumerable ones),
             // and consults a proxy's `ownKeys` trap via the proxy-aware native.
-            "ownKeys" => builtin(self, "objectGetOwnPropertyNames", checked, Ty::Array),
+            "ownKeys" => builtin(self, "reflectOwnKeys", checked, Ty::Array),
             "getOwnPropertyDescriptor" => {
                 builtin(self, "objectGetOwnPropertyDescriptor", checked, Ty::Any)
             }
@@ -7345,6 +7376,20 @@ impl Checker<'_> {
                     };
                 }
 
+                if self.module_globals.contains(&name) {
+                    // A module-level binding called from another function:
+                    // read it from the realm store and call it dynamically.
+                    let callee_value = self.global_get_expr(&name, callee.span);
+                    return hir::Expr {
+                        kind: hir::ExprKind::IndirectCall {
+                            callee: Box::new(callee_value),
+                            args,
+                            func: hir::DYNAMIC_FUNCTION,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 let Some(&func) = self.by_name.get(&name) else {
                     self.error(callee.span, format!("unknown function `{name}`"));
                     return self.poison(span);

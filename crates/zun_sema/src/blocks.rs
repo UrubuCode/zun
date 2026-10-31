@@ -23,13 +23,12 @@ impl<'a> Checker<'a> {
                         if let hir::Stmt::Let { slot, init } | hir::Stmt::BoxedLet { slot, init } =
                             &lowered
                         {
-                            let init_is_function = matches!(init.ty, crate::hir::Ty::Function(_));
                             let slot = *slot;
                             let slot_ty = cx.locals[slot as usize];
-                            // Function values do not box to `Any`, so they cannot
-                            // ride the realm global store; such a binding stays a
-                            // local only (it is still callable within `<main>`).
-                            if !matches!(slot_ty, crate::hir::Ty::Function(_)) && !init_is_function {
+                            // Function values ride the global object function slot (see
+                            // `globalSet`), so function-valued bindings are mirrored too and
+                            // callable from other functions.
+                            {
                                 let span = name.span;
                                 let read = hir::Expr {
                                     kind: if cx.boxed.contains(&slot) {
