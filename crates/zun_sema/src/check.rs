@@ -7923,6 +7923,42 @@ impl Checker<'_> {
                 args,
                 ..
             } => {
+                // `recv.method(...args)` on a dynamic receiver: dispatch at run time.
+                if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                    && !matches!(self.text(method), "call" | "apply" | "bind")
+                    && !matches!(receiver.as_ref(), ast::Expr::Ident(_) | ast::Expr::Field { .. } | ast::Expr::StaticField { .. } if false)
+                {
+                    let is_namespace = matches!(receiver.as_ref(), ast::Expr::Ident(n) if cx.lookup(self.text(n)).is_none());
+                    if !is_namespace {
+                        let probe = self.check_expr(cx, receiver);
+                        if matches!(probe.ty, Ty::Any | Ty::DynamicObject) {
+                            let elements = args
+                                .iter()
+                                .map(|arg| match arg {
+                                    ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                                    other => ast::ArrayElement::Expr(other.clone()),
+                                })
+                                .collect();
+                            let literal = ast::Expr::ArrayLiteral { elements, span };
+                            let list = self.check_expr(cx, &literal);
+                            if let Some((id, _)) = zun_natives::resolve("array", "methodCallSpread") {
+                                let name = hir::Expr {
+                                    kind: hir::ExprKind::String(self.text(method).to_string()),
+                                    ty: Ty::String,
+                                    span,
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id,
+                                        args: vec![Self::box_to_any(probe), Self::box_to_any(name), list],
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                            }
+                        }
+                    }
+                }
                 // `Object.prototype.toString.call(value)`.
                 if self.text(method) == "call" && args.len() == 1 && !self.classes_by_name.contains_key("Object") {
                     let is_proto_to_string = match receiver.as_ref() {
@@ -8494,8 +8530,77 @@ impl Checker<'_> {
                         span,
                     };
                 }
-                // `join()` defaults the separator to a comma.
-                if receiver.ty == Ty::Array && mname == "join" && args.is_empty() {
+                // `slice(...args)`: a runtime argument list.
+                if receiver.ty == Ty::Array
+                    && mname == "slice"
+                    && args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                {
+                    let elements = args
+                        .iter()
+                        .map(|arg| match arg {
+                            ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                            other => ast::ArrayElement::Expr(other.clone()),
+                        })
+                        .collect();
+                    let literal = ast::Expr::ArrayLiteral { elements, span };
+                    let list = self.check_expr(cx, &literal);
+                    let Some((id, _)) = zun_natives::resolve("array", "arraySliceArgs") else {
+                        self.error(span, "missing Array intrinsic `arraySliceArgs`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, list] },
+                        ty: Ty::Array,
+                        span,
+                    };
+                }
+                // `fill(value, start?, end?)` and `copyWithin(target, start, end?)`.
+                if receiver.ty == Ty::Array
+                    && matches!(mname.as_str(), "fill" | "copyWithin")
+                    && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                {
+                    let (min, max, native) = if mname == "fill" { (1, 3, "arrayFill") } else { (1, 3, "arrayCopyWithin") };
+                    if args.len() < min || args.len() > max {
+                        self.error(span, format!("`{mname}` expects {min} to {max} argument(s), found {}", args.len()));
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("array", native) else {
+                        self.error(span, format!("missing Array intrinsic `{native}`"));
+                        return self.poison(span);
+                    };
+                    let mut call_args = vec![receiver];
+                    for arg in args.iter() {
+                        let value = self.check_expr(cx, arg);
+                        call_args.push(Self::box_to_any(value));
+                    }
+                    while call_args.len() < 4 {
+                        call_args.push(hir::Expr {
+                            kind: hir::ExprKind::Unary {
+                                op: hir::UnaryOp::Void,
+                                operand: Box::new(hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span }),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        });
+                    }
+                    return hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty: Ty::Array, span };
+                }
+                // Strings hold valid UTF-8 only, so they are always well formed.
+                if receiver.ty == Ty::String && args.is_empty() && matches!(mname.as_str(), "isWellFormed" | "toWellFormed") {
+                    if mname == "toWellFormed" {
+                        return receiver;
+                    }
+                    return hir::Expr {
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(receiver),
+                            value: Box::new(hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span }),
+                        },
+                        ty: Ty::Boolean,
+                        span,
+                    };
+                }
+                // `join()` defaults the separator to a comma; `toString()` is `join()`.
+                if receiver.ty == Ty::Array && matches!(mname.as_str(), "join" | "toString") && args.is_empty() {
                     let Some((id, _)) = zun_natives::resolve("collections", "arrayJoin") else {
                         self.error(span, "missing Array intrinsic `arrayJoin`");
                         return self.poison(span);
@@ -8705,15 +8810,54 @@ impl Checker<'_> {
                     // `toSpliced(start, deleteCount, ...items)`: a copy with the
                     // splice applied, mirroring `splice`'s index resolution but
                     // leaving the receiver untouched.
-                    if args.len() < 2 {
-                        self.error(
+                    if args.len() < 2 || args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                        // A runtime argument list: splice a copy with JS clamping.
+                        let elements = args
+                            .iter()
+                            .map(|arg| match arg {
+                                ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                                other => ast::ArrayElement::Expr(other.clone()),
+                            })
+                            .collect();
+                        let literal = ast::Expr::ArrayLiteral { elements, span };
+                        let list = self.check_expr(cx, &literal);
+                        let (Some((slice_id, _)), Some((splice_id, _))) = (
+                            zun_natives::resolve("array", "arraySlice"),
+                            zun_natives::resolve("array", "arraySpliceArgs"),
+                        ) else {
+                            self.error(span, "missing Array intrinsics for `toSpliced`");
+                            return self.poison(span);
+                        };
+                        let name = self.fresh_temp_name(cx);
+                        let slot = cx.declare(&name, Ty::Array);
+                        let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::Array, span };
+                        let zero = hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::Int(IntKind::U64), span };
+                        let copy = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: slice_id, args: vec![receiver, zero] },
+                            ty: Ty::Array,
                             span,
-                            format!(
-                                "`Array.toSpliced` expects at least 2 argument(s), found {}",
-                                args.len()
-                            ),
-                        );
-                        return self.poison(span);
+                        };
+                        let splice = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: splice_id, args: vec![local(span), list] },
+                            ty: Ty::Array,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot, value: Box::new(copy) },
+                                    ty: Ty::Array,
+                                    span,
+                                }),
+                                value: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Sequence { effect: Box::new(splice), value: Box::new(local(span)) },
+                                    ty: Ty::Array,
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Array,
+                            span,
+                        };
                     }
                     let mut start = self.check_expr(cx, &args[0]);
                     coerce_numeric_literal(&mut start, Ty::Int(IntKind::U64));
@@ -12898,6 +13042,50 @@ impl Checker<'_> {
             ast::Expr::Function(function) => self.check_closure_expr(cx, function, span),
             ast::Expr::ComputedCall { callee, args, .. } => {
                 if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                    // `(arr.method as any)(...args)` on a typed array keeps its receiver:
+                    // lower it as the method call it denotes.
+                    let mut inner = callee.as_ref();
+                    while let ast::Expr::Cast { expr, .. } = inner {
+                        inner = expr.as_ref();
+                    }
+                    if let ast::Expr::Field { object, field, .. } = inner {
+                        let probe = self.check_expr(cx, object);
+                        if matches!(probe.ty, Ty::Any | Ty::DynamicObject) {
+                            let elements = args
+                                .iter()
+                                .map(|arg| match arg {
+                                    ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                                    other => ast::ArrayElement::Expr(other.clone()),
+                                })
+                                .collect();
+                            let literal = ast::Expr::ArrayLiteral { elements, span };
+                            let list = self.check_expr(cx, &literal);
+                            if let Some((id, _)) = zun_natives::resolve("array", "methodCallSpread") {
+                                let name = hir::Expr {
+                                    kind: hir::ExprKind::String(self.text(field).to_string()),
+                                    ty: Ty::String,
+                                    span,
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id,
+                                        args: vec![Self::box_to_any(probe), Self::box_to_any(name), list],
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                            }
+                        }
+                        if probe.ty == Ty::Array {
+                            let call = ast::Expr::MethodCall {
+                                receiver: object.clone(),
+                                method: *field,
+                                args: args.clone(),
+                                span,
+                            };
+                            return self.check_expr(cx, &call);
+                        }
+                    }
                     if let Some(call) = self.check_spread_call(cx, callee, args, span) {
                         return call;
                     }

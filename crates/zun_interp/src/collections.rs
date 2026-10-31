@@ -2859,9 +2859,54 @@ impl<'a> Interp<'a> {
                         }
                         None => member.to_string(),
                     };
+                    let mut native_name = native_name;
                     let mut native_args = Vec::with_capacity(call_args.len() + 1);
                     native_args.push(Value::Object(namespace));
                     native_args.extend(call_args.iter().cloned());
+                    // Methods whose typed form takes defaulted/variadic arguments
+                    // are normalised to the matching runtime-argument natives.
+                    match member.as_ref() {
+                        "slice" => {
+                            native_name = "arraySliceRange".to_string();
+                            native_args.resize(3, Value::Void);
+                            for slot in native_args.iter_mut().skip(1) {
+                                *slot = match slot.clone() {
+                                    Value::Str(text) => Value::Float(
+                                        text.trim().parse::<f64>().unwrap_or(f64::NAN),
+                                        zun_il::NumKind::F64,
+                                    ),
+                                    Value::Bool(b) => Value::Float(f64::from(u8::from(b)), zun_il::NumKind::F64),
+                                    Value::Null => Value::Float(0.0, zun_il::NumKind::F64),
+                                    other => other,
+                                };
+                            }
+                        }
+                        "join" => {
+                            if !matches!(native_args.get(1), Some(Value::Str(_))) {
+                                native_args.truncate(1);
+                                native_args.push(Value::Str(",".into()));
+                            }
+                        }
+                        "toString" => {
+                            native_name = "arrayJoin".to_string();
+                            native_args.truncate(1);
+                            native_args.push(Value::Str(",".into()));
+                        }
+                        "fill" | "copyWithin" => native_args.resize(4, Value::Void),
+                        "splice" => {
+                            let list = zun_gc::with_current_heap_mut(|heap| {
+                                let list = heap.alloc_array(0);
+                                for value in &call_args {
+                                    let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    heap.array_push(list, boxed);
+                                }
+                                list
+                            });
+                            native_name = "arraySpliceArgs".to_string();
+                            native_args = vec![Value::Object(namespace), Value::Object(list)];
+                        }
+                        _ => {}
+                    }
                     match self.call_managed_collection(&native_name, &native_args) {
                         Ok(result) => {
                             let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
@@ -4101,6 +4146,119 @@ impl<'a> Interp<'a> {
                 })
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(result))
+            }
+            "arrayFill" | "arrayCopyWithin" => {
+                // `fill(value, start, end)` / `copyWithin(target, start, end)`; an
+                // undefined bound takes its default, negatives count from the end.
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                self.guard_array(source, crate::integrity::ArrayOp::Add)
+                    .map_err(|_| RunError::Native("TypeError: Cannot assign to read only property of object '[object Array]'".into()))?;
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(source)).unwrap_or(0);
+                let len_f = length as f64;
+                let bound = |value: &Value, default: f64| -> f64 {
+                    let raw = match value {
+                        Value::Int(n, _) => *n as f64,
+                        Value::Float(n, _) => *n,
+                        Value::Void => return default,
+                        Value::Bool(b) => f64::from(u8::from(*b)),
+                        Value::Null => 0.0,
+                        Value::Str(text) => text.trim().parse::<f64>().unwrap_or(0.0),
+                        _ => 0.0,
+                    };
+                    let integer = if raw.is_nan() { 0.0 } else { raw.trunc() };
+                    if integer < 0.0 { (len_f + integer).max(0.0) } else { integer.min(len_f) }
+                };
+                let a1 = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+                let a2 = unbox_arg(args.get(2).ok_or(RunError::BadToken)?)?;
+                let a3 = unbox_arg(args.get(3).ok_or(RunError::BadToken)?)?;
+                if name == "arrayFill" {
+                    let start = bound(&a2, 0.0) as usize;
+                    let end = bound(&a3, len_f) as usize;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| a1.box_any(heap))
+                        .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        for index in start..end {
+                            heap.array_set(source, index, boxed);
+                        }
+                    });
+                } else {
+                    let to = bound(&a1, 0.0) as usize;
+                    let from = bound(&a2, 0.0) as usize;
+                    let end = bound(&a3, len_f) as usize;
+                    let count = end.saturating_sub(from).min(length - to);
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let copied: Vec<zun_core::Any> = (0..count)
+                            .map(|offset| heap.array_get(source, from + offset).unwrap_or_else(zun_core::Any::void))
+                            .collect();
+                        for (offset, value) in copied.into_iter().enumerate() {
+                            heap.array_set(source, to + offset, value);
+                        }
+                    });
+                }
+                Ok(Value::Object(source))
+            }
+            "methodCallSpread" => {
+                // `(recv.method as any)(...args)` on a dynamic receiver: array
+                // methods dispatch by name; a dynamic object calls its own function
+                // property with itself as `this`.
+                let receiver = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let method = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => text.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let list = args.get(2).ok_or(RunError::BadToken)?.clone();
+                let Some(target) = object(&receiver) else {
+                    return Err(RunError::Native("TypeError: Cannot read properties of undefined".into()));
+                };
+                let is_array = zun_gc::with_current_heap(|heap| heap.array_len(target).is_some());
+                if is_array {
+                    let native = match method.as_str() {
+                        "slice" => "arraySliceArgs",
+                        "splice" => "arraySpliceArgs",
+                        _ => return Err(RunError::Native(format!("TypeError: array.{method} is not supported with spread arguments"))),
+                    };
+                    return self.call_managed_collection(native, &[Value::Object(target), list]);
+                }
+                let handle = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(target, &method));
+                let Some(handle) = handle else {
+                    return Err(RunError::Native(format!("TypeError: {method} is not a function")));
+                };
+                let list_obj = object(&list).ok_or(RunError::BadToken)?;
+                let call_values: Vec<Value> = zun_gc::with_current_heap(|heap| {
+                    let len = heap.array_len(list_obj).unwrap_or(0);
+                    (0..len)
+                        .map(|i| {
+                            heap.array_get(list_obj, i)
+                                .and_then(|any| Value::unbox_any(any, heap))
+                                .unwrap_or(Value::Void)
+                        })
+                        .collect()
+                });
+                let call_args = self.with_this_arg(handle, target, call_values);
+                self.invoke_function_value(handle, call_args)
+            }
+            "arraySliceArgs" => {
+                // `slice(...args)` with a runtime argument list.
+                let list =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let mut forwarded = vec![args[0].clone()];
+                for index in 0..2 {
+                    let element = zun_gc::with_current_heap(|heap| {
+                        heap.array_get(list, index).and_then(|any| Value::unbox_any(any, heap))
+                    });
+                    forwarded.push(match element {
+                        Some(Value::Str(text)) => Value::Float(
+                            text.trim().parse::<f64>().unwrap_or(f64::NAN),
+                            zun_il::NumKind::F64,
+                        ),
+                        Some(Value::Bool(b)) => Value::Float(f64::from(u8::from(b)), zun_il::NumKind::F64),
+                        Some(Value::Null) => Value::Float(0.0, zun_il::NumKind::F64),
+                        Some(other) => other,
+                        None => Value::Void,
+                    });
+                }
+                self.call_managed_collection("arraySliceRange", &forwarded)
             }
             "arraySpliceArgs" => {
                 // `splice(...args)` with a runtime argument list: JS clamping rules.

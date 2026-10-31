@@ -37,6 +37,8 @@ pub const MODULE: crate::Module = crate::Module {
         // `splice(start, deleteCount, ...items)` — deletes and inserts the items
         // (gathered into a managed Array by the lowering) at `start`, returning
         // the removed elements.
+        NativeFn { name: "arrayFill", params: &[Array, Opaque, Opaque, Opaque], ret: Array, imp: unavailable },
+        NativeFn { name: "arrayCopyWithin", params: &[Array, Opaque, Opaque, Opaque], ret: Array, imp: unavailable },
         NativeFn { name: "arraySpliceArgs", params: &[Array, Array], ret: Array, imp: unavailable },
         NativeFn { name: "arraySpliceInsert", params: &[Array, U64, U64, Array], ret: Array, imp: unavailable },
         // No-initial-value `reduce`/`reduceRight`: seed from the first/last
@@ -99,6 +101,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "arrayConcat", params: &[Array, Array], ret: Array, imp: unavailable },
         // `slice(start?, end?)` with ECMAScript relative-index clamping, and the
         // strict-equality search family. Indices are `number`s (NaN means 0).
+        NativeFn { name: "methodCallSpread", params: &[Opaque, Opaque, Array], ret: Opaque, imp: unavailable },
+        NativeFn { name: "arraySliceArgs", params: &[Array, Array], ret: Array, imp: unavailable },
         NativeFn { name: "arraySliceRange", params: &[Array, F64, F64], ret: Array, imp: unavailable },
         NativeFn { name: "arrayIndexOf", params: &[Array, Opaque, F64], ret: F64, imp: unavailable },
         NativeFn { name: "arrayLastIndexOf", params: &[Array, Opaque, F64], ret: F64, imp: unavailable },
