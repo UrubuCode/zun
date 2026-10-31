@@ -1111,11 +1111,13 @@ impl<'a> Interp<'a> {
                     let pair = entry
                         .as_object()
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-                        .ok_or(RunError::BadToken)?;
+                        .ok_or_else(|| {
+                            RunError::Native("TypeError: Iterator value is not an entry object".into())
+                        })?;
                     let key = zun_gc::with_current_heap(|heap| heap.array_get(pair, 0))
                         .ok_or(RunError::BadToken)?;
                     let value = zun_gc::with_current_heap(|heap| heap.array_get(pair, 1))
-                        .ok_or(RunError::BadToken)?;
+                        .unwrap_or_else(zun_core::Any::void);
                     zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[1], key, value));
                 }
                 Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
@@ -1366,6 +1368,10 @@ impl<'a> Interp<'a> {
                 // does not reach here, but is handled too for `any` receivers.
                 // Arbitrary user `[Symbol.iterator]` objects are deferred.
                 let arg = args.first().ok_or(RunError::BadToken)?;
+                if matches!(unbox_arg(arg), Ok(Value::Void) | Ok(Value::Null)) {
+                    let empty = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
+                    return Ok(Value::Any(zun_core::Any::object(empty.addr() as usize)));
+                }
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
                 // String: intern each code point and add it. Interned strings
                 // are referenced by a stable id, so no rooting dance is needed.
@@ -1446,6 +1452,11 @@ impl<'a> Interp<'a> {
                 // receivers. A string is not a valid map iterable (its elements
                 // are not pairs) and is rejected, matching JS's TypeError.
                 let arg = args.first().ok_or(RunError::BadToken)?;
+                // `new Map(null)` / `new Map(undefined)` is an empty map.
+                if matches!(unbox_arg(arg), Ok(Value::Void) | Ok(Value::Null)) {
+                    let empty = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
+                    return Ok(Value::Any(zun_core::Any::object(empty.addr() as usize)));
+                }
                 if matches!(arg, Value::Str(_)) {
                     return Err(RunError::Native(
                         "Map constructor requires an iterable of [key, value] pairs".into(),
@@ -1523,11 +1534,13 @@ impl<'a> Interp<'a> {
                     let pair = entry
                         .as_object()
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-                        .ok_or(RunError::BadToken)?;
+                        .ok_or_else(|| {
+                            RunError::Native("TypeError: Iterator value is not an entry object".into())
+                        })?;
                     let key = zun_gc::with_current_heap(|heap| heap.array_get(pair, 0))
                         .ok_or(RunError::BadToken)?;
                     let value = zun_gc::with_current_heap(|heap| heap.array_get(pair, 1))
-                        .ok_or(RunError::BadToken)?;
+                        .unwrap_or_else(zun_core::Any::void);
                     zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[1], key, value));
                 }
                 Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
@@ -6058,7 +6071,12 @@ impl<'a> Interp<'a> {
                 };
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
                     .ok_or(RunError::BadToken)?;
-                let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                let obj = zun_gc::with_current_heap_mut(|heap| {
+                    let obj = heap.alloc_dynamic();
+                    // The result has a null prototype.
+                    heap.dynamic_set_prototype(obj, Some(zun_core::Any::null()));
+                    obj
+                });
                 let roots = [source, obj];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                 for index in 0..length {
@@ -6068,10 +6086,17 @@ impl<'a> Interp<'a> {
                         callback,
                         vec![Value::Any(element), Value::Any(zun_core::Any::float(index as f64))],
                     )?;
-                    let key_any = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
-                        .ok_or(RunError::BadToken)?;
-                    let key = zun_gc::with_current_heap(|heap| stringify_any(key_any, heap))
-                        .ok_or(RunError::BadToken)?;
+                    let key = match unbox_arg(&produced)? {
+                        Value::Void => "undefined".to_string(),
+                        Value::Null => "null".to_string(),
+                        Value::Float(n, _) if n == 0.0 => "0".to_string(),
+                        _ => {
+                            let key_any = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                                .ok_or(RunError::BadToken)?;
+                            zun_gc::with_current_heap(|heap| stringify_any(key_any, heap))
+                                .ok_or(RunError::BadToken)?
+                        }
+                    };
                     zun_gc::with_current_heap_mut(|heap| {
                         let group = match heap
                             .dynamic_get(roots[1], &key)

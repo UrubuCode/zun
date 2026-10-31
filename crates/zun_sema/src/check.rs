@@ -8100,6 +8100,24 @@ impl Checker<'_> {
                     if class_name == "super" {
                         return self.check_super_call(cx, Some(method), args, span);
                     }
+                    if class_name == "Map"
+                        && self.text(method) == "groupBy"
+                        && !self.classes_by_name.contains_key("Map")
+                        && args.len() == 2
+                    {
+                        if let Some(&func) = self.by_name.get("__zunMapGroupBy") {
+                            let items = self.check_expr(cx, &args[0]);
+                            let callback = self.check_expr(cx, &args[1]);
+                            return hir::Expr {
+                                kind: hir::ExprKind::Call {
+                                    func,
+                                    args: vec![Self::box_to_any(items), callback],
+                                },
+                                ty: Ty::Map,
+                                span,
+                            };
+                        }
+                    }
                     if class_name == "Object" && !self.classes_by_name.contains_key("Object") {
                         return self.check_object_static(
                             cx,
@@ -11128,7 +11146,7 @@ impl Checker<'_> {
                                     // An array keeps the dedicated fast path; a
                                     // known built-in iterable or an `any` value
                                     // routes to the general native.
-                                    let native = if self.is_assignable(argument.ty, Ty::Array) {
+                                    let native = if argument.ty != Ty::Any && self.is_assignable(argument.ty, Ty::Array) {
                                         from
                                     } else if Self::is_iterable_ty(argument.ty) {
                                         from_iterable

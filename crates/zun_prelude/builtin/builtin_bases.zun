@@ -176,3 +176,21 @@ class __BuiltinSet {
         }
     }
 }
+
+// `Map.groupBy(items, callback)`: group by the callback's key (SameValueZero),
+// preserving first-appearance order of keys and encounter order inside groups.
+function __zunMapGroupBy(items: any, callback: any): Map<any, any> {
+    const groups = new Map<any, any>();
+    let index = 0;
+    for (const item of items) {
+        const key: any = callback(item, index);
+        let group: any = groups.get(key);
+        if (group === undefined) {
+            group = [];
+            groups.set(key, group);
+        }
+        group.push(item);
+        index = index + 1;
+    }
+    return groups;
+}
