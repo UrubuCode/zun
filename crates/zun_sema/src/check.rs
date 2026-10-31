@@ -5842,7 +5842,24 @@ impl Checker<'_> {
                 }
                 result
             }
-            ast::Expr::TaggedTemplate { tag, cooked: _, raw, exprs, .. } => {
+            ast::Expr::TaggedTemplate { tag, cooked, raw, exprs, .. } => {
+                if !self.tag_is_string_raw(tag) {
+                    // A user tag is called as `tag(strings, ...substitutions)`.
+                    let strings = ast::Expr::ArrayLiteral {
+                        elements: cooked
+                            .iter()
+                            .map(|chunk| ast::ArrayElement::Expr(ast::Expr::String { value: chunk.clone(), span }))
+                            .collect(),
+                        span,
+                    };
+                    let mut args = vec![strings];
+                    args.extend(exprs.iter().map(|expression| (**expression).clone()));
+                    let call = match tag.as_ref() {
+                        ast::Expr::Ident(name) => ast::Expr::Call { callee: *name, args, span },
+                        other => ast::Expr::ComputedCall { callee: Box::new(other.clone()), args, span },
+                    };
+                    return self.check_expr(cx, &call);
+                }
                 self.check_tagged_template(cx, tag, raw, exprs, span)
             }
             ast::Expr::Bool { value, .. } => hir::Expr {
@@ -12550,6 +12567,7 @@ impl Checker<'_> {
                             "String" => &[("fromCharCode", 0, 99)],
                             _ => &[],
                         },
+                        ast::Expr::RegexLiteral { .. } => &[("exec", 1, 1), ("test", 1, 1)],
                         // A typed collection/string held in a local: dispatch over its methods.
                         ast::Expr::Ident(id) => match cx.lookup(self.text(id)).map(|slot| cx.locals[slot as usize]) {
                             Some(Ty::Map) => &[

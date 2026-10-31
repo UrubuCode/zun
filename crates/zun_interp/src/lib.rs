@@ -1027,6 +1027,37 @@ impl Interp<'_> {
                             }
                         }
                     }
+                    // A string receiver: `str[i]` is the character, `str.length` its length.
+                    {
+                        let concrete = match &object_raw {
+                            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .unwrap_or(Value::Void),
+                            other => other.clone(),
+                        };
+                        if let Value::Str(text) = &concrete {
+                            let answer = match &key {
+                                Value::Int(..) | Value::Float(..) => {
+                                    let at = key.as_number();
+                                    if at >= 0.0 && at.fract() == 0.0 {
+                                        text.chars().nth(at as usize).map(|c| Value::Str(c.to_string().into()))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Value::Str(name) if &**name == "length" => {
+                                    Some(Value::Float(text.chars().count() as f64, zun_il::NumKind::F64))
+                                }
+                                Value::Str(name) => name
+                                    .parse::<usize>()
+                                    .ok()
+                                    .and_then(|at| text.chars().nth(at))
+                                    .map(|c| Value::Str(c.to_string().into())),
+                                _ => None,
+                            };
+                            stack.push(answer.unwrap_or(Value::Void));
+                            continue;
+                        }
+                    }
                     let object = object_raw.as_object();
                     let value = if let Value::Any(any) = &key {
                         if let Some(symbol) = any.as_symbol() {
