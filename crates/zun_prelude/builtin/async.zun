@@ -44,10 +44,14 @@ function __zunAsyncIterOpen(src: any): any {
     if (it !== undefined) {
         return it;
     }
-    return new __AsyncFromSync(src[Symbol.iterator]());
+    return new __AsyncFromSync(asyncCollections.syncIterOpen(src));
 }
 
 async function __zunAsyncIterClose(it: any): Promise<any> {
+    if (it instanceof __AsyncFromSync || it instanceof __AsyncGenerator) {
+        await it.return();
+        return undefined;
+    }
     const method = it["return"];
     if (method == null) {
         return undefined;
@@ -142,4 +146,39 @@ class __AsyncGenerator {
 
 function __zunMakeAsyncGen(g: any): any {
     return new __AsyncGenerator(g);
+}
+
+// Minimal MessageChannel: two entangled ports delivering `{ data }` events to
+// `onmessage` as macrotasks (setTimeout 0). Ports are dynamic objects so their
+// `onmessage` handler (a function) can live in an ordinary property.
+function __zunMakePort(): any {
+    const port: any = { closed: false, other: null, onmessage: null };
+    port.postMessage = (data: any) => {
+        const target: any = port.other;
+        if (!port.closed && target != null) {
+            setTimeout(() => {
+                if (!target.closed && target.onmessage != null) {
+                    target.onmessage({ data: data });
+                }
+            }, 0);
+        }
+    };
+    port.close = () => {
+        port.closed = true;
+    };
+    return port;
+}
+
+class MessageChannel {
+    port1: any;
+    port2: any;
+
+    constructor() {
+        const a: any = __zunMakePort();
+        const b: any = __zunMakePort();
+        a.other = b;
+        b.other = a;
+        this.port1 = a;
+        this.port2 = b;
+    }
 }

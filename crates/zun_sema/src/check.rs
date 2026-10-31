@@ -5660,6 +5660,28 @@ impl Checker<'_> {
                         return;
                     }
                 }
+                // `{ [Symbol.iterator]: function () {} }`: a function value under a
+                // computed key lives in the function slot, like method shorthand.
+                if let (Ty::Function(_), ast::PropertyKey::Computed(key_expr)) =
+                    (checked.ty, &property.key)
+                {
+                    let key = self.check_expr(cx, key_expr);
+                    let slot_builtin = if key.ty == Ty::Symbol || key.ty == Ty::Any {
+                        self.resolve_collection(span, "dynamicSetSymbolFunction")
+                            .map(|builtin| (builtin, Self::box_to_any(key)))
+                    } else if key.ty == Ty::String {
+                        self.resolve_collection(span, "dynamicSetFunction")
+                            .map(|builtin| (builtin, key))
+                    } else {
+                        None
+                    };
+                    if let Some((builtin, key)) = slot_builtin {
+                        entries.push(hir::ObjectEntry::Install { builtin, args: vec![key, checked] });
+                        return;
+                    }
+                    self.error(span, "a computed method key must be a string or a Symbol");
+                    return;
+                }
                 let value = Self::box_to_any(checked);
                 let key = match &property.key {
                     ast::PropertyKey::Computed(key) => {
@@ -7380,7 +7402,7 @@ impl Checker<'_> {
                     };
                     let (built_args, ret) = match name.as_str() {
                         "setTimeout" | "setInterval" => {
-                            if args.is_empty() || args.len() > 2 {
+                            if args.is_empty() {
                                 self.error(span, format!("`{name}` expects a callback and an optional delay"));
                                 return self.poison(span);
                             }
@@ -7395,7 +7417,32 @@ impl Checker<'_> {
                                 self.error(ms.span, format!("`{name}` delay must be a number"));
                             }
                             coerce_numeric_literal(&mut ms, Ty::F64);
-                            (vec![cb, ms], Ty::F64)
+                            let extra: Vec<hir::Expr> = it.collect();
+                            if extra.is_empty() {
+                                (vec![cb, ms], Ty::F64)
+                            } else {
+                                // Extra arguments are forwarded to the callback: pass them
+                                // as a boxed array to the `*Args` variant.
+                                let args_name = format!("{name}Args");
+                                let Some((args_id, _)) = zun_natives::resolve("timers", &args_name) else {
+                                    self.error(span, format!("missing timer intrinsic `{args_name}`"));
+                                    return self.poison(span);
+                                };
+                                let elements = extra
+                                    .into_iter()
+                                    .map(|value| Some(Self::box_to_any(value)))
+                                    .collect();
+                                let array = hir::Expr {
+                                    kind: hir::ExprKind::ArrayLiteral { elements },
+                                    ty: Ty::Array,
+                                    span,
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id: args_id, args: vec![cb, ms, array] },
+                                    ty: Ty::F64,
+                                    span,
+                                };
+                            }
                         }
                         "setImmediate" | "queueMicrotask" => {
                             if args.len() != 1 {

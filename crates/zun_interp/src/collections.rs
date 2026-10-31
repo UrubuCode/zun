@@ -2206,6 +2206,25 @@ impl<'a> Interp<'a> {
                 Ok(args.first().cloned().unwrap_or(Value::Void))
             }
             "asyncGenResume" => self.async_gen_resume(args),
+            "syncIterOpen" => {
+                // GetIterator(src, sync): the iterator object behind `for-of` over
+                // any iterable (built-in collections, strings, generators, user
+                // iterables). Throws `TypeError` when `src` is not iterable.
+                let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let iterator = match value {
+                    Value::Str(_) => {
+                        self.call_managed_collection("stringIteratorNew", &[value.clone()])?
+                    }
+                    other => match as_object_ref(&other) {
+                        Some(source) => Value::Object(self.resolve_iterator(source)?),
+                        None => {
+                            return Err(RunError::Native("TypeError: value is not iterable".into()))
+                        }
+                    },
+                };
+                let obj = as_object_ref(&iterator).ok_or(RunError::BadToken)?;
+                Ok(Value::Any(zun_core::Any::object(obj.addr() as usize)))
+            }
             "asyncIterOpen" => {
                 // `source[Symbol.asyncIterator]()` when the source carries that
                 // method (own symbol slot or a class symbol method); `undefined`
@@ -5288,6 +5307,35 @@ impl<'a> Interp<'a> {
                 let handle = self.timer_arm(callback, delay, period);
                 Ok(Value::Float(handle as f64, zun_il::NumKind::F64))
             }
+            "setTimeoutArgs" | "setIntervalArgs" => {
+                let callback = match args.first() {
+                    Some(value @ Value::Function(_)) => value.clone(),
+                    _ => return Ok(Value::Float(f64::NAN, zun_il::NumKind::F64)),
+                };
+                let delay = match args.get(1) {
+                    Some(Value::Float(ms, _)) => *ms as i64,
+                    Some(Value::Int(ms, _)) => *ms,
+                    _ => 0,
+                }
+                .max(0);
+                let period = if name == "setIntervalArgs" { Some(delay) } else { None };
+                let extra = match args.get(2).and_then(as_object_ref) {
+                    Some(array) => self.read_array_values(array)?,
+                    None => Vec::new(),
+                };
+                let handle = self.timer_arm(callback, delay, period);
+                let task = TaskId(handle);
+                if let Some(entry) = self
+                    .async_state
+                    .timers
+                    .entries
+                    .iter_mut()
+                    .find(|entry| entry.task == task)
+                {
+                    entry.args = extra;
+                }
+                Ok(Value::Float(handle as f64, zun_il::NumKind::F64))
+            }
             "clearTimeout" | "clearInterval" => {
                 let handle = match args.first() {
                     Some(Value::Float(handle, _)) => *handle as i64,
@@ -8110,6 +8158,10 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
         call_args: Vec<Value>,
     ) -> Result<Value, RunError> {
+        // Promise settlers and generator-method values are not plain methods.
+        if handle.generator_method().is_some() || self.settler_of(handle).is_some() {
+            return self.invoke_function_value(handle, call_args);
+        }
         let (method_rid, mut final_args) = self.resolve_call_target(handle, call_args)?;
         let target = self
             .module
@@ -8179,7 +8231,14 @@ impl<'a> Interp<'a> {
             heap.promise_resolve(promise, zun_core::Any::null());
             promise
         });
-        self.promise_then(promise, Some(callback), None)?;
+        let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+        let roots = [promise, target];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        self.attach_reaction(
+            roots[0],
+            roots[1],
+            ReactionKind::Microtask { callback: Value::Function(callback) },
+        );
         Ok(())
     }
 
@@ -8888,6 +8947,14 @@ impl<'a> Interp<'a> {
             ReactionKind::Combinator { aggregate, index } => {
                 let settlement = self.promise_settlement_of(roots[0])?;
                 self.combinator_input_settled(aggregate, index, settlement);
+            }
+            ReactionKind::Microtask { callback } => {
+                if let Some(callback) = as_function(&Some(callback)) {
+                    match self.invoke_callback(callback, Vec::new()) {
+                        Ok(_) | Err(RunError::Thrown(_)) => {}
+                        Err(other) => return Err(other),
+                    }
+                }
             }
             ReactionKind::AsyncStep { generator } => {
                 let generator = as_object_ref(&generator).ok_or(RunError::BadToken)?;

@@ -624,6 +624,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "asyncAwaitMark", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "asyncGenResume", params: &[Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "asyncIterOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "syncIterOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
     ],
 };
 

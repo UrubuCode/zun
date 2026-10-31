@@ -203,6 +203,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "asyncAwaitMark",
         "asyncGenResume",
         "asyncIterOpen",
+        "syncIterOpen",
         "generatorReturnValue",
         "setCallArgc",
         "argumentsObject",
@@ -443,6 +444,8 @@ pub(crate) fn managed_timers_builtin(id: u32) -> Option<&'static str> {
         "clearInterval",
         "queueMicrotask",
         "setImmediate",
+        "setTimeoutArgs",
+        "setIntervalArgs",
     ] {
         if zun_natives::resolve("timers", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);

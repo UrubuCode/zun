@@ -38,5 +38,9 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "queueMicrotask", params: &[Opaque], ret: Void, imp: unavailable },
         // `setImmediate(cb)` → a 0-delay macrotask; returns a numeric handle.
         NativeFn { name: "setImmediate", params: &[Opaque], ret: F64, imp: unavailable },
+        // `setTimeout(cb, ms, ...args)` / `setInterval(cb, ms, ...args)`: the extra
+        // arguments (an array) are passed to the callback when the timer fires.
+        NativeFn { name: "setTimeoutArgs", params: &[Opaque, F64, Array], ret: F64, imp: unavailable },
+        NativeFn { name: "setIntervalArgs", params: &[Opaque, F64, Array], ret: F64, imp: unavailable },
     ],
 };
