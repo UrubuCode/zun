@@ -16,7 +16,7 @@ impl<'a> Checker<'a> {
             // to the realm global store so function bodies can read it via
             // `globalGet` (JS module scope). The mirror reads the local back, so
             // its value and type in `<main>` are unaffected.
-            if cx.is_module_scope {
+            if cx.is_module_scope && cx.scopes.len() == 2 {
                 if let ast::Stmt::Let { name, .. } = statement {
                     let name_text = self.text(name).to_string();
                     if self.module_globals.contains(&name_text) {

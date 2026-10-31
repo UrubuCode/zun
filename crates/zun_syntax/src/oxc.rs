@@ -457,10 +457,27 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                     span: span_all,
                 });
             }
-            // A bare `{ … }` block: flatten its statements (block scoping is not
-            // modelled separately here).
+            // A bare `{ … }` block. One that declares `let`/`const` keeps its own
+            // scope (modelled as `if (true) { … }`); other blocks are flattened.
             Statement::BlockStatement(block) => {
-                statements.extend(convert_statement_list(source, &block.body)?);
+                let declares_lexical = TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start && block.body.iter().any(|inner| {
+                    matches!(
+                        inner,
+                        Statement::VariableDeclaration(decl)
+                            if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
+                    )
+                });
+                let inner = convert_statement_list(source, &block.body)?;
+                if declares_lexical {
+                    statements.push(Stmt::If {
+                        cond: Expr::Bool { value: true, span: span(block.span) },
+                        then_block: Block { statements: inner, span: span(block.span) },
+                        else_block: None,
+                        span: span(block.span),
+                    });
+                } else {
+                    statements.extend(inner);
+                }
             }
             // A nested function declaration binds a function value (hoisting to
             // the top of the scope is approximated by its textual position).
@@ -801,10 +818,7 @@ fn convert_try_statement(
         source: &str,
         block: &oxc_ast::ast::BlockStatement<'_>,
     ) -> Result<Block, String> {
-        let mut statements = Vec::new();
-        for statement in &block.body {
-            statements.extend(convert_if_branch(source, statement)?.statements);
-        }
+        let statements = convert_statement_list(source, &block.body)?;
         Ok(Block {
             statements,
             span: Span::new(block.span.start, block.span.end),
@@ -1893,6 +1907,12 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     let mut classes = Vec::new();
     let mut top_level = Vec::new();
     for statement in parsed.program.body {
+        TOP_LEVEL_BLOCK.with(|cell| {
+            cell.set(match &statement {
+                Statement::BlockStatement(block) => block.span.start,
+                _ => u32::MAX,
+            })
+        });
         // TS type-only declarations erase: a type alias or interface carries no
         // runtime value, so it is dropped (annotations that name it resolve to
         // `any` on this path, like the native parser's erasure).
@@ -3103,6 +3123,14 @@ mod tests {
         assert!(matches!(elements[2], crate::ast::ArrayElement::Hole));
         assert!(matches!(elements[3], crate::ast::ArrayElement::Expr(_)));
     }
+}
+
+thread_local! {
+    /// Start offset of the bare block currently being converted as a direct
+    /// child of the module body. Such a block stays flattened into the module
+    /// scope (its bindings are module globals); every other bare block that
+    /// declares `let`/`const` keeps its own scope.
+    static TOP_LEVEL_BLOCK: std::cell::Cell<u32> = const { std::cell::Cell::new(u32::MAX) };
 }
 
 thread_local! {

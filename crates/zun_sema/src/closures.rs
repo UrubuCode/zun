@@ -278,12 +278,9 @@ impl Checker<'_> {
                     .into_iter()
                     .enumerate()
                     .map(move |(offset, mut capture)| {
-                        let source_slot = match capture.source {
-                            hir::CaptureSource::Environment {
-                                environment_slot, ..
-                            } => environment_slot,
-                            hir::CaptureSource::Local(slot) => slot as u16,
-                        };
+                        // The capture was found in the enclosing closure's own
+                        // environment; read it from that environment slot.
+                        let source_slot = capture.environment_slot;
                         capture.environment_slot = (local_capture_count + offset) as u16;
                         capture.source = hir::CaptureSource::Environment {
                             environment_slot: source_slot,

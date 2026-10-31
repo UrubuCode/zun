@@ -33,6 +33,7 @@ pub(crate) fn route_exception(
         })
         .filter(|handler| match handler.kind {
             zun_module::HandlerKind::Finally => true,
+            zun_module::HandlerKind::Catch if is_generator_return(exception) => false,
             zun_module::HandlerKind::Catch => match (handler.catch_type, exception) {
                 (Some(token), Value::Object(object)) => {
                     types.is_assignable(object.type_rid(), token.rid())
@@ -49,4 +50,18 @@ pub(crate) fn route_exception(
     stack.push(exception.clone());
     *pc = handler.handler_start as usize;
     true
+}
+
+/// Marker thrown into a suspended generator to model a `return()` completion:
+/// only `finally` handlers observe it; `catch` clauses never match it.
+pub(crate) const GENERATOR_RETURN_SENTINEL: &str = "\u{0}zun.generatorReturn";
+
+thread_local! {
+    /// Set right before resuming a generator frame that must unwind as a
+    /// `return()` completion (the iterator-close protocol).
+    pub(crate) static GENERATOR_RETURN_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn is_generator_return(value: &Value) -> bool {
+    matches!(value, Value::Str(text) if &**text == GENERATOR_RETURN_SENTINEL)
 }

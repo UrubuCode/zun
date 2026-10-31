@@ -1968,6 +1968,20 @@ impl Checker<'_> {
                 if !matches!(value.ty, Ty::Array | Ty::Any | Ty::Error) {
                     self.error(span, "array destructuring requires an Array or any value");
                 }
+                // A dynamic source may hold a string or any iterable, not just
+                // an Array: materialize it through the iteration protocol first.
+                let value = if value.ty == Ty::Any {
+                    match zun_natives::resolve("array", "arrayFrom") {
+                        Some((id, _)) => hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                            ty: Ty::Array,
+                            span,
+                        },
+                        None => value,
+                    }
+                } else {
+                    value
+                };
                 let temp = cx.declare(&self.fresh_temp_name(cx), value.ty);
                 let temp_ty = value.ty;
                 out.push(hir::Stmt::Let { slot: temp, init: value });
@@ -2395,12 +2409,21 @@ impl Checker<'_> {
                     self.error(span, "missing `objectKeys` intrinsic");
                     return hir::Stmt::Expr(self.poison(span));
                 };
+                let Some((has_id, _)) = zun_natives::resolve("collections", "forInHas") else {
+                    self.error(span, "missing `forInHas` intrinsic");
+                    return hir::Stmt::Expr(self.poison(span));
+                };
+                // The enumerated object is evaluated once; every key is
+                // re-checked against it before its iteration runs (for-in is live:
+                // a key deleted earlier in the loop is skipped).
+                let subject = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+                let subject_read = hir::Expr { kind: hir::ExprKind::Local(subject), ty: Ty::Any, span };
                 let keys = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: keys_id, args: vec![keys_arg] },
+                    kind: hir::ExprKind::CallBuiltin { id: keys_id, args: vec![hir::Expr { kind: hir::ExprKind::Local(subject), ty: Ty::Any, span }] },
                     ty: Ty::Array,
                     span,
                 };
-                self.lower_for_iteration(
+                let lowered = self.lower_for_iteration(
                     cx,
                     keys,
                     "arrayIteratorNew",
@@ -2408,7 +2431,42 @@ impl Checker<'_> {
                     "arrayIteratorNext",
                     pattern,
                     body,
-                )
+                );
+                match lowered {
+                    hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body } => {
+                        let key_read = hir::Expr {
+                            kind: hir::ExprKind::Local(binding),
+                            ty: cx.locals[binding as usize],
+                            span,
+                        };
+                        let key_arg = if key_read.ty == Ty::Any || key_read.ty == Ty::String {
+                            key_read
+                        } else {
+                            Self::box_to_any(key_read)
+                        };
+                        let still_there = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: has_id, args: vec![subject_read, key_arg] },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                        hir::Stmt::Group(vec![
+                            hir::Stmt::Let { slot: subject, init: keys_arg },
+                            hir::Stmt::ForOf {
+                                iterator,
+                                iterator_slot,
+                                done,
+                                next,
+                                binding,
+                                body: vec![hir::Stmt::If {
+                                    cond: still_there,
+                                    then_body: body,
+                                    else_body: Vec::new(),
+                                }],
+                            },
+                        ])
+                    }
+                    other => other,
+                }
             }
             ast::Stmt::Labeled { label, statement, .. } => {
                 let label_text = self.text(label).to_string();
@@ -11881,6 +11939,16 @@ impl Checker<'_> {
                 }
                 let mut index = self.check_expr(cx, index);
                 coerce_numeric_literal(&mut index, Ty::INT);
+                if object.ty == Ty::Array && matches!(index.ty, Ty::Any | Ty::DynamicObject) {
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicGetValue {
+                            object: Box::new(object),
+                            key: Box::new(index),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 if object.ty != Ty::Array && !object.ty.is_error() {
                     self.error(object.span, "indexing requires an Array");
                 }
@@ -11977,6 +12045,19 @@ impl Checker<'_> {
                 let mut index = self.check_expr(cx, index);
                 let value = self.check_expr(cx, value);
                 let value_ty = value.ty;
+                if object.ty == Ty::Array && matches!(index.ty, Ty::Any | Ty::DynamicObject) {
+                    // A dynamic key follows ToPropertyKey at run time (objects run
+                    // toString, canonical index strings address elements).
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicSetValue {
+                            object: Box::new(object),
+                            key: Box::new(index),
+                            value: Box::new(Self::box_to_any(value)),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 coerce_numeric_literal(&mut index, Ty::INT);
                 if object.ty != Ty::Array && !object.ty.is_error() {
                     self.error(object.span, "indexing requires an Array");
@@ -12191,7 +12272,7 @@ impl Checker<'_> {
                         Ty::Set => "setIteratorNew",
                         Ty::String => "stringIteratorNew",
                         Ty::Error => "arrayIteratorNew",
-                        Ty::Any | Ty::DynamicObject => "generatorIteratorNew",
+                        Ty::Any | Ty::DynamicObject => "symbolIteratorCall",
                         Ty::BufferView(kind) => match crate::typed_arrays::iterator_new(kind) {
                             Some(new_name) => new_name,
                             None => {

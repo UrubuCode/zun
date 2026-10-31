@@ -61,6 +61,8 @@ pub struct DynamicObject {
     /// Setter functions for accessor properties.
     accessor_set: BTreeMap<String, FunctionHandle>,
     symbol_properties: BTreeMap<SymbolId, Any>,
+    /// Symbol keys in first-insertion order (the order own-key enumeration reports).
+    symbol_order: Vec<SymbolId>,
     /// Symbol keys whose **enumerable** attribute is cleared (skipped by spread
     /// and `Object.assign`).
     non_enumerable_symbols: HashSet<SymbolId>,
@@ -423,7 +425,7 @@ impl DynamicObject {
     /// backing store). Backs `Object.getOwnPropertySymbols` and, later,
     /// symbol-key copying for object spread and serialization.
     pub fn symbol_keys(&self) -> impl Iterator<Item = SymbolId> + '_ {
-        self.symbol_properties.keys().copied()
+        self.symbol_order.iter().copied().filter(|symbol| self.symbol_properties.contains_key(symbol))
     }
     /// Define a symbol-keyed data property with an explicit enumerable flag
     /// (`Object.defineProperty(o, sym, ...)`). Rejected on a non-extensible
@@ -432,6 +434,7 @@ impl DynamicObject {
         if !self.symbol_properties.contains_key(&symbol) && (self.non_extensible || self.frozen) {
             return false;
         }
+        if !self.symbol_properties.contains_key(&symbol) { self.symbol_order.push(symbol); }
         self.symbol_properties.insert(symbol, value);
         if enumerable { self.non_enumerable_symbols.remove(&symbol); } else { self.non_enumerable_symbols.insert(symbol); }
         true
@@ -455,6 +458,7 @@ impl DynamicObject {
         !self.index.contains_key(name) || !(self.frozen || self.non_configurable.contains(name))
     }
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
+        if !self.symbol_properties.contains_key(&symbol) { self.symbol_order.push(symbol); }
         self.symbol_properties.insert(symbol, value)
     }
     pub fn get_symbol_getter(&self, symbol: SymbolId) -> Option<FunctionHandle> {

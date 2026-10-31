@@ -204,6 +204,9 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn { name: "arrayHas", params: &[Array, Str], ret: Bool, imp: unavailable },
+        NativeFn { name: "forInHas", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "arrayMakeHole", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "arrayPushHole", params: &[Opaque], ret: Bool, imp: unavailable },
         NativeFn {
             name: "reflectHas",
             params: &[DynamicObject, Str],

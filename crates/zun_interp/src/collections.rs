@@ -856,7 +856,7 @@ impl<'a> Interp<'a> {
                     return self.create_generator(method_rid, &[]);
                 }
                 let source = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                    .ok_or_else(|| RunError::Native("TypeError: value is not iterable".into()))?;
                 // A generator object drives itself through the existing frame
                 // resume machinery; anything else (a built-in iterator object, a
                 // raw array/set/map, or a user `[Symbol.iterator]` object) routes
@@ -917,6 +917,82 @@ impl<'a> Interp<'a> {
                     })
                     .ok_or(RunError::BadToken)?,
                 ))
+            }
+            "symbolIteratorCall" => {
+                let source = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some()) {
+                    return Ok(Value::Object(source));
+                }
+                let iterator_id = zun_core::WellKnownSymbol::Iterator.id();
+                let builtin = zun_gc::with_current_heap(|heap| {
+                    heap.array_iterator_done(source).is_some()
+                        || heap.set_iterator_done(source).is_some()
+                        || heap.map_iterator_done(source).is_some()
+                        || heap.array_len(source).is_some()
+                        || heap.set_values(source).is_some()
+                        || heap.map_entries(source).is_some()
+                });
+                if builtin {
+                    return Ok(Value::Object(self.resolve_iterator(source)?));
+                }
+                let handle = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_symbol_function(source, iterator_id)
+                })
+                .or_else(|| {
+                    self.class_symbol_methods
+                        .get(&(source.type_rid(), iterator_id.get()))
+                        .copied()
+                });
+                let Some(handle) = handle else {
+                    return Err(RunError::Native("TypeError: value is not iterable".into()));
+                };
+                self.invoke_function_value(handle, Vec::new())
+            }
+            "generatorIteratorClose" => {
+                // IteratorClose: call the iterator's `return()` (if any) when a
+                // for-of loop exits early. `throwing` marks a throw completion,
+                // whose error wins over anything `return()` raises.
+                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let throwing = matches!(args.get(1), Some(Value::Bool(true)));
+                if zun_gc::with_current_heap(|heap| heap.generator_state(wrapper).is_some()) {
+                    return self.close_generator(wrapper, throwing);
+                }
+                let it = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(wrapper, "__zun_it").and_then(|any| any.as_object())
+                })
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                let Some(it) = it else { return Ok(Value::Bool(true)) };
+                let is_builtin = zun_gc::with_current_heap(|heap| {
+                    heap.array_iterator_done(it).is_some()
+                        || heap.set_iterator_done(it).is_some()
+                        || heap.map_iterator_done(it).is_some()
+                });
+                if is_builtin {
+                    return Ok(Value::Bool(true));
+                }
+                if zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some()) {
+                    return self.close_generator(it, throwing);
+                }
+                let method = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "return"));
+                let Some(method) = method else { return Ok(Value::Bool(true)) };
+                let roots = [it];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                match self.invoke_function_value(method, Vec::new()) {
+                    Ok(result) => {
+                        if !throwing && Self::value_object(&result).is_none() {
+                            return Err(RunError::Native(
+                                "TypeError: iterator.return() did not return an object".into(),
+                            ));
+                        }
+                        Ok(Value::Bool(true))
+                    }
+                    Err(RunError::Thrown(_)) | Err(RunError::Native(_)) if throwing => {
+                        Ok(Value::Bool(true))
+                    }
+                    Err(error) => Err(error),
+                }
             }
             "generatorIteratorNext" => {
                 let generator = object(args.first().ok_or(RunError::BadToken)?)
@@ -2037,9 +2113,80 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name,
                     _ => return Err(RunError::BadToken),
                 };
+                // A dynamic object answers for its whole prototype chain.
+                if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(object)) {
+                    return self.call_managed_collection("forInHas", args);
+                }
                 Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
                     heap.dynamic_has(object, name)
                 })))
+            }
+            "arrayMakeHole" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let index = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Int(value, _) => value as usize,
+                    Value::Float(value, _) => value as usize,
+                    _ => return Err(RunError::BadToken),
+                };
+                zun_gc::with_current_heap_mut(|heap| heap.array_set(array, index, zun_core::Any::hole()));
+                Ok(Value::Bool(true))
+            }
+            "arrayPushHole" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.array_push(array, zun_core::Any::hole()));
+                Ok(Value::Bool(true))
+            }
+            "forInHas" => {
+                // for-in liveness: is `key` still a property of `object` (own or
+                // inherited)? Unknown receivers answer `true` (never skip).
+                let Value::Object(mut current) = unbox_arg(args.first().ok_or(RunError::BadToken)?)? else {
+                    return Ok(Value::Bool(true));
+                };
+                let Value::Str(key) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? else {
+                    return Ok(Value::Bool(true));
+                };
+                let key = key.to_string();
+                let mut present = true;
+                for _ in 0..256 {
+                    let (is_array, is_dynamic, found) = zun_gc::with_current_heap(|heap| {
+                        let array_len = heap.array_len(current);
+                        let dynamic = heap.is_dynamic_object(current);
+                        let mut found = false;
+                        if let Some(len) = array_len {
+                            if key == "length" {
+                                found = true;
+                            } else if let Ok(index) = key.parse::<usize>() {
+                                if index.to_string() == key {
+                                    found = index < len
+                                        && heap.array_get(current, index).is_some_and(|any| !any.is_hole());
+                                }
+                            }
+                        }
+                        if !found && dynamic {
+                            found = heap.dynamic_has(current, &key)
+                                || heap.dynamic_keys(current).is_some_and(|keys| keys.iter().any(|k| *k == key));
+                        }
+                        (array_len.is_some(), dynamic, found)
+                    });
+                    if !is_array && !is_dynamic {
+                        break;
+                    }
+                    if found {
+                        present = true;
+                        break;
+                    }
+                    present = false;
+                    let next = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_prototype(current)
+                            .and_then(|any| any.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                    });
+                    match next {
+                        Some(next) => current = next,
+                        None => break,
+                    }
+                }
+                Ok(Value::Bool(present))
             }
             "arrayHas" => {
                 let array = object(args.first().ok_or(RunError::BadToken)?)
@@ -4680,8 +4827,29 @@ impl<'a> Interp<'a> {
                 // `for (k in obj)`: own enumerable keys first, then enumerable
                 // keys inherited along the explicit prototype chain; a key
                 // already seen (even a non-enumerable own one) shadows.
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                // A primitive receiver: a string enumerates its character
+                // indices; every other primitive (and null/undefined) has none.
+                let obj = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Object(obj) => obj,
+                    other => {
+                        let count = match &other {
+                            Value::Str(text) => text.chars().count(),
+                            _ => 0,
+                        };
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(count);
+                            for index in 0..count {
+                                let item = Value::Str(index.to_string().into())
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                let _ = heap.array_set(array, index, item);
+                            }
+                            array
+                        });
+                        return Ok(Value::Object(array));
+                    }
+                };
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && heap.array_len(obj).is_none());
                 let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 let mut keys: Vec<String> = Vec::new();
                 if is_dynamic {
@@ -4755,7 +4923,7 @@ impl<'a> Interp<'a> {
                     _ => {}
                 }
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let entries = self.object_own_entries(obj)?;
+                let entries = self.object_own_entries_impl(obj, false)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(entries.len());
                     for (index, (key, _)) in entries.iter().enumerate() {
@@ -4769,6 +4937,43 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(array))
             }
             "objectValues" => {
+                match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => {
+                        let chars: Vec<String> = text.chars().map(|ch| ch.to_string()).collect();
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(chars.len());
+                            for (index, ch) in chars.iter().enumerate() {
+                                let value_any = Value::Str(ch.clone().into())
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                let item = if name == "objectEntries" {
+                                    let key_any = Value::Str(index.to_string().into())
+                                        .box_any(heap)
+                                        .unwrap_or_else(zun_core::Any::null);
+                                    let pair = heap.alloc_array(2);
+                                    let _ = heap.array_set(pair, 0, key_any);
+                                    let _ = heap.array_set(pair, 1, value_any);
+                                    zun_core::Any::object(pair.addr() as usize)
+                                } else {
+                                    value_any
+                                };
+                                let _ = heap.array_set(array, index, item);
+                            }
+                            array
+                        });
+                        return Ok(Value::Object(array));
+                    }
+                    Value::Int(..) | Value::Float(..) | Value::Bool(_) => {
+                        let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                        return Ok(Value::Object(array));
+                    }
+                    Value::Null | Value::Void => {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert undefined or null to object".into(),
+                        ));
+                    }
+                    _ => {}
+                }
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let entries = self.object_own_entries(obj)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
@@ -4782,6 +4987,43 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(array))
             }
             "objectEntries" => {
+                match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Str(text) => {
+                        let chars: Vec<String> = text.chars().map(|ch| ch.to_string()).collect();
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(chars.len());
+                            for (index, ch) in chars.iter().enumerate() {
+                                let value_any = Value::Str(ch.clone().into())
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                let item = if name == "objectEntries" {
+                                    let key_any = Value::Str(index.to_string().into())
+                                        .box_any(heap)
+                                        .unwrap_or_else(zun_core::Any::null);
+                                    let pair = heap.alloc_array(2);
+                                    let _ = heap.array_set(pair, 0, key_any);
+                                    let _ = heap.array_set(pair, 1, value_any);
+                                    zun_core::Any::object(pair.addr() as usize)
+                                } else {
+                                    value_any
+                                };
+                                let _ = heap.array_set(array, index, item);
+                            }
+                            array
+                        });
+                        return Ok(Value::Object(array));
+                    }
+                    Value::Int(..) | Value::Float(..) | Value::Bool(_) => {
+                        let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                        return Ok(Value::Object(array));
+                    }
+                    Value::Null | Value::Void => {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert undefined or null to object".into(),
+                        ));
+                    }
+                    _ => {}
+                }
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let entries = self.object_own_entries(obj)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
@@ -5630,6 +5872,16 @@ impl<'a> Interp<'a> {
         &mut self,
         obj: zun_gc::Obj,
     ) -> Result<Vec<(String, Value)>, RunError> {
+        self.object_own_entries_impl(obj, true)
+    }
+
+    /// Enumerate own enumerable keys; `read_values` false skips getters (values
+    /// come back as `undefined`), as `Object.keys` never reads property values.
+    pub(crate) fn object_own_entries_impl(
+        &mut self,
+        obj: zun_gc::Obj,
+        read_values: bool,
+    ) -> Result<Vec<(String, Value)>, RunError> {
         // A primitive wrapper object (`new String("hi")`, `new Number(1)`):
         // a string wrapper exposes its characters; number/boolean wrappers
         // have no own enumerable properties.
@@ -5662,7 +5914,9 @@ impl<'a> Interp<'a> {
             let mut out: Vec<(String, Value)> = Vec::new();
             for index in 0..len {
                 let element = zun_gc::with_current_heap(|heap| {
-                    heap.array_get(obj, index).and_then(|any| Value::unbox_any(any, heap))
+                    heap.array_get(obj, index)
+                        .filter(|any| !any.is_hole())
+                        .and_then(|any| Value::unbox_any(any, heap))
                 });
                 if let Some(element) = element {
                     out.push((index.to_string(), element));
@@ -5696,6 +5950,10 @@ impl<'a> Interp<'a> {
                     )
                 });
                 if !enumerable {
+                    continue;
+                }
+                if !read_values {
+                    out.push((key, Value::Void));
                     continue;
                 }
                 let value = if let Some(getter) = getter {
@@ -6167,15 +6425,11 @@ impl<'a> Interp<'a> {
                 .copied()
         });
         let Some(handle) = handle else {
-            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                "value is not iterable",
-            ))));
+            return Err(RunError::Native("TypeError: value is not iterable".into()));
         };
         let result = self.invoke_function_value(handle, Vec::new())?;
         Self::value_object(&result).ok_or_else(|| {
-            RunError::Thrown(Value::Str(std::rc::Rc::from(
-                "[Symbol.iterator]() did not return an object",
-            )))
+            RunError::Native("TypeError: [Symbol.iterator]() did not return an object".into())
         })
     }
 
@@ -6212,17 +6466,13 @@ impl<'a> Interp<'a> {
         }
         let next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
         let Some(next) = next else {
-            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                "iterator has no next() method",
-            ))));
+            return Err(RunError::Native("TypeError: iterator has no next() method".into()));
         };
         let roots = [it];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         let result = self.invoke_function_value(next, Vec::new())?;
         let Some(result_obj) = Self::value_object(&result) else {
-            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                "iterator.next() did not return an object",
-            ))));
+            return Err(RunError::Native("TypeError: iterator.next() did not return an object".into()));
         };
         let done = zun_gc::with_current_heap(|heap| {
             heap.dynamic_get(result_obj, "done")
@@ -6262,6 +6512,51 @@ impl<'a> Interp<'a> {
             wrapper
         });
         Ok(Value::Object(wrapper))
+    }
+
+    /// IteratorClose for a real generator: resume the suspended frame as a
+    /// `return()` completion so its `finally` clauses run, then mark it done.
+    fn close_generator(
+        &mut self,
+        generator: zun_gc::Obj,
+        throwing: bool,
+    ) -> Result<Value, RunError> {
+        let mut state = zun_gc::with_current_heap_mut(|heap| heap.generator_state_take(generator))
+            .ok_or(RunError::BadToken)?;
+        let saved = if state.done { None } else { state.frame.take() };
+        state.has_current = false;
+        let Some(saved) = saved else {
+            state.done = true;
+            zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+            return Ok(Value::Bool(true));
+        };
+        let locals = zun_gc::with_current_heap(|heap| {
+            saved.locals.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+        })
+        .ok_or(RunError::BadToken)?;
+        let stack = zun_gc::with_current_heap(|heap| {
+            saved.eval_stack.iter().map(|value| Value::unbox_any(*value, heap)).collect::<Option<Vec<_>>>()
+        })
+        .ok_or(RunError::BadToken)?;
+        let mut frame = ExecutionFrame::new(state.method_rid, locals);
+        frame.pc = saved.pc;
+        frame.stack = stack;
+        // Mark done first so re-entrant calls see a finished generator.
+        state.done = true;
+        zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+        let roots = [generator];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(true));
+        let outcome = self.resume_suspended(frame);
+        crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(false));
+        match outcome {
+            ExecutionOutcome::Thrown(value) if crate::unwind::is_generator_return(&value) => {
+                Ok(Value::Bool(true))
+            }
+            ExecutionOutcome::Thrown(value) if !throwing => Err(RunError::Thrown(value)),
+            ExecutionOutcome::Fault(error) => Err(error),
+            _ => Ok(Value::Bool(true)),
+        }
     }
 
     /// The `done` side of the protocol for-of path: prefetch the next value into
@@ -6328,10 +6623,20 @@ impl<'a> Interp<'a> {
                 || heap.set_iterator_done(it).is_some()
                 || heap.map_iterator_done(it).is_some()
         });
-        if !is_builtin {
+        let is_generator = zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some());
+        if !is_builtin && !is_generator {
             return Ok(None);
         }
-        let (value, done) = self.protocol_step(it)?;
+        let (value, done) = if is_generator {
+            let finished = self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
+            if matches!(finished, Value::Bool(true)) {
+                (Value::Void, true)
+            } else {
+                (self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?, false)
+            }
+        } else {
+            self.protocol_step(it)?
+        };
         let boxed = if done {
             zun_core::Any::void()
         } else {

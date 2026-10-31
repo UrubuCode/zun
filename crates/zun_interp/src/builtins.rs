@@ -181,6 +181,9 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "finalizationRegister",
         "finalizationUnregister",
         "reflectHas",
+        "forInHas",
+        "arrayMakeHole",
+        "arrayPushHole",
         "arrayHas",
         "reflectDelete",
         "reflectSet",
@@ -550,6 +553,8 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
         "generatorIteratorNewArgs",
         "generatorIteratorNext",
         "generatorIteratorDone",
+        "generatorIteratorClose",
+        "symbolIteratorCall",
         "stringIteratorNew",
         // Kind-agnostic second-generation typed-array surface (bulk set,
         // slice/copyWithin, functional methods, from/of). One native each;

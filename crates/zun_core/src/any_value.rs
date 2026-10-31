@@ -28,6 +28,10 @@ pub struct Any { tag: AnyTag, payload: u64 }
 
 impl Any {
     pub const fn void() -> Self { Self { tag: AnyTag::Void, payload: 0 } }
+    /// An array hole (elision / never-written index): reads as `undefined`
+    /// everywhere, but own-key enumeration can tell it from a stored `undefined`.
+    pub const fn hole() -> Self { Self { tag: AnyTag::Void, payload: 1 } }
+    pub const fn is_hole(self) -> bool { matches!(self.tag, AnyTag::Void) && self.payload == 1 }
     pub const fn null() -> Self { Self { tag: AnyTag::Null, payload: 0 } }
     pub const fn int(value: i64) -> Self { Self { tag: AnyTag::Int, payload: value as u64 } }
     pub const fn float(value: f64) -> Self { Self { tag: AnyTag::Float, payload: value.to_bits() } }

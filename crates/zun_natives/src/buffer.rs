@@ -338,6 +338,8 @@ macro_rules! buffer_module {
             NativeFn { name: "generatorIteratorNewArgs", params: &[U32, Opaque], ret: Opaque, imp: unavailable },
             NativeFn { name: "generatorIteratorNext", params: &[Opaque], ret: Opaque, imp: unavailable },
             NativeFn { name: "generatorIteratorDone", params: &[Opaque], ret: Bool, imp: unavailable },
+            NativeFn { name: "generatorIteratorClose", params: &[Opaque, Bool], ret: Bool, imp: unavailable },
+            NativeFn { name: "symbolIteratorCall", params: &[Opaque], ret: Opaque, imp: unavailable },
             // `String.prototype[Symbol.iterator]` — iterates by Unicode code point.
             // Reuses the array-iterator machinery over a code-point array, so only
             // the constructor is new; `next`/`done` are the `arrayIterator*` ones.

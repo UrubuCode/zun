@@ -28,7 +28,7 @@ impl ArrayStorage {
         index
     }
     pub fn pop(&mut self) -> Option<Any> { self.elements.pop() }
-    pub fn resize(&mut self, new_length: usize) { self.elements.resize(new_length, Any::int(0)); }
+    pub fn resize(&mut self, new_length: usize) { self.elements.resize(new_length, Any::hole()); }
 
     pub fn insert(&mut self, index: usize, value: Any) -> bool {
         if index > self.elements.len() { return false; }

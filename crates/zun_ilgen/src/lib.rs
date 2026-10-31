@@ -510,6 +510,15 @@ fn lower_closure_function<'a>(
     (gen.code, gen.handlers, gen.points)
 }
 
+/// A pending cleanup that an abrupt exit (`break`/`continue`/`return`) must run
+/// before leaving its scope: a `finally` body, or the iterator-close protocol of
+/// a `for-of` loop (`loop_index` identifies the owning loop).
+#[derive(Clone, Copy)]
+enum Cleanup<'a> {
+    Block(&'a [Stmt]),
+    IterClose { slot: u16, loop_index: usize },
+}
+
 /// Handle to a forward branch whose displacement is patched once the target
 /// offset is known.
 struct BranchPatch {
@@ -527,7 +536,7 @@ struct FnLowerer<'a, 'b> {
     continue_targets: Vec<Vec<usize>>,
     continue_patches: Vec<Vec<BranchPatch>>,
     handlers: Vec<ExceptionHandler>,
-    finally_bodies: Vec<&'a [Stmt]>,
+    finally_bodies: Vec<Cleanup<'a>>,
     /// `finally_bodies.len()` when each enclosing break target was entered.
     break_finally_depths: Vec<usize>,
     /// Code ranges that are inlined copies of a `finally` body (start, end,
@@ -573,18 +582,44 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     /// Inline the pending `finally` bodies that sit inside the target scope
     /// (those entered after `depth`), innermost first, for a `break` or
     /// `continue` that leaves them.
-    fn run_finally_to(&mut self, depth: usize) {
+    fn run_finally_to(&mut self, depth: usize, continuing: Option<usize>) {
         let saved = self.finally_bodies.clone();
         for (index, cleanup) in saved.iter().enumerate().rev() {
             if index < depth {
                 break;
             }
+            // `continue` on a for-of loop keeps its own iterator open.
+            if let (Cleanup::IterClose { loop_index, .. }, Some(target)) = (cleanup, continuing) {
+                if *loop_index == target {
+                    continue;
+                }
+            }
             self.finally_bodies.truncate(index);
             let hole_start = self.code.len() as u32;
-            self.stmts(cleanup);
+            self.emit_cleanup(*cleanup);
             self.finally_holes.push((hole_start, self.code.len() as u32, index));
         }
         self.finally_bodies = saved;
+    }
+
+    /// Emit one pending cleanup inline.
+    fn emit_cleanup(&mut self, cleanup: Cleanup<'a>) {
+        match cleanup {
+            Cleanup::Block(stmts) => self.stmts(stmts),
+            Cleanup::IterClose { slot, .. } => {
+                self.emit_iterator_close(slot, false);
+                self.emit(Instruction::simple(Opcode::Pop));
+            }
+        }
+    }
+
+    /// Push the result of `generatorIteratorClose(iterator, throwing)`.
+    fn emit_iterator_close(&mut self, slot: u16, throwing: bool) {
+        self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+        self.emit(Instruction::simple(if throwing { Opcode::ConstTrue } else { Opcode::ConstFalse }));
+        let (id, _) = zun_natives::resolve("buffer", "generatorIteratorClose")
+            .expect("generatorIteratorClose intrinsic");
+        self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
     }
 
     /// Register a handler over `[start, end)`, minus the inlined `finally`
@@ -910,13 +945,41 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 self.loop_labels.push(self.pending_label.take());
                 self.continue_targets.push(vec![loop_start]);
                 self.continue_patches.push(Vec::new());
+                // Only the generic iteration protocol can carry a user
+                // `return()` (or generator `finally`) to run on early exit.
+                let generic_id = zun_natives::resolve("buffer", "generatorIteratorNew").map(|(id, _)| id);
+                let needs_close = matches!(
+                    &iterator.kind,
+                    ExprKind::CallBuiltin { id, .. } if Some(*id) == generic_id
+                );
+                let loop_index = self.break_patches.len() - 1;
+                let entry_depth = self.finally_bodies.len();
+                if needs_close {
+                    self.finally_bodies.push(Cleanup::IterClose { slot: *iterator_slot, loop_index });
+                }
+                let body_start = self.code.len() as u32;
                 self.expr(next);
                 self.emit(Instruction::new(
                     Opcode::StoreLocal,
                     Operand::Local(*binding),
                 ));
                 self.stmts(body);
+                if needs_close {
+                    self.finally_bodies.pop();
+                }
+                let body_end = self.code.len() as u32;
                 self.emit_branch_back(Opcode::Branch, loop_start);
+                if needs_close {
+                    // A throw out of the body (or the binding pattern) closes
+                    // the iterator, swallowing any error from `return()`, and
+                    // then continues unwinding.
+                    let handler_start = self.code.len() as u32;
+                    self.emit_iterator_close(*iterator_slot, true);
+                    self.emit(Instruction::simple(Opcode::Pop));
+                    self.emit(Instruction::simple(Opcode::Rethrow));
+                    let handler_end = self.code.len() as u32;
+                    self.push_protected(entry_depth, true, body_start, body_end, handler_start, handler_end, HandlerKind::Finally, None);
+                }
                 self.patch_to_here(to_exit);
                 self.continue_targets.pop();
                 self.continue_patches.pop();
@@ -927,10 +990,18 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
             }
             Stmt::Labeled { label, body } => {
-                let is_loop = matches!(
-                    &**body,
-                    Stmt::While { .. } | Stmt::DoWhile { .. } | Stmt::For { .. } | Stmt::ForOf { .. }
-                );
+                let is_loop_stmt = |stmt: &Stmt| {
+                    matches!(
+                        stmt,
+                        Stmt::While { .. } | Stmt::DoWhile { .. } | Stmt::For { .. } | Stmt::ForOf { .. }
+                    )
+                };
+                // A `Group` ending in a loop (for-in's hoisted subject) still
+                // labels that loop.
+                let is_loop = match &**body {
+                    Stmt::Group(items) => items.last().is_some_and(is_loop_stmt),
+                    other => is_loop_stmt(other),
+                };
                 if is_loop {
                     let previous = self.pending_label.replace(label.clone());
                     self.stmt(body);
@@ -968,7 +1039,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     })
                 });
                 if let Some(index) = target {
-                    self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0));
+                    self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0), None);
                 }
                 let patch = self.emit_branch(Opcode::Branch);
                 if let Some(index) = target {
@@ -982,7 +1053,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.loop_labels.iter().rposition(|candidate| candidate.as_ref() == Some(name))
                 }).or_else(|| (0..self.continue_targets.len()).rev().find(|&i| !self.continue_targets[i].is_empty()));
                 if let Some(index) = target_index {
-                    self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0));
+                    self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0), Some(index));
                     let target = self.continue_targets[index].last().copied().unwrap_or(usize::MAX);
                     if target == usize::MAX {
                         let patch = self.emit_branch(Opcode::Branch);
@@ -1002,7 +1073,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     // not re-inline itself.
                     self.finally_bodies.truncate(index);
                     let hole_start = self.code.len() as u32;
-                    self.stmts(cleanup);
+                    self.emit_cleanup(*cleanup);
                     self.finally_holes.push((hole_start, self.code.len() as u32, index));
                 }
                 self.finally_bodies = saved;
@@ -1024,7 +1095,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 let has_finally_flag = finally_body.is_some();
                 let try_start = self.code.len() as u32;
                 if let Some(finally_body) = finally_body {
-                    self.finally_bodies.push(finally_body);
+                    self.finally_bodies.push(Cleanup::Block(finally_body));
                 }
                 self.stmts(body);
                 if finally_body.is_some() {
@@ -1047,7 +1118,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                         Operand::Local(catch.slot),
                     ));
                     if let Some(finally_body) = finally_body {
-                        self.finally_bodies.push(finally_body);
+                        self.finally_bodies.push(Cleanup::Block(finally_body));
                     }
                     self.stmts(&catch.body);
                     if finally_body.is_some() {
@@ -1844,11 +1915,20 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.emit(Instruction::simple(Opcode::Dup));
                     self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index)));
                     match element {
-                        Some(element) => self.expr(element),
-                        None => self.emit(Instruction::simple(Opcode::ConstUndef)),
+                        Some(element) => {
+                            self.expr(element);
+                            self.emit(Instruction::simple(Opcode::StoreArray));
+                            self.emit(Instruction::simple(Opcode::Pop));
+                        }
+                        None => {
+                            // An elision: mark the slot as a hole (reads as
+                            // `undefined`, but is absent from own-key enumeration).
+                            let (id, _) = zun_natives::resolve("collections", "arrayMakeHole")
+                                .expect("arrayMakeHole intrinsic");
+                            self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
+                            self.emit(Instruction::simple(Opcode::Pop));
+                        }
                     }
-                    self.emit(Instruction::simple(Opcode::StoreArray));
-                    self.emit(Instruction::simple(Opcode::Pop));
                 }
             }
             ExprKind::ArraySpreadLiteral { parts } => {
@@ -1866,8 +1946,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                             self.emit(Instruction::simple(Opcode::ArrayPush));
                         }
                         hir::ArrayPart::Hole => {
-                            self.emit(Instruction::simple(Opcode::ConstUndef));
-                            self.emit(Instruction::simple(Opcode::ArrayPush));
+                            let (id, _) = zun_natives::resolve("collections", "arrayPushHole")
+                                .expect("arrayPushHole intrinsic");
+                            self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
+                            self.emit(Instruction::simple(Opcode::Pop));
                         }
                         hir::ArrayPart::Spread { builtin, source } => {
                             self.expr(source);

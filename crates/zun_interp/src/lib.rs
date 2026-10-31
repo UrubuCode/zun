@@ -331,6 +331,7 @@ impl Interp<'_> {
         let body = read_body(&self.module.code, method.body_offset)
             .map_err(|e| RunError::Malformed(e.to_string()))?;
 
+        let resumed = self.resume_frame.is_some();
         let mut frame = if let Some(frame) = self.resume_frame.take() {
             if frame.method_rid != method_rid {
                 return Err(RunError::Malformed(
@@ -397,6 +398,16 @@ impl Interp<'_> {
         let locals = &mut frame.locals;
         let code = body.code;
         let mut pc = &mut frame.pc;
+
+        if resumed && unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.replace(false)) {
+            // Close protocol: resume the generator as a `return()` completion so
+            // only its `finally` clauses run.
+            let sentinel = Value::Str(unwind::GENERATOR_RETURN_SENTINEL.into());
+            let throw_pc = (*pc).saturating_sub(1);
+            if !self.route_exception(&body, stack, pc, throw_pc, &sentinel) {
+                return Err(RunError::Thrown(sentinel));
+            }
+        }
 
         while *pc < code.len() {
             self.active_frame = Some((method_rid, *pc as u32));
@@ -597,6 +608,32 @@ impl Interp<'_> {
                     if name == "constructor" {
                         if let Value::Object(obj) = &concrete {
                             let obj = *obj;
+                            // Plain dynamic objects and arrays without an own
+                            // `constructor` expose a record naming `Object`/`Array`.
+                            let builtin_name = zun_gc::with_current_heap(|heap| {
+                                if heap.array_len(obj).is_some() {
+                                    Some("Array")
+                                } else if heap.is_dynamic_object(obj)
+                                    && heap.dynamic_get(obj, "constructor").is_none()
+                                    && heap.dynamic_get_function(obj, "constructor").is_none()
+                                {
+                                    Some("Object")
+                                } else {
+                                    None
+                                }
+                            });
+                            if let Some(class_name) = builtin_name {
+                                let record = zun_gc::with_current_heap_mut(|heap| {
+                                    let record = heap.alloc_dynamic();
+                                    let name_any = Value::Str(class_name.into())
+                                        .box_any(heap)
+                                        .unwrap_or_else(zun_core::Any::null);
+                                    heap.dynamic_set(record, "name", name_any);
+                                    record
+                                });
+                                stack.push(Value::Object(record));
+                                continue;
+                            }
                             let typed = zun_gc::with_current_heap(|heap| {
                                 !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
                             });
@@ -886,6 +923,22 @@ impl Interp<'_> {
                         }
                         other => other,
                     };
+                    // ToPropertyKey: booleans, null/undefined and objects become
+                    // their string form (objects run toString first).
+                    let key = if matches!(key, Value::Bool(_) | Value::Null | Value::Void | Value::Object(_)) {
+                        match self.dyn_to_string(&key) {
+                            Ok(text) => Value::Str(text.into()),
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    } else {
+                        key
+                    };
                     let object_raw = pop(&mut stack)?;
                     {
                         let concrete = match &object_raw {
@@ -933,6 +986,22 @@ impl Interp<'_> {
                         } else {
                             return Err(RunError::BadToken);
                         }
+                    } else if let Some(element) = match &key {
+                        // A canonical index string on an array addresses the element.
+                        Value::Str(text) => zun_gc::with_current_heap(|heap| {
+                            let len = heap.array_len(object)?;
+                            let index = text.parse::<usize>().ok().filter(|i| i.to_string() == **text)?;
+                            Some(if index < len {
+                                heap.array_get(object, index)
+                                    .and_then(|any| Value::unbox_any(any, heap))
+                                    .unwrap_or(Value::Void)
+                            } else {
+                                Value::Void
+                            })
+                        }),
+                        _ => None,
+                    } {
+                        element
                     } else if let Value::Str(key) = &key {
                         match self.dynamic_member_get(object, key) {
                             Ok(v) => v,
@@ -982,6 +1051,22 @@ impl Interp<'_> {
                             zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
                         }
                         other => other,
+                    };
+                    // ToPropertyKey: booleans, null/undefined and objects become
+                    // their string form (objects run toString first).
+                    let key = if matches!(key, Value::Bool(_) | Value::Null | Value::Void | Value::Object(_)) {
+                        match self.dyn_to_string(&key) {
+                            Ok(text) => Value::Str(text.into()),
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    } else {
+                        key
                     };
                     let object = pop(&mut stack)?.as_object();
                     {
@@ -1040,6 +1125,20 @@ impl Interp<'_> {
                         }
                         Value::Str(key) => {
                             zun_gc::with_current_heap_mut(|heap| {
+                                if let Some(len) = heap.array_len(object) {
+                                    // A canonical index string addresses the element;
+                                    // any other string is an expando on the array.
+                                    if let Ok(index) = key.parse::<usize>() {
+                                        if index.to_string() == **key && index < u32::MAX as usize {
+                                            if index >= len {
+                                                heap.array_resize(object, index + 1);
+                                            }
+                                            heap.array_set(object, index, any);
+                                            return;
+                                        }
+                                    }
+                                    heap.ensure_dynamic_entry(object);
+                                }
                                 heap.dynamic_set(object, key.as_ref().to_owned(), any);
                             });
                         }
@@ -1118,7 +1217,7 @@ impl Interp<'_> {
                             if (index as usize) >= len {
                                 heap.array_resize(array, index as usize + 1);
                                 for gap in len..(index as usize) {
-                                    heap.array_set(array, gap, zun_core::Any::void());
+                                    heap.array_set(array, gap, zun_core::Any::hole());
                                 }
                             }
                         }
