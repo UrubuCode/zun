@@ -12520,20 +12520,45 @@ impl Checker<'_> {
                 // `console[key](args)` with a runtime key: dispatch on the key over
                 // the console methods (the key is evaluated once into a temp).
                 if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
-                    let namespace_methods: &[&str] = match recv_ast.as_ref() {
+                    let namespace_methods: &[(&str, usize, usize)] = match recv_ast.as_ref() {
                         ast::Expr::Ident(id) if cx.lookup(self.text(id)).is_none() => match self.text(id) {
-                            "console" => &["debug", "info", "warn", "error", "log"],
-                            "JSON" => &["stringify", "parse"],
+                            "console" => &[
+                                ("debug", 0, 99), ("info", 0, 99), ("warn", 0, 99), ("error", 0, 99), ("log", 0, 99),
+                            ],
+                            "JSON" => &[("stringify", 1, 3), ("parse", 1, 2)],
                             "Math" => &[
-                                "abs", "floor", "ceil", "round", "max", "min", "sqrt", "pow", "trunc", "sign",
+                                ("abs", 1, 1), ("floor", 1, 1), ("ceil", 1, 1), ("round", 1, 1), ("max", 0, 99),
+                                ("min", 0, 99), ("sqrt", 1, 1), ("pow", 2, 2), ("trunc", 1, 1), ("sign", 1, 1),
                             ],
                             "Object" => &[
-                                "keys", "values", "entries", "assign", "freeze", "isFrozen", "create",
-                                "getPrototypeOf", "defineProperty",
+                                ("keys", 1, 1), ("values", 1, 1), ("entries", 1, 1), ("assign", 1, 99),
+                                ("freeze", 1, 1), ("isFrozen", 1, 1), ("create", 1, 1), ("getPrototypeOf", 1, 1),
+                                ("defineProperty", 3, 3),
                             ],
-                            "Array" => &["isArray", "from", "of"],
-                            "Number" => &["isInteger", "isNaN", "isFinite", "parseFloat", "parseInt"],
-                            "String" => &["fromCharCode"],
+                            "Array" => &[("isArray", 1, 1), ("from", 1, 3), ("of", 0, 99)],
+                            "Number" => &[
+                                ("isInteger", 1, 1), ("isNaN", 1, 1), ("isFinite", 1, 1), ("parseFloat", 1, 1),
+                                ("parseInt", 1, 2),
+                            ],
+                            "String" => &[("fromCharCode", 0, 99)],
+                            _ => &[],
+                        },
+                        // A typed collection/string held in a local: dispatch over its methods.
+                        ast::Expr::Ident(id) => match cx.lookup(self.text(id)).map(|slot| cx.locals[slot as usize]) {
+                            Some(Ty::Map) => &[
+                                ("entries", 0, 0), ("keys", 0, 0), ("values", 0, 0), ("get", 1, 1), ("set", 2, 2),
+                                ("has", 1, 1), ("delete", 1, 1), ("clear", 0, 0),
+                            ],
+                            Some(Ty::Set) => &[
+                                ("entries", 0, 0), ("keys", 0, 0), ("values", 0, 0), ("add", 1, 1),
+                                ("has", 1, 1), ("delete", 1, 1), ("clear", 0, 0),
+                            ],
+                            Some(Ty::String) => &[
+                                ("toUpperCase", 0, 0), ("toLowerCase", 0, 0), ("trim", 0, 0), ("charAt", 1, 1),
+                                ("charCodeAt", 1, 1), ("slice", 1, 2), ("substring", 1, 2), ("indexOf", 1, 2),
+                                ("split", 1, 2), ("includes", 1, 2), ("startsWith", 1, 2), ("endsWith", 1, 2),
+                                ("repeat", 1, 1), ("padStart", 1, 2), ("padEnd", 1, 2), ("concat", 0, 99),
+                            ],
                             _ => &[],
                         },
                         _ => &[],
@@ -12550,7 +12575,10 @@ impl Checker<'_> {
                                 operand: Box::new(ast::Expr::Number { value: 0.0, span }),
                                 span,
                             };
-                            for method in namespace_methods.iter().copied() {
+                            for (method, min, max) in namespace_methods.iter().copied() {
+                                if args.len() < min || args.len() > max {
+                                    continue;
+                                }
                                 chain = ast::Expr::Conditional {
                                     condition: Box::new(ast::Expr::Binary {
                                         op: ast::BinaryOp::Eq,
@@ -12590,9 +12618,10 @@ impl Checker<'_> {
                 if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
                     if args.len() <= 4 && !matches!(key_ast.as_ref(), ast::Expr::Spread { .. }) {
                         let recv_hir = self.check_expr(cx, recv_ast);
-                        if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject | Ty::Array) {
+                        if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject | Ty::Array | Ty::Map | Ty::Set | Ty::String) {
                             let key_hir = self.check_expr(cx, key_ast);
-                            let array_ok = recv_hir.ty != Ty::Array || matches!(key_hir.ty, Ty::String | Ty::Any);
+                            let array_ok = !matches!(recv_hir.ty, Ty::Array | Ty::Map | Ty::Set | Ty::String)
+                                || matches!(key_hir.ty, Ty::String | Ty::Any);
                             if array_ok
                                 && (matches!(key_hir.ty, Ty::String | Ty::F64 | Ty::Any) || key_hir.ty.is_int())
                             {
