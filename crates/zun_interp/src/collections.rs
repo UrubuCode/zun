@@ -2136,6 +2136,29 @@ impl<'a> Interp<'a> {
                 zun_gc::with_current_heap_mut(|heap| heap.array_push(array, zun_core::Any::hole()));
                 Ok(Value::Bool(true))
             }
+            "setCallArgc" => {
+                let count = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Float(value, _) => value as usize,
+                    Value::Int(value, _) => value as usize,
+                    _ => 0,
+                };
+                crate::unwind::CALL_ARGC_MARK.with(|mark| mark.set(Some(count)));
+                Ok(args.first().ok_or(RunError::BadToken)?.clone())
+            }
+            "argumentsObject" => {
+                // Trim the `[p1, ..., ...rest]` array to the number of arguments
+                // actually passed (omitted defaults are not counted).
+                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let actual = crate::unwind::CALL_ARGC_CURRENT.with(|current| current.get());
+                zun_gc::with_current_heap_mut(|heap| {
+                    if let Some(len) = heap.array_len(array) {
+                        if actual < len {
+                            heap.array_resize(array, actual);
+                        }
+                    }
+                });
+                Ok(Value::Object(array))
+            }
             "forInHas" => {
                 // for-in liveness: is `key` still a property of `object` (own or
                 // inherited)? Unknown receivers answer `true` (never skip).

@@ -65,3 +65,11 @@ thread_local! {
 pub(crate) fn is_generator_return(value: &Value) -> bool {
     matches!(value, Value::Str(text) if &**text == GENERATOR_RETURN_SENTINEL)
 }
+
+thread_local! {
+    /// Real argument count announced by a statically compiled call site just
+    /// before the call (consumed by the callee's frame entry).
+    pub(crate) static CALL_ARGC_MARK: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Real argument count of the call that created the running frame.
+    pub(crate) static CALL_ARGC_CURRENT: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}

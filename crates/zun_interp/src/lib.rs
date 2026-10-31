@@ -340,6 +340,10 @@ impl Interp<'_> {
             }
             frame
         } else {
+            // Remember how many arguments the caller really passed (a static call
+            // site announces it; dynamic calls pass exactly what they carry).
+            let announced = unwind::CALL_ARGC_MARK.with(|mark| mark.take());
+            unwind::CALL_ARGC_CURRENT.with(|current| current.set(announced.unwrap_or(args.len())));
             // Dynamic-call argument adaptation (ECMAScript semantics): a
             // closure with a rest parameter (`<closure@..@rest>`) packs its
             // trailing arguments into an array; any other callee drops

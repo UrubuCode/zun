@@ -156,6 +156,7 @@ fn check_impl(
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
         module_globals: HashSet::new(),
+        arguments_functions: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
         chain_roots: Vec::new(),
     };
@@ -391,6 +392,9 @@ struct Checker<'a> {
     /// function body can read them, matching JS module scope. All are dynamic
     /// (`any`).
     module_globals: HashSet<String>,
+    /// Functions whose body materializes an `arguments` object: their callers
+    /// report the real argument count (see `setCallArgc`).
+    arguments_functions: HashSet<u32>,
     /// Module globals assigned inside a function or method body (a superset:
     /// the name may also be a local there). `<main>` reads such a global
     /// through the realm store so it observes those writes, and mirrors its
@@ -1445,6 +1449,9 @@ impl Checker<'_> {
         }
         for f in &program.functions {
             let name = self.text(&f.name).to_string();
+            if matches!(f.body.statements.first(), Some(ast::Stmt::Let { name, .. }) if self.text(name) == "arguments") {
+                self.arguments_functions.insert(self.signatures.len() as u32);
+            }
             let params = f
                 .params
                 .iter()
@@ -2201,8 +2208,22 @@ impl Checker<'_> {
                 if matches!(init, ast::Expr::Function(_)) {
                     self.closure_self_name = Some(self.text(name).to_string());
                 }
+                // The adapter's injected `arguments = [p1, ..., ...rest]` (name and
+                // literal share one span): trimmed to the real call-site count.
+                let injected_arguments = self.text(name) == "arguments"
+                    && matches!(init, ast::Expr::ArrayLiteral { span: literal, .. } if *literal == name.span);
                 let mut init = self.check_expr(cx, init);
                 self.closure_self_name = None;
+                if injected_arguments && init.ty == Ty::Array {
+                    if let Some((trim_id, _)) = zun_natives::resolve("collections", "argumentsObject") {
+                        let (span_of, ty) = (init.span, init.ty);
+                        init = hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id: trim_id, args: vec![init] },
+                            ty,
+                            span: span_of,
+                        };
+                    }
+                }
                 let declared = ty.as_ref().map(|t| self.resolve_annotation(t));
                 // `let x: int = 1` — retype an integral number literal to the
                 // declared numeric type.
@@ -7490,6 +7511,7 @@ impl Checker<'_> {
                     is_generator: self.signatures[func as usize].is_generator,
                     is_static: false,
                 };
+                let actual_argc = args.len();
                 let rest_index = sig.rest_param;
                 if let Some(rest_index) = rest_index {
                     let rest_required = rest_index.saturating_sub(optional_count);
@@ -7544,6 +7566,30 @@ impl Checker<'_> {
                                 format!("argument type {:?} does not match {expected:?}", arg.ty),
                             );
                         }
+                    }
+                }
+                // A callee that reads `arguments` learns the real argument count
+                // (before default padding) through the last argument's evaluation.
+                if self.arguments_functions.contains(&func) {
+                    if let (Some(last), Some((mark_id, _))) =
+                        (args.pop(), zun_natives::resolve("collections", "setCallArgc"))
+                    {
+                        let (ty, last_span) = (last.ty, last.span);
+                        args.push(hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id: mark_id,
+                                args: vec![
+                                    last,
+                                    hir::Expr {
+                                        kind: hir::ExprKind::Number(actual_argc as f64),
+                                        ty: Ty::F64,
+                                        span: last_span,
+                                    },
+                                ],
+                            },
+                            ty,
+                            span: last_span,
+                        });
                     }
                 }
                 hir::Expr {
