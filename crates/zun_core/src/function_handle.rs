@@ -70,6 +70,28 @@ impl FunctionHandle {
     }
 }
 
+/// `reserved` base marking a generator method value (`gen.next`, `gen.return`,
+/// `gen.throw`): the low bits select the method and `environment` is the
+/// generator object (traced like a closure environment).
+const GENERATOR_METHOD_BASE: u32 = 16;
+
+impl FunctionHandle {
+    /// A generator method value; `kind` is 0 = next, 1 = return, 2 = throw.
+    pub const fn new_generator_method(kind: u32, generator: usize) -> Self {
+        Self { method_rid: 0, reserved: GENERATOR_METHOD_BASE + kind, environment: generator }
+    }
+
+    /// The generator method selector (0 next, 1 return, 2 throw) when this
+    /// handle is a generator method value.
+    pub const fn generator_method(self) -> Option<u32> {
+        if self.reserved >= GENERATOR_METHOD_BASE && self.reserved < GENERATOR_METHOD_BASE + 3 {
+            Some(self.reserved - GENERATOR_METHOD_BASE)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::FunctionHandle;

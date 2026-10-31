@@ -609,6 +609,20 @@ impl Interp<'_> {
                             None => return Err(RunError::Native(format!("TypeError: {message}"))),
                         }
                     }
+                    // `gen.next` / `gen.return` / `gen.throw` read off a generator
+                    // object are callable method values.
+                    if matches!(name.as_str(), "next" | "return" | "throw") {
+                        if let Value::Object(obj) = &concrete {
+                            if zun_gc::with_current_heap(|heap| heap.generator_state(*obj).is_some()) {
+                                let kind = match name.as_str() { "next" => 0, "return" => 1, _ => 2 };
+                                stack.push(Value::Function(zun_core::FunctionHandle::new_generator_method(
+                                    kind,
+                                    obj.addr() as usize,
+                                )));
+                                continue;
+                            }
+                        }
+                    }
                     if name == "constructor" {
                         if let Value::Object(obj) = &concrete {
                             let obj = *obj;
@@ -617,7 +631,7 @@ impl Interp<'_> {
                             let builtin_name = zun_gc::with_current_heap(|heap| {
                                 if heap.array_len(obj).is_some() {
                                     Some("Array")
-                                } else if heap.is_dynamic_object(obj)
+                                } else if heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
                                     && heap.dynamic_get(obj, "constructor").is_none()
                                     && heap.dynamic_get_function(obj, "constructor").is_none()
                                 {
@@ -639,7 +653,7 @@ impl Interp<'_> {
                                 continue;
                             }
                             let typed = zun_gc::with_current_heap(|heap| {
-                                !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
+                                (!heap.is_dynamic_object(obj) || heap.is_instance_bag(obj)) && heap.array_len(obj).is_none()
                             });
                             let type_rid = obj.type_rid();
                             if typed && type_rid >= 1 {
@@ -907,12 +921,23 @@ impl Interp<'_> {
                                 }
                             }
                         } else {
-                            zun_gc::with_current_heap_mut(|heap| {
-                                if heap.array_len(object).is_some() {
-                                    heap.ensure_dynamic_entry(object);
-                                }
-                                heap.dynamic_set(object, name, any);
+                            // A typed class instance: a declared field takes the
+                            // value in place; any other name becomes an expando.
+                            let typed_instance = zun_gc::with_current_heap(|heap| {
+                                !heap.is_dynamic_object(object)
+                                    && heap.array_len(object).is_none()
+                                    && object.type_rid() >= 1
                             });
+                            if !(typed_instance && self.instance_member_set(object, &name, &value)) {
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    if heap.array_len(object).is_some() {
+                                        heap.ensure_dynamic_entry(object);
+                                    } else if typed_instance {
+                                        heap.ensure_instance_bag(object);
+                                    }
+                                    heap.dynamic_set(object, name, any);
+                                });
+                            }
                         }
                         stack.push(value);
                     }
@@ -1793,6 +1818,11 @@ impl Interp<'_> {
                     let Value::Function(handle) = function else {
                         return Err(RunError::BadToken);
                     };
+                    if handle.generator_method().is_some() {
+                        let result = self.invoke_function_value(handle, args)?;
+                        stack.push(result);
+                        continue;
+                    }
                     if let Some((promise, mode)) = self.settler_of(handle) {
                         // A `Promise.withResolvers` settler: settle natively and
                         // push its `undefined` result (no method body to run).

@@ -63,6 +63,9 @@ pub struct DynamicObject {
     symbol_properties: BTreeMap<SymbolId, Any>,
     /// Symbol keys in first-insertion order (the order own-key enumeration reports).
     symbol_order: Vec<SymbolId>,
+    /// This table backs expando properties of a typed class instance (its
+    /// declared fields still live in the fixed object layout).
+    instance_bag: bool,
     /// Symbol keys whose **enumerable** attribute is cleared (skipped by spread
     /// and `Object.assign`).
     non_enumerable_symbols: HashSet<SymbolId>,
@@ -125,6 +128,9 @@ fn array_index(name: &str) -> Option<u32> {
 
 impl DynamicObject {
     pub fn new() -> Self { Self::default() }
+    /// Mark this table as the expando bag of a typed class instance.
+    pub fn mark_instance_bag(&mut self) { self.instance_bag = true; }
+    pub fn is_instance_bag(&self) -> bool { self.instance_bag }
     /// Append a brand-new string key in ECMAScript own-key order: canonical
     /// array indices first (ascending), then other strings by insertion.
     fn insert_new(&mut self, name: String, value: Any) {

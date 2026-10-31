@@ -2191,7 +2191,9 @@ impl<'a> Interp<'a> {
                         }
                         (array_len.is_some(), dynamic, found)
                     });
-                    if !is_array && !is_dynamic {
+                    let is_bag = zun_gc::with_current_heap(|heap| heap.is_instance_bag(current));
+                    if (!is_array && !is_dynamic) || (is_bag && !found) {
+                        present = true;
                         break;
                     }
                     if found {
@@ -2686,6 +2688,12 @@ impl<'a> Interp<'a> {
                 // A built-in iterator object (from `Array`/`Map`/`Set`
                 // `keys`/`values`/`entries`) answers `next()` with a fresh
                 // `{ value, done }` result object, per the iterator protocol.
+                if matches!(member.as_ref(), "return" | "throw")
+                    && zun_gc::with_current_heap(|heap| heap.generator_state(namespace).is_some())
+                {
+                    let kind = if member.as_ref() == "return" { 1 } else { 2 };
+                    return self.call_generator_method(kind, namespace, &args[2..]);
+                }
                 if member.as_ref() == "next" {
                     if let Some(result) = self.builtin_iterator_result(namespace)? {
                         return Ok(result);
@@ -2765,7 +2773,7 @@ impl<'a> Interp<'a> {
                 // A typed class instance reached through `any`: dispatch the
                 // named method (virtually) with the instance as receiver.
                 if !is_array
-                    && !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(namespace))
+                    && !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(namespace) && !heap.is_instance_bag(namespace))
                 {
                     if let Some(rid) = self.instance_method_rid(namespace, &member) {
                         let mut method_args = Vec::with_capacity(call_args.len() + 1);
@@ -4872,7 +4880,7 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Object(array));
                     }
                 };
-                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && heap.array_len(obj).is_none());
+                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && heap.array_len(obj).is_none() && !heap.is_instance_bag(obj));
                 let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 let mut keys: Vec<String> = Vec::new();
                 if is_dynamic {
@@ -5124,6 +5132,19 @@ impl<'a> Interp<'a> {
                         let target_dynamic =
                             zun_gc::with_current_heap(|heap| heap.is_dynamic_object(target));
                         if !target_dynamic {
+                            // A typed instance target: a declared field takes the
+                            // value, any other key becomes an expando.
+                            let typed = zun_gc::with_current_heap(|heap| {
+                                heap.array_len(target).is_none() && target.type_rid() >= 1
+                            });
+                            if typed
+                                && !self.instance_member_set(target, &key, &Value::Any(boxed))
+                            {
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    heap.ensure_instance_bag(target);
+                                    heap.dynamic_set(target, key, boxed);
+                                });
+                            }
                             continue;
                         }
                         let (is_accessor, setter, has, writable, extensible) =
@@ -5960,7 +5981,7 @@ impl<'a> Interp<'a> {
             out.extend(expandos);
             return Ok(out);
         }
-        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)) {
             let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj))
                 .ok_or(RunError::BadToken)?;
             let mut out = Vec::with_capacity(keys.len());
@@ -6045,6 +6066,28 @@ impl<'a> Interp<'a> {
                 });
                 out.push((name, value));
             }
+        }
+        // Expando properties of a typed instance follow its declared fields;
+        // canonical integer keys sort first, as for any ordinary object.
+        if zun_gc::with_current_heap(|heap| heap.is_instance_bag(obj)) {
+            let extras: Vec<(String, Value)> = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_keys(obj)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|key| heap.dynamic_is_enumerable(obj, key))
+                    .filter_map(|key| {
+                        heap.dynamic_get(obj, &key)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                            .map(|value| (key, value))
+                    })
+                    .collect()
+            });
+            out.extend(extras);
+            let is_index = |key: &str| key.parse::<u32>().is_ok_and(|n| n.to_string() == key && n != u32::MAX);
+            let (mut indexed, rest): (Vec<_>, Vec<_>) = out.into_iter().partition(|(key, _)| is_index(key));
+            indexed.sort_by_key(|(key, _)| key.parse::<u32>().unwrap_or(0));
+            indexed.extend(rest);
+            out = indexed;
         }
         Ok(out)
     }
@@ -6633,6 +6676,51 @@ impl<'a> Interp<'a> {
         Ok(current)
     }
 
+    /// Invoke a generator method value (`gen.next` / `gen.return` / `gen.throw`)
+    /// obtained by reading the property off a generator object.
+    pub(crate) fn call_generator_method(
+        &mut self,
+        kind: u32,
+        generator: zun_gc::Obj,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
+        let first = match args.first() {
+            Some(Value::Any(any)) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                .unwrap_or(Value::Void),
+            Some(other) => other.clone(),
+            None => Value::Void,
+        };
+        match kind {
+            0 => Ok(self.builtin_iterator_result(generator)?.unwrap_or(Value::Void)),
+            1 => {
+                self.close_generator(generator, false)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| first.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::void);
+                let value_root: Vec<zun_gc::Obj> = boxed
+                    .as_object()
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                    .into_iter()
+                    .collect();
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&value_root) };
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let result = heap.alloc_dynamic();
+                    let value_any = match value_root.first() {
+                        Some(object) => zun_core::Any::object(object.addr() as usize),
+                        None => boxed,
+                    };
+                    heap.dynamic_set(result, "value", value_any);
+                    heap.dynamic_set(result, "done", zun_core::Any::bool(true));
+                    result
+                });
+                Ok(Value::Any(zun_core::Any::object(result.addr() as usize)))
+            }
+            _ => {
+                self.close_generator(generator, true)?;
+                Err(RunError::Thrown(first))
+            }
+        }
+    }
+
     /// `iterator.next()` for a built-in iterator object reached through a dynamic
     /// member call (`[10, 20].values().next()`): advance it and return a fresh
     /// `{ value, done }` result object. Returns `None` for a non-iterator so the
@@ -6813,6 +6901,13 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
         call_args: Vec<Value>,
     ) -> Result<Value, RunError> {
+        if let Some(kind) = handle.generator_method() {
+            let generator = handle
+                .environment()
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                .ok_or(RunError::BadToken)?;
+            return self.call_generator_method(kind, generator, &call_args);
+        }
         if let Some((promise, mode)) = self.settler_of(handle) {
             return self.invoke_promise_settler(promise, mode, call_args);
         }

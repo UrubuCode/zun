@@ -126,3 +126,47 @@ impl<'a> Interp<'a> {
         Ok(self.module.strings.get(zun_metadata::StringIndex(index)))
     }
 }
+
+impl Interp<'_> {
+    /// Assign member `name` of a typed class instance reached through `any`
+    /// when it names a declared instance field (searching base classes too).
+    /// Returns whether a declared field took the value.
+    pub(crate) fn instance_member_set(&mut self, object: zun_gc::Obj, name: &str, value: &Value) -> bool {
+        let mut current = object.type_rid();
+        for _ in 0..64 {
+            if current == 0 {
+                return false;
+            }
+            let Some(type_def) = self.module.tables.type_defs.get(current as usize - 1) else {
+                return false;
+            };
+            let (start, end, base) = (type_def.field_start, type_def.field_end, type_def.base);
+            for field_rid in start..end {
+                let Some(field) = self.module.tables.field_defs.get(field_rid as usize - 1) else {
+                    continue;
+                };
+                if field.is_static || self.module.strings.get(field.name) != name {
+                    continue;
+                }
+                let Some(layout) = self.types.get_field(field_rid) else {
+                    continue;
+                };
+                let (slot, kind) = (layout.slot, layout.kind);
+                let value = match value {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                zun_gc::with_current_heap_mut(|heap| {
+                    crate::value::store_field(kind, object, slot, &value, heap);
+                });
+                return true;
+            }
+            if base.is_null() || base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                return false;
+            }
+            current = base.rid();
+        }
+        false
+    }
+}

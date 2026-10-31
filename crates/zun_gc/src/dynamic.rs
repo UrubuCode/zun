@@ -384,3 +384,16 @@ impl Heap {
         true
     }
 }
+
+impl Heap {
+    /// Give a typed class instance an expando-property table (properties added
+    /// with `(obj as any).extra = v`); its declared fields stay in the fixed layout.
+    pub fn ensure_instance_bag(&mut self, object: Obj) {
+        self.dynamic_objects.entry(object.addr() as usize).or_default().mark_instance_bag();
+    }
+
+    /// Whether `object` is a typed class instance carrying an expando table.
+    pub fn is_instance_bag(&self, object: Obj) -> bool {
+        self.dynamic_objects.get(&(object.addr() as usize)).is_some_and(|properties| properties.is_instance_bag())
+    }
+}
