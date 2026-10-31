@@ -3921,7 +3921,9 @@ impl Checker<'_> {
                 (element, prelude)
             }
         };
+        cx.loop_depth += 1;
         let mut body = self.check_block(cx, body);
+        cx.loop_depth -= 1;
         if !prelude.is_empty() {
             let mut combined = prelude;
             combined.append(&mut body);
