@@ -24,6 +24,18 @@ impl<'a> Checker<'a> {
         // Resolve base names to indices now that all classes are known.
         for (i, c) in program.classes.iter().enumerate() {
             if let Some(base_name) = self.classes[i].base_name.clone() {
+                // `extends Promise` (and the other built-in value types) derive
+                // from the prelude's `__Builtin<Name>` wrapper class, which owns
+                // the native value and forwards the built-in's methods to it.
+                let wrapper = format!("__Builtin{base_name}");
+                let base_name = if !self.classes_by_name.contains_key(&base_name)
+                    && self.classes_by_name.contains_key(&wrapper)
+                {
+                    self.classes[i].base_name = Some(wrapper.clone());
+                    wrapper
+                } else {
+                    base_name
+                };
                 match self.classes_by_name.get(&base_name) {
                     Some(&b) if b != i as u32 => self.classes[i].base = Some(b),
                     Some(_) => {

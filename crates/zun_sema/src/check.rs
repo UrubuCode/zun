@@ -11826,11 +11826,21 @@ impl Checker<'_> {
                 // checked against the constructor's parameters. The class's own
                 // `constructor` runs; it may call `super(...)` to chain to the
                 // base constructor (see `check_super_call`).
-                let own_ctor = self
-                    .methods_by_class
-                    .get(class_idx as usize)
-                    .and_then(|m| m.get("constructor"))
-                    .copied();
+                // A derived class without its own constructor inherits the nearest
+                // base constructor (JS implicit `constructor(...args) { super(...args) }`).
+                let mut own_ctor = None;
+                let mut walk = Some(class_idx);
+                while let Some(current) = walk {
+                    own_ctor = self
+                        .methods_by_class
+                        .get(current as usize)
+                        .and_then(|m| m.get("constructor"))
+                        .copied();
+                    if own_ctor.is_some() {
+                        break;
+                    }
+                    walk = self.classes.get(current as usize).and_then(|c| c.base);
+                }
                 if let Some(ctor) = own_ctor {
                     let new = self.check_new_with_constructor(cx, class_idx, &name, ctor, args, span);
                     return self.wrap_hooked_new(class_idx, new, span);

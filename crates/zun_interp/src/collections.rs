@@ -8624,8 +8624,22 @@ impl<'a> Interp<'a> {
             // The call is scheduled as a microtask job: a pre-resolved dummy
             // promise carries a `ThenableJob` reaction, which the scheduler
             // enqueues (ReadyNow) and the turn-drain runs.
-            if let Some(then) =
-                zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "then"))
+            // A typed class instance with a `then` method is a thenable too; its
+            // method rid rides the job as an integer (called with the instance
+            // as `this`).
+            let typed_then = if zun_gc::with_current_heap(|heap| {
+                heap.dynamic_get_function(obj, "then").is_none() && !heap.is_dynamic_object(obj)
+            }) {
+                self.instance_method_rid(obj, "then")
+            } else {
+                None
+            };
+            if let Some(then) = typed_then
+                .map(|rid| Value::Int(rid as i64, zun_il::NumKind::U32))
+                .or_else(|| {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "then"))
+                        .map(Value::Function)
+                })
             {
                 let dummy = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 let roots = [target, obj, dummy];
@@ -8638,7 +8652,7 @@ impl<'a> Interp<'a> {
                     roots[0],
                     ReactionKind::ThenableJob {
                         thenable: Value::Object(roots[1]),
-                        then: Value::Function(then),
+                        then,
                     },
                 );
                 return;
@@ -9017,8 +9031,23 @@ impl<'a> Interp<'a> {
                 self.async_step(generator, roots[1], input)?;
             }
             ReactionKind::ThenableJob { thenable, then } => {
-                let _ = thenable;
-                if let Some(then) = as_function(&Some(then)) {
+                if let Value::Int(rid, _) = then {
+                    let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
+                    let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
+                    match self.call(
+                        rid as u32,
+                        vec![thenable, Value::Function(resolve), Value::Function(reject)],
+                        None,
+                    ) {
+                        Ok(_) => {}
+                        Err(RunError::Thrown(thrown)) => {
+                            let _ = self.invoke_promise_settler(roots[1], SETTLE_REJECT, vec![thrown]);
+                        }
+                        Err(_) => {
+                            self.settle_promise_reject(roots[1], "thenable.then failed".into());
+                        }
+                    }
+                } else if let Some(then) = as_function(&Some(then)) {
                     let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
                     let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
                     match self.invoke_function_value(
