@@ -192,12 +192,28 @@ impl<'a> Checker<'a> {
                     span,
                 }
             }
+            // Any other name reads an expando property off the function
+            // object and invokes it through the dynamic-call form.
             other => {
-                self.error(
-                    method_span,
-                    format!("no method `{other}` on a function value"),
-                );
-                self.poison(span)
+                let callee = hir::Expr {
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(receiver),
+                        name: other.to_string(),
+                    },
+                    ty: Ty::Any,
+                    span: method_span,
+                };
+                let args: Vec<hir::Expr> =
+                    args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+                hir::Expr {
+                    kind: hir::ExprKind::IndirectCall {
+                        callee: Box::new(callee),
+                        args,
+                        func: hir::DYNAMIC_FUNCTION,
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
             }
         }
     }

@@ -34,11 +34,62 @@ pub(super) fn rewrite_boxed_lets(
             hir::Stmt::Labeled { body, .. } => {
                 rewrite_boxed_lets(std::slice::from_mut(body.as_mut()), boxed)
             }
-            hir::Stmt::For { init, body, .. } => {
+            hir::Stmt::For { init, cond, update, body } => {
+                let mut loop_cells: Vec<hir::LocalSlot> = Vec::new();
                 if let Some(init) = init {
                     rewrite_boxed_lets(std::slice::from_mut(init.as_mut()), boxed);
+                    collect_boxed_lets(init, &mut loop_cells);
                 }
                 rewrite_boxed_lets(body, boxed);
+                // Per-iteration bindings: before the update runs, every
+                // closure-captured loop variable moves into a fresh cell
+                // holding the current value, so closures created in earlier
+                // iterations keep observing their own iteration's value.
+                let span = cond.span;
+                for slot in loop_cells {
+                    let renew = hir::Expr {
+                        kind: hir::ExprKind::Assign {
+                            slot,
+                            value: Box::new(hir::Expr {
+                                kind: hir::ExprKind::DynamicObjectLiteral {
+                                    entries: vec![hir::ObjectEntry::Data {
+                                        key: hir::ObjectKey::Named("$value".to_string()),
+                                        value: hir::Expr {
+                                            kind: hir::ExprKind::BoxAny {
+                                                value: Box::new(hir::Expr {
+                                                    kind: hir::ExprKind::CellLoad { slot },
+                                                    ty: Ty::Any,
+                                                    span,
+                                                }),
+                                            },
+                                            ty: Ty::Any,
+                                            span,
+                                        },
+                                    }],
+                                },
+                                ty: Ty::DynamicObject,
+                                span,
+                            }),
+                        },
+                        ty: Ty::DynamicObject,
+                        span,
+                    };
+                    *update = Some(match update.take() {
+                        Some(old) => {
+                            let ty = old.ty;
+                            let span = old.span;
+                            hir::Expr {
+                                kind: hir::ExprKind::Sequence {
+                                    effect: Box::new(renew),
+                                    value: Box::new(old),
+                                },
+                                ty,
+                                span,
+                            }
+                        }
+                        None => renew,
+                    });
+                }
             }
             hir::Stmt::Try {
                 body,
@@ -55,5 +106,18 @@ pub(super) fn rewrite_boxed_lets(
             }
             _ => {}
         }
+    }
+}
+
+/// Collect the cell slots declared by a (possibly grouped) rewritten `for` init.
+fn collect_boxed_lets(statement: &hir::Stmt, out: &mut Vec<hir::LocalSlot>) {
+    match statement {
+        hir::Stmt::BoxedLet { slot, .. } => out.push(*slot),
+        hir::Stmt::Group(body) => {
+            for inner in body {
+                collect_boxed_lets(inner, out);
+            }
+        }
+        _ => {}
     }
 }

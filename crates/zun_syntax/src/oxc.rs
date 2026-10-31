@@ -464,7 +464,20 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
             // A bare `{ … }` block. One that declares `let`/`const` keeps its own
             // scope (modelled as `if (true) { … }`); other blocks are flattened.
             Statement::BlockStatement(block) => {
-                let declares_lexical = TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start && block.body.iter().any(|inner| {
+                let shadows_top_level = TOP_LEVEL_BLOCK.with(|cell| cell.get()) == block.span.start
+                    && block.body.iter().any(|inner| {
+                        matches!(
+                            inner,
+                            Statement::VariableDeclaration(decl)
+                                if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
+                                    && decl.declarations.iter().any(|d| matches!(
+                                        &d.id,
+                                        BindingPattern::BindingIdentifier(id)
+                                            if TOP_LEVEL_NAMES.with(|names| names.borrow().contains(id.name.as_str()))
+                                    ))
+                        )
+                    });
+                let declares_lexical = (TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start || shadows_top_level) && block.body.iter().any(|inner| {
                     matches!(
                         inner,
                         Statement::VariableDeclaration(decl)
@@ -2144,6 +2157,19 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     let mut classes = Vec::new();
     let mut top_level = Vec::new();
     let mut hoisted_functions: Vec<Stmt> = Vec::new();
+    TOP_LEVEL_NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        names.clear();
+        for statement in parsed.program.body.iter() {
+            if let Statement::VariableDeclaration(decl) = statement {
+                for d in decl.declarations.iter() {
+                    if let BindingPattern::BindingIdentifier(id) = &d.id {
+                        names.insert(id.name.to_string());
+                    }
+                }
+            }
+        }
+    });
     for statement in parsed.program.body {
         TOP_LEVEL_BLOCK.with(|cell| {
             cell.set(match &statement {
@@ -3388,6 +3414,12 @@ thread_local! {
     /// `convert_statement_list` right after each statement is converted.
     static PENDING_PRELUDE: std::cell::RefCell<Vec<Stmt>> = const { std::cell::RefCell::new(Vec::new()) };
     static YIELD_STAR_COUNTER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Names bound by top-level variable declarations of the module.
+    static TOP_LEVEL_NAMES: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 thread_local! {

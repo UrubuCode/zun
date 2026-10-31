@@ -716,6 +716,18 @@ pub const MODULE: crate::Module = crate::Module {
             imp: to_lower_case,
         },
         NativeFn {
+            name: "encodeURIComponent",
+            params: &[Str],
+            ret: Str,
+            imp: encode_uri_component,
+        },
+        NativeFn {
+            name: "decodeURIComponent",
+            params: &[Str],
+            ret: Str,
+            imp: decode_uri_component,
+        },
+        NativeFn {
             name: "toUpperCase",
             params: &[Str],
             ret: Str,
@@ -838,3 +850,47 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "intlCollatorCompare", params: &[Str, Str, Str], ret: I32, imp: intl_collator_compare },
     ],
 };
+
+fn encode_uri_component(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let Some(NativeArg::Str(value)) = args.first() else {
+        return Err(NativeError("encodeURIComponent: expected a string".to_string()));
+    };
+    let mut out = String::new();
+    for byte in value.as_bytes() {
+        let b = *byte;
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    Ok(NativeValue::Str(out))
+}
+
+fn decode_uri_component(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let Some(NativeArg::Str(value)) = args.first() else {
+        return Err(NativeError("decodeURIComponent: expected a string".to_string()));
+    };
+    let bytes = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
+            match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                Some(b) => {
+                    out.push(b);
+                    i += 3;
+                }
+                None => return Err(NativeError("URIError: URI malformed".to_string())),
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    match String::from_utf8(out) {
+        Ok(text) => Ok(NativeValue::Str(text)),
+        Err(_) => Err(NativeError("URIError: URI malformed".to_string())),
+    }
+}

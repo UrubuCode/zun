@@ -2733,7 +2733,17 @@ impl<'a> Interp<'a> {
                     }
                     let length = zun_gc::with_current_heap_mut(|heap| {
                         for value in &call_args {
-                            let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                            // A callable has no `Any` form; it rides in a
+                            // `functionBox` record exactly like the typed push.
+                            let boxed = match value {
+                                Value::Function(handle) => {
+                                    let record = heap.alloc_dynamic();
+                                    heap.dynamic_set_function(record, "__boxedFn", *handle);
+                                    Value::Object(record).box_any(heap)
+                                }
+                                other => other.box_any(heap),
+                            }
+                            .unwrap_or_else(zun_core::Any::null);
                             let end = heap.array_len(namespace).unwrap_or(0);
                             heap.array_insert(namespace, end, boxed);
                         }

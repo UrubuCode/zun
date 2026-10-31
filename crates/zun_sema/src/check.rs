@@ -6645,6 +6645,23 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                if matches!(name.as_str(), "encodeURIComponent" | "decodeURIComponent")
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                    && args.len() == 1
+                {
+                    let Some((id, _)) = zun_natives::resolve("string", &name) else {
+                        self.error(span, format!("missing string intrinsic `{name}`"));
+                        return self.poison(span);
+                    };
+                    let arg = self.check_expr(cx, &args[0]);
+                    let arg = if arg.ty == Ty::String { arg } else { self.to_string_for_parse(arg) };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 // `Function(p1, ..., body)` behaves exactly like `new Function(...)`.
                 if name == "Function"
                     && !self.by_name.contains_key(&name)
@@ -11656,6 +11673,16 @@ impl Checker<'_> {
                         ty: Ty::String,
                         span,
                     }, span),
+                    // Function objects carry an expando property bag
+                    // (`fn['x'] = ...`), resolved at run time by the interpreter.
+                    Ty::Function(_) => hir::Expr {
+                        kind: hir::ExprKind::DynamicGet {
+                            object: Box::new(object),
+                            name: fname,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    },
                     Ty::Error => self.poison(span),
                     Ty::RegExp if fname == "source" || fname == "flags" => {
                         let native = if fname == "source" { "regexpSource" } else { "regexpFlags" };
@@ -12467,6 +12494,26 @@ impl Checker<'_> {
                         self.proxy_set(object, key, value, span)
                     }
                     Ty::Error => self.poison(span),
+                    Ty::Function(_) => {
+                        let boxed = if value.ty == Ty::Any || matches!(value.ty, Ty::Function(_)) {
+                            value
+                        } else {
+                            hir::Expr {
+                                span: value.span,
+                                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                ty: Ty::Any,
+                            }
+                        };
+                        hir::Expr {
+                            kind: hir::ExprKind::DynamicSet {
+                                object: Box::new(object),
+                                name: fname,
+                                value: Box::new(boxed),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        }
+                    }
                     other => {
                         self.error(object.span, format!("type {other:?} has no fields"));
                         self.poison(span)

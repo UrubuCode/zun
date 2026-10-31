@@ -621,7 +621,7 @@ impl Interp<'_> {
                 }
                 Opcode::LoadDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
-                    let raw = pop(&mut stack)?;
+                    let raw = expando_receiver(pop(&mut stack)?);
                     // A dynamic receiver that unboxes to a primitive string or an
                     // array exposes `.length` the same as the typed forms, so a
                     // value read through `any` (e.g. a module global) keeps it.
@@ -873,7 +873,7 @@ impl Interp<'_> {
                         // DynamicObject); `LoadDynamic`'s function-slot fallback
                         // reads them back as `Value::Function`. Capture names are
                         // never accessors, so no accessor lookup happens here.
-                        let object = pop(&mut stack)?.as_object();
+                        let object = expando_receiver(pop(&mut stack)?).as_object();
                         // An array gets an expando table on first named store.
                         zun_gc::with_current_heap_mut(|heap| {
                             if heap.array_len(object).is_some() {
@@ -881,6 +881,9 @@ impl Interp<'_> {
                             }
                         });
                         zun_gc::with_current_heap_mut(|heap| {
+                            if heap.dynamic_get_function(object, &name).is_none() {
+                                heap.dynamic_remove(object, &name);
+                            }
                             heap.dynamic_set_function(object, name, handle);
                         });
                         stack.push(Value::Function(handle));
@@ -890,7 +893,7 @@ impl Interp<'_> {
                         // here unboxed, e.g. `o.k = 5.0` or `o.k = null`).
                         let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                             .ok_or(RunError::BadToken)?;
-                        let object = pop(&mut stack)?.as_object();
+                        let object = expando_receiver(pop(&mut stack)?).as_object();
                         // `arr.length = n` on an array reached through `any`.
                         if name == "length" {
                             let level_len = zun_gc::with_current_heap(|heap| {
@@ -1005,7 +1008,7 @@ impl Interp<'_> {
                     } else {
                         key
                     };
-                    let object_raw = pop(&mut stack)?;
+                    let object_raw = expando_receiver(pop(&mut stack)?);
                     {
                         let concrete = match &object_raw {
                             Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
@@ -1165,7 +1168,7 @@ impl Interp<'_> {
                     } else {
                         key
                     };
-                    let object = pop(&mut stack)?.as_object();
+                    let object = expando_receiver(pop(&mut stack)?).as_object();
                     {
                         let key_name: Option<String> = match &key {
                             Value::Str(text) => Some(text.to_string()),
@@ -6486,3 +6489,37 @@ mod method_tests {
     }
 }
 
+
+/// Resolve the expando property bag of a function object, creating it on
+/// first use. Bags are dynamic objects rooted in the statics object under a
+/// hidden `__fnbag:<method>:<env>` key, so `fn['x'] = v` on a function value
+/// behaves like a property write on a JS function object.
+pub(crate) fn function_expando_bag(handle: zun_core::FunctionHandle) -> zun_gc::Obj {
+    let key = format!(
+        "__fnbag:{}:{}:{}",
+        handle.method_rid(),
+        handle.is_bound(),
+        handle.environment().unwrap_or(0)
+    );
+    zun_gc::with_current_heap_mut(|heap| {
+        let statics = heap.statics_object();
+        if let Some(any) = heap.dynamic_get(statics, &key) {
+            if let Some(Value::Object(obj)) = Value::unbox_any(any, heap) {
+                return obj;
+            }
+        }
+        let bag = heap.alloc_dynamic();
+        if let Some(any) = Value::Object(bag).box_any(heap) {
+            heap.dynamic_set(statics, key, any);
+        }
+        bag
+    })
+}
+
+/// Map a function-valued receiver to its expando bag; other values pass through.
+pub(crate) fn expando_receiver(value: Value) -> Value {
+    match value {
+        Value::Function(handle) => Value::Object(function_expando_bag(handle)),
+        other => other,
+    }
+}
