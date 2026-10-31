@@ -412,6 +412,8 @@ struct FunctionCx {
     is_generator: bool,
     loop_depth: usize,
     loop_labels: Vec<String>,
+    switch_depth: usize,
+    block_labels: Vec<String>,
     mutated: HashSet<hir::LocalSlot>,
     mutated_names: HashSet<String>,
     boxed: HashSet<hir::LocalSlot>,
@@ -516,6 +518,8 @@ impl Checker<'_> {
             is_generator: false,
             loop_depth: 0,
             loop_labels: Vec::new(),
+            switch_depth: 0,
+            block_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
             boxed: HashSet::new(),
@@ -1674,6 +1678,8 @@ impl Checker<'_> {
             is_generator: f.is_generator,
             loop_depth: 0,
             loop_labels: Vec::new(),
+            switch_depth: 0,
+            block_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
             boxed: HashSet::new(),
@@ -2397,37 +2403,57 @@ impl Checker<'_> {
                         | ast::Stmt::DoWhile { .. }
                         | ast::Stmt::For { .. }
                         | ast::Stmt::ForOf { .. }
+                        | ast::Stmt::ForIn { .. }
                 );
                 if labels_loop {
                     cx.loop_labels.push(label_text.clone());
+                } else {
+                    cx.block_labels.push(label_text.clone());
                 }
                 let body = self.check_stmt(cx, statement);
                 if labels_loop {
                     cx.loop_labels.pop();
+                } else {
+                    cx.block_labels.pop();
                 }
                 hir::Stmt::Labeled {
                     label: label_text,
                     body: Box::new(body),
                 }
             }
+            ast::Stmt::Switch { discriminant, cases, span } => {
+                self.check_switch(cx, discriminant, cases, *span)
+            }
             ast::Stmt::Break { label, span } => {
-                if cx.loop_depth == 0 {
-                    self.error(*span, "`break` is only valid inside a loop");
-                } else if let Some(label) = label {
-                    let name = self.text(label);
-                    if !cx.loop_labels.iter().any(|candidate| candidate == name) {
-                        self.error(*span, format!("unknown break label `{name}`"));
+                match label {
+                    Some(label) => {
+                        let name = self.text(label);
+                        if !cx.loop_labels.iter().any(|c| c == name)
+                            && !cx.block_labels.iter().any(|c| c == name)
+                        {
+                            self.error(*span, format!("unknown break label `{name}`"));
+                        }
+                    }
+                    None => {
+                        if cx.loop_depth == 0 && cx.switch_depth == 0 {
+                            self.error(*span, "`break` is only valid inside a loop or switch");
+                        }
                     }
                 }
                 hir::Stmt::Break(label.map(|name| self.text(&name).to_string()))
             }
             ast::Stmt::Continue { label, span } => {
-                if cx.loop_depth == 0 {
-                    self.error(*span, "`continue` is only valid inside a loop");
-                } else if let Some(label) = label {
-                    let name = self.text(label);
-                    if !cx.loop_labels.iter().any(|candidate| candidate == name) {
-                        self.error(*span, format!("unknown continue label `{name}`"));
+                match label {
+                    Some(label) => {
+                        let name = self.text(label);
+                        if !cx.loop_labels.iter().any(|c| c == name) {
+                            self.error(*span, format!("unknown continue label `{name}`"));
+                        }
+                    }
+                    None => {
+                        if cx.loop_depth == 0 {
+                            self.error(*span, "`continue` is only valid inside a loop");
+                        }
                     }
                 }
                 hir::Stmt::Continue(label.map(|name| self.text(&name).to_string()))
@@ -3903,6 +3929,85 @@ impl Checker<'_> {
         }
         cx.scopes.pop();
         hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
+    }
+
+    /// Lower a `switch` with fall-through: the discriminant is evaluated once
+    /// into a temp, the first matching case index is computed lazily with a
+    /// nested conditional (default index otherwise), and each clause body runs
+    /// when `index <= clause`. `break` exits the enclosing synthetic label.
+    fn check_switch(
+        &mut self,
+        cx: &mut FunctionCx,
+        discriminant: &ast::Expr,
+        cases: &[ast::SwitchCase],
+        span: Span,
+    ) -> hir::Stmt {
+        let disc = self.check_expr(cx, discriminant);
+        let disc = Self::box_to_any(disc);
+        cx.scopes.push(Scope::new());
+        let disc_slot = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+        let idx_slot = cx.declare(&self.fresh_temp_name(cx), Ty::F64);
+        let num = |value: f64| hir::Expr { kind: hir::ExprKind::Number(value), ty: Ty::F64, span };
+        let none_index = cases.len() as f64;
+        let default_index = cases
+            .iter()
+            .position(|c| c.test.is_none())
+            .map_or(none_index, |p| p as f64);
+        let mut index_expr = num(default_index);
+        let mut tests = Vec::new();
+        for (position, case) in cases.iter().enumerate() {
+            if let Some(test) = &case.test {
+                let test = self.check_expr(cx, test);
+                tests.push((position, Self::box_to_any(test)));
+            }
+        }
+        for (position, test) in tests.into_iter().rev() {
+            let cond = hir::Expr {
+                kind: hir::ExprKind::Binary {
+                    op: ast::BinaryOp::Eq,
+                    lhs: Box::new(hir::Expr { kind: hir::ExprKind::Local(disc_slot), ty: Ty::Any, span }),
+                    rhs: Box::new(test),
+                },
+                ty: Ty::Boolean,
+                span,
+            };
+            index_expr = hir::Expr {
+                kind: hir::ExprKind::Conditional {
+                    condition: Box::new(cond),
+                    when_true: Box::new(num(position as f64)),
+                    when_false: Box::new(index_expr),
+                },
+                ty: Ty::F64,
+                span,
+            };
+        }
+        let mut out = vec![
+            hir::Stmt::Let { slot: disc_slot, init: disc },
+            hir::Stmt::Let { slot: idx_slot, init: index_expr },
+        ];
+        cx.switch_depth += 1;
+        for (position, case) in cases.iter().enumerate() {
+            if case.body.statements.is_empty() {
+                continue;
+            }
+            let body = self.check_block(cx, &case.body);
+            let cond = hir::Expr {
+                kind: hir::ExprKind::Binary {
+                    op: ast::BinaryOp::Le,
+                    lhs: Box::new(hir::Expr { kind: hir::ExprKind::Local(idx_slot), ty: Ty::F64, span }),
+                    rhs: Box::new(num(position as f64)),
+                },
+                ty: Ty::Boolean,
+                span,
+            };
+            out.push(hir::Stmt::If { cond, then_body: body, else_body: Vec::new() });
+        }
+        cx.switch_depth -= 1;
+        cx.scopes.pop();
+        hir::Stmt::Labeled {
+            label: "\0switch".to_string(),
+            body: Box::new(hir::Stmt::Group(out)),
+        }
     }
 
     /// Coerce a computed array index to an integer. An integer passes through;
@@ -12420,6 +12525,7 @@ fn stmt_returns_value(stmt: &ast::Stmt) -> bool {
         | ast::Stmt::ForOf { body, .. }
         | ast::Stmt::ForIn { body, .. } => block_returns_value(body),
         ast::Stmt::Labeled { statement, .. } => stmt_returns_value(statement),
+        ast::Stmt::Switch { cases, .. } => cases.iter().any(|c| block_returns_value(&c.body)),
         ast::Stmt::Try { body, catches, finally, .. } => {
             block_returns_value(body)
                 || catches.iter().any(|clause| block_returns_value(&clause.body))
@@ -12448,6 +12554,7 @@ fn count_yields_in_stmt(stmt: &ast::Stmt) -> usize {
         For { init, cond, update, body, .. } => init.as_deref().map_or(0, count_yields_in_stmt) + cond.as_ref().map_or(0, count_yields_in_expr) + update.as_ref().map_or(0, count_yields_in_expr) + count_yields_in_block(body),
         ForOf { iterable, body, .. } => count_yields_in_expr(iterable) + count_yields_in_block(body),
         ForIn { object, body, .. } => count_yields_in_expr(object) + count_yields_in_block(body),
+        Switch { discriminant, cases, .. } => count_yields_in_expr(discriminant) + cases.iter().map(|c| c.test.as_ref().map_or(0, count_yields_in_expr) + count_yields_in_block(&c.body)).sum::<usize>(),
         Labeled { statement, .. } => count_yields_in_stmt(statement),
         Break { .. } | Continue { .. } => 0,
         Return { value, .. } => value.as_ref().map_or(0, count_yields_in_expr),
@@ -12523,6 +12630,7 @@ fn count_awaits_in_stmt(stmt: &ast::Stmt) -> usize {
         }
         ForOf { iterable, body, .. } => count_awaits_in_expr(iterable) + count_awaits_in_block(body),
         ForIn { object, body, .. } => count_awaits_in_expr(object) + count_awaits_in_block(body),
+        Switch { discriminant, cases, .. } => count_awaits_in_expr(discriminant) + cases.iter().map(|c| c.test.as_ref().map_or(0, count_awaits_in_expr) + count_awaits_in_block(&c.body)).sum::<usize>(),
         Labeled { statement, .. } => count_awaits_in_stmt(statement),
         Break { .. } | Continue { .. } => 0,
         Return { value, .. } => value.as_ref().map_or(0, count_awaits_in_expr),

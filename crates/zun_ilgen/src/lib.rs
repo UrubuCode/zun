@@ -816,15 +816,45 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
             }
             Stmt::Labeled { label, body } => {
-                let previous = self.pending_label.replace(label.clone());
-                self.stmt(body);
-                self.pending_label = previous;
+                let is_loop = matches!(
+                    &**body,
+                    Stmt::While { .. } | Stmt::DoWhile { .. } | Stmt::For { .. } | Stmt::ForOf { .. }
+                );
+                if is_loop {
+                    let previous = self.pending_label.replace(label.clone());
+                    self.stmt(body);
+                    self.pending_label = previous;
+                } else {
+                    // A labeled non-loop statement (block or switch): a break
+                    // target only. An empty continue-target list marks it as
+                    // not a loop.
+                    self.break_patches.push(Vec::new());
+                    self.loop_labels.push(Some(label.clone()));
+                    self.continue_targets.push(Vec::new());
+                    self.continue_patches.push(Vec::new());
+                    let previous = self.pending_label.take();
+                    self.stmt(body);
+                    self.pending_label = previous;
+                    self.continue_targets.pop();
+                    self.continue_patches.pop();
+                    self.loop_labels.pop();
+                    for patch in self.break_patches.pop().unwrap_or_default() {
+                        self.patch_to_here(patch);
+                    }
+                }
             }
             Stmt::Break(label) => {
                 let patch = self.emit_branch(Opcode::Branch);
+                // An unlabeled `break` targets the innermost loop or switch,
+                // never a plain labeled block.
                 let target = label.as_ref().and_then(|name| {
                     self.loop_labels.iter().rposition(|candidate| candidate.as_ref() == Some(name))
-                }).or_else(|| self.break_patches.len().checked_sub(1));
+                }).or_else(|| {
+                    (0..self.break_patches.len()).rev().find(|&i| {
+                        !self.continue_targets[i].is_empty()
+                            || self.loop_labels[i].as_deref() == Some("\0switch")
+                    })
+                });
                 if let Some(index) = target {
                     if let Some(patches) = self.break_patches.get_mut(index) {
                         patches.push(patch);
@@ -834,7 +864,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             Stmt::Continue(label) => {
                 let target_index = label.as_ref().and_then(|name| {
                     self.loop_labels.iter().rposition(|candidate| candidate.as_ref() == Some(name))
-                }).or_else(|| self.continue_targets.len().checked_sub(1));
+                }).or_else(|| (0..self.continue_targets.len()).rev().find(|&i| !self.continue_targets[i].is_empty()));
                 if let Some(index) = target_index {
                     let target = self.continue_targets[index].last().copied().unwrap_or(usize::MAX);
                     if target == usize::MAX {

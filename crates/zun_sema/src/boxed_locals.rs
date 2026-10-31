@@ -27,8 +27,12 @@ pub(super) fn rewrite_boxed_lets(
                 rewrite_boxed_lets(then_body, boxed);
                 rewrite_boxed_lets(else_body, boxed);
             }
-            hir::Stmt::While { body, .. } | hir::Stmt::DoWhile { body, .. } => {
-                rewrite_boxed_lets(body, boxed)
+            hir::Stmt::While { body, .. }
+            | hir::Stmt::DoWhile { body, .. }
+            | hir::Stmt::ForOf { body, .. } => rewrite_boxed_lets(body, boxed),
+            hir::Stmt::Group(body) => rewrite_boxed_lets(body, boxed),
+            hir::Stmt::Labeled { body, .. } => {
+                rewrite_boxed_lets(std::slice::from_mut(body.as_mut()), boxed)
             }
             hir::Stmt::For { init, body, .. } => {
                 if let Some(init) = init {

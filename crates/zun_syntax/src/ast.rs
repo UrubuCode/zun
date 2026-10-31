@@ -359,6 +359,15 @@ pub struct Name {
     pub span: Span,
 }
 
+/// One `case test:` / `default:` clause of a `switch`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchCase {
+    /// The case test; `None` for `default`.
+    pub test: Option<Expr>,
+    /// The clause's statements (may be empty, falling through).
+    pub body: Block,
+}
+
 /// `{ statements }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
@@ -531,6 +540,15 @@ pub enum Stmt {
         object: Expr,
         /// The loop body.
         body: Block,
+        /// Span of the whole statement.
+        span: Span,
+    },
+    /// `switch (discriminant) { case ...: ... default: ... }` with fall-through.
+    Switch {
+        /// The switch discriminant, evaluated once.
+        discriminant: Expr,
+        /// The clauses in source order.
+        cases: Vec<SwitchCase>,
         /// Span of the whole statement.
         span: Span,
     },

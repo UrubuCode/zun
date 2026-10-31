@@ -37,6 +37,13 @@ pub(super) fn collect_mutated_names(
                 collect_mutated_expr(checker, object, names);
                 collect_mutated_names(checker, &body.statements, names);
             }
+            ast::Stmt::Switch { discriminant, cases, .. } => {
+                collect_mutated_expr(checker, discriminant, names);
+                for case in cases {
+                    if let Some(test) = &case.test { collect_mutated_expr(checker, test, names); }
+                    collect_mutated_names(checker, &case.body.statements, names);
+                }
+            }
             ast::Stmt::Return { value, .. } => {
                 if let Some(value) = value { collect_mutated_expr(checker, value, names); }
             }

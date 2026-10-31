@@ -54,6 +54,8 @@ impl Checker<'_> {
             is_generator: false,
             loop_depth: 0,
             loop_labels: Vec::new(),
+            switch_depth: 0,
+            block_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
             boxed: HashSet::new(),
@@ -332,6 +334,17 @@ impl Checker<'_> {
                 self.collect_capture_expr(cx, parameters, object, uses);
                 for statement in &body.statements {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
+                }
+            }
+            ast::Stmt::Switch { discriminant, cases, .. } => {
+                self.collect_capture_expr(cx, parameters, discriminant, uses);
+                for case in cases {
+                    if let Some(test) = &case.test {
+                        self.collect_capture_expr(cx, parameters, test, uses);
+                    }
+                    for statement in &case.body.statements {
+                        self.collect_capture_stmt(cx, parameters, statement, uses);
+                    }
                 }
             }
             ast::Stmt::Return { value, .. } => {

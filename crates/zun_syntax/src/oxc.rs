@@ -379,8 +379,27 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 statements.push(convert_switch(source, switch)?);
             }
             Statement::LabeledStatement(labeled) => {
-                let inner = convert_statement_list(source, std::slice::from_ref(&labeled.body))?;
                 let span_all = span(labeled.span);
+                if let Statement::BlockStatement(block) = &labeled.body {
+                    // A labeled block: `if (true) { ... }` carries the whole block
+                    // as the single labeled statement.
+                    let body = Block {
+                        statements: convert_statement_list(source, &block.body)?,
+                        span: span(block.span),
+                    };
+                    statements.push(Stmt::Labeled {
+                        label: Name { span: span(labeled.label.span) },
+                        statement: Box::new(Stmt::If {
+                            cond: Expr::Bool { value: true, span: span(block.span) },
+                            then_block: body,
+                            else_block: None,
+                            span: span(block.span),
+                        }),
+                        span: span_all,
+                    });
+                    continue;
+                }
+                let inner = convert_statement_list(source, std::slice::from_ref(&labeled.body))?;
                 // The labelled body is a single statement; wrap a multi-statement
                 // body (rare) in a block-equivalent by taking the first.
                 let mut inner = inner;
@@ -635,34 +654,20 @@ fn convert_switch(
 ) -> Result<Stmt, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let whole = span(switch.span);
-    let value = convert_expression(source, &switch.discriminant)?;
+    let discriminant = convert_expression(source, &switch.discriminant)?;
     let mut cases = Vec::new();
-    let mut default_body = None;
     for case in &switch.cases {
-        let mut stmts = convert_statement_list(source, &case.consequent)?;
-        stmts.retain(|statement| !matches!(statement, Stmt::Break { .. }));
-        let block = Block { statements: stmts, span: span(case.span) };
-        match &case.test {
-            Some(test) => cases.push((convert_expression(source, test)?, block)),
-            None => default_body = Some(block),
-        }
-    }
-    let mut chain: Option<Block> = default_body;
-    for (case_value, body) in cases.into_iter().rev() {
-        let cond = Expr::Binary {
-            op: BinaryOp::Eq,
-            lhs: Box::new(value.clone()),
-            rhs: Box::new(case_value),
-            span: whole,
-        };
-        chain = Some(Block {
-            span: whole,
-            statements: vec![Stmt::If { cond, then_block: body, else_block: chain, span: whole }],
+        let stmts = convert_statement_list(source, &case.consequent)?;
+        cases.push(crate::ast::SwitchCase {
+            test: case
+                .test
+                .as_ref()
+                .map(|test| convert_expression(source, test))
+                .transpose()?,
+            body: Block { statements: stmts, span: span(case.span) },
         });
     }
-    Ok(chain
-        .and_then(|block| block.statements.into_iter().next())
-        .unwrap_or(Stmt::Expr(Expr::Null { span: whole })))
+    Ok(Stmt::Switch { discriminant, cases, span: whole })
 }
 
 /// Convert a `for (… in …)` statement to the `ForIn` node (lowered to key
