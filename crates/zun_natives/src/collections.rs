@@ -203,6 +203,7 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: unavailable,
         },
+        NativeFn { name: "arrayHas", params: &[Array, Str], ret: Bool, imp: unavailable },
         NativeFn {
             name: "reflectHas",
             params: &[DynamicObject, Str],

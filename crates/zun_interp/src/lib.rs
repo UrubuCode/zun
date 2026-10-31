@@ -361,6 +361,33 @@ impl Interp<'_> {
             } else if args.len() > declared {
                 args.truncate(declared);
             }
+            // Coerce boxed `Any` arguments to the callee's typed parameter
+            // representation (dynamic callers cannot know the parameter types).
+            for (index, arg) in args.iter_mut().enumerate() {
+                if let Value::Any(any) = *arg {
+                    let kind = body.local_kinds.get(index).copied().unwrap_or(255);
+                    let unboxed = zun_gc::with_current_heap_mut(|heap| Value::unbox_any(any, heap));
+                    if let Some(inner) = unboxed {
+                        use zun_il::{JitKind, NumKind};
+                        let coerced = match (JitKind::from_byte(kind), inner) {
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Float(f, _)) => Some(Value::Float(f, n)),
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Int(i, _)) => Some(Value::Float(i as f64, n)),
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Bool(b)) => Some(Value::Float(if b { 1.0 } else { 0.0 }, n)),
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Void) => Some(Value::Float(f64::NAN, n)),
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Null) => Some(Value::Float(0.0, n)),
+                            (JitKind::Num(n), Value::Int(i, _)) => Some(Value::Int(i, n)),
+                            (JitKind::Num(n), Value::Float(f, _)) => Some(Value::Int(f as i64, n)),
+                            (JitKind::Bool, Value::Bool(b)) => Some(Value::Bool(b)),
+                            (JitKind::String, Value::Str(s)) => Some(Value::Str(s)),
+                            (JitKind::Object | JitKind::Array, Value::Object(o)) => Some(Value::Object(o)),
+                            _ => None,
+                        };
+                        if let Some(v) = coerced {
+                            *arg = v;
+                        }
+                    }
+                }
+            }
             let mut locals: Vec<Value> = Vec::with_capacity(body.local_count as usize);
             locals.extend(args);
             locals.resize(body.local_count as usize, Value::Void);

@@ -2041,6 +2041,24 @@ impl<'a> Interp<'a> {
                     heap.dynamic_has(object, name)
                 })))
             }
+            "arrayHas" => {
+                let array = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                    let len = heap.array_len(array).unwrap_or(0);
+                    if key == "length" {
+                        return true;
+                    }
+                    match key.parse::<u64>() {
+                        Ok(index) if index.to_string() == key => (index as usize) < len,
+                        _ => false,
+                    }
+                })))
+            }
             "reflectDelete" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;

@@ -26,13 +26,25 @@ impl Ordering {
 pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
+    // A boxed `Any` operand (e.g. an untyped callback parameter) is unboxed
+    // and compared by its dynamic value.
+    let unbox = |v: Value| -> Value {
+        match v {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(v),
+            other => other,
+        }
+    };
+    let (a, b) = (unbox(a), unbox(b));
     let result = match (&a, &b) {
         (Value::Int(x, k), Value::Int(y, _)) => {
             let (_, signed) = k.int_parts().expect("int kind");
             if signed { op.apply(*x, *y) } else { op.apply(*x as u64, *y as u64) }
         }
         (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
-        _ => return Err(RunError::Malformed("comparison of mismatched numeric kinds".into())),
+        (Value::Int(x, _), Value::Float(y, _)) => op.apply(*x as f64, *y),
+        (Value::Float(x, _), Value::Int(y, _)) => op.apply(*x, *y as f64),
+        (Value::Str(x), Value::Str(y)) => op.apply(x.as_ref() as &str, y.as_ref() as &str),
+        _ => return Err(RunError::Malformed(format!("comparison of mismatched numeric kinds: {a:?} vs {b:?}"))),
     };
     stack.push(Value::Bool(result));
     Ok(())

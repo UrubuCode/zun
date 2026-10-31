@@ -12187,10 +12187,15 @@ impl Checker<'_> {
     ) -> hir::Expr {
         let key = self.check_expr(cx, key);
         let object = self.check_expr(cx, object);
-        if !key.ty.is_error() && key.ty != Ty::String {
-            self.error(key.span, "left operand of `in` must be a string key");
-        }
+        // A non-string key (e.g. an array index) is converted with ToString,
+        // matching ECMAScript property-key coercion.
+        let key = if key.ty != Ty::String && !key.ty.is_error() {
+            self.to_string_for_parse(key)
+        } else {
+            key
+        };
         let native = match object.ty {
+            Ty::Array => "arrayHas",
             Ty::Proxy => "proxyHas",
             Ty::DynamicObject | Ty::Any => "reflectHas",
             Ty::Error => return self.poison(span),
