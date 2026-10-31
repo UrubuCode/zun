@@ -450,6 +450,14 @@ fn lower_function<'a>(
     gen.stmts(&f.body);
     // Guarantee the body cannot run off its end: a void function gets an
     // implicit return. (Non-void paths are the verifier's job later.)
+    if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
+        // Running off the end of a value-returning body yields `undefined`.
+        match f.return_ty {
+            Ty::Any => gen.emit(Instruction::simple(Opcode::ConstUndef)),
+            Ty::F64 | Ty::Boolean | Ty::Int(_) => {}
+            _ => gen.emit(Instruction::simple(Opcode::ConstNull)),
+        }
+    }
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
     }
@@ -484,6 +492,14 @@ fn lower_closure_function<'a>(
     };
     gen.emit_defaults(&f.defaults, 1, &f.locals);
     gen.stmts(&f.body);
+    if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
+        // Running off the end of a value-returning body yields `undefined`.
+        match f.return_ty {
+            Ty::Any => gen.emit(Instruction::simple(Opcode::ConstUndef)),
+            Ty::F64 | Ty::Boolean | Ty::Int(_) => {}
+            _ => gen.emit(Instruction::simple(Opcode::ConstNull)),
+        }
+    }
     if f.return_ty == Ty::Void || !matches!(f.body.last(), Some(Stmt::Return(_))) {
         gen.emit(Instruction::simple(Opcode::Ret));
     }
@@ -923,6 +939,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
                 let try_end = self.code.len() as u32;
                 let mut exits = Vec::new();
+                let mut catch_body_ranges: Vec<(u32, u32)> = Vec::new();
                 if let Some(finally_body) = finally_body {
                     self.stmts(finally_body);
                 }
@@ -943,6 +960,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     if finally_body.is_some() {
                         self.finally_bodies.pop();
                     }
+                    catch_body_ranges.push((handler_start, self.code.len() as u32));
                     if let Some(finally_body) = finally_body {
                         self.stmts(finally_body);
                     }
@@ -974,6 +992,17 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                         kind: HandlerKind::Finally,
                         catch_type: None,
                     });
+                    // An exception thrown inside a catch body also runs the finally.
+                    for (body_start, body_end) in catch_body_ranges {
+                        self.handlers.push(ExceptionHandler {
+                            try_start: body_start,
+                            try_end: body_end,
+                            handler_start,
+                            handler_end,
+                            kind: HandlerKind::Finally,
+                            catch_type: None,
+                        });
+                    }
                 }
                 for exit in exits {
                     self.patch_to_here(exit);

@@ -2446,6 +2446,29 @@ impl<'a> Interp<'a> {
                         };
                     }
                 }
+                // Boolean.prototype methods on a boolean reached through `any`.
+                if let Value::Bool(flag) = &receiver_concrete {
+                    match member.as_ref() {
+                        "toString" => {
+                            let text = Value::Str(if *flag { "true" } else { "false" }.into());
+                            let boxed = zun_gc::with_current_heap_mut(|heap| text.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                        "valueOf" => return Ok(Value::Any(zun_core::Any::bool(*flag))),
+                        _ => {}
+                    }
+                }
+                if matches!(receiver_concrete, Value::Void | Value::Null) {
+                    let kind = if matches!(receiver_concrete, Value::Null) { "null" } else { "undefined" };
+                    return match self.new_error_object(
+                        "TypeError",
+                        &format!("Cannot read properties of {kind} (reading '{member}')"),
+                    ) {
+                        Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                        None => Err(RunError::BadToken),
+                    };
+                }
                 // `Function.prototype.call/apply` on a function value reached
                 // through `any`.
                 if let Value::Function(handle) = &receiver_concrete {
@@ -7748,7 +7771,11 @@ pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
         Value::Float(number, _) => number != 0.0 && !number.is_nan(),
         Value::Str(text) => !text.is_empty(),
         Value::Null | Value::Void => false,
-        Value::Object(_) | Value::Function(_) | Value::Any(_) => true,
+        Value::Object(object) => !heap
+            .bigint_value(object)
+            .map(|big| big.is_zero())
+            .unwrap_or(false),
+        Value::Function(_) | Value::Any(_) => true,
     }
 }
 
