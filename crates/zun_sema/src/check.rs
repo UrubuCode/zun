@@ -3933,6 +3933,48 @@ impl Checker<'_> {
         hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
     }
 
+    /// `{ slot = bound; test == null ? undefined : call }`: the shared shape of
+    /// optional calls on dynamic receivers (`bound` evaluated exactly once).
+    fn optional_guarded(
+        &mut self,
+        cx: &mut FunctionCx,
+        slot: hir::LocalSlot,
+        bound: hir::Expr,
+        test: ast::Expr,
+        call: ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let cond = ast::Expr::Conditional {
+            condition: Box::new(ast::Expr::Binary {
+                op: ast::BinaryOp::LooseEq,
+                lhs: Box::new(test),
+                rhs: Box::new(ast::Expr::Null { span }),
+                span,
+            }),
+            when_true: Box::new(ast::Expr::Unary {
+                op: ast::UnaryOp::Void,
+                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                span,
+            }),
+            when_false: Box::new(call),
+            span,
+        };
+        let value = self.check_expr(cx, &cond);
+        let ty = value.ty;
+        hir::Expr {
+            kind: hir::ExprKind::Sequence {
+                effect: Box::new(hir::Expr {
+                    kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                    ty: Ty::Any,
+                    span,
+                }),
+                value: Box::new(value),
+            },
+            ty,
+            span,
+        }
+    }
+
     /// Lower a `switch` with fall-through: the discriminant is evaluated once
     /// into a temp, the first matching case index is computed lazily with a
     /// nested conditional (default index otherwise), and each clause body runs
@@ -11281,7 +11323,17 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::OptionalField { object, field, .. } => {
+                let object_ast: &ast::Expr = object;
                 let object = self.check_expr(cx, object);
+                if !matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Error) {
+                    // A statically non-nullable receiver: `?.` is a plain read.
+                    let read = ast::Expr::Field {
+                        object: Box::new(object_ast.clone()),
+                        field: *field,
+                        span,
+                    };
+                    return self.check_expr(cx, &read);
+                }
                 if object.ty != Ty::Any && !object.ty.is_error() {
                     self.error(
                         object.span,
@@ -11298,11 +11350,17 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::OptionalIndex { object, index, .. } => {
+                let object_ast: &ast::Expr = object;
                 let object = self.check_expr(cx, object);
-                let key = self.check_expr(cx, index);
                 if !matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Error) {
-                    self.error(object.span, "optional computed access requires a dynamic receiver");
+                    let read = ast::Expr::Index {
+                        object: Box::new(object_ast.clone()),
+                        index: index.clone(),
+                        span,
+                    };
+                    return self.check_expr(cx, &read);
                 }
+                let key = self.check_expr(cx, index);
                 hir::Expr {
                     kind: hir::ExprKind::OptionalDynamicGetValue {
                         object: Box::new(object),
@@ -11313,7 +11371,40 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::OptionalCall { callee, args, .. } => {
-                let callee = self.check_expr(cx, callee);
+                // `recv.m?.(args)` on a dynamic receiver: bind the receiver
+                // once, then `tmp.m == null ? undefined : tmp.m(args)` (keeps
+                // the `this` binding).
+                if let ast::Expr::Field { object: recv, field, .. } = callee.as_ref() {
+                    let recv_hir = self.check_expr(cx, recv);
+                    if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                        let tmp_expr = ast::Expr::Ident(tmp);
+                        let test = ast::Expr::Field {
+                            object: Box::new(tmp_expr.clone()),
+                            field: *field,
+                            span,
+                        };
+                        let call = ast::Expr::MethodCall {
+                            receiver: Box::new(tmp_expr),
+                            method: *field,
+                            args: args.clone(),
+                            span,
+                        };
+                        return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), test, call, span);
+                    }
+                }
+                let callee_hir = self.check_expr(cx, callee);
+                if matches!(callee_hir.ty, Ty::Any | Ty::DynamicObject) {
+                    let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                    let tmp_expr = ast::Expr::Ident(tmp);
+                    let call = ast::Expr::ComputedCall {
+                        callee: Box::new(tmp_expr.clone()),
+                        args: args.clone(),
+                        span,
+                    };
+                    return self.optional_guarded(cx, slot, Self::box_to_any(callee_hir), tmp_expr, call, span);
+                }
+                let callee = callee_hir;
                 let func = match callee.ty {
                     Ty::Function(func) => func,
                     // A dynamic callee: null/undefined short-circuits, otherwise
@@ -11347,7 +11438,65 @@ impl Checker<'_> {
                 args,
                 ..
             } => {
+                let object_ast: &ast::Expr = object;
                 let object = self.check_expr(cx, object);
+                let managed = matches!(
+                    object.ty,
+                    Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet | Ty::WeakRef
+                        | Ty::RegExp | Ty::Promise | Ty::Error
+                );
+                if !managed {
+                    if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                        // `a?.m(args)` on a dynamic receiver: bind the receiver
+                        // once, then `tmp == null ? undefined : tmp.m(args)`.
+                        let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+                        let tmp_expr = ast::Expr::Ident(tmp);
+                        let call = ast::Expr::MethodCall {
+                            receiver: Box::new(tmp_expr.clone()),
+                            method: *method,
+                            args: args.clone(),
+                            span,
+                        };
+                        let cond = ast::Expr::Conditional {
+                            condition: Box::new(ast::Expr::Binary {
+                                op: ast::BinaryOp::LooseEq,
+                                lhs: Box::new(tmp_expr),
+                                rhs: Box::new(ast::Expr::Null { span }),
+                                span,
+                            }),
+                            when_true: Box::new(ast::Expr::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                                span,
+                            }),
+                            when_false: Box::new(call),
+                            span,
+                        };
+                        let value = self.check_expr(cx, &cond);
+                        let ty = value.ty;
+                        let bound = Self::box_to_any(object);
+                        return hir::Expr {
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                                    ty: Ty::Any,
+                                    span,
+                                }),
+                                value: Box::new(value),
+                            },
+                            ty,
+                            span,
+                        };
+                    }
+                    // A statically non-nullable receiver: `?.` is a plain call.
+                    let call = ast::Expr::MethodCall {
+                        receiver: Box::new(object_ast.clone()),
+                        method: *method,
+                        args: args.clone(),
+                        span,
+                    };
+                    return self.check_expr(cx, &call);
+                }
                 let name = self.text(method).to_string();
                 let (native_name, return_ty, expected) = match (object.ty, name.as_str()) {
                     (Ty::Map, "set") => ("mapSetChain", Ty::Map, vec![Ty::Any, Ty::Any]),

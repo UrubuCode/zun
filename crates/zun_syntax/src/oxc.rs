@@ -1055,6 +1055,14 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     args.push(convert_argument(source, argument)?);
                 }
                 if let Expression::StaticMemberExpression(member) = &call.callee {
+                    if call.optional && !member.optional {
+                        // `recv.m?.(args)`: the *callee* is optional, not the receiver.
+                        return Ok(Expr::OptionalCall {
+                            callee: Box::new(convert_expression(source, &call.callee)?),
+                            args,
+                            span: span(chain.span),
+                        });
+                    }
                     return Ok(Expr::OptionalMethodCall {
                         object: Box::new(convert_expression(source, &member.object)?),
                         method: Name { span: span(member.property.span) },
