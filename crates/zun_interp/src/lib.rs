@@ -679,16 +679,7 @@ impl Interp<'_> {
                             // Plain dynamic objects and arrays without an own
                             // `constructor` expose a record naming `Object`/`Array`.
                             let builtin_name = zun_gc::with_current_heap(|heap| {
-                                if heap.array_len(obj).is_some() {
-                                    Some("Array")
-                                } else if heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
-                                    && heap.dynamic_get(obj, "constructor").is_none()
-                                    && heap.dynamic_get_function(obj, "constructor").is_none()
-                                {
-                                    Some("Object")
-                                } else {
-                                    None
-                                }
+                                crate::collections::builtin_constructor_name(heap, obj)
                             });
                             if let Some(class_name) = builtin_name {
                                 let record = zun_gc::with_current_heap_mut(|heap| {

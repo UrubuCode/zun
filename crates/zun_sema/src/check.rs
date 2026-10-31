@@ -12076,6 +12076,29 @@ impl Checker<'_> {
                     }
                 }
                 let object = self.check_expr(cx, object);
+                // `value.constructor` on a statically typed receiver: box it and
+                // use the dynamic read, which exposes the `{ name, __classDesc }`
+                // constructor record of typed instances and built-in values.
+                if fname == "constructor"
+                    && matches!(
+                        object.ty,
+                        Ty::Instance(_) | Ty::Array | Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet
+                            | Ty::WeakRef | Ty::Promise | Ty::RegExp | Ty::String | Ty::Boolean
+                            | Ty::Float(_) | Ty::Int(_) | Ty::BigInt | Ty::BufferView(_)
+                            | Ty::FinalizationRegistry
+                    )
+                    && !matches!(object.ty, Ty::Instance(c) if self.method_of(c, "get_constructor").is_some()
+                        || self.field_of(c, "constructor").is_some())
+                {
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicGet {
+                            object: Box::new(Self::box_to_any(object)),
+                            name: fname,
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 // `symbol.description` — the creation description or `undefined`.
                 if object.ty == Ty::Symbol && fname == "description" {
                     let Some((id, _)) =

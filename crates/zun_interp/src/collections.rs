@@ -7613,19 +7613,7 @@ impl<'a> Interp<'a> {
     /// instance, or one naming `Array`/`Object` for arrays and plain objects
     /// without an own `constructor`.
     fn constructor_record(&mut self, obj: zun_gc::Obj) -> Option<zun_gc::Obj> {
-        let builtin_name = zun_gc::with_current_heap(|heap| {
-            if heap.array_len(obj).is_some() {
-                Some("Array")
-            } else if heap.is_dynamic_object(obj)
-                && !heap.is_instance_bag(obj)
-                && heap.dynamic_get(obj, "constructor").is_none()
-                && heap.dynamic_get_function(obj, "constructor").is_none()
-            {
-                Some("Object")
-            } else {
-                None
-            }
-        });
+        let builtin_name = zun_gc::with_current_heap(|heap| builtin_constructor_name(heap, obj));
         if let Some(class_name) = builtin_name {
             return Some(zun_gc::with_current_heap_mut(|heap| {
                 let record = heap.alloc_dynamic();
@@ -9688,4 +9676,31 @@ fn gen_unbox(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<Value> {
         }
     }
     Some(value)
+}
+
+/// The built-in constructor name of a runtime-owned heap object (`Array`,
+/// `Map`, `Set`, `Promise`, `RegExp`, plain `Object`), or `None` for a typed
+/// class instance.
+pub(crate) fn builtin_constructor_name(heap: &zun_gc::Heap, obj: zun_gc::Obj) -> Option<&'static str> {
+    if heap.array_len(obj).is_some() {
+        Some("Array")
+    } else if heap.map_len(obj).is_some() {
+        Some("Map")
+    } else if heap.set_len(obj).is_some() {
+        Some("Set")
+    } else if heap.promise_state(obj).is_some() {
+        Some("Promise")
+    } else if heap.regex_source(obj).is_some() {
+        Some("RegExp")
+    } else if heap.date_millis(obj).is_some() {
+        Some("Date")
+    } else if heap.is_dynamic_object(obj)
+        && !heap.is_instance_bag(obj)
+        && heap.dynamic_get(obj, "constructor").is_none()
+        && heap.dynamic_get_function(obj, "constructor").is_none()
+    {
+        Some("Object")
+    } else {
+        None
+    }
 }
