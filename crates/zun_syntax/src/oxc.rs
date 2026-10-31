@@ -309,9 +309,53 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
 fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut statements = Vec::with_capacity(body.len());
-    for statement in body {
+    let ordered = hoist_function_declarations(source, body);
+    for statement in ordered.iter().copied() {
         match statement {
             Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var
+                    && declaration.declarations.iter().any(|d| match &d.id {
+                        BindingPattern::BindingIdentifier(id) => HOISTED_VARS.with(|stack| {
+                            stack
+                                .borrow()
+                                .last()
+                                .map(|set| set.contains(id.name.as_str()))
+                                .unwrap_or(false)
+                        }),
+                        _ => false,
+                    }) =>
+            {
+                for declarator in &declaration.declarations {
+                    let hoisted = match &declarator.id {
+                        BindingPattern::BindingIdentifier(id) => HOISTED_VARS.with(|stack| {
+                            stack
+                                .borrow()
+                                .last()
+                                .map(|set| set.contains(id.name.as_str()))
+                                .unwrap_or(false)
+                        }),
+                        _ => false,
+                    };
+                    if !hoisted {
+                        statements.push(convert_declarator(source, declarator)?);
+                        continue;
+                    }
+                    // Hoisted: the declaration lives at function scope, so the
+                    // initializer becomes a plain assignment (and a bare
+                    // `var x;` leaves the value untouched).
+                    if let (Some(initializer), BindingPattern::BindingIdentifier(id)) =
+                        (declarator.init.as_ref(), &declarator.id)
+                    {
+                        let whole = span(declarator.span);
+                        statements.push(Stmt::Expr(Expr::Assign {
+                            target: Name { span: span(id.span) },
+                            value: Box::new(convert_expression(source, initializer)?),
+                            span: whole,
+                        }));
+                    }
+                }
+            }
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
                     statements.push(convert_declarator(source, declarator)?);
@@ -536,7 +580,7 @@ fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr
         });
     }
     let mut statements = prologue;
-    statements.extend(convert_statement_list(source, &body.statements)?);
+    statements.extend(convert_function_statements(source, &body.statements, &param_names(&function.params))?);
     let mut params = params;
     inject_arguments_object(source, span(function.span), &mut params, &mut statements);
     Ok(Expr::Function(FunctionExpr {
@@ -1784,7 +1828,7 @@ fn convert_arrow(
         Block { statements, span: span(arrow.span) }
     } else if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(function_body) = &arrow.body {
         let mut statements = prologue;
-        statements.extend(convert_statement_list(source, &function_body.statements)?);
+        statements.extend(convert_function_statements(source, &function_body.statements, &param_names(&arrow.params))?);
         Block { statements, span: span(function_body.span) }
     } else {
         return Err("OXC adapter: unexpected arrow body".into());
@@ -2006,7 +2050,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         // destructured-parameter prologue.
         let mut statements = prologue;
         statements.extend(
-            convert_statement_list(source, &body.statements).map_err(|error| vec![error])?,
+            convert_function_statements(source, &body.statements, &param_names(&function.params)).map_err(|error| vec![error])?,
         );
         if let Some(rest) = function.params.rest.as_ref() {
             let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
@@ -3197,7 +3241,7 @@ fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Cla
                         }
                         let mut method_statements = method_prologue;
                         method_statements.extend(
-                            convert_statement_list(source, &body.statements)
+                            convert_function_statements(source, &body.statements, &param_names(&method.value.params))
                                 .map_err(|error| vec![error])?,
                         );
                         if let Some(rest) = method.value.params.rest.as_ref() {
@@ -3700,4 +3744,296 @@ fn wrap_binds(binds: Vec<Expr>, body: Expr, span: Span) -> Expr {
         result = Expr::TempBind { value: Box::new(value), body: Box::new(result), span };
     }
     result
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Whether `text` mentions `word` as a whole identifier.
+fn contains_word(text: &str, word: &str) -> bool {
+    let mut from = 0;
+    while let Some(found) = text[from..].find(word) {
+        let start = from + found;
+        let end = start + word.len();
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        if !before.map(is_identifier_char).unwrap_or(false)
+            && !after.map(is_identifier_char).unwrap_or(false)
+        {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// JS hoists function declarations to the top of their block. The adapter
+/// lowers a nested declaration to a `let` of a closure, so a declaration that
+/// an earlier statement mentions is moved in front of the first such
+/// statement (not to the very top, so it still captures the bindings declared
+/// before that use).
+fn hoist_function_declarations<'a, 'b>(
+    source: &str,
+    body: &'a [Statement<'b>],
+) -> Vec<&'a Statement<'b>> {
+    let mut order: Vec<&Statement> = body.iter().collect();
+    let mut index = 0;
+    while index < order.len() {
+        if let Statement::FunctionDeclaration(function) = order[index] {
+            if let Some(id) = function.id.as_ref() {
+                let name = id.name.as_str();
+                let first_use = order[..index].iter().position(|earlier| {
+                    let span = earlier.span();
+                    source
+                        .get(span.start as usize..span.end as usize)
+                        .map(|text| contains_word(text, name))
+                        .unwrap_or(false)
+                });
+                if let Some(first) = first_use {
+                    let moved = order.remove(index);
+                    order.insert(first, moved);
+                }
+            }
+        }
+        index += 1;
+    }
+    order
+}
+
+thread_local! {
+    /// `var` names hoisted to the function currently being converted
+    /// (innermost last). A `var x = e` of a hoisted name converts to the
+    /// assignment `x = e`; the declaration itself is emitted once at the top
+    /// of the function body.
+    static HOISTED_VARS: std::cell::RefCell<Vec<std::collections::HashSet<String>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A `var` binding found in a function body.
+struct VarSite {
+    name: String,
+    /// Index of the enclosing top-level statement of the function body.
+    top_index: usize,
+    /// Declared inside a nested block / loop / branch.
+    nested: bool,
+    /// Declared in a `for` / `for-in` / `for-of` head (converted separately).
+    in_head: bool,
+}
+
+fn collect_var_declaration(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    top_index: usize,
+    nested: bool,
+    in_head: bool,
+    out: &mut Vec<VarSite>,
+) {
+    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
+        return;
+    }
+    for declarator in &declaration.declarations {
+        if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
+            out.push(VarSite { name: identifier.name.to_string(), top_index, nested, in_head });
+        }
+    }
+}
+
+fn collect_vars_in_statement(
+    statement: &Statement<'_>,
+    top_index: usize,
+    nested: bool,
+    out: &mut Vec<VarSite>,
+) {
+    match statement {
+        Statement::VariableDeclaration(declaration) => {
+            collect_var_declaration(declaration, top_index, nested, false, out)
+        }
+        Statement::BlockStatement(block) => {
+            for inner in &block.body {
+                collect_vars_in_statement(inner, top_index, true, out);
+            }
+        }
+        Statement::IfStatement(if_statement) => {
+            collect_vars_in_statement(&if_statement.consequent, top_index, true, out);
+            if let Some(alternate) = &if_statement.alternate {
+                collect_vars_in_statement(alternate, top_index, true, out);
+            }
+        }
+        Statement::ForStatement(for_statement) => {
+            if let Some(ForStatementInit::VariableDeclaration(declaration)) = &for_statement.init {
+                collect_var_declaration(declaration, top_index, true, true, out);
+            }
+            collect_vars_in_statement(&for_statement.body, top_index, true, out);
+        }
+        Statement::ForInStatement(for_in) => {
+            if let ForStatementLeft::VariableDeclaration(declaration) = &for_in.left {
+                collect_var_declaration(declaration, top_index, true, true, out);
+            }
+            collect_vars_in_statement(&for_in.body, top_index, true, out);
+        }
+        Statement::ForOfStatement(for_of) => {
+            if let ForStatementLeft::VariableDeclaration(declaration) = &for_of.left {
+                collect_var_declaration(declaration, top_index, true, true, out);
+            }
+            collect_vars_in_statement(&for_of.body, top_index, true, out);
+        }
+        Statement::WhileStatement(while_statement) => {
+            collect_vars_in_statement(&while_statement.body, top_index, true, out)
+        }
+        Statement::DoWhileStatement(do_while) => {
+            collect_vars_in_statement(&do_while.body, top_index, true, out)
+        }
+        Statement::LabeledStatement(labeled) => {
+            collect_vars_in_statement(&labeled.body, top_index, nested, out)
+        }
+        Statement::TryStatement(try_statement) => {
+            for inner in &try_statement.block.body {
+                collect_vars_in_statement(inner, top_index, true, out);
+            }
+            if let Some(handler) = &try_statement.handler {
+                for inner in &handler.body.body {
+                    collect_vars_in_statement(inner, top_index, true, out);
+                }
+            }
+            if let Some(finalizer) = &try_statement.finalizer {
+                for inner in &finalizer.body {
+                    collect_vars_in_statement(inner, top_index, true, out);
+                }
+            }
+        }
+        Statement::SwitchStatement(switch) => {
+            for case in &switch.cases {
+                for inner in &case.consequent {
+                    collect_vars_in_statement(inner, top_index, true, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Convert a function body, hoisting `var` declarations to function scope when
+/// they are declared in a nested block or read before their declaration.
+fn convert_function_statements(
+    source: &str,
+    body: &[Statement<'_>],
+    params: &[String],
+) -> Result<Vec<Stmt>, String> {
+    let mut sites = Vec::new();
+    for (index, statement) in body.iter().enumerate() {
+        collect_vars_in_statement(statement, index, false, &mut sites);
+    }
+    let mut hoisted: Vec<String> = Vec::new();
+    for site in &sites {
+        if site.in_head
+            || params.contains(&site.name)
+            || hoisted.contains(&site.name)
+            || sites.iter().any(|other| other.in_head && other.name == site.name)
+        {
+            continue;
+        }
+        let used_early = !site.nested
+            && body[..site.top_index].iter().any(|earlier| {
+                let span = earlier.span();
+                source
+                    .get(span.start as usize..span.end as usize)
+                    .map(|text| contains_word(text, &site.name))
+                    .unwrap_or(false)
+            });
+        if site.nested || used_early {
+            hoisted.push(site.name.clone());
+        }
+    }
+    HOISTED_VARS.with(|stack| stack.borrow_mut().push(hoisted.iter().cloned().collect()));
+    let converted = convert_statement_list(source, body);
+    HOISTED_VARS.with(|stack| stack.borrow_mut().pop());
+    let converted = converted?;
+    if hoisted.is_empty() {
+        return Ok(converted);
+    }
+    let mut statements = Vec::with_capacity(converted.len() + hoisted.len());
+    for name in &hoisted {
+        let span = find_var_name_span(body, name)
+            .ok_or_else(|| "OXC adapter lost a hoisted var span".to_string())?;
+        statements.push(Stmt::Let {
+            name: Name { span },
+            ty: None,
+            init: Expr::Unary {
+                op: crate::ast::UnaryOp::Void,
+                operand: Box::new(Expr::Number { value: 0.0, span }),
+                span,
+            },
+            span,
+        });
+    }
+    statements.extend(converted);
+    Ok(statements)
+}
+
+fn find_var_name_span(body: &[Statement<'_>], name: &str) -> Option<Span> {
+    fn in_declaration(
+        declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+        name: &str,
+    ) -> Option<Span> {
+        for declarator in &declaration.declarations {
+            if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
+                if identifier.name == name {
+                    return Some(Span::new(identifier.span.start, identifier.span.end));
+                }
+            }
+        }
+        None
+    }
+    fn in_statement(statement: &Statement<'_>, name: &str) -> Option<Span> {
+        match statement {
+            Statement::VariableDeclaration(declaration) => in_declaration(declaration, name),
+            Statement::BlockStatement(block) => {
+                block.body.iter().find_map(|s| in_statement(s, name))
+            }
+            Statement::IfStatement(s) => in_statement(&s.consequent, name)
+                .or_else(|| s.alternate.as_ref().and_then(|a| in_statement(a, name))),
+            Statement::ForStatement(s) => in_statement(&s.body, name),
+            Statement::ForInStatement(s) => in_statement(&s.body, name),
+            Statement::ForOfStatement(s) => in_statement(&s.body, name),
+            Statement::WhileStatement(s) => in_statement(&s.body, name),
+            Statement::DoWhileStatement(s) => in_statement(&s.body, name),
+            Statement::LabeledStatement(s) => in_statement(&s.body, name),
+            Statement::TryStatement(s) => s
+                .block
+                .body
+                .iter()
+                .find_map(|x| in_statement(x, name))
+                .or_else(|| {
+                    s.handler
+                        .as_ref()
+                        .and_then(|h| h.body.body.iter().find_map(|x| in_statement(x, name)))
+                })
+                .or_else(|| {
+                    s.finalizer
+                        .as_ref()
+                        .and_then(|f| f.body.iter().find_map(|x| in_statement(x, name)))
+                }),
+            Statement::SwitchStatement(s) => s
+                .cases
+                .iter()
+                .find_map(|c| c.consequent.iter().find_map(|x| in_statement(x, name))),
+            _ => None,
+        }
+    }
+    body.iter().find_map(|statement| in_statement(statement, name))
+}
+
+fn param_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    for item in &params.items {
+        if let BindingPattern::BindingIdentifier(identifier) = &item.pattern {
+            names.push(identifier.name.to_string());
+        }
+    }
+    if let Some(rest) = &params.rest {
+        if let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument {
+            names.push(identifier.name.to_string());
+        }
+    }
+    names
 }

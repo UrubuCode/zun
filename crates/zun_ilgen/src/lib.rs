@@ -206,6 +206,7 @@ pub fn lower(program: &hir::Program) -> Module {
             &layout,
             &mut module,
             program.functions.len() as u32,
+            index as u32,
             &regex_plan,
         );
         module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
@@ -441,6 +442,7 @@ fn lower_function<'a>(
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         closure_method_base,
+        self_closure: None,
         points: Vec::new(),
         regex_plan,
     };
@@ -461,6 +463,7 @@ fn lower_closure_function<'a>(
     layout: &'a Layout,
     module: &mut Module,
     closure_method_base: u32,
+    closure_index: u32,
     regex_plan: &'a [RegexPlan],
 ) -> (Vec<u8>, Vec<ExceptionHandler>, Vec<(u32, Span)>) {
     let mut gen = FnLowerer {
@@ -475,6 +478,7 @@ fn lower_closure_function<'a>(
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         closure_method_base,
+        self_closure: Some(closure_index),
         points: Vec::new(),
         regex_plan,
     };
@@ -504,6 +508,8 @@ struct FnLowerer<'a, 'b> {
     continue_patches: Vec<Vec<BranchPatch>>,
     handlers: Vec<ExceptionHandler>,
     finally_bodies: Vec<&'a [Stmt]>,
+    /// Index of the closure being lowered (for [`ExprKind::SelfClosure`]).
+    self_closure: Option<u32>,
     closure_method_base: u32,
     points: Vec<(u32, Span)>,
     /// Lowering plan for each static regex (parallel to
@@ -1002,6 +1008,15 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             }
             ExprKind::CellRef { slot } => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(*slot)));
+            }
+            ExprKind::SelfClosure => {
+                let function = self.self_closure.expect("SelfClosure outside a closure");
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
+                let token = Token::new(
+                    TableKind::MethodDef,
+                    self.closure_method_base + function + 1,
+                );
+                self.emit(Instruction::new(Opcode::MakeClosure, Operand::Token(token)));
             }
             ExprKind::CaptureRef { environment_slot } => {
                 self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));

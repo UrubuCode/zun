@@ -22,7 +22,8 @@ impl Checker<'_> {
         // the argument-checking site. It applies only to THIS closure — taken
         // once so a nested/sibling closure does not inherit it.
         let param_hint = self.closure_param_hint.take();
-        let captures = self.analyze_closure_captures(outer, function);
+        let self_name = self.closure_self_name.take();
+        let captures = self.analyze_closure_captures(outer, function, self_name.as_deref());
         let takes_this = std::mem::take(&mut self.closure_takes_this);
         let mut saw_default = false;
         for parameter in &function.params {
@@ -86,8 +87,31 @@ impl Checker<'_> {
                 .unwrap_or(Ty::Any);
             inner.declare(self.text(&parameter.name), ty);
         }
+        // A named closure (`const f = () => … f() …`, a nested `function f`)
+        // can call itself: bind its own name to a function value made from
+        // its own method and environment.
+        let self_binding = match self_name.as_deref() {
+            Some(name)
+                if function.params.iter().all(|p| self.text(&p.name) != name)
+                    && self.source.get(function.body.span.start as usize..function.body.span.end as usize).map(|body| body.contains(name)).unwrap_or(true) =>
+            {
+                let slot = inner.declare(name, Ty::Function(hir::DYNAMIC_FUNCTION));
+                Some(hir::Stmt::Let {
+                    slot,
+                    init: hir::Expr {
+                        kind: hir::ExprKind::SelfClosure,
+                        ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+                        span,
+                    },
+                })
+            }
+            _ => None,
+        };
         self.collect_mutated_names(&function.body.statements, &mut inner.mutated_names);
         let mut body = self.check_block(&mut inner, &function.body);
+        if let Some(binding) = self_binding {
+            body.insert(0, binding);
+        }
         self.rewrite_boxed_lets(&mut body, &inner.boxed);
         // An expression-bodied arrow whose body is a void call (`() => log(x)`)
         // returns nothing: evaluate it as a statement, then return bare.
@@ -200,6 +224,7 @@ impl Checker<'_> {
         &self,
         cx: &FunctionCx,
         function: &ast::FunctionExpr,
+        self_name: Option<&str>,
     ) -> Vec<hir::Capture> {
         let mut parameters: HashSet<String> = function
             .params
@@ -208,6 +233,9 @@ impl Checker<'_> {
             .collect();
         if self.closure_takes_this {
             parameters.insert("this".to_string());
+        }
+        if let Some(name) = self_name {
+            parameters.insert(name.to_string());
         }
         let mut uses = CaptureUse::default();
         for statement in &function.body.statements {

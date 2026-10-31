@@ -601,6 +601,8 @@ pub enum ExprKind {
         /// Bindings copied/shared into the environment.
         captures: Vec<ClosureCapture>,
     },
+    /// The enclosing closure itself (its own method over its own environment).
+    SelfClosure,
     /// Read one entry from the hidden closure environment parameter.
     CaptureLoad {
         /// Environment layout slot.

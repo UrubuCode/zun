@@ -150,6 +150,7 @@ fn check_impl(
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
         closure_takes_this: false,
+        closure_self_name: None,
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
         type_param_names: HashSet::new(),
@@ -372,6 +373,8 @@ struct Checker<'a> {
     /// (named `this`) and is marked by an `@this` name suffix, which the
     /// interpreter reads to pass the receiver on a dynamic member call.
     closure_takes_this: bool,
+    /// Name a closure being bound by `let name = <closure>` may call itself by.
+    closure_self_name: Option<String>,
     /// Instance methods whose runtime decorator returns a function (method
     /// replacement): calls dispatch through the `class_named_methods` side
     /// table instead of the static vtable slot. Value: the declaring class.
@@ -2177,7 +2180,11 @@ impl Checker<'_> {
                 hir::Stmt::Group(out)
             }
             ast::Stmt::Let { name, ty, init, .. } => {
+                if matches!(init, ast::Expr::Function(_)) {
+                    self.closure_self_name = Some(self.text(name).to_string());
+                }
                 let mut init = self.check_expr(cx, init);
+                self.closure_self_name = None;
                 let declared = ty.as_ref().map(|t| self.resolve_annotation(t));
                 // `let x: int = 1` — retype an integral number literal to the
                 // declared numeric type.
