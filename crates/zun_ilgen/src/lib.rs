@@ -884,10 +884,15 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 }
             }
             Stmt::Return(value) => {
-                let cleanups: Vec<&[Stmt]> = self.finally_bodies.iter().rev().copied().collect();
-                for cleanup in cleanups {
+                let saved = self.finally_bodies.clone();
+                for (index, cleanup) in saved.iter().enumerate().rev() {
+                    // While a cleanup runs, only the enclosing (outer) finally
+                    // bodies are active: a `return` inside a finally block must
+                    // not re-inline itself.
+                    self.finally_bodies.truncate(index);
                     self.stmts(cleanup);
                 }
+                self.finally_bodies = saved;
                 if let Some(v) = value {
                     self.expr(v);
                 }

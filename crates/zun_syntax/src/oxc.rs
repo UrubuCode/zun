@@ -775,10 +775,27 @@ fn convert_try_statement(
                 BindingPattern::BindingIdentifier(identifier) => {
                     Span::new(identifier.span.start, identifier.span.end)
                 }
-                _ => Span::new(handler.body.span.start, handler.body.span.start),
+                // A destructuring pattern binds a hidden local named by the
+                // pattern's own source text (no identifier can collide); the
+                // body is prefixed with the destructuring of that local.
+                _ => Span::new(parameter.span.start, parameter.span.end),
             },
             None => Span::new(handler.body.span.start, handler.body.span.start),
         };
+        let mut catch_body = convert_block_node(source, &handler.body)?;
+        if let Some(parameter) = handler.param.as_ref() {
+            if !matches!(&parameter.pattern, BindingPattern::BindingIdentifier(_)) {
+                let pattern = convert_binding_pattern(source, &parameter.pattern)?;
+                catch_body.statements.insert(
+                    0,
+                    Stmt::Destructure {
+                        pattern,
+                        init: crate::ast::Expr::Ident(Name { span: binding_span }),
+                        span: Span::new(binding_span.start, binding_span.end),
+                    },
+                );
+            }
+        }
         vec![crate::ast::CatchClause {
             binding: Name { span: binding_span },
             ty: crate::ast::TypeAnnotation {
@@ -787,7 +804,7 @@ fn convert_try_statement(
                 },
                 is_array: false,
             },
-            body: convert_block_node(source, &handler.body)?,
+            body: catch_body,
         }]
     } else {
         Vec::new()
