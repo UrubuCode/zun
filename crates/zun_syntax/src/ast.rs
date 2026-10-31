@@ -1043,3 +1043,36 @@ impl Expr {
 /// identifiers (not source slices); sema resolves their text as
 /// ` synth#<start - SYNTHETIC_NAME_BASE>`.
 pub const SYNTHETIC_NAME_BASE: u32 = 0xF000_0000;
+
+/// First span offset of *named* synthetic identifiers: compiler-made names whose
+/// text is registered at creation (see [`synthetic_ident`]) instead of being a
+/// source slice. Offsets below this (but at/above `SYNTHETIC_NAME_BASE`) are the
+/// anonymous temporaries resolved as ` synth#<n>`.
+pub const NAMED_SYNTHETIC_BASE: u32 = SYNTHETIC_NAME_BASE + 0x0A00_0000;
+
+fn synthetic_registry() -> &'static std::sync::Mutex<Vec<String>> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// Create an identifier with the given text that is not backed by source.
+pub fn synthetic_ident(text: &str) -> Name {
+    let mut registry = synthetic_registry().lock().expect("synthetic registry");
+    let index = match registry.iter().position(|existing| existing == text) {
+        Some(index) => index,
+        None => {
+            registry.push(text.to_owned());
+            registry.len() - 1
+        }
+    } as u32;
+    Name { span: Span::new(NAMED_SYNTHETIC_BASE + index, NAMED_SYNTHETIC_BASE + index) }
+}
+
+/// The text of a named synthetic identifier made by [`synthetic_ident`].
+pub fn synthetic_ident_text(name: Name) -> Option<String> {
+    if name.span.start < NAMED_SYNTHETIC_BASE {
+        return None;
+    }
+    let registry = synthetic_registry().lock().expect("synthetic registry");
+    registry.get((name.span.start - NAMED_SYNTHETIC_BASE) as usize).cloned()
+}

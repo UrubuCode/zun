@@ -23,6 +23,10 @@ impl Checker<'_> {
     /// (`builtin/intl.zun`). This is the entire `Intl` namespace shim: a
     /// general `Ns.Member` resolution system is deliberately out of scope.
     pub(crate) fn text(&self, name: &ast::Name) -> &str {
+        if let Some(text) = ast::synthetic_ident_text(*name) {
+            let leaked: &'static str = Box::leak(text.into_boxed_str());
+            return leaked;
+        }
         if name.span.start >= SYNTHETIC_NAME_BASE {
             // A compiler-synthesized temporary (see `synthetic_name`).
             let leaked: &'static str = Box::leak(

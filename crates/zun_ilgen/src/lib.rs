@@ -827,7 +827,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 // model — including void calls, which push a void value — so an
                 // expression statement always discards one.
                 self.expr(e);
-                if !matches!(e.kind, ExprKind::Yield { .. }) {
+                {
                     self.emit(Instruction::simple(Opcode::Pop));
                 }
             }
@@ -1306,6 +1306,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             ExprKind::Yield { value } => {
                 self.expr(value);
                 self.emit(Instruction::simple(Opcode::Yield));
+                // The value of a `yield` expression is what `next(v)` sends back in
+                // (undefined when nothing was sent).
+                let (sent_id, _) = zun_natives::resolve("collections", "generatorSent")
+                    .expect("generatorSent intrinsic");
+                self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(sent_id as i32)));
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 if *op == BinaryOp::Nullish {

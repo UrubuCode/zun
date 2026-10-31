@@ -2159,6 +2159,9 @@ impl<'a> Interp<'a> {
                 });
                 Ok(Value::Object(array))
             }
+            "generatorSent" => Ok(crate::unwind::GENERATOR_SENT
+                .with(|sent| sent.borrow_mut().take())
+                .unwrap_or(Value::Void)),
             "forInHas" => {
                 // for-in liveness: is `key` still a property of `object` (own or
                 // inherited)? Unknown receivers answer `true` (never skip).
@@ -2695,6 +2698,9 @@ impl<'a> Interp<'a> {
                     return self.call_generator_method(kind, namespace, &args[2..]);
                 }
                 if member.as_ref() == "next" {
+                    if zun_gc::with_current_heap(|heap| heap.generator_state(namespace).is_some()) {
+                        return self.call_generator_method(0, namespace, &args[2..]);
+                    }
                     if let Some(result) = self.builtin_iterator_result(namespace)? {
                         return Ok(result);
                     }
@@ -6467,7 +6473,7 @@ impl<'a> Interp<'a> {
                 || heap.set_iterator_done(source).is_some()
                 || heap.map_iterator_done(source).is_some()
         });
-        if is_builtin_iter {
+        if is_builtin_iter || zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some()) {
             return Ok(source);
         }
         if zun_gc::with_current_heap(|heap| heap.array_len(source)).is_some() {
@@ -6503,6 +6509,14 @@ impl<'a> Interp<'a> {
     /// built-in iterator advances through its native cursor; a user iterator has
     /// its `next()` method called and the `{ value, done }` result read back.
     fn protocol_step(&mut self, it: zun_gc::Obj) -> Result<(Value, bool), RunError> {
+        if zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some()) {
+            let finished = self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
+            if matches!(finished, Value::Bool(true)) {
+                return Ok((Value::Void, true));
+            }
+            let value = self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?;
+            return Ok((value, false));
+        }
         if let Some(done) = zun_gc::with_current_heap(|heap| heap.array_iterator_done(it)) {
             if done {
                 return Ok((Value::Void, true));
@@ -6591,6 +6605,7 @@ impl<'a> Interp<'a> {
             .ok_or(RunError::BadToken)?;
         let saved = if state.done { None } else { state.frame.take() };
         state.has_current = false;
+        state.current = zun_core::Any::void();
         let Some(saved) = saved else {
             state.done = true;
             zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
@@ -6691,7 +6706,12 @@ impl<'a> Interp<'a> {
             None => Value::Void,
         };
         match kind {
-            0 => Ok(self.builtin_iterator_result(generator)?.unwrap_or(Value::Void)),
+            0 => {
+                crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = args.first().map(|_| first.clone()));
+                let result = self.builtin_iterator_result(generator);
+                crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
+                Ok(result?.unwrap_or(Value::Void))
+            }
             1 => {
                 self.close_generator(generator, false)?;
                 let boxed = zun_gc::with_current_heap_mut(|heap| first.box_any(heap))
@@ -6741,14 +6761,22 @@ impl<'a> Interp<'a> {
         let (value, done) = if is_generator {
             let finished = self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
             if matches!(finished, Value::Bool(true)) {
-                (Value::Void, true)
+                // The first completion reports the generator's return value
+                // (what `yield*` evaluates to); later ones report undefined.
+                let returned = zun_gc::with_current_heap_mut(|heap| {
+                    heap.generator_state_mut(it).map(|state| std::mem::replace(&mut state.current, zun_core::Any::void()))
+                });
+                let value = returned
+                    .and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
+                    .unwrap_or(Value::Void);
+                (value, true)
             } else {
                 (self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?, false)
             }
         } else {
             self.protocol_step(it)?
         };
-        let boxed = if done {
+        let boxed = if done && !is_generator {
             zun_core::Any::void()
         } else {
             zun_gc::with_current_heap_mut(|heap| value.box_any(heap))

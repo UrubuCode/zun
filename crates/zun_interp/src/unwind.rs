@@ -73,3 +73,9 @@ thread_local! {
     /// Real argument count of the call that created the running frame.
     pub(crate) static CALL_ARGC_CURRENT: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
 }
+
+thread_local! {
+    /// The value passed to `generator.next(v)`, handed to the resumed `yield`
+    /// expression (read once by `generatorSent`).
+    pub(crate) static GENERATOR_SENT: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}

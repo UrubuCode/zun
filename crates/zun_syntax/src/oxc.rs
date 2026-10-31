@@ -309,8 +309,12 @@ fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Bl
 fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut statements = Vec::with_capacity(body.len());
+    let saved_prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+    let mut prev_start = 0usize;
     let ordered = hoist_function_declarations(source, body);
     for statement in ordered.iter().copied() {
+        flush_prelude(&mut statements, prev_start);
+        prev_start = statements.len();
         match statement {
             Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
             Statement::VariableDeclaration(declaration)
@@ -511,7 +515,21 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
             }
         }
     }
+    flush_prelude(&mut statements, prev_start);
+    PENDING_PRELUDE.with(|pending| *pending.borrow_mut() = saved_prelude);
     Ok(statements)
+}
+
+/// Insert the statements queued by expression conversion (the `yield*` loop)
+/// before the statement(s) converted since `start`.
+fn flush_prelude(statements: &mut Vec<Stmt>, start: usize) {
+    let prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+    if prelude.is_empty() {
+        return;
+    }
+    let tail = statements.split_off(start.min(statements.len()));
+    statements.extend(prelude);
+    statements.extend(tail);
 }
 
 /// A parameter's default expression; an optional `x?: T` parameter without an
@@ -1217,6 +1235,64 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             operand: Box::new(convert_expression(source, &await_expression.argument)?),
             span: span(await_expression.span),
         }),
+        Expression::YieldExpression(yield_expression) if yield_expression.delegate => {
+            // `yield* source`: drive the delegate by hand. The iteration setup and
+            // the forwarding loop become statements placed before the statement
+            // that contains the expression (see `PENDING_PRELUDE`); the expression
+            // itself reads the delegate's return value.
+            let Some(argument) = yield_expression.argument.as_ref() else {
+                return Err("OXC adapter: `yield*` requires an operand".into());
+            };
+            let sp = span(yield_expression.span);
+            let operand = convert_expression(source, argument)?;
+            let n = YIELD_STAR_COUNTER.with(|c| {
+                c.set(c.get() + 1);
+                c.get()
+            });
+            let it = crate::ast::synthetic_ident(&format!("__ys_it{n}"));
+            let result = crate::ast::synthetic_ident(&format!("__ys_r{n}"));
+            let string = |text: &str| Expr::String { value: text.to_owned(), span: sp };
+            let index = |name: Name, key: &str| Expr::Index {
+                object: Box::new(Expr::Ident(name)),
+                index: Box::new(string(key)),
+                span: sp,
+            };
+            let step = || Expr::ComputedCall { callee: Box::new(index(it, "next")), args: Vec::new(), span: sp };
+            let get_iterator = Expr::ComputedCall {
+                callee: Box::new(Expr::Index {
+                    object: Box::new(operand),
+                    index: Box::new(Expr::Field {
+                        object: Box::new(Expr::Ident(crate::ast::synthetic_ident("Symbol"))),
+                        field: crate::ast::synthetic_ident("iterator"),
+                        span: sp,
+                    }),
+                    span: sp,
+                }),
+                args: Vec::new(),
+                span: sp,
+            };
+            let prelude = vec![
+                Stmt::Let { name: it, ty: None, init: get_iterator, span: sp },
+                Stmt::Let { name: result, ty: None, init: step(), span: sp },
+                Stmt::While {
+                    cond: Expr::Unary {
+                        op: crate::ast::UnaryOp::Not,
+                        operand: Box::new(index(result, "done")),
+                        span: sp,
+                    },
+                    body: Block {
+                        statements: vec![
+                            Stmt::Expr(Expr::Yield { value: Box::new(index(result, "value")), span: sp }),
+                            Stmt::Expr(Expr::Assign { target: result, value: Box::new(step()), span: sp }),
+                        ],
+                        span: sp,
+                    },
+                    span: sp,
+                },
+            ];
+            PENDING_PRELUDE.with(|pending| pending.borrow_mut().extend(prelude));
+            Ok(index(result, "value"))
+        }
         Expression::YieldExpression(yield_expression) => {
             if yield_expression.delegate {
                 return Err("OXC adapter does not support delegated yield yet".into());
@@ -3123,6 +3199,14 @@ mod tests {
         assert!(matches!(elements[2], crate::ast::ArrayElement::Hole));
         assert!(matches!(elements[3], crate::ast::ArrayElement::Expr(_)));
     }
+}
+
+thread_local! {
+    /// Statements a converted expression needs executed before the statement
+    /// that contains it (the `yield*` forwarding loop). Drained by
+    /// `convert_statement_list` right after each statement is converted.
+    static PENDING_PRELUDE: std::cell::RefCell<Vec<Stmt>> = const { std::cell::RefCell::new(Vec::new()) };
+    static YIELD_STAR_COUNTER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {

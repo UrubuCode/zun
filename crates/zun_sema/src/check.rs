@@ -6988,8 +6988,10 @@ impl Checker<'_> {
                                     span,
                                 };
                             }
-                            if args.len() < param_tys.len().saturating_sub(optional_count)
-                                || args.len() > param_tys.len()
+                            // JS allows calling with fewer arguments: missing ones read
+                            // as `undefined`.
+                            let sig = Signature { optional_count: param_tys.len(), ..sig };
+                            if args.len() > param_tys.len()
                             {
                                 self.error(
                                     span,
