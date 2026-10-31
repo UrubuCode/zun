@@ -97,6 +97,9 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
             x.as_object() == Some(y.addr() as usize)
         }
         (Value::Null, Value::Null) => true,
+        (Value::Any(x), Value::Any(y)) if x.as_class_descriptor().is_some() => {
+            x.as_class_descriptor() == y.as_class_descriptor()
+        }
         (Value::Any(x), Value::Void) | (Value::Void, Value::Any(x)) => {
             x.tag() == zun_core::AnyTag::Void
         }

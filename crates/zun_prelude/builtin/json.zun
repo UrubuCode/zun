@@ -175,6 +175,9 @@ class JSON {
     // --- parse -------------------------------------------------------------
 
     static parse(text: any): any {
+        if (typeof text === "symbol") {
+            throw new TypeError("Cannot convert a Symbol value to a string");
+        }
         let parser = new JsonParser(String(text));
         return parser.parseDocument();
     }

@@ -674,6 +674,15 @@ impl Interp<'_> {
                             }
                         }
                     }
+                    // `Class.prototype` on a class descriptor reached through
+                    // `any` is the descriptor itself (identity); other reads
+                    // of a descriptor yield undefined.
+                    if let Value::Any(descriptor) = &concrete {
+                        if descriptor.as_class_descriptor().is_some() {
+                            stack.push(if name == "prototype" { Value::Any(*descriptor) } else { Value::Void });
+                            continue;
+                        }
+                    }
                     // A primitive number/boolean/undefined/null receiver has no own
                     // properties here: the read yields `undefined`.
                     if matches!(

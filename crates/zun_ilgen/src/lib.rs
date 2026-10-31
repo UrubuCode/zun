@@ -442,6 +442,7 @@ fn lower_function<'a>(
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         break_finally_depths: Vec::new(),
+        finally_holes: Vec::new(),
         closure_method_base,
         self_closure: None,
         points: Vec::new(),
@@ -487,6 +488,7 @@ fn lower_closure_function<'a>(
         handlers: Vec::new(),
         finally_bodies: Vec::new(),
         break_finally_depths: Vec::new(),
+        finally_holes: Vec::new(),
         closure_method_base,
         self_closure: Some(closure_index),
         points: Vec::new(),
@@ -528,6 +530,9 @@ struct FnLowerer<'a, 'b> {
     finally_bodies: Vec<&'a [Stmt]>,
     /// `finally_bodies.len()` when each enclosing break target was entered.
     break_finally_depths: Vec<usize>,
+    /// Code ranges that are inlined copies of a `finally` body (start, end,
+    /// index of the owning cleanup); excluded from exception handler ranges.
+    finally_holes: Vec<(u32, u32, usize)>,
     /// Index of the closure being lowered (for [`ExprKind::SelfClosure`]).
     self_closure: Option<u32>,
     closure_method_base: u32,
@@ -575,9 +580,60 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 break;
             }
             self.finally_bodies.truncate(index);
+            let hole_start = self.code.len() as u32;
             self.stmts(cleanup);
+            self.finally_holes.push((hole_start, self.code.len() as u32, index));
         }
         self.finally_bodies = saved;
+    }
+
+    /// Register a handler over `[start, end)`, minus the inlined `finally`
+    /// copies (holes) owned by this try or by a try nested inside it: an
+    /// exception thrown while a cleanup runs must not re-enter that cleanup.
+    fn push_protected(
+        &mut self,
+        entry_depth: usize,
+        has_finally: bool,
+        start: u32,
+        end: u32,
+        handler_start: u32,
+        handler_end: u32,
+        kind: HandlerKind,
+        catch_type: Option<Token>,
+    ) {
+        let mut holes: Vec<(u32, u32)> = self
+            .finally_holes
+            .iter()
+            .filter(|(hole_start, hole_end, owner)| {
+                (*owner < entry_depth || (*owner == entry_depth && has_finally)) && *hole_start >= start && *hole_end <= end
+            })
+            .map(|(hole_start, hole_end, _)| (*hole_start, *hole_end))
+            .collect();
+        holes.sort_unstable();
+        let mut cursor = start;
+        for (hole_start, hole_end) in holes {
+            if hole_start > cursor {
+                self.handlers.push(ExceptionHandler {
+                    try_start: cursor,
+                    try_end: hole_start,
+                    handler_start,
+                    handler_end,
+                    kind,
+                    catch_type,
+                });
+            }
+            cursor = cursor.max(hole_end);
+        }
+        if cursor < end {
+            self.handlers.push(ExceptionHandler {
+                try_start: cursor,
+                try_end: end,
+                handler_start,
+                handler_end,
+                kind,
+                catch_type,
+            });
+        }
     }
 
     fn emit_dynamic_load(&mut self, name: &str) {
@@ -945,7 +1001,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     // bodies are active: a `return` inside a finally block must
                     // not re-inline itself.
                     self.finally_bodies.truncate(index);
+                    let hole_start = self.code.len() as u32;
                     self.stmts(cleanup);
+                    self.finally_holes.push((hole_start, self.code.len() as u32, index));
                 }
                 self.finally_bodies = saved;
                 if let Some(v) = value {
@@ -962,6 +1020,8 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 catches,
                 finally_body,
             } => {
+                let entry_depth = self.finally_bodies.len();
+                let has_finally_flag = finally_body.is_some();
                 let try_start = self.code.len() as u32;
                 if let Some(finally_body) = finally_body {
                     self.finally_bodies.push(finally_body);
@@ -999,17 +1059,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     }
                     let handler_end = self.code.len() as u32;
                     exits.push(self.emit_branch(Opcode::Branch));
-                    self.handlers.push(ExceptionHandler {
-                        try_start,
-                        try_end,
-                        handler_start,
-                        handler_end,
-                        kind: HandlerKind::Catch,
-                        catch_type: match catch.ty {
-                            Ty::Instance(index) => Some(Token::new(TableKind::TypeDef, index + 1)),
-                            _ => None,
-                        },
-                    });
+                    let catch_type = match catch.ty {
+                        Ty::Instance(index) => Some(Token::new(TableKind::TypeDef, index + 1)),
+                        _ => None,
+                    };
+                    self.push_protected(entry_depth, has_finally_flag, try_start, try_end, handler_start, handler_end, HandlerKind::Catch, catch_type);
                 }
 
                 if let Some(finally_body) = finally_body {
@@ -1017,24 +1071,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     self.stmts(finally_body);
                     self.emit(Instruction::simple(Opcode::Rethrow));
                     let handler_end = self.code.len() as u32;
-                    self.handlers.push(ExceptionHandler {
-                        try_start,
-                        try_end,
-                        handler_start,
-                        handler_end,
-                        kind: HandlerKind::Finally,
-                        catch_type: None,
-                    });
+                    self.push_protected(entry_depth, has_finally_flag, try_start, try_end, handler_start, handler_end, HandlerKind::Finally, None);
                     // An exception thrown inside a catch body also runs the finally.
                     for (body_start, body_end) in catch_body_ranges {
-                        self.handlers.push(ExceptionHandler {
-                            try_start: body_start,
-                            try_end: body_end,
-                            handler_start,
-                            handler_end,
-                            kind: HandlerKind::Finally,
-                            catch_type: None,
-                        });
+                        self.push_protected(entry_depth, has_finally_flag, body_start, body_end, handler_start, handler_end, HandlerKind::Finally, None);
                     }
                 }
                 for exit in exits {

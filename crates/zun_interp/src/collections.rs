@@ -5112,6 +5112,17 @@ impl<'a> Interp<'a> {
                     ProxyRoute::NotProxy => proxy,
                 };
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
+                if prototype.is_none()
+                    && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())
+                {
+                    let array_class = zun_gc::with_current_heap_mut(|heap| {
+                        let global = heap.global_object();
+                        heap.dynamic_get(global, "Array")
+                    });
+                    if let Some(descriptor) = array_class {
+                        return Ok(Value::Any(descriptor));
+                    }
+                }
                 // A dynamic object with no explicit link inherits from the
                 // shared `Object.prototype`; an explicit `null` link
                 // (`Object.create(null)`) stays null.
