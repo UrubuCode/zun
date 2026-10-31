@@ -6684,6 +6684,13 @@ impl Checker<'_> {
                 if name == "super" {
                     return self.check_super_call(cx, None, args, span);
                 }
+                // Internal: the value of the `generator.return(v)` request being
+                // unwound (used by the `yield*` desugaring to forward it).
+                if name == "__generatorReturnValue" && args.is_empty() {
+                    if let Some((id, _)) = zun_natives::resolve("collections", "generatorReturnValue") {
+                        return hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() }, ty: Ty::Any, span };
+                    }
+                }
                 // Global `parseInt`/`parseFloat` are the same as their `Number.*`
                 // statics; route to that implementation when no user binding
                 // shadows the name.

@@ -63,6 +63,12 @@ thread_local! {
 }
 
 thread_local! {
+    /// Value of the `generator.return(v)` request currently unwinding a
+    /// generator frame (read by a delegating `yield*` to forward it).
+    pub(crate) static GENERATOR_RETURN_VALUE: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
     /// Exception to raise at the suspended `yield` of the generator being
     /// resumed by `generator.throw(e)`.
     pub(crate) static GENERATOR_THROW_PENDING: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };

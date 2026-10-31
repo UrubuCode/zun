@@ -947,7 +947,8 @@ impl<'a> Interp<'a> {
                 let Some(handle) = handle else {
                     return Err(RunError::Native("TypeError: value is not iterable".into()));
                 };
-                self.invoke_function_value(handle, Vec::new())
+                let call_args = self.with_this_arg(handle, source, Vec::new());
+                self.invoke_function_value(handle, call_args)
             }
             "generatorIteratorClose" => {
                 // IteratorClose: call the iterator's `return()` (if any) when a
@@ -2172,6 +2173,14 @@ impl<'a> Interp<'a> {
                     }
                 });
                 Ok(Value::Object(array))
+            }
+            "generatorReturnValue" => {
+                let value = crate::unwind::GENERATOR_RETURN_VALUE
+                    .with(|slot| slot.borrow().clone())
+                    .unwrap_or(Value::Void);
+                let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::void);
+                Ok(Value::Any(boxed))
             }
             "generatorSent" => Ok(crate::unwind::GENERATOR_SENT
                 .with(|sent| sent.borrow_mut().take())
@@ -6923,7 +6932,10 @@ impl<'a> Interp<'a> {
         let roots = [generator];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(true));
+        let previous_value = crate::unwind::GENERATOR_RETURN_VALUE
+            .with(|slot| slot.borrow_mut().replace(value.clone()));
         let outcome = self.resume_suspended(frame);
+        crate::unwind::GENERATOR_RETURN_VALUE.with(|slot| *slot.borrow_mut() = previous_value);
         crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(false));
         let generator = roots[0];
         let result = match outcome {

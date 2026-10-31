@@ -1357,6 +1357,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             let threw = crate::ast::synthetic_ident(&format!("__ys_th{n}"));
             let sent = crate::ast::synthetic_ident(&format!("__ys_s{n}"));
             let caught = crate::ast::synthetic_ident(&format!("__ys_c{n}"));
+            let ret_answer = crate::ast::synthetic_ident(&format!("__ys_rr{n}"));
             let string = |text: &str| Expr::String { value: text.to_owned(), span: sp };
             let index = |name: Name, key: &str| Expr::Index {
                 object: Box::new(Expr::Ident(name)),
@@ -1364,6 +1365,17 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 span: sp,
             };
             let step = |args: Vec<Expr>| Expr::ComputedCall { callee: Box::new(index(it, "next")), args, span: sp };
+            // `typeof it.key !== "undefined"`: a delegate method that is present.
+            let defined = |key: &str| Expr::Binary {
+                op: BinaryOp::Ne,
+                lhs: Box::new(Expr::Unary {
+                    op: crate::ast::UnaryOp::Typeof,
+                    operand: Box::new(index(it, key)),
+                    span: sp,
+                }),
+                rhs: Box::new(string("undefined")),
+                span: sp,
+            };
             let get_iterator = Expr::ComputedCall {
                 callee: Box::new(Expr::Index {
                     object: Box::new(operand),
@@ -1449,11 +1461,69 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                                                     span: sp,
                                                 },
                                                 then_block: Block {
-                                                    statements: vec![Stmt::Expr(Expr::ComputedCall {
-                                                        callee: Box::new(index(it, "return")),
-                                                        args: Vec::new(),
+                                                    statements: vec![Stmt::If {
+                                                        cond: defined("return"),
+                                                        then_block: Block {
+                                                            statements: vec![
+                                                                // Forward the return request, validate the
+                                                                // answer, and finish when the delegate did.
+                                                                Stmt::Let {
+                                                                    name: ret_answer,
+                                                                    ty: None,
+                                                                    init: Expr::ComputedCall {
+                                                                        callee: Box::new(index(it, "return")),
+                                                                        args: vec![Expr::Call {
+                                                                            callee: crate::ast::synthetic_ident("__generatorReturnValue"),
+                                                                            args: Vec::new(),
+                                                                            span: sp,
+                                                                        }],
+                                                                        span: sp,
+                                                                    },
+                                                                    span: sp,
+                                                                },
+                                                                Stmt::If {
+                                                                    cond: Expr::Binary {
+                                                                        op: BinaryOp::Ne,
+                                                                        lhs: Box::new(Expr::Unary {
+                                                                            op: crate::ast::UnaryOp::Typeof,
+                                                                            operand: Box::new(Expr::Ident(ret_answer)),
+                                                                            span: sp,
+                                                                        }),
+                                                                        rhs: Box::new(string("object")),
+                                                                        span: sp,
+                                                                    },
+                                                                    then_block: Block {
+                                                                        statements: vec![Stmt::Throw {
+                                                                            value: Expr::New {
+                                                                                class: crate::ast::synthetic_ident("TypeError"),
+                                                                                args: vec![string("iterator.return() did not return an object")],
+                                                                                span: sp,
+                                                                            },
+                                                                            span: sp,
+                                                                        }],
+                                                                        span: sp,
+                                                                    },
+                                                                    else_block: None,
+                                                                    span: sp,
+                                                                },
+                                                                Stmt::If {
+                                                                    cond: index(ret_answer, "done"),
+                                                                    then_block: Block {
+                                                                        statements: vec![Stmt::Return {
+                                                                            value: Some(index(ret_answer, "value")),
+                                                                            span: sp,
+                                                                        }],
+                                                                        span: sp,
+                                                                    },
+                                                                    else_block: None,
+                                                                    span: sp,
+                                                                },
+                                                            ],
+                                                            span: sp,
+                                                        },
+                                                        else_block: None,
                                                         span: sp,
-                                                    })],
+                                                    }],
                                                     span: sp,
                                                 },
                                                 else_block: None,
@@ -1479,7 +1549,35 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                                     span: sp,
                                 },
                                 else_block: Some(Block {
-                                    statements: vec![Stmt::Expr(Expr::Assign {
+                                    statements: vec![
+                                    // A delegate without `throw` is closed via `return`
+                                    // (when present) before the call below raises a TypeError.
+                                    Stmt::If {
+                                        cond: Expr::Unary {
+                                            op: crate::ast::UnaryOp::Not,
+                                            operand: Box::new(defined("throw")),
+                                            span: sp,
+                                        },
+                                        then_block: Block {
+                                            statements: vec![Stmt::If {
+                                                cond: defined("return"),
+                                                then_block: Block {
+                                                    statements: vec![Stmt::Expr(Expr::ComputedCall {
+                                                        callee: Box::new(index(it, "return")),
+                                                        args: Vec::new(),
+                                                        span: sp,
+                                                    })],
+                                                    span: sp,
+                                                },
+                                                else_block: None,
+                                                span: sp,
+                                            }],
+                                            span: sp,
+                                        },
+                                        else_block: None,
+                                        span: sp,
+                                    },
+                                    Stmt::Expr(Expr::Assign {
                                         target: result,
                                         value: Box::new(Expr::ComputedCall {
                                             callee: Box::new(index(it, "throw")),

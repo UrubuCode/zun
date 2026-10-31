@@ -200,6 +200,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "reflectHas",
         "forInHas",
         "generatorSent",
+        "generatorReturnValue",
         "setCallArgc",
         "argumentsObject",
         "arrayMakeHole",

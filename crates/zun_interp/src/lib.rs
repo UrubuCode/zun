@@ -1089,6 +1089,20 @@ impl Interp<'_> {
                         continue;
                     }
                     let object = object_raw.as_object();
+                    // `gen["next" | "return" | "throw"]` read off a generator object
+                    // is a callable method value, like the static-name read.
+                    if let Value::Str(name) = &key {
+                        if matches!(&**name, "next" | "return" | "throw")
+                            && zun_gc::with_current_heap(|heap| heap.generator_state(object).is_some())
+                        {
+                            let kind = match &**name { "next" => 0, "return" => 1, _ => 2 };
+                            stack.push(Value::Function(zun_core::FunctionHandle::new_generator_method(
+                                kind,
+                                object.addr() as usize,
+                            )));
+                            continue;
+                        }
+                    }
                     let value = if let Value::Any(any) = &key {
                         if let Some(symbol) = any.as_symbol() {
                             if let Some(getter) = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_getter(object, symbol)) {
