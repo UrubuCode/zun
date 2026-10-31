@@ -1251,13 +1251,17 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             });
             let it = crate::ast::synthetic_ident(&format!("__ys_it{n}"));
             let result = crate::ast::synthetic_ident(&format!("__ys_r{n}"));
+            let ok = crate::ast::synthetic_ident(&format!("__ys_ok{n}"));
+            let threw = crate::ast::synthetic_ident(&format!("__ys_th{n}"));
+            let sent = crate::ast::synthetic_ident(&format!("__ys_s{n}"));
+            let caught = crate::ast::synthetic_ident(&format!("__ys_c{n}"));
             let string = |text: &str| Expr::String { value: text.to_owned(), span: sp };
             let index = |name: Name, key: &str| Expr::Index {
                 object: Box::new(Expr::Ident(name)),
                 index: Box::new(string(key)),
                 span: sp,
             };
-            let step = || Expr::ComputedCall { callee: Box::new(index(it, "next")), args: Vec::new(), span: sp };
+            let step = |args: Vec<Expr>| Expr::ComputedCall { callee: Box::new(index(it, "next")), args, span: sp };
             let get_iterator = Expr::ComputedCall {
                 callee: Box::new(Expr::Index {
                     object: Box::new(operand),
@@ -1273,7 +1277,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             };
             let prelude = vec![
                 Stmt::Let { name: it, ty: None, init: get_iterator, span: sp },
-                Stmt::Let { name: result, ty: None, init: step(), span: sp },
+                Stmt::Let { name: result, ty: None, init: step(Vec::new()), span: sp },
                 Stmt::While {
                     cond: Expr::Unary {
                         op: crate::ast::UnaryOp::Not,
@@ -1282,8 +1286,110 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     },
                     body: Block {
                         statements: vec![
-                            Stmt::Expr(Expr::Yield { value: Box::new(index(result, "value")), span: sp }),
-                            Stmt::Expr(Expr::Assign { target: result, value: Box::new(step()), span: sp }),
+                            // The sent value, a thrown exception, or a return request on the
+                            // outer generator is forwarded to the delegate.
+                            Stmt::Let { name: ok, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
+                            Stmt::Let { name: threw, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
+                            Stmt::Let { name: sent, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
+                            Stmt::Try {
+                                body: Block {
+                                    statements: vec![
+                                        Stmt::Expr(Expr::Assign {
+                                            target: sent,
+                                            value: Box::new(Expr::Yield {
+                                                value: Box::new(index(result, "value")),
+                                                span: sp,
+                                            }),
+                                            span: sp,
+                                        }),
+                                        Stmt::Expr(Expr::Assign {
+                                            target: ok,
+                                            value: Box::new(Expr::Bool { value: true, span: sp }),
+                                            span: sp,
+                                        }),
+                                    ],
+                                    span: sp,
+                                },
+                                catches: vec![crate::ast::CatchClause {
+                                    binding: caught,
+                                    ty: crate::ast::TypeAnnotation {
+                                        name: Name { span: Span::new(0, 0) },
+                                        is_array: false,
+                                    },
+                                    body: Block {
+                                        statements: vec![
+                                            Stmt::Expr(Expr::Assign {
+                                                target: threw,
+                                                value: Box::new(Expr::Bool { value: true, span: sp }),
+                                                span: sp,
+                                            }),
+                                            Stmt::Expr(Expr::Assign {
+                                                target: sent,
+                                                value: Box::new(Expr::Ident(caught)),
+                                                span: sp,
+                                            }),
+                                        ],
+                                        span: sp,
+                                    },
+                                }],
+                                finally: Some(Block {
+                                    statements: vec![Stmt::If {
+                                        cond: Expr::Unary {
+                                            op: crate::ast::UnaryOp::Not,
+                                            operand: Box::new(Expr::Ident(ok)),
+                                            span: sp,
+                                        },
+                                        then_block: Block {
+                                            statements: vec![Stmt::If {
+                                                cond: Expr::Unary {
+                                                    op: crate::ast::UnaryOp::Not,
+                                                    operand: Box::new(Expr::Ident(threw)),
+                                                    span: sp,
+                                                },
+                                                then_block: Block {
+                                                    statements: vec![Stmt::Expr(Expr::ComputedCall {
+                                                        callee: Box::new(index(it, "return")),
+                                                        args: Vec::new(),
+                                                        span: sp,
+                                                    })],
+                                                    span: sp,
+                                                },
+                                                else_block: None,
+                                                span: sp,
+                                            }],
+                                            span: sp,
+                                        },
+                                        else_block: None,
+                                        span: sp,
+                                    }],
+                                    span: sp,
+                                }),
+                                span: sp,
+                            },
+                            Stmt::If {
+                                cond: Expr::Ident(ok),
+                                then_block: Block {
+                                    statements: vec![Stmt::Expr(Expr::Assign {
+                                        target: result,
+                                        value: Box::new(step(vec![Expr::Ident(sent)])),
+                                        span: sp,
+                                    })],
+                                    span: sp,
+                                },
+                                else_block: Some(Block {
+                                    statements: vec![Stmt::Expr(Expr::Assign {
+                                        target: result,
+                                        value: Box::new(Expr::ComputedCall {
+                                            callee: Box::new(index(it, "throw")),
+                                            args: vec![Expr::Ident(sent)],
+                                            span: sp,
+                                        }),
+                                        span: sp,
+                                    })],
+                                    span: sp,
+                                }),
+                                span: sp,
+                            },
                         ],
                         span: sp,
                     },

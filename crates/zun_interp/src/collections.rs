@@ -1066,7 +1066,12 @@ impl<'a> Interp<'a> {
                             .ok_or(RunError::BadToken)?;
                         value
                     }
-                    ExecutionOutcome::Thrown(value) => return Err(RunError::Thrown(value)),
+                    ExecutionOutcome::Thrown(value) => {
+                        state.done = true;
+                        state.current = zun_core::Any::void();
+                        zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                        return Err(RunError::Thrown(value));
+                    }
                     ExecutionOutcome::Fault(error) => return Err(error),
                 };
                 zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
@@ -6735,6 +6740,19 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(zun_core::Any::object(result.addr() as usize)))
             }
             _ => {
+                let suspended = zun_gc::with_current_heap(|heap| {
+                    heap.generator_state(generator)
+                        .map(|state| !state.done && !state.has_current && state.frame.is_some())
+                })
+                .unwrap_or(false);
+                if suspended {
+                    // Raise the exception at the suspended `yield`; a surrounding
+                    // try/catch in the generator may handle it and keep going.
+                    crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = Some(first));
+                    let result = self.builtin_iterator_result(generator);
+                    crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
+                    return Ok(result?.unwrap_or(Value::Void));
+                }
                 self.close_generator(generator, true)?;
                 Err(RunError::Thrown(first))
             }

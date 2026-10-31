@@ -62,6 +62,12 @@ thread_local! {
     pub(crate) static GENERATOR_RETURN_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+thread_local! {
+    /// Exception to raise at the suspended `yield` of the generator being
+    /// resumed by `generator.throw(e)`.
+    pub(crate) static GENERATOR_THROW_PENDING: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
 pub(crate) fn is_generator_return(value: &Value) -> bool {
     matches!(value, Value::Str(text) if &**text == GENERATOR_RETURN_SENTINEL)
 }

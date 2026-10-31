@@ -413,6 +413,15 @@ impl Interp<'_> {
             }
         }
 
+        if resumed {
+            if let Some(thrown) = unwind::GENERATOR_THROW_PENDING.with(|slot| slot.borrow_mut().take()) {
+                let throw_pc = (*pc).saturating_sub(1);
+                if !self.route_exception(&body, stack, pc, throw_pc, &thrown) {
+                    return Err(RunError::Thrown(thrown));
+                }
+            }
+        }
+
         while *pc < code.len() {
             self.active_frame = Some((method_rid, *pc as u32));
             if let Some(frame) = self.call_stack.last_mut() {
