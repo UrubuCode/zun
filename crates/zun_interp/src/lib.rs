@@ -1061,6 +1061,12 @@ impl Interp<'_> {
                             continue;
                         }
                     }
+                    if matches!(object_raw, Value::Int(..) | Value::Float(..) | Value::Bool(_))
+                        || matches!(&object_raw, Value::Any(a) if matches!(zun_gc::with_current_heap(|heap| Value::unbox_any(*a, heap)), Some(Value::Int(..) | Value::Float(..) | Value::Bool(_))))
+                    {
+                        stack.push(Value::Void);
+                        continue;
+                    }
                     let object = object_raw.as_object();
                     let value = if let Value::Any(any) = &key {
                         if let Some(symbol) = any.as_symbol() {

@@ -2609,8 +2609,23 @@ impl Checker<'_> {
                         e
                     }
                 });
+                let value = if value.is_none() && cx.is_generator && cx.return_ty == Ty::Any {
+                    Some(self.check_expr(
+                        cx,
+                        &ast::Expr::Unary {
+                            op: ast::UnaryOp::Void,
+                            operand: Box::new(ast::Expr::Number { value: 0.0, span: *span }),
+                            span: *span,
+                        },
+                    ))
+                } else {
+                    value
+                };
                 match (&value, cx.return_ty) {
                     (None, Ty::Void) => {}
+                    // A bare `return;` in a generator (or an `any`-returning
+                    // function) yields `undefined`.
+                    (None, Ty::Any) if cx.is_generator => {}
                     (None, expected) if !expected.is_error() => {
                         self.error(*span, format!("expected a {expected:?} return value"));
                     }
@@ -5546,11 +5561,9 @@ impl Checker<'_> {
             ast::PropertyKind::Method => {
                 // A method that mentions `this` receives the object as a hidden
                 // first parameter (see `closure_takes_this`).
-                if !matches!(property.key, ast::PropertyKey::Computed(_)) {
-                    if let ast::Expr::Function(function) = &property.value {
-                        let body = &self.source[function.span.start as usize..function.span.end as usize];
-                        self.closure_takes_this = body.contains("this");
-                    }
+                if let ast::Expr::Function(function) = &property.value {
+                    let body = &self.source[function.span.start as usize..function.span.end as usize];
+                    self.closure_takes_this = body.contains("this");
                 }
                 let func = self.check_expr(cx, &property.value);
                 self.closure_takes_this = false;

@@ -6657,7 +6657,8 @@ impl<'a> Interp<'a> {
         let Some(handle) = handle else {
             return Err(RunError::Native("TypeError: value is not iterable".into()));
         };
-        let result = self.invoke_function_value(handle, Vec::new())?;
+        let call_args = self.with_this_arg(handle, source, Vec::new());
+        let result = self.invoke_function_value(handle, call_args)?;
         Self::value_object(&result).ok_or_else(|| {
             RunError::Native("TypeError: [Symbol.iterator]() did not return an object".into())
         })
