@@ -4113,7 +4113,17 @@ impl Checker<'_> {
         let (binding, prelude) = match pattern {
             ast::Pattern::Ident { name, ty } => {
                 let declared = ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
-                (cx.declare(self.text(name), declared), Vec::new())
+                let name_text = self.text(name).to_string();
+                let slot = cx.declare(&name_text, declared);
+                // A loop variable that a closure captures and that is assigned
+                // lives in a per-iteration cell from the start of the body.
+                if cx.mutated_names.contains(&name_text)
+                    && cx.mutated_names.contains(&format!("{name_text}"))
+                    && !matches!(declared, Ty::Function(_))
+                {
+                    cx.boxed.insert(slot);
+                }
+                (slot, Vec::new())
             }
             _ => {
                 let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);

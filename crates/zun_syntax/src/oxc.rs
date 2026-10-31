@@ -437,7 +437,7 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 statements.push(stmt);
             }
             Statement::ForOfStatement(for_of_statement) => {
-                statements.push(convert_for_of(source, for_of_statement)?);
+                statements.extend(convert_for_of(source, for_of_statement)?);
             }
             Statement::ForInStatement(for_in_statement) => {
                 statements.push(convert_for_in(source, for_in_statement)?);
@@ -727,12 +727,20 @@ fn convert_for_statement(
                     span: span(declarator.span),
                 },
             };
-            Some(Box::new(Stmt::Let {
+            let binding = Stmt::Let {
                 name: Name { span: span(identifier.span) },
                 ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
                 init,
                 span: span(declarator.span),
-            }))
+            };
+            if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                // `var` is function-scoped: one binding shared by every
+                // iteration (no per-iteration copy).
+                pre.push(binding);
+                None
+            } else {
+                Some(Box::new(binding))
+            }
         }
         Some(init) => Some(Box::new(Stmt::Expr(convert_expression(
             source,
@@ -817,7 +825,7 @@ fn convert_for_in(
 fn convert_for_of(
     source: &str,
     for_of_statement: &oxc_ast::ast::ForOfStatement<'_>,
-) -> Result<Stmt, String> {
+) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     if for_of_statement.r#await {
         return Err("OXC adapter does not support await in for-of loops yet".into());
@@ -836,12 +844,50 @@ fn convert_for_of(
         },
         other => convert_binding_pattern(source, other)?,
     };
-    Ok(Stmt::ForOf {
+    // `for (var x of ...)`: one function-scoped binding shared by every
+    // iteration — declared before the loop and assigned from a per-iteration
+    // temporary at the top of the body.
+    if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+        if let (BindingPattern::BindingIdentifier(identifier), crate::ast::Pattern::Ident { ty, .. }) =
+            (&declarator.id, &pattern)
+        {
+            let var_name = Name { span: span(identifier.span) };
+            let temp = crate::ast::synthetic_ident("__for_of_var");
+            let mut body = convert_if_branch(source, &for_of_statement.body)?;
+            body.statements.insert(
+                0,
+                Stmt::Expr(Expr::Assign {
+                    target: var_name,
+                    value: Box::new(Expr::Ident(temp)),
+                    span: span(identifier.span),
+                }),
+            );
+            return Ok(vec![
+                Stmt::Let {
+                    name: var_name,
+                    ty: ty.clone(),
+                    init: Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number { value: 0.0, span: span(identifier.span) }),
+                        span: span(identifier.span),
+                    },
+                    span: span(declarator.span),
+                },
+                Stmt::ForOf {
+                    pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+                    iterable: convert_expression(source, &for_of_statement.right)?,
+                    body,
+                    span: span(for_of_statement.span),
+                },
+            ]);
+        }
+    }
+    Ok(vec![Stmt::ForOf {
         pattern,
         iterable: convert_expression(source, &for_of_statement.right)?,
         body: convert_if_branch(source, &for_of_statement.body)?,
         span: span(for_of_statement.span),
-    })
+    }])
 }
 
 fn convert_if_statement(

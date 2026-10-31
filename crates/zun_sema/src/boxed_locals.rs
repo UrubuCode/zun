@@ -27,9 +27,27 @@ pub(super) fn rewrite_boxed_lets(
                 rewrite_boxed_lets(then_body, boxed);
                 rewrite_boxed_lets(else_body, boxed);
             }
-            hir::Stmt::While { body, .. }
-            | hir::Stmt::DoWhile { body, .. }
-            | hir::Stmt::ForOf { body, .. } => rewrite_boxed_lets(body, boxed),
+            hir::Stmt::While { body, .. } | hir::Stmt::DoWhile { body, .. } => {
+                rewrite_boxed_lets(body, boxed)
+            }
+            hir::Stmt::ForOf { body, binding, .. } => {
+                rewrite_boxed_lets(body, boxed);
+                // A captured-and-mutated loop variable lives in a fresh cell per
+                // iteration, seeded from the value the iterator just produced.
+                if boxed.contains(binding) {
+                    body.insert(
+                        0,
+                        hir::Stmt::BoxedLet {
+                            slot: *binding,
+                            init: hir::Expr {
+                                kind: hir::ExprKind::Local(*binding),
+                                ty: Ty::Any,
+                                span: zun_common::Span::new(0, 0),
+                            },
+                        },
+                    );
+                }
+            }
             hir::Stmt::Group(body) => rewrite_boxed_lets(body, boxed),
             hir::Stmt::Labeled { body, .. } => {
                 rewrite_boxed_lets(std::slice::from_mut(body.as_mut()), boxed)
