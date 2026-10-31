@@ -8997,14 +8997,42 @@ impl<'a> Interp<'a> {
                 let settlement = self.promise_settlement_of(roots[0])?;
                 let cleanup_error = match as_function(&on_finally) {
                     Some(callback) => match self.invoke_callback(callback, vec![]) {
-                        Ok(_) => None,
-                        Err(RunError::Thrown(value)) => Some(value_to_error_string(&value)),
+                        Ok(result) => {
+                            // A cleanup that returns an already-rejected Promise
+                            // overrides the original settlement.
+                            let rejected = as_object_ref(&unbox_arg(&result).unwrap_or(Value::Void))
+                                .and_then(|obj| {
+                                    zun_gc::with_current_heap(|heap| {
+                                        match heap.promise_state(obj) {
+                                            Some(zun_core::ManagedPromiseState::Rejected) => {
+                                                Some((obj, heap.promise_reason(obj), heap.promise_error(obj)))
+                                            }
+                                            _ => None,
+                                        }
+                                    })
+                                });
+                            if let Some((obj, reason, error)) = rejected {
+                                self.notice_promise(obj);
+                                let error = error.unwrap_or_else(|| "Promise rejected".into());
+                                match reason {
+                                    Some(reason) => {
+                                        self.settle_promise_reject_value(roots[1], reason, error);
+                                    }
+                                    None => {
+                                        self.settle_promise_reject(roots[1], error);
+                                    }
+                                }
+                                return Ok(());
+                            }
+                            None
+                        }
+                        Err(RunError::Thrown(value)) => Some(value),
                         Err(other) => return Err(other),
                     },
                     None => None,
                 };
                 if let Some(error) = cleanup_error {
-                    self.settle_promise_reject(roots[1], error);
+                    self.reject_with_thrown(roots[1], &error);
                 } else {
                     match settlement {
                         PromiseSettlement::Resolved(value) => {
@@ -9096,11 +9124,26 @@ impl<'a> Interp<'a> {
                 Ok(())
             }
             Err(RunError::Thrown(value)) => {
-                let message = value_to_error_string(&value);
-                self.settle_promise_reject(roots[1], message);
+                self.reject_with_thrown(roots[1], &value);
                 Ok(())
             }
             Err(other) => Err(other),
+        }
+    }
+
+    /// Reject `target` with a thrown value, keeping an object reason
+    /// first-class (a plain string keeps the string surface).
+    fn reject_with_thrown(&mut self, target: zun_gc::Obj, value: &Value) {
+        match value {
+            Value::Str(message) => {
+                self.settle_promise_reject(target, message.to_string());
+            }
+            other => {
+                let reason = zun_gc::with_current_heap_mut(|heap| other.clone().box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                let message = value_to_error_string(other);
+                self.settle_promise_reject_value(target, reason, message);
+            }
         }
     }
 
