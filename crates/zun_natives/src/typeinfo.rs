@@ -90,5 +90,14 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: instanceof_class,
         },
+        NativeFn {
+            // `value instanceof Array|Map|Set|Promise|RegExp|Object|Function`
+            // for a built-in constructor name; the managed floor inspects the
+            // heap object kind (and the wrapper-base chain of user subclasses).
+            name: "instanceofBuiltin",
+            params: &[Opaque, Str],
+            ret: Bool,
+            imp: instanceof_class,
+        },
     ],
 };

@@ -13876,6 +13876,28 @@ impl Checker<'_> {
             return self.poison(span);
         };
         let name = self.text(class_name).to_string();
+        if !self.classes_by_name.contains_key(&name)
+            && matches!(
+                name.as_str(),
+                "Array" | "Map" | "Set" | "Promise" | "RegExp" | "Object" | "Function"
+            )
+            && !cx.scopes.iter().any(|s| s.contains_key(name.as_str()))
+        {
+            if value.ty.is_error() {
+                return self.poison(span);
+            }
+            let Some((id, _)) = zun_natives::resolve("typeinfo", "instanceofBuiltin") else {
+                self.error(span, "missing `instanceofBuiltin` intrinsic".to_string());
+                return self.poison(span);
+            };
+            let value = Self::box_to_any(value);
+            let ctor = hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span };
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![value, ctor] },
+                ty: Ty::Boolean,
+                span,
+            };
+        }
         let Some(&target) = self.classes_by_name.get(&name) else {
             // Not a class name: the right operand may be a dynamic object
             // carrying a `[Symbol.hasInstance]` method. If the identifier

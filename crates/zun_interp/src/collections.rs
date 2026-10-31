@@ -3301,6 +3301,43 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Void)
             }
+            "instanceofBuiltin" => {
+                let ctor = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let operand = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let found = match operand {
+                    Value::Function(_) => ctor == "Function" || ctor == "Object",
+                    Value::Object(obj) => {
+                        let direct = zun_gc::with_current_heap(|heap| {
+                            builtin_constructor_name(heap, obj).map(|name| name == ctor)
+                        });
+                        match direct {
+                            Some(true) => true,
+                            _ if ctor == "Object" => true,
+                            _ => {
+                                // A user subclass of a built-in extends its
+                                // `__Builtin<Name>` wrapper base.
+                                let wrapper = format!("__Builtin{ctor}");
+                                let mut rid = obj.type_rid();
+                                let mut hit = false;
+                                while rid >= 1 {
+                                    let Some(def) = self.module.tables.type_defs.get(rid as usize - 1) else { break };
+                                    if self.module.strings.get(def.name) == wrapper {
+                                        hit = true;
+                                        break;
+                                    }
+                                    rid = if def.base.is_null() { 0 } else { def.base.rid() };
+                                }
+                                hit
+                            }
+                        }
+                    }
+                    _ => false,
+                };
+                Ok(Value::Bool(found))
+            }
             "instanceofDynamic" => {
                 // `value instanceof C` where `C` is a dynamic object. If `C`
                 // carries a `[Symbol.hasInstance]` method, call it with `value`

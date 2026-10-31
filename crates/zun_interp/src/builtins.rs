@@ -523,7 +523,7 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
 }
 
 pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
-    for name in ["typeofAny", "objectToStringTag", "instanceofClass", "instanceofDynamic"] {
+    for name in ["typeofAny", "objectToStringTag", "instanceofClass", "instanceofDynamic", "instanceofBuiltin"] {
         if zun_natives::resolve("typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }
