@@ -206,31 +206,55 @@ impl TypeSystem {
                 type_fields.push(layout);
             }
 
-            let mut vtable = if ty.base.is_null() {
-                Vec::new()
-            } else {
-                if ty.base.table() != Some(zun_metadata::TableKind::TypeDef) {
-                    return Err(TypeError::BadBase);
-                }
-                types
-                    .get(ty.base.rid() as usize - 1)
-                    .ok_or(TypeError::BadBase)?
-                    .vtable
-                    .clone()
-            };
-            if vtable.len() < slot_names.len() {
-                vtable.resize(slot_names.len(), 0);
-            }
-            for rid in ty.method_start..ty.method_end {
-                let slot = method_slots[rid as usize].ok_or(TypeError::BadMetadata)?;
-                vtable[slot] = rid;
-            }
             types.push(TypeDescriptor {
                 type_rid,
                 base: ty.base,
                 fields: type_fields,
-                vtable,
+                vtable: Vec::new(),
             });
+        }
+        // Vtables inherit from the base, which may be defined later in the table
+        // (prelude classes follow the user's), so resolve them base-first.
+        let count = types.len();
+        let mut resolved = vec![false; count];
+        for start in 0..count {
+            let mut chain = Vec::new();
+            let mut cursor = start;
+            while !resolved[cursor] {
+                if chain.contains(&cursor) {
+                    return Err(TypeError::BadBase);
+                }
+                chain.push(cursor);
+                let base = types[cursor].base;
+                if base.is_null() {
+                    break;
+                }
+                if base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                    return Err(TypeError::BadBase);
+                }
+                let base_index = (base.rid() as usize).checked_sub(1).ok_or(TypeError::BadBase)?;
+                if base_index >= count {
+                    return Err(TypeError::BadBase);
+                }
+                cursor = base_index;
+            }
+            for &index in chain.iter().rev() {
+                let ty = &module.tables.type_defs[index];
+                let mut vtable = if ty.base.is_null() {
+                    Vec::new()
+                } else {
+                    types[ty.base.rid() as usize - 1].vtable.clone()
+                };
+                if vtable.len() < slot_names.len() {
+                    vtable.resize(slot_names.len(), 0);
+                }
+                for rid in ty.method_start..ty.method_end {
+                    let slot = method_slots[rid as usize].ok_or(TypeError::BadMetadata)?;
+                    vtable[slot] = rid;
+                }
+                types[index].vtable = vtable;
+                resolved[index] = true;
+            }
         }
         Ok(Self {
             types,

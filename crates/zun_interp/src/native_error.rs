@@ -38,7 +38,7 @@ impl<'a> Interp<'a> {
             .map(|i| self.field_kind_at(field_start + i))
             .collect::<Result<_, _>>()
             .ok()?;
-        // Field order of `Error`: message, stackFrames, cause.
+        // Field order of `Error`: message, stackFrames, cause, nameOverride.
         let values = [
             Value::Str(message.into()),
             Value::Str("".into()),

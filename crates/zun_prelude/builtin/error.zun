@@ -34,8 +34,30 @@ class Error {
     // every Error construction goes through that special lowering.
     cause: any;
 
-    get name(): string {
+    // Assignable `name` (`this.name = "X"` in subclass constructors): the
+    // override wins over the class-provided default name.
+    nameOverride: string = "";
+
+    constructor(message: string, options?: any) {
+        this.message = message;
+        if (options !== undefined) {
+            this.cause = options.cause;
+        }
+    }
+
+    get errorName(): string {
         return "Error";
+    }
+
+    get name(): string {
+        if (this.nameOverride != "") {
+            return this.nameOverride;
+        }
+        return this.errorName;
+    }
+
+    set name(value: string) {
+        this.nameOverride = value;
     }
 
     // JS omits the separator when either half is empty: `new Error()` prints
@@ -57,37 +79,37 @@ class Error {
 }
 
 class EvalError extends Error {
-    get name(): string {
+    get errorName(): string {
         return "EvalError";
     }
 }
 
 class RangeError extends Error {
-    get name(): string {
+    get errorName(): string {
         return "RangeError";
     }
 }
 
 class ReferenceError extends Error {
-    get name(): string {
+    get errorName(): string {
         return "ReferenceError";
     }
 }
 
 class SyntaxError extends Error {
-    get name(): string {
+    get errorName(): string {
         return "SyntaxError";
     }
 }
 
 class TypeError extends Error {
-    get name(): string {
+    get errorName(): string {
         return "TypeError";
     }
 }
 
 class URIError extends Error {
-    get name(): string {
+    get errorName(): string {
         return "URIError";
     }
 }

@@ -66,6 +66,7 @@ impl Interp<'_> {
             Value::Str(message.into()),
             Value::Str("".into()),
             Value::Void,
+            Value::Str("".into()),
         ];
         if field_count != values.len() {
             return None;
