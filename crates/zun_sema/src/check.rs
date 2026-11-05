@@ -631,6 +631,56 @@ impl Checker<'_> {
         out
     }
 
+    /// Whether every value-returning `return` in `block` (outside nested functions)
+    /// is `return this;`, and there is at least one. Such a method is fluent: its
+    /// result is the receiver's own class.
+    fn block_returns_only_this(&self, block: &ast::Block) -> bool {
+        fn walk(checker: &Checker<'_>, block: &ast::Block, this_count: &mut usize, other: &mut bool) {
+            for statement in &block.statements {
+                stmt(checker, statement, this_count, other);
+            }
+        }
+        fn stmt(checker: &Checker<'_>, statement: &ast::Stmt, this_count: &mut usize, other: &mut bool) {
+            match statement {
+                ast::Stmt::Return { value: Some(value), .. } => match value {
+                    ast::Expr::Ident(name) if checker.text(name) == "this" => *this_count += 1,
+                    _ => *other = true,
+                },
+                ast::Stmt::If { then_block, else_block, .. } => {
+                    walk(checker, then_block, this_count, other);
+                    if let Some(else_block) = else_block {
+                        walk(checker, else_block, this_count, other);
+                    }
+                }
+                ast::Stmt::While { body, .. }
+                | ast::Stmt::DoWhile { body, .. }
+                | ast::Stmt::For { body, .. }
+                | ast::Stmt::ForOf { body, .. }
+                | ast::Stmt::ForIn { body, .. } => walk(checker, body, this_count, other),
+                ast::Stmt::Labeled { statement, .. } => stmt(checker, statement, this_count, other),
+                ast::Stmt::Switch { cases, .. } => {
+                    for case in cases {
+                        walk(checker, &case.body, this_count, other);
+                    }
+                }
+                ast::Stmt::Try { body, catches, finally, .. } => {
+                    walk(checker, body, this_count, other);
+                    for clause in catches {
+                        walk(checker, &clause.body, this_count, other);
+                    }
+                    if let Some(finally) = finally {
+                        walk(checker, finally, this_count, other);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut this_count = 0;
+        let mut other = false;
+        walk(self, block, &mut this_count, &mut other);
+        this_count > 0 && !other
+    }
+
     fn build_module_initializer(&self, program: &ast::Program) -> Option<hir::Function> {
         let span = Span::new(0, 0);
         let mut body: Vec<hir::Stmt> = Vec::new();
@@ -1654,10 +1704,21 @@ impl Checker<'_> {
                         None => Ty::Any,
                     });
                 }
+                let fluent = m.return_type.is_none()
+                    && m.accessor.is_none()
+                    && !m.is_static
+                    && !m.is_async
+                    && !m.is_generator
+                    && !program.classes.iter().any(|other| {
+                        other.base.is_some_and(|base| self.text(&base) == self.text(&class.name))
+                    })
+                    && self.block_returns_only_this(&m.body);
                 let return_ty = match &m.return_type {
                     Some(t) => self.resolve_annotation(t),
                     None => {
-                        if block_returns_value(&m.body) {
+                        if fluent {
+                            Ty::Instance(class_idx as u32)
+                        } else if block_returns_value(&m.body) {
                             Ty::Any
                         } else {
                             Ty::Void
