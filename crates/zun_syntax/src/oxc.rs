@@ -45,6 +45,22 @@ fn convert_type_annotation(
     }
     // Keep the base name of a generic (`Array<number>` -> `Array`); the type
     // arguments are erased like everything else.
+    // A union / intersection at the top level (`Node<T> | null`) erases to `any`;
+    // it must not be mistaken for its first member by the generic strip.
+    {
+        let mut depth = 0i32;
+        let mut previous = ' ';
+        for character in type_text.chars() {
+            match character {
+                '<' | '(' | '[' | '{' => depth += 1,
+                '>' if previous == '=' => {}
+                '>' | ')' | ']' | '}' => depth -= 1,
+                '|' | '&' if depth == 0 => return Ok(None),
+                _ => {}
+            }
+            previous = character;
+        }
+    }
     if let Some(generic) = type_text.find('<') {
         type_text = type_text[..generic].trim_end();
     }
