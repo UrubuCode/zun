@@ -2361,6 +2361,8 @@ impl<'a> Interp<'a> {
                         }
                         if !found && dynamic {
                             found = heap.dynamic_has(current, &key)
+                                || heap.dynamic_get_function(current, &key).is_some()
+                                || heap.dynamic_accessor_getter(current, &key).is_some()
                                 || heap.dynamic_keys(current).is_some_and(|keys| keys.iter().any(|k| *k == key));
                         }
                         (array_len.is_some(), dynamic, found)
@@ -6328,7 +6330,14 @@ impl<'a> Interp<'a> {
                     Some(crate::property_ops::PropKey::Sym(symbol)) => {
                         Value::Any(zun_core::Any::symbol(symbol))
                     }
-                    None => return Err(RunError::BadToken),
+                    // An object key is coerced with ToPropertyKey (string hint).
+                    None => match object(args.get(1).ok_or(RunError::BadToken)?) {
+                        Some(key_object) => match self.ordinary_to_primitive(key_object, "string")? {
+                            Some(Value::Str(text)) => Value::Str(text),
+                            _ => Value::Str("[object Object]".into()),
+                        },
+                        None => return Err(RunError::BadToken),
+                    },
                 };
                 let desc = object(args.get(2).ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native("TypeError: Property description must be an object".into())
@@ -6366,6 +6375,7 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?;
                     let desc = desc_any.as_object().ok_or(RunError::BadToken)?;
                     let desc = unsafe { zun_gc::Obj::from_addr(desc as *mut u64) };
+                    let desc = self.normalize_descriptor(desc)?;
                     if !self.define_own_property(obj, &crate::property_ops::PropKey::Str(name.clone()), desc) {
                         return Err(RunError::Native(format!(
                             "TypeError: Cannot redefine property: {name}"
@@ -7045,12 +7055,12 @@ impl<'a> Interp<'a> {
                         if let Some(handle) = get {
                             heap.dynamic_set_function(out, "get", handle);
                         } else {
-                            heap.dynamic_set(out, "get".to_owned(), zun_core::Any::null());
+                            heap.dynamic_set(out, "get".to_owned(), zun_core::Any::void());
                         }
                         if let Some(handle) = set {
                             heap.dynamic_set_function(out, "set", handle);
                         } else {
-                            heap.dynamic_set(out, "set".to_owned(), zun_core::Any::null());
+                            heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
                         }
                     });
                     set_bool("enumerable", enumerable);

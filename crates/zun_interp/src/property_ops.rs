@@ -450,6 +450,75 @@ impl Interp<'_> {
         }
     }
 
+    /// ToPropertyDescriptor: read a descriptor object's fields in spec order
+    /// (`enumerable`, `configurable`, `value`, `writable`, `get`, `set`) through
+    /// its getters and prototype chain, validate accessor callability and the
+    /// accessor/data conflict, and return a fresh plain descriptor object.
+    pub(crate) fn normalize_descriptor(&mut self, desc: zun_gc::Obj) -> Result<zun_gc::Obj, RunError> {
+        let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+        let roots = [desc, out];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let (mut has_accessor, mut has_data) = (false, false);
+        for field in ["enumerable", "configurable", "value", "writable", "get", "set"] {
+            let present = self
+                .call_managed_collection(
+                    "forInHas",
+                    &[Value::Object(roots[0]), Value::Str(field.into())],
+                )?;
+            if !matches!(present, Value::Bool(true)) {
+                continue;
+            }
+            let value = self.dynamic_member_get(roots[0], field)?;
+            match field {
+                "enumerable" | "configurable" | "writable" => {
+                    if field == "writable" {
+                        has_data = true;
+                    }
+                    let flag = zun_gc::with_current_heap(|heap| super::collections::is_truthy(&value, heap));
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::bool(flag));
+                    });
+                }
+                "value" => {
+                    has_data = true;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(roots[1], "value".to_owned(), boxed);
+                    });
+                }
+                _ => {
+                    has_accessor = true;
+                    match value {
+                        Value::Function(handle) => zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set_function(roots[1], field, handle);
+                        }),
+                        Value::Void => zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::void());
+                        }),
+                        Value::Any(any) if any.tag() == zun_core::AnyTag::Void => {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::void());
+                            })
+                        }
+                        _ => {
+                            let label = if field == "get" { "Getter" } else { "Setter" };
+                            return Err(RunError::Native(format!(
+                                "TypeError: {label} must be a function"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        if has_accessor && has_data {
+            return Err(RunError::Native(
+                "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute".into(),
+            ));
+        }
+        Ok(roots[1])
+    }
+
     /// `Object.defineProperty(obj, key, desc)` / `Reflect.defineProperty`.
     /// `strict` throws a `TypeError` on refusal and returns the object;
     /// otherwise a boolean.
@@ -463,14 +532,23 @@ impl Interp<'_> {
                 "TypeError: Object.defineProperty called on non-object".into(),
             ));
         };
-        let Some(key) = args.get(1).and_then(prop_key) else {
-            return Err(RunError::BadToken);
+        let key = match args.get(1).and_then(prop_key) {
+            Some(key) => key,
+            // An object key is coerced with ToPropertyKey (ToPrimitive, string hint).
+            None => match args.get(1).and_then(as_object) {
+                Some(key_object) => match self.ordinary_to_primitive(key_object, "string")? {
+                    Some(Value::Str(text)) => PropKey::Str(text.to_string()),
+                    _ => PropKey::Str("[object Object]".to_owned()),
+                },
+                None => return Err(RunError::BadToken),
+            },
         };
         let Some(desc) = args.get(2).and_then(as_object) else {
             return Err(RunError::Native(
                 "TypeError: Property description must be an object".into(),
             ));
         };
+        let desc = self.normalize_descriptor(desc)?;
         let ok = self.define_own_property(target, &key, desc);
         if strict {
             if !ok {
