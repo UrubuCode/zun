@@ -733,6 +733,17 @@ impl Interp<'_> {
                             _ => {}
                         }
                     }
+                    // `size` of a Map / Set reached through `any`.
+                    if name == "size" {
+                        if let Value::Object(obj) = &concrete {
+                            if let Some(size) = zun_gc::with_current_heap(|heap| {
+                                heap.map_len(*obj).or_else(|| heap.set_len(*obj))
+                            }) {
+                                stack.push(Value::Float(size as f64, zun_il::NumKind::F64));
+                                continue;
+                            }
+                        }
+                    }
                     // A RegExp object read through `any`: the flag accessors
                     // and `source`/`flags`/`lastIndex`.
                     if let Value::Object(regex) = &concrete {

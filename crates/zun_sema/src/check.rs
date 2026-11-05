@@ -13656,29 +13656,23 @@ impl Checker<'_> {
                     // `arr.length = n` (truncation; growth is not supported):
                     // lowered to a clamped splice removing the tail.
                     Ty::Array if fname == "length" => {
-                        coerce_numeric_literal(&mut value, Ty::Int(IntKind::U64));
-                        if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::Int(IntKind::U64)) {
-                            self.error(value.span, "`Array.length` must be assigned an integer");
-                            return self.poison(span);
-                        }
-                        let Some((id, _)) = zun_natives::resolve("array", "arraySpliceInsert") else {
-                            self.error(span, "missing Array intrinsic `arraySpliceInsert`");
-                            return self.poison(span);
-                        };
-                        let mut count = hir::Expr {
-                            kind: hir::ExprKind::Number(4294967295.0),
-                            ty: Ty::F64,
-                            span,
-                        };
-                        coerce_numeric_literal(&mut count, Ty::Int(IntKind::U64));
-                        let items = hir::Expr {
-                            kind: hir::ExprKind::ArrayLiteral { elements: Vec::new() },
-                            ty: Ty::Array,
-                            span,
+                        // Shrinks or grows (holes) through the dynamic length setter.
+                        let boxed = if value.ty == Ty::Any {
+                            value
+                        } else {
+                            hir::Expr {
+                                span: value.span,
+                                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                ty: Ty::Any,
+                            }
                         };
                         hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, value, count, items] },
-                            ty: Ty::Array,
+                            kind: hir::ExprKind::DynamicSet {
+                                object: Box::new(object),
+                                name: fname,
+                                value: Box::new(boxed),
+                            },
+                            ty: Ty::Any,
                             span,
                         }
                     }
