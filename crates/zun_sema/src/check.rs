@@ -594,6 +594,26 @@ impl Checker<'_> {
         }
     }
 
+    /// A private name resolves lexically to the enclosing class, so a receiver
+    /// the checker only knows as `any` (`other.#x` after a `v is Point` guard)
+    /// is downcast to that class; a wrong-brand value then fails the cast with a
+    /// TypeError at run time.
+    fn assume_private_receiver(&mut self, cx: &FunctionCx, object: hir::Expr, name: &str) -> hir::Expr {
+        if !matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+            return object;
+        }
+        let Some(class) = cx.this_class else { return object };
+        if self.private_field_of(class, name).is_none() && !self.has_private_member(class, name) {
+            return object;
+        }
+        let span = object.span;
+        hir::Expr {
+            kind: hir::ExprKind::Convert { value: Box::new(Self::box_to_any(object)) },
+            ty: Ty::Instance(class),
+            span,
+        }
+    }
+
     /// An expression that throws a `TypeError` when evaluated (calling
     /// `undefined`), used for writes the language rejects at run time.
     fn runtime_type_error(&mut self, cx: &mut FunctionCx, span: Span) -> hir::Expr {
@@ -11523,6 +11543,8 @@ impl Checker<'_> {
                     }
                 }
                 let object = self.check_expr(cx, object);
+                let private_name = self.text(field).to_string();
+                let object = self.assume_private_receiver(cx, object, &private_name);
                 let name = self.text(field).to_string();
                 // Private accessor (`get #x()`): not a slot, so read it through
                 // the ordinary member path under its `#`-prefixed name.
@@ -13715,6 +13737,8 @@ impl Checker<'_> {
                     let peeled_object = Box::new(self.peel_this_cast(cx, private_object));
                     let private_object = &peeled_object;
                     let checked_object = self.check_expr(cx, private_object);
+                    let private_name = self.text(field).to_string();
+                    let checked_object = self.assume_private_receiver(cx, checked_object, &private_name);
                     let name = self.text(field).to_string();
                     let Some(class) = (match checked_object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
                         self.error(span, "private fields require an instance receiver");

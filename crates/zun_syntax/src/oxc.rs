@@ -4198,6 +4198,40 @@ fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::as
                             }
                         }
                     }
+                    ClassElement::StaticBlock(block) => {
+                        // `static { ... }` runs once with the other static
+                        // initializers: a synthetic static field (named by the
+                        // block's own unique source text) whose initializer is
+                        // an immediately invoked arrow over the block body.
+                        let block_span = Span::new(block.span.start, block.span.end);
+                        let statements = convert_function_statements(source, &block.body, &[])
+                            .map_err(|error| vec![error])?;
+                        let arrow = Expr::Function(FunctionExpr {
+                            params: Vec::new(),
+                            return_type: convert_type_annotation(source, None)
+                                .map_err(|error| vec![error])?,
+                            body: Block { statements, span: block_span },
+                            is_arrow: true,
+                            is_async: false,
+                            is_generator: false,
+                            span: block_span,
+                        });
+                        fields.push(crate::ast::ClassField {
+                            name: Name { span: block_span },
+                            decorators: Vec::new(),
+                            ty: crate::ast::TypeAnnotation {
+                                name: Name { span: Span::new(block_span.start, block_span.start) },
+                                is_array: false,
+                            },
+                            is_static: true,
+                            is_private: false,
+                            initializer: Some(Box::new(Expr::ComputedCall {
+                                callee: Box::new(arrow),
+                                args: Vec::new(),
+                                span: block_span,
+                            })),
+                        });
+                    }
                     _ => {
                         return Err(vec![
                             "OXC adapter does not support this class element yet".into()

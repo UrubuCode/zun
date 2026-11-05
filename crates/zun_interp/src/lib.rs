@@ -630,7 +630,11 @@ impl Interp<'_> {
                         {
                             stack.push(Value::Object(object));
                         }
-                        _ => return Err(RunError::BadToken),
+                        // A receiver of the wrong class (a private-brand
+                        // mismatch, or a bad downcast) is a catchable TypeError.
+                        _ => {
+                            throw_native!(self, body, stack, pc, next - size, "TypeError: Cannot access a private member on an object whose class did not declare it".to_string());
+                        }
                     }
                 }
                 Opcode::NewDynamic => {
